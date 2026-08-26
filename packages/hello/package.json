@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/hello",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Throwaway package proving the Estiva publish pipeline end to end. Not a library \u2014 do not depend on it.",
   "license": "MIT",
   "type": "module",

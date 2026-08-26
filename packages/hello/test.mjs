@@ -11,10 +11,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
-const { hello, HELLO_VERSION } = await import('./dist/index.js')
+const { hello, farewell, HELLO_VERSION } = await import('./dist/index.js')
 
 assert.equal(HELLO_VERSION, version, `HELLO_VERSION is ${HELLO_VERSION}, package.json says ${version}`)
 assert.equal(hello('you').version, version)
 assert.equal(hello('you').text, 'Hello, you, from Estiva.')
+assert.equal(farewell('you').text, 'Goodbye, you, from Estiva.')
 
 console.log(`✅ @estiva-app/hello ${version} — built output agrees with package.json`)

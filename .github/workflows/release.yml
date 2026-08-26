@@ -5,10 +5,19 @@ name: release
 #
 #   git tag hello@0.0.2 && git push origin hello@0.0.2
 #
-# `NPM_TOKEN` is a **granular** access token scoped to @estiva-app, read-write.
-# Not a personal classic token: that is a standing credential for everything its
-# owner can publish, which is the same objection the deploy workflows make about
-# SSH keys in GitHub.
+# **There is no npm credential here.** The first attempt used a granular access
+# token and npm answered `EOTP`: the account requires 2FA for writes and the
+# token may not bypass it. npm removes direct publish from 2FA-bypass tokens
+# entirely in January 2027, so a token was never going to be the answer.
+#
+# Publishing goes through **trusted publishing (OIDC)** instead — GitHub proves
+# which workflow is running and npm checks that against a trusted publisher
+# registered on the package. Nothing standing is stored in GitHub, which is the
+# same objection the deploy workflows make about SSH keys.
+#
+# A package's *first* publish cannot use this: a trusted publisher is configured
+# on a package that already exists. Creating a package is a once-ever manual act
+# with an interactive 2FA challenge.
 
 on:
   push:
@@ -19,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # What replaces the token. Without it npm gets no OIDC assertion and the
+      # publish falls back to asking for credentials that are not there.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,5 +67,3 @@ jobs:
       # commit and this repo is private.
       - name: Publish
         run: npm publish -w "packages/${{ steps.tag.outputs.name }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
