@@ -8,13 +8,9 @@ export type { Greeting }
  * upgrade propagated" can be checked by grepping a built application bundle,
  * rather than by trusting the lockfile that claims it.
  */
-export const HELLO_VERSION = '0.0.2'
+export const HELLO_VERSION = '0.0.1'
 
 export function hello(name = 'world'): Greeting {
   return greet(name, HELLO_VERSION)
 }
 
-/** Added in 0.0.2, so an upgrade is visible in the type surface too. */
-export function farewell(name = 'world'): Greeting {
-  return { text: `Goodbye, ${name}, from Estiva.`, version: HELLO_VERSION }
-}

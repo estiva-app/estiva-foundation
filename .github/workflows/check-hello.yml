@@ -32,6 +32,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w packages/hello
+      - run: npm test -w packages/hello
 
       # The emitted specifier is the thing three toolchains disagree about, and
       # it is invisible until a consumer's build fails. `tsc` copies relative

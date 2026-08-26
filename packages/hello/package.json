@@ -1,7 +1,7 @@
 {
   "name": "@estiva-app/hello",
-  "version": "0.0.2",
-  "description": "Throwaway package proving the Estiva publish pipeline end to end. Not a library — do not depend on it.",
+  "version": "0.0.1",
+  "description": "Throwaway package proving the Estiva publish pipeline end to end. Not a library \u2014 do not depend on it.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -31,6 +31,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build"
   },

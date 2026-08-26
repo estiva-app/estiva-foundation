@@ -19,8 +19,6 @@ Three things about it are deliberate:
 - **It is two files**, so the emitted relative import (`'./greeting.js'`) is
   actually exercised. A one-file package would prove nothing about the specifier
   three toolchains have to agree on.
-- **`farewell` arrived in 0.0.2**, so the upgrade is visible in the type surface
-  and not only in a string.
 
 Retire it once SHA-2 lands a real package: `npm deprecate '@estiva-app/hello@*'`.
 Unpublishing is only possible within 72 hours of publication.
