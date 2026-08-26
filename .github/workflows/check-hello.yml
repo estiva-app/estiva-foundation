@@ -1,0 +1,51 @@
+name: check hello
+
+# One workflow per package, filtered by path. This is what ADR 0002 §2 promises
+# in exchange for putting four packages in one repository: a change to
+# `protocol` must not run `ui`'s jsdom tests, or a flaky UI test becomes a
+# blocked wire-format release — which is the objection b990b57 raises against a
+# shared repo, and the one this layout has to answer.
+#
+# Known cost of `paths`: a PR touching no package never runs this job, so it
+# cannot be a *required* check that must report success. Require the jobs that
+# run on every PR instead, if a branch rule is ever added.
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/hello/**', '.github/workflows/check-hello.yml', 'tsconfig.base.json']
+  pull_request:
+    paths: ['packages/hello/**', '.github/workflows/check-hello.yml', 'tsconfig.base.json']
+
+concurrency:
+  group: check-hello-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/hello
+
+      # The emitted specifier is the thing three toolchains disagree about, and
+      # it is invisible until a consumer's build fails. `tsc` copies relative
+      # specifiers through untouched, so an extensionless one ships broken.
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/hello/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      # Ambient globals are guarded by `types: []` and `lib: ["es2022"]` in
+      # tsconfig.base.json, so a package reaching for `process` or `document`
+      # fails the build above rather than reaching a consumer. Peek's app config
+      # sets types:["vite/client"] and Ship's sets types:["node"], and a .d.ts
+      # that needs either compiles in one repo and fails in the other.

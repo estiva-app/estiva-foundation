@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "Shared compiler options for every published package. Two rules here are not",
+    "style, they are what makes a package installable in all three consuming",
+    "toolchains — see estiva-docs/decisions/0002:",
+    "",
+    "  target/lib es2022, and NO `lib: dom` and NO `types: node`. Peek's app",
+    "  tsconfig sets `types: [\"vite/client\"]` and Ship's sets `types: [\"node\"]`.",
+    "  A .d.ts that reaches for a global from either one compiles in one repo and",
+    "  fails in the other. Anything DOM- or Node-shaped must be a parameter, not",
+    "  an ambient global.",
+    "",
+    "  declaration + declarationMap + sourceMap, and `src/` ships in the tarball,",
+    "  so a consumer stepping into this code lands on TypeScript rather than on",
+    "  a line of emitted JS."
+  ],
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true
+  }
+}

@@ -1,0 +1,59 @@
+name: release
+
+# Nobody publishes from a laptop (ADR 0002 §4c). The version bump is a PR; the
+# tag is what releases.
+#
+#   git tag hello@0.0.2 && git push origin hello@0.0.2
+#
+# `NPM_TOKEN` is a **granular** access token scoped to @estiva-app, read-write.
+# Not a personal classic token: that is a standing credential for everything its
+# owner can publish, which is the same objection the deploy workflows make about
+# SSH keys in GitHub.
+
+on:
+  push:
+    tags: ['*@*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Read the package and version out of the tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "name=${TAG%@*}"    >> "$GITHUB_OUTPUT"
+          echo "version=${TAG##*@}" >> "$GITHUB_OUTPUT"
+
+      # A tag that disagrees with package.json publishes a version nobody asked
+      # for, under a tag that will forever point at the wrong commit. npm accepts
+      # it silently, so this is the only place it can be caught.
+      - name: The tag agrees with package.json
+        run: |
+          DIR="packages/${{ steps.tag.outputs.name }}"
+          ACTUAL=$(node -p "require('./$DIR/package.json').version")
+          if [ "$ACTUAL" != "${{ steps.tag.outputs.version }}" ]; then
+            echo "::error::tag says ${{ steps.tag.outputs.version }}, $DIR/package.json says $ACTUAL"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run build -w "packages/${{ steps.tag.outputs.name }}"
+
+      # `publishConfig.access: public` lives in every package.json, so a scoped
+      # package cannot fail its first publish looking like a permissions bug.
+      # `--provenance` is deliberately absent: it attests to a *public* source
+      # commit and this repo is private.
+      - name: Publish
+        run: npm publish -w "packages/${{ steps.tag.outputs.name }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

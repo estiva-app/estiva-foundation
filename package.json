@@ -1,0 +1,20 @@
+{
+  "name": "estiva-foundation",
+  "private": true,
+  "type": "module",
+  "description": "The libraries four Estiva apps inherit. Wire format, identity, platform, UI.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

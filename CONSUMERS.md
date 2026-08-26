@@ -1,0 +1,20 @@
+# Consumers
+
+Who depends on what. **A breaking change is not published until every consumer
+listed here has an open upgrade PR, authored by the person making the break** —
+ADR 0002 §5. This file is what makes "every consumer" a list somebody can read
+rather than folklore.
+
+Keep it current in the same PR that adds or drops a dependency.
+
+| package | consumer | repo | notes |
+| --- | --- | --- | --- |
+| `@estiva-app/hello` | — | — | throwaway; installed and removed during SHA-1's proof |
+| `@estiva-app/protocol` | Peek, Ship, estiva-agent | `estiva-app/peek`, `estiva-app/ship`, `estiva-app/estiva-agent` | SHA-3. The agent's copy is vendored today and `diff -r` is what keeps it honest |
+| `@estiva-app/platform` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-2 |
+| `@estiva-app/identity` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-4, extracted during REW-2 |
+| `@estiva-app/ui` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-5, extracted during REW-3 |
+
+The scaffold REW-1 produces consumes all four, which makes app number four a
+consumer the day it is created. That is the reason this list exists now rather
+than at four apps.
