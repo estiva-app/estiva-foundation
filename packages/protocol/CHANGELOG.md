@@ -4,6 +4,37 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.1.1 — 2026-08-27
+
+**Wire behaviour: unchanged.** Nothing in `src/` changed except the version
+constant. The `dist/` a consumer receives is byte-identical to 0.1.0's apart from
+that string, and no builder, tag layout, id computation or signature input moved.
+
+**This release exists to exercise the release path, and that is the honest
+description of it.** ADR 0002 §4c decided that releases publish through trusted
+publishing (OIDC) with no npm credential in GitHub. 0.1.0 could not test that: a
+package's first publish is necessarily manual, because a trusted publisher is
+configured on a package that already exists. So until this tag, §4c was a
+decision nobody had executed, and the trusted publisher was configured and
+unexercised — the state in which a misconfiguration is cheapest to find and most
+likely to be discovered at the worst moment instead.
+
+What it carries, for completeness rather than as a reason to upgrade:
+
+- **`npm run typecheck` worked in CI and failed on a fresh clone.** It was
+  `tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json`; the second pass
+  typechecks `test/**/*.ts`, which import `../dist/index.js` on purpose because
+  dist is what ships, so TypeScript resolves them to `dist/index.d.ts` — which
+  does not exist until something builds. CI runs `build` first, so it was green.
+  A fresh clone got eleven `TS2307`s that read as a broken package. Now
+  `npm run build && tsc -p tsconfig.test.json`, which is one `tsc` invocation
+  fewer, since the build already typechecks `src`.
+
+**A consumer on `^0.1.0` needs to do nothing.** The range already admits this
+version, neither changed file ships in the tarball's functional surface
+(`tsconfig.test.json` is not in `files`, and `scripts` do not run for a
+consumer), and the only observable difference is `PROTOCOL_VERSION`.
+
 ## 0.1.0 — 2026-08-27
 
 First release. SHA-3.
