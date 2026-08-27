@@ -33,11 +33,18 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      # **No `registry-url`.** With it, actions/setup-node writes an .npmrc
+      # containing `_authToken=${NODE_AUTH_TOKEN}` and, when no token secret is
+      # supplied, sets that variable to the literal placeholder
+      # `XXXXX-XXXXX-XXXXX-XXXXX`. npm then authenticates with a bogus token
+      # instead of exchanging an OIDC assertion, and the registry answers `404
+      # Not Found` on the PUT — which reads as "the package does not exist"
+      # rather than "your credential is nonsense". Measured on the first attempt
+      # at this release.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Read the package and version out of the tag
         id: tag
@@ -57,6 +64,11 @@ jobs:
             echo "::error::tag says ${{ steps.tag.outputs.version }}, $DIR/package.json says $ACTUAL"
             exit 1
           fi
+
+      # Trusted publishing needs npm >= 11.5.1. Node 24 ships a new enough one,
+      # but the failure if it ever regresses is the same misleading 404.
+      - name: Versions
+        run: node -v && npm -v
 
       - run: npm ci
       - run: npm run build -w "packages/${{ steps.tag.outputs.name }}"
