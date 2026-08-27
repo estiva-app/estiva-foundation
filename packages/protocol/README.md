@@ -72,9 +72,30 @@ new shape, and then the release note says so under *Wire behaviour*.
 
 A green suite is still not the last word. The relay is the only authority on
 whether the wire format is right, and a passing test run is compatible with a
-rejected event — so a change to the bytes is verified by publishing a real signed
-event and reading the `accepted` field back, with a negative control alongside it
-so "it works" is distinguishable from "the rule was removed".
+rejected event. So there is a fifth check, and it is hand-run because it needs a
+real workspace credential — and a credential in CI is the standing secret ADR
+0002 §4c spent a failed release deciding not to have:
+
+```bash
+npm run build -w packages/protocol && set -a && . ~/.estiva-agent.env && set +a && npm run verify:live -w packages/protocol
+```
+
+It publishes a **real signed `kind:9007`** naming a channel that already exists,
+so the relay answers `200 {"accepted":false,"duplicate: channel already
+exists"}` — proof the event was parsed, its id recomputed and its signature
+verified — while creating nothing. Then two negative controls, without which "it
+works" is indistinguishable from "the rule was removed":
+
+- the same signed event with **two tags swapped** and `id`/`sig` left alone. The
+  relay's own words, 2026-08-27: `400 invalid: invalid event id: computed
+  70f206d4…, got b9d1e606…`. It recomputes the id independently, so agreement on
+  the good event is agreement about the bytes rather than indifference to them.
+- a `kind:0`, which `/sign` refuses for every app unconditionally —
+  `422 policy_violation`. The gates are live, not open.
+
+Run it before tagging any release whose *Wire behaviour* line is not
+"unchanged", and again afterwards against the **published tarball** rather than
+the workspace, because built is not published.
 
 ## `nostr-tools` was evaluated, and is a devDependency rather than a dependency
 

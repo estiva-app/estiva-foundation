@@ -32,12 +32,20 @@
     "url": "git+https://github.com/estiva-app/estiva-foundation.git",
     "directory": "packages/protocol"
   },
-  "keywords": ["nostr", "nip-01", "nip-19", "nip-98", "buzz", "estiva"],
+  "keywords": [
+    "nostr",
+    "nip-01",
+    "nip-19",
+    "nip-98",
+    "buzz",
+    "estiva"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "verify:live": "node scripts/verify-live.mjs"
   },
   "dependencies": {
     "@noble/curves": "^1.9.2",

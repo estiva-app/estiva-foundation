@@ -108,9 +108,34 @@ test('publicKeyFromSecret is unchanged', () => {
   reproducing the id is a check against the authority rather than against
   ourselves — which is the difference between "our tests pass" and "the wire
   format is still right".
+
+  Sampled from the 96 RECORDED events in Ship's fold fixture, deliberately not
+  from the 7 adversarial ones alongside them. Those are hand-built — `h` is the
+  literal string "fixture-folder", which the relay would refuse as a channel id
+  in the first place — and were never published anywhere, so calling them
+  "production" would have been a claim about the relay that the relay had never
+  agreed to. One is kept below on its own terms.
 */
 for (const event of vectors.production.events) {
   test(`production kind:${event.kind} ${event.id.slice(0, 12)} — the relay's own id reproduces`, () => {
     assert.equal(P.computeEventId(event), event.id)
+  })
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+test('every production vector really is relay-shaped, so the label is earned', () => {
+  for (const event of vectors.production.events) {
+    const h = event.tags.find((t) => t[0] === 'h')?.[1]
+    assert.ok(h === undefined || UUID.test(h), `${event.id}: h is "${h}", which no relay would have stored`)
+    assert.match(event.pubkey, /^[0-9a-f]{64}$/)
+    assert.match(event.sig, /^[0-9a-f]{128}$/)
+  }
+})
+
+for (const event of vectors.synthetic.events) {
+  test(`synthetic kind:${event.kind} ${event.id.slice(0, 12)} — id computes, relay unasked`, () => {
+    assert.equal(P.computeEventId(event), event.id)
+    assert.ok(!UUID.test(event.tags.find((t) => t[0] === 'h')?.[1] ?? ''), 'if this ever becomes uuid-shaped it belongs in the production set')
   })
 }

@@ -667,7 +667,7 @@
     "untouched": "  no pointer   here  "
   },
   "production": {
-    "note": "Real events read back off https://estiva.estiva.app. Their ids and sigs are the RELAY's, so computeEventId reproducing them is a check against the authority rather than against ourselves. Sampled from estiva-ship/conformance/fold-fixture.json.",
+    "note": "Real events read back off https://estiva.estiva.app. Their ids and sigs are the RELAY's, so computeEventId reproducing them is a check against the authority rather than against ourselves. Sampled from the 96 RECORDED events in estiva-ship/conformance/fold-fixture.json — the 7 adversarial ones in that file are hand-built (h is the literal string \"fixture-folder\", authored 1970s-era timestamps) and were never published anywhere, so they cannot be checked against the relay. One is kept below as  because it is still a good id vector.",
     "events": [
       {
         "content": "It's good idea to turn it into React before adding extra functionality, I'll ask Claude tomorrow how much work that would be",
@@ -738,32 +738,6 @@
             "1787142018561"
           ]
         ]
-      },
-      {
-        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
-        "created_at": 1700000012,
-        "kind": 1851,
-        "tags": [
-          [
-            "h",
-            "fixture-folder"
-          ],
-          [
-            "a",
-            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:56119588-4b40-491f-a517-09b579d4798c"
-          ],
-          [
-            "field",
-            "status"
-          ],
-          [
-            "value",
-            "cancelled"
-          ]
-        ],
-        "content": "later by created_at, wins while the window is 1s",
-        "id": "44e938d6876d7be15a0ae0d153a1b3be524f0e02b8b47979221d1fe1f61698cb",
-        "sig": "36755501ca3ebc5cb1ae8f04f39b1a8ebaaf68356e65b45ce3ef1d1db3bce50f275b424cfab2746ff29ec938db9562075972146341262ecf6f925e9433667e2c"
       },
       {
         "content": "",
@@ -868,6 +842,37 @@
             "EST-1"
           ]
         ]
+      }
+    ]
+  },
+  "synthetic": {
+    "note": "Hand-built for Ship's fold fixture (h is the literal string \"fixture-folder\"), never published to any relay. Kept because its id still has to compute correctly and its content exercises the hash; the relay has no opinion about it, which is exactly why it is separated from `production` below rather than counted with it.",
+    "events": [
+      {
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "created_at": 1700000012,
+        "kind": 1851,
+        "tags": [
+          [
+            "h",
+            "fixture-folder"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:56119588-4b40-491f-a517-09b579d4798c"
+          ],
+          [
+            "field",
+            "status"
+          ],
+          [
+            "value",
+            "cancelled"
+          ]
+        ],
+        "content": "later by created_at, wins while the window is 1s",
+        "id": "44e938d6876d7be15a0ae0d153a1b3be524f0e02b8b47979221d1fe1f61698cb",
+        "sig": "36755501ca3ebc5cb1ae8f04f39b1a8ebaaf68356e65b45ce3ef1d1db3bce50f275b424cfab2746ff29ec938db9562075972146341262ecf6f925e9433667e2c"
       }
     ]
   }
