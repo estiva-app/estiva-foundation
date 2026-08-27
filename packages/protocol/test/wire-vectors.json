@@ -1,0 +1,879 @@
+{
+  "note": "Recorded from peek-app/convex/nostr/ and estiva-ship/lib/nostr/ at the commits below, BEFORE @estiva-app/protocol existed. These are the bytes the two apps were already publishing to a live relay. Do not regenerate to make a failing test pass - a failure means the package moved an app’s wire output, which is a MAJOR whether or not the TypeScript changed.",
+  "recordedFrom": {
+    "peek": "98d284fd51f465fe56b1819d422422495e254626",
+    "ship": "82e048b187956b96cbfe30ad1a34081fcf19ca59"
+  },
+  "inputs": {
+    "PUB": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+    "PUB2": "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697",
+    "CH": "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1",
+    "EV1": "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d",
+    "EV2": "d92ac2b87ffb4a15982400044cce9cf50000000000000000000000000000abcd",
+    "MS": 1787142018561,
+    "ADDR": "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731",
+    "SECRET": "0000000000000000000000000000000000000000000000000000000000000001",
+    "AWKWARD": "hello — “curly” \\ /\ttab\nnewline  two spaces  nbsp",
+    "ABOUT_TEXT": "a\nb \"q\""
+  },
+  "events": [
+    {
+      "name": "profile",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 0,
+        "tags": [],
+        "content": "{\"about\":\"a\\nb \\\"q\\\"\",\"display_name\":\"Ada\",\"name\":\"ada\",\"nip05\":\"ada@estiva.app\",\"picture\":\"https://x/y.png\"}"
+      },
+      "id": "fb1df4f69408bd8b53a6bb6e094f8513aa11378beb3244e4258b3a0613503d6f"
+    },
+    {
+      "name": "createChannel-minimal",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9007,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "name",
+            "Design"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "1a5034d035e8fd673ab83b9994f1230a71d22e81c1654df838e0f0a7905776e0"
+    },
+    {
+      "name": "createChannel-full",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9007,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "name",
+            "Ops"
+          ],
+          [
+            "visibility",
+            "private"
+          ],
+          [
+            "channel_type",
+            "forum"
+          ],
+          [
+            "about",
+            "the ops room"
+          ],
+          [
+            "ttl",
+            "86400"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "e920f6eb5ef006262199697fa806f556a5e6e9e8b893ffdbdec1ed40758881a1"
+    },
+    {
+      "name": "addMember",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9000,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "p",
+            "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697"
+          ],
+          [
+            "role",
+            "admin"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "20aad8a035d659e70daec7d5d9571212d07bd8a42b80cb32e798595d2ff60720"
+    },
+    {
+      "name": "reaction",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 7,
+        "tags": [
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d"
+          ]
+        ],
+        "content": "🎉"
+      },
+      "id": "58910338c49b09117f440ee0189313c011b8e24415c9162ed68697ab24f0e05d"
+    },
+    {
+      "name": "deletion",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 5,
+        "tags": [
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "e961e14a105bdc1976440358e03db8debc2b1ec8a60f2bc9b666696466bf7105"
+    },
+    {
+      "name": "message-awkward-content",
+      "note": "Tabs, newlines and non-ASCII in the content, because the id is a hash over JSON.stringify escaping.",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ]
+        ],
+        "content": "hello — “curly” \\ /\ttab\nnewline  two spaces  nbsp"
+      },
+      "id": "e543b840c5872a9381ae822616e8e6589fdfdf3a8d8abc229dd95570c105d71b"
+    },
+    {
+      "name": "message-direct-reply",
+      "note": "A direct reply emits ONE e tag marked \"reply\", not a root tag. Buzz thread_tags.",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d",
+            "",
+            "reply"
+          ]
+        ],
+        "content": "r"
+      },
+      "id": "f4fe096e68da3423715111a8a6ea0dec10ae68a506891b00baf17a9652330c8c"
+    },
+    {
+      "name": "message-nested-reply",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d",
+            "",
+            "root"
+          ],
+          [
+            "e",
+            "d92ac2b87ffb4a15982400044cce9cf50000000000000000000000000000abcd",
+            "",
+            "reply"
+          ]
+        ],
+        "content": "r"
+      },
+      "id": "a05b5faba667a2ac9ec13b433a45f8293de4d75f90ba75257b26b5d6733e2189"
+    },
+    {
+      "name": "message-mentions-dedup-broadcast-imeta",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "p",
+            "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697"
+          ],
+          [
+            "p",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "broadcast",
+            "1"
+          ],
+          [
+            "imeta",
+            "url https://x/a.png",
+            "m image/png"
+          ]
+        ],
+        "content": "hi"
+      },
+      "id": "336a37de23c81649500eb4da4d12c71e0c5af80d8dfb7aed39891db59ffb0112"
+    },
+    {
+      "name": "message-with-about",
+      "note": "Peek only. Ship’s builder had no `about` parameter at all — the divergence SHA-3 merged. The `a` tags sit between the thread tags and the mentions.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d",
+            "",
+            "reply"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731"
+          ],
+          [
+            "a",
+            "30850:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:p1"
+          ],
+          [
+            "p",
+            "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697"
+          ]
+        ],
+        "content": "about an issue"
+      },
+      "id": "1ec7cebcbb4a10667e4a9a651d50cd7c5e17cd959620e5c8af4150da12a6cd2b"
+    },
+    {
+      "name": "deleteChannel",
+      "note": "Peek only before SHA-3.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9008,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "cf191ee5e704ebf6f929e2bebd6a9e51549e60737bf50a22a290277a4cd81ba0"
+    },
+    {
+      "name": "editChannelMetadata",
+      "note": "Peek only before SHA-3.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9002,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "name",
+            "Renamed"
+          ],
+          [
+            "about",
+            "why"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "305e2ddb9d72d5237e336660e45445f60d00eb4615bb260787266a8cd3b6e3e4"
+    },
+    {
+      "name": "resolution-resolved",
+      "note": "Peek only before SHA-3.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9101,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d"
+          ],
+          [
+            "t",
+            "resolution"
+          ],
+          [
+            "action",
+            "resolved"
+          ],
+          [
+            "e",
+            "d92ac2b87ffb4a15982400044cce9cf50000000000000000000000000000abcd",
+            "",
+            "support"
+          ]
+        ],
+        "content": "shipped"
+      },
+      "id": "0f3a758dc9dfff833e19c1711f043a54b384faa183d9d76fde5c98db45278322"
+    },
+    {
+      "name": "resolution-reopened",
+      "note": "Peek only before SHA-3.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9101,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d"
+          ],
+          [
+            "t",
+            "resolution"
+          ],
+          [
+            "action",
+            "reopened"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "1bb9c2bd39afbb53fc310170ca88a88350260b3de4b870dfc4021b8423b01f6d"
+    },
+    {
+      "name": "relayAuth",
+      "note": "Peek only before SHA-3. Never stored by the relay; the path is stripped to an origin.",
+      "producedBy": [
+        "peek"
+      ],
+      "event": {
+        "pubkey": "",
+        "created_at": 1787142018,
+        "kind": 22242,
+        "tags": [
+          [
+            "relay",
+            "wss://estiva.estiva.app"
+          ],
+          [
+            "challenge",
+            "chal-123"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "344698f8156570f97c79102ca596f3165a9b41c5e1f488a21e400111e4c0854f"
+    },
+    {
+      "name": "file",
+      "note": "Ship only before SHA-3 (NIP-FC).",
+      "producedBy": [
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 30840,
+        "tags": [
+          [
+            "d",
+            "f1"
+          ],
+          [
+            "title",
+            "Spec"
+          ],
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "a",
+            "30841:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c1"
+          ],
+          [
+            "a",
+            "30841:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c2"
+          ]
+        ],
+        "content": "{\"v\":1}"
+      },
+      "id": "276cd8fb749387a3a9c9e5f24095902b4bf4a7a9a150502860c974ed39433c4b"
+    },
+    {
+      "name": "component",
+      "note": "Ship only before SHA-3 (NIP-FC).",
+      "producedBy": [
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 30841,
+        "tags": [
+          [
+            "d",
+            "c1"
+          ],
+          [
+            "a",
+            "30840:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:f1"
+          ],
+          [
+            "type",
+            "nfb/todo"
+          ],
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "L",
+            "nfb.x"
+          ],
+          [
+            "l",
+            "v",
+            "nfb.x"
+          ]
+        ],
+        "content": "{\"done\":false}"
+      },
+      "id": "36f7c91ba9e1d30191e122c059bf0b14580756b0b3e3a4d68949f0ef1ae24c46"
+    },
+    {
+      "name": "highlight",
+      "note": "Ship only before SHA-3 (NIP-84).",
+      "producedBy": [
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 9802,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "e",
+            "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d"
+          ],
+          [
+            "r",
+            "https://x/y"
+          ],
+          [
+            "p",
+            "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697",
+            "",
+            "author"
+          ],
+          [
+            "L",
+            "nfb.highlight"
+          ],
+          [
+            "l",
+            "insight",
+            "nfb.highlight"
+          ]
+        ],
+        "content": "an excerpt"
+      },
+      "id": "4a602aedfee8eac849e9d56487b9507a222d4382e2471592fc0c91bc67c1e2be"
+    },
+    {
+      "name": "nip98-auth-no-body",
+      "note": "Peek’s builder is unsigned, Ship’s combined build-and-sign; the TAGS are what is compared, and they agreed.",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 27235,
+        "tags": [
+          [
+            "u",
+            "https://estiva.estiva.app/query"
+          ],
+          [
+            "method",
+            "POST"
+          ],
+          [
+            "nonce",
+            "deadbeef"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "a74abb0af2c504edb98ea5d310475eecb50a14b91df637fb31a212bde9ccfa73"
+    },
+    {
+      "name": "nip98-auth-with-body",
+      "producedBy": [
+        "peek",
+        "ship"
+      ],
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 27235,
+        "tags": [
+          [
+            "u",
+            "https://estiva.estiva.app/events"
+          ],
+          [
+            "method",
+            "POST"
+          ],
+          [
+            "nonce",
+            "cafe"
+          ],
+          [
+            "payload",
+            "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "5369430bc69ccb2af11660885fd27ac04ccd76799c8538a12c7da6e769b55403"
+    }
+  ],
+  "naddr": {
+    "withRelay": {
+      "peek": "naddr1qqjrxd3kxqckgvph95ukzerz956rqdps94snqefc95unvdekv4skxdt9xuenzqgedp68gurn8ghj7etnw35hvcfwv4ehg6tkvyhxzursqgst8r7jdpa30w7796q8j4muhfspjd4vlcdhx8fd9wnummef5p3ak3srqsqqq7yrjsr882",
+      "ship": "naddr1qqjrxd3kxqckgvph95ukzerz956rqdps94snqefc95unvdekv4skxdt9xuenzqgedp68gurn8ghj7etnw35hvcfwv4ehg6tkvyhxzursqgst8r7jdpa30w7796q8j4muhfspjd4vlcdhx8fd9wnummef5p3ak3srqsqqq7yrjsr882"
+    },
+    "withoutRelay": {
+      "peek": "naddr1qqjrxd3kxqckgvph95ukzerz956rqdps94snqefc95unvdekv4skxdt9xuenzq3qkw8ay6rmz7aaut5q09thewnqrym2elsmwvwj62a8ehhjngrrmdrqxpqqqpugx4sjqmh",
+      "ship": "naddr1qqjrxd3kxqckgvph95ukzerz956rqdps94snqefc95unvdekv4skxdt9xuenzq3qkw8ay6rmz7aaut5q09thewnqrym2elsmwvwj62a8ehhjngrrmdrqxpqqqpugx4sjqmh"
+    },
+    "colonsInIdentifier": {
+      "peek": "naddr1qqx8qet9dva8yetpvsa8vvgzyzecl5ng0vtmhh3wspu4wl96vqvndt87rde36tft5lx772dqv0d5vqcyqqq82ls66f673",
+      "ship": "naddr1qqx8qet9dva8yetpvsa8vvgzyzecl5ng0vtmhh3wspu4wl96vqvndt87rde36tft5lx772dqv0d5vqcyqqq82ls66f673"
+    }
+  },
+  "keys": {
+    "secret": "0000000000000000000000000000000000000000000000000000000000000001",
+    "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+  },
+  "strip": {
+    "inline": "See for details.",
+    "ownLine": "Header\n\nFooter",
+    "untouched": "  no pointer   here  "
+  },
+  "production": {
+    "note": "Real events read back off https://estiva.estiva.app. Their ids and sigs are the RELAY's, so computeEventId reproducing them is a check against the authority rather than against ourselves. Sampled from the 96 RECORDED events in estiva-ship/conformance/fold-fixture.json — the 7 adversarial ones in that file are hand-built (h is the literal string \"fixture-folder\", authored 1970s-era timestamps) and were never published anywhere, so they cannot be checked against the relay. One is kept below as  because it is still a good id vector.",
+    "events": [
+      {
+        "content": "It's good idea to turn it into React before adding extra functionality, I'll ask Claude tomorrow how much work that would be",
+        "created_at": 1787244500,
+        "id": "0334cd33ee176716cae51f6fa91530a0e51422e0e20ddc33764e9b47524565a7",
+        "kind": 9,
+        "pubkey": "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697",
+        "sig": "b7e1fd76c2ecf6afd5ffc1a47e74f544028ab33513b680a14355f384fdf069f313a461ddbb92ae7bfccb24aeb3b4a018147b0f5e73bc3dabf5e5b916a3289a40",
+        "tags": [
+          [
+            "h",
+            "2303e8c1-c866-43b8-9b4c-e263f313a683"
+          ],
+          [
+            "e",
+            "c62b085f9a703406b4d4b85e0edce83675c1b9bee8e32e7697764f28f30d01e5",
+            "",
+            "reply"
+          ]
+        ]
+      },
+      {
+        "content": "Few ideas\n- The animation could happen on the topic itself in the sidebar. Let's say you gave me emoji in conversation in Feedback on Peek. The Feedback on Peek topic in sidebar would get this animation.\n- Have dedicated section in Desk that would only be available if you have unread emoji reaction. It could be called \"Reactions\" and it would be just icon and if hove over, it would show a simple box where you would see the message with the reaction.",
+        "created_at": 1787236455,
+        "id": "5a64455fd68b9c15147caf6c97f0b0ad261c05db817b7cc5c43ff9912d1939df",
+        "kind": 9,
+        "pubkey": "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1",
+        "sig": "69420733a908fb813554501cf3ff1c816d913b2fd7381445c3a2a015ce522457032643adaddb2f3db0b56d4a468303e595a2445ef34cbd2b69227e1df3553e45",
+        "tags": [
+          [
+            "h",
+            "2303e8c1-c866-43b8-9b4c-e263f313a683"
+          ],
+          [
+            "e",
+            "c62b085f9a703406b4d4b85e0edce83675c1b9bee8e32e7697764f28f30d01e5",
+            "",
+            "reply"
+          ]
+        ]
+      },
+      {
+        "content": "Status → in_progress",
+        "created_at": 1787142018,
+        "id": "014fc35342a892572cbd948111a7b661b3130739eee3706642522b664787601d",
+        "kind": 1851,
+        "pubkey": "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697",
+        "sig": "b600ad813fbc1af1d1bdfbe132add8ef9e3066ca6c21bf6dd2a769672a867dbd9cc8d45f459d14e80da644ceb49cc282e30a674e946966153b72baee7ccc3159",
+        "tags": [
+          [
+            "a",
+            "30851:a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697:d92ac2b8-7ffb-4a15-9824-00044cce9cf5"
+          ],
+          [
+            "field",
+            "status"
+          ],
+          [
+            "value",
+            "in_progress"
+          ],
+          [
+            "h",
+            "2303e8c1-c866-43b8-9b4c-e263f313a683"
+          ],
+          [
+            "ts",
+            "1787142018561"
+          ]
+        ]
+      },
+      {
+        "content": "",
+        "created_at": 1787068269,
+        "id": "22ae180e54ba9bfbb941029be1d738e8290070e22ddb121911888ae0dbe011fd",
+        "kind": 30850,
+        "pubkey": "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1",
+        "sig": "2849de5b49ede85012a657701ac4137a1696b7fd24ccac39bbfbbf9511c062910133bc7c6ae431ae8411e136c67a86dc7b8e335f1f180108e6a9aa998153ab67",
+        "tags": [
+          [
+            "d",
+            "360327a9-18c5-40e5-9747-9166dc284ddc"
+          ],
+          [
+            "title",
+            "Estiva ID: Feedback & Bugs"
+          ],
+          [
+            "h",
+            "fcfe9d61-2d05-4d25-b113-40b2d2e601ee"
+          ]
+        ]
+      },
+      {
+        "content": "Ship→Peek updates are not real-time and cannot explain themselves. Source ticket: PEEK-109.\n\n## The actual diagnosis\n\nThere is no polling. Peek reads the relay **once per topic mount** and never again — `useTopicView.tsx` keys its sync effect on `[topicId, topicFolderId, relayUrl, convex]`, none of which change while you sit in a topic. \"Replies take time to appear\" is really \"replies appear on remount\", which is why a reload fixes it.\n\nFour independent staleness sources, each matching a reported symptom:\n\n1. **Messages/replies** — one fetch per mount (`useTopicView.tsx:144-159`). Reactions and deletions are additionally capped to the newest 100 messages per topic (`convex/nostr/sync.ts:41`), so an older message never picks up a reaction at all.\n2. **Ship projects/issues in the sidebar** — `TopicProjectPanel.tsx:250-269` resolves once, keyed on a folder id that never changes. The file admits it: \"the panel reflects the moment it resolved and does not live-update\". A project created in Ship after the panel mounted never appears.\n3. **Everything outside topics never syncs at all** — the only relay-read call sites are `useTopicView` (channel) and `AuthGate` (profiles). DMs, inbox, Desk and Screener have no read path.\n4. **Auth failure is silent** — `useTopicView.tsx:150` calls `validToken()` and returns with no signal; relay failures below are `console.warn`. Silent refresh exists (PEEK-108) but it is a `setTimeout`, which browsers throttle in background tabs. The UI cannot distinguish \"nothing changed\" from \"I stopped being able to ask\".\n\n## What is already true (verified live, 2026-08-21)\n\n- `wss://estiva.estiva.app` accepts a WebSocket upgrade through Cloudflare from Peek's origin and immediately sends `[\"AUTH\",\"<challenge>\"]`. Verified with curl; **pass `--http1.1`** or the same request returns NIP-11 JSON, because `Connection`/`Upgrade` are not HTTP/2 headers.\n- NIP-11 reports `supported_nips` including 42, `auth_required: true`, `max_subscriptions: 1024`, `max_filters: 10`.\n- **One subscription covers messages, reactions AND deletions.** `buzz-core/src/filter.rs:68-90` has an explicit `#h` fallback to `StoredEvent.channel_id` for events carrying no `h` tag (kind:7, kind:5, whose channel is derived at ingest). So `{\"#h\":[channelUuid]}` delivers messages + reactions + deletions + assertions in one REQ. The current HTTP path needs four sequential round trips to do less.\n- **The projection is reusable unchanged.** PEEK-106 already split credential from projection: `importChannel` / `importReactions` / `importResolutions` take events, not tokens.\n- **Convex is already reactive.** Once a row lands, every open view updates. The only missing link is relay→Convex.\n\n## Two gates\n\n**Gate 1 — Estiva ID must sign kind:22242 (blocking).** `estiva-id/src/db/seed.ts:79` gives Peek `[9,7,5,9007,27235,1851,9101,9002]` — no 22242, so Peek cannot answer the AUTH challenge and every REQ returns `auth-required`. The socket looks healthy and delivers nothing. Deploying needs a **manual re-seed**: `update.sh` runs `migrate`, never `seed`. Unlike PEEK-128 this is only one gate — AUTH never goes through `ingest.rs`, `Kind::Authentication` is built into `buzz-auth/src/nip42.rs:52`, so no Buzz change and no relay deploy.\n\n**Gate 2 — one subscription per channel (silent trap).** `buzz-relay/src/handlers/req.rs:1013` returns `None` when filters name more than one distinct `#h`; `subscription.rs:84-113` then registers the subscription as *global*, and `fan_out_scoped:273-288` consults only the channel indexes for channel-scoped events. The invariant is stated at `subscription.rs:321-325`. A multi-channel subscription returns correct history at EOSE and then receives **zero** live events. One REQ per channel; 1024 per connection is no practical ceiling.\n\n## Why the socket stays in the browser\n\n`convex/nostr/sync.ts:18-20` proposes an external consumer holding the socket. An identity is obtainable — `estiva-id/src/domain/roles.ts` has role identities with a client-credentials grant. But Buzz gates reads **per channel**: `handlers/event.rs:181-196` filters live fan-out through `is_member_cached(community, channel, pubkey)` and fails closed on private channels. A service identity would need membership in every topic — a product decision (a bot in every conversation), not an implementation detail. `convex/crons.ts` already reached this conclusion. Convex keeps the projection; only the socket moves.\n\n## Shape of the fix\n\nOne shared WebSocket per tab. One subscription per open channel. Live events routed into the existing Convex import actions. Convex reactivity carries it to the UI. The HTTP path stays as the backfill on subscribe (it owns the `since` cursor and paging) and as the fallback when the socket is down — so the change is additive and a WS failure degrades to today's behaviour rather than to nothing.\n\nOrdering caveat to design for: `created_at` is in seconds and several events routinely land in the same one (SPEC §6.2). Imports are idempotent by event id and `nostrSyncedAt` only moves forward (`convex/nostr/data.ts:523`), so live and backfill can overlap safely.\n\n## Milestones\n\n- **M1 — Un-gated relief.** Refetch on focus/visibility plus a short interval, in both the topic sync and the project panel; TTL the profile cache. Turns \"until remount\" into \"within 30 seconds\" and probably clears most reported symptoms. Nothing blocks this.\n- **M2 — Open the 22242 gate.** Add it to Peek's allowed kinds, scoped by `relay` tag, deploy, **re-seed**, verify the row.\n- **M3 — The live socket.** WS client with NIP-42 AUTH and reconnect; refcounted per-channel subscription manager; live events into the Convex projection; `useTopicView` subscribing with HTTP as backfill and fallback.\n- **M4 — Honest state.** One derived connection state surfaced once, and relay read failures made visible instead of swallowed.\n- **M5 — Beyond topics.** Subscriptions for the inbox, Desk and DMs, which have no relay read path at all today.\n\n## Not yet verified\n\n- The **live** `allowed_kinds` row for peek. `seed.ts` has no 22242; the read to confirm production matches was blocked. Run `docker compose exec -T postgres psql -U estiva_id -d estiva_id -tAc \"select client_id, allowed_kinds from app_credentials\"` before planning on it.\n- No end-to-end 22242 signing test — needs a live user token.\n\nIssues are filed in implementation order. Each is written to be picked up cold by Claude Code.",
+        "created_at": 1787348120,
+        "id": "6c5b706baa802f30d5c57c5420a7e0acbef2604d21cb5e2ee0766ea4e2ffbaba",
+        "kind": 30850,
+        "pubkey": "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1",
+        "sig": "51af9a417fd144910e2b574342057e7f9e1dde367e0491b1352039ae4b3e060a79066101a74df1960b164d74fbe781cce418d0fd8f359b2283486ecabdcc1d0d",
+        "tags": [
+          [
+            "d",
+            "df13e841-891c-48db-a1a2-24f9c16b411e"
+          ],
+          [
+            "title",
+            "Peek: Real-time Ship→Peek updates"
+          ],
+          [
+            "h",
+            "996ab3d4-5565-4335-9e17-2284fda675a0"
+          ]
+        ]
+      },
+      {
+        "content": "Because then it feels like duplicate. You're trying to open item that is already open.",
+        "created_at": 1787217132,
+        "id": "16c7094f6ded549f465dfaa9bfa1119a90e395610c8439ee700169b8ec7704db",
+        "kind": 30851,
+        "pubkey": "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1",
+        "sig": "9eb50401f8712eb76b36dd5fc0bcb5a085fc24d7c64dc0ffdcd260c0415ac695ec09c1c0a6be202dae156ad0db76349b627f0a14a24566b5c9a4ee06a371bc46",
+        "tags": [
+          [
+            "d",
+            "e5bc8a9c-3800-4aa7-9e6a-08b156e0b889"
+          ],
+          [
+            "title",
+            "If item is already in Open Work, it shouldn't show in Screener"
+          ],
+          [
+            "h",
+            "2303e8c1-c866-43b8-9b4c-e263f313a683"
+          ],
+          [
+            "a",
+            "30850:a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697:2a5b8f13-0364-4a84-bdd4-fc0a6ddc259c"
+          ],
+          [
+            "ref",
+            "PEE-6"
+          ]
+        ]
+      },
+      {
+        "content": "An issue appeared, might be worth taking a look. I signed in on Ship and left it open for some time. Then returned and found an error banner that I'm not signed, even though my avatar was still correct and there was no option to sign in in the menu, just sign out",
+        "created_at": 1787068311,
+        "id": "9d34b502384c403cb43cf6d313b25fd5200f75572b541aee974ebdf58898b1cd",
+        "kind": 30851,
+        "pubkey": "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1",
+        "sig": "a825d9cf69b9020e7d782d8949e897b2f1f936f962c1fbdb751302cd3d54f73726475d86305e24dd19661b56a3bb200f56c1167467e26bb5a2283a81be985cec",
+        "tags": [
+          [
+            "d",
+            "a5eef7bf-06f8-4932-93f9-1c0552ab9578"
+          ],
+          [
+            "title",
+            "Weird log out on Ship"
+          ],
+          [
+            "h",
+            "fcfe9d61-2d05-4d25-b113-40b2d2e601ee"
+          ],
+          [
+            "a",
+            "30850:f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1:360327a9-18c5-40e5-9747-9166dc284ddc"
+          ],
+          [
+            "ref",
+            "EST-1"
+          ]
+        ]
+      }
+    ]
+  },
+  "synthetic": {
+    "note": "Hand-built for Ship's fold fixture (h is the literal string \"fixture-folder\"), never published to any relay. Kept because its id still has to compute correctly and its content exercises the hash; the relay has no opinion about it, which is exactly why it is separated from `production` below rather than counted with it.",
+    "events": [
+      {
+        "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+        "created_at": 1700000012,
+        "kind": 1851,
+        "tags": [
+          [
+            "h",
+            "fixture-folder"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:56119588-4b40-491f-a517-09b579d4798c"
+          ],
+          [
+            "field",
+            "status"
+          ],
+          [
+            "value",
+            "cancelled"
+          ]
+        ],
+        "content": "later by created_at, wins while the window is 1s",
+        "id": "44e938d6876d7be15a0ae0d153a1b3be524f0e02b8b47979221d1fe1f61698cb",
+        "sig": "36755501ca3ebc5cb1ae8f04f39b1a8ebaaf68356e65b45ce3ef1d1db3bce50f275b424cfab2746ff29ec938db9562075972146341262ecf6f925e9433667e2c"
+      }
+    ]
+  }
+}

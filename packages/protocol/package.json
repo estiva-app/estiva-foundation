@@ -1,0 +1,59 @@
+{
+  "name": "@estiva-app/protocol",
+  "version": "0.1.0",
+  "description": "The Estiva wire format: Buzz-shaped Nostr event builders, NIP-01 ids, NIP-19 naddr, NIP-98 HTTP auth, and the relay clients. Speaks the protocol; interprets nothing.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estiva-app/estiva-foundation.git",
+    "directory": "packages/protocol"
+  },
+  "keywords": [
+    "nostr",
+    "nip-01",
+    "nip-19",
+    "nip-98",
+    "buzz",
+    "estiva"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run build",
+    "verify:live": "node scripts/verify-live.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.2",
+    "@noble/hashes": "^1.8.0"
+  },
+  "devDependencies": {
+    "nostr-tools": "^2.25.0",
+    "typescript": "~5.9.3",
+    "@types/node": "^24.13.3"
+  }
+}
