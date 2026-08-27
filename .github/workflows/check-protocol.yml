@@ -1,0 +1,91 @@
+name: check protocol
+
+# One workflow per package, filtered by path — ADR 0002 §2. A change to
+# `protocol` must not run `ui`'s jsdom tests, or a flaky UI test becomes a
+# blocked wire-format release.
+#
+# Known cost of `paths`: a PR touching no package never runs this job, so it
+# cannot be a *required* check that must report success.
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json']
+  pull_request:
+    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json']
+
+concurrency:
+  group: check-protocol-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/protocol
+
+      # Includes the wire vectors recorded from Peek's and Ship's own trees
+      # before this package existed. A failure here is a MAJOR, not a red build
+      # to be made green — see packages/protocol/CHANGELOG.md.
+      - run: npm test -w packages/protocol
+
+      # The emitted specifier is the thing three toolchains disagree about, and
+      # it is invisible until a consumer's build fails. `tsc` copies relative
+      # specifiers through untouched, so an extensionless one ships broken.
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/protocol/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      # `types: []` and `lib: ["es2022"]` in tsconfig.base.json make an ambient
+      # global a compile error, so the build above is the guard for the source.
+      # This is the guard for the *emitted declarations*: a `.d.ts` that names a
+      # DOM or Node type compiles in Peek (types: ["vite/client"]) and fails in
+      # Ship (types: ["node"]), or the reverse, and neither repo's CI would say
+      # why. `@estiva-app/ui` ships `.d.ts` files naming `HTMLButtonElement` and
+      # gets away with it only because both its consumers happen to be browser
+      # apps; this package is imported by a Convex backend as well.
+      #
+      # Comments are stripped first — the prose here talks about `WebSocket` and
+      # `fetch` constantly, and it should be able to.
+      - name: The published declarations name no DOM or Node global
+        run: |
+          BAD=$(cat packages/protocol/dist/*.d.ts \
+            | sed -E 's:/\*.*\*/::g' \
+            | awk '/\/\*/{c=1} !c{print} /\*\//{c=0}' \
+            | sed -E 's://.*$::' \
+            | grep -nE '\b(WebSocket|Window|Document|HTMLElement|HTMLButtonElement|Element|Response|Request|Headers|NodeJS|Buffer|ProcessEnv|Timeout)\b' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::A published declaration reaches for an ambient global. Make it a parameter or declare the shape locally (ADR 0002 §4a): $BAD"
+            exit 1
+          fi
+
+      # The package must not grow a dependency on a nostr library. It is allowed
+      # one in devDependencies — nostr-tools is the independent oracle in
+      # test/oracle.test.mjs — and that distinction is the whole point: a
+      # cross-check costs consumers nothing, a dependency puts a second major of
+      # @noble/* in every consumer's tree.
+      - name: nostr-tools stays a devDependency
+        run: |
+          node -e "
+            const p = require('./packages/protocol/package.json');
+            const deps = Object.keys(p.dependencies || {});
+            const unexpected = deps.filter(d => !d.startsWith('@noble/'));
+            if (unexpected.length) {
+              console.error('::error::Unexpected runtime dependency: ' + unexpected.join(', '));
+              process.exit(1);
+            }
+            if (!(p.devDependencies || {})['nostr-tools']) {
+              console.error('::error::nostr-tools is gone from devDependencies — the independent oracle is what replaced diff -r');
+              process.exit(1);
+            }
+          "
