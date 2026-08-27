@@ -44,29 +44,70 @@ export function signEvent(unsigned: UnsignedEvent, secretKeyHex: string): Signed
   return { ...unsigned, id, sig }
 }
 
+/**
+ * Who signs, decided once and injected everywhere (PEEK-44).
+ *
+ * ## Why this exists at all
+ *
+ * The suite claims apps built by different people, sharing no code and no
+ * database, can work on the same data. Wiring an app directly to one login
+ * service would quietly undercut that — it would only work for people with an
+ * Estiva account.
+ *
+ * Depending on a *signer* does not. Separating the signer from the client is
+ * ordinary Nostr architecture (NIP-07, NIP-46), so an app stays honest for
+ * anyone who wants to point their own signer at it, and "sign in with Estiva ID"
+ * becomes one implementation among several rather than an assumption baked into
+ * the data layer. It is also the seam that lets this package stay ignorant of
+ * identity: `@estiva-app/identity` implements this interface, and nothing here
+ * knows that it exists.
+ *
+ * ## The two decisions in the interface
+ *
+ * **`pubkey` is synchronous.** Every event builder needs it before there is
+ * anything to sign — `buildMessage(pubkey, …)` — so making it a promise would
+ * put an `await` in front of every construction site for no benefit. You know
+ * who you are before you sign; implementations that must ask (NIP-07) resolve it
+ * once, at construction.
+ *
+ * **`sign` is asynchronous**, because two of the three implementations are: a
+ * remote call to `/sign` and a round trip to a browser extension. The local key
+ * is the odd one out, and it is cheaper for it to return a resolved promise than
+ * for the interface to pretend signing is always instant.
+ *
+ * ## What a signer deliberately cannot do
+ *
+ * Sign as somebody else. Every implementation attributes the event to its own
+ * `pubkey` and ignores whatever the caller put there, which is the same
+ * guarantee `/sign` makes server-side. Code that genuinely needs to produce a
+ * mismatched event — Ship's `scripts/verify.ts` forges one to prove the relay
+ * rejects it — uses {@link signEvent} directly and holds a raw key to do it.
+ */
+
 /** How the current signer authenticates, for anything that needs to say so. */
 export type SignerKind = 'local' | 'estiva-id' | 'nip07'
 
-/**
- * Something that can turn an unsigned event into a signed one.
- *
- * Async because the interesting implementations are: a remote signer over HTTP,
- * a browser extension. A local secret key answers synchronously and is wrapped
- * to match.
- */
 export interface Signer {
-  /** The pubkey every event this signer produces will be authored by. */
-  pubkey: string
-  kind: SignerKind
+  /** The pubkey every event from this signer is attributed to. */
+  readonly pubkey: string
+  readonly kind: SignerKind
+  /** Attributes the event to {@link pubkey}, whatever the caller supplied. */
   sign(unsigned: UnsignedEvent): Promise<SignedEvent>
 }
 
-/** A {@link Signer} backed by a raw secret key. Server scripts and seeds. */
+/**
+ * A signer holding a raw secret key.
+ *
+ * The honest name for what a script has always done. Used directly by scripts,
+ * which have no `localStorage`, and underneath an app's per-browser identity.
+ */
 export function secretKeySigner(secretKeyHex: string, kind: SignerKind = 'local'): Signer {
   const pubkey = publicKeyFromSecret(secretKeyHex)
   return {
     pubkey,
     kind,
-    sign: (unsigned) => Promise.resolve(signEvent({ ...unsigned, pubkey }, secretKeyHex)),
+    async sign(unsigned) {
+      return signEvent({ ...unsigned, pubkey }, secretKeyHex)
+    },
   }
 }

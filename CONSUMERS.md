@@ -10,7 +10,7 @@ Keep it current in the same PR that adds or drops a dependency.
 | package | consumer | repo | notes |
 | --- | --- | --- | --- |
 | `@estiva-app/hello` | — | — | throwaway; installed and removed during SHA-1's proof |
-| `@estiva-app/protocol` | Peek, Ship, estiva-agent | `estiva-app/peek`, `estiva-app/ship`, `estiva-app/estiva-agent` | SHA-3. The agent's copy is vendored today and `diff -r` is what keeps it honest |
+| `@estiva-app/protocol` | Peek, Ship, estiva-agent | `estiva-app/peek`, `estiva-app/ship`, `estiva-app/estiva-agent` | **SHA-3, all three live.** The vendored copies are deleted and `diff -r` is no longer the safety mechanism. What is still duplicated between Ship and the agent is `src/` and `lib/nostr/signer.ts`, held by a byte-identical `scripts/conformance.test.ts` |
 | `@estiva-app/platform` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-2 |
 | `@estiva-app/identity` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-4, extracted during REW-2 |
 | `@estiva-app/ui` | Peek, Ship | `estiva-app/peek`, `estiva-app/ship` | SHA-5, extracted during REW-3 |

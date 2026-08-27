@@ -117,6 +117,7 @@ export {
   buildUnsignedAuthEvent,
   base64,
   authorizationHeaderFor,
+  authorizationHeader,
 } from './nip98.js'
 
 export {

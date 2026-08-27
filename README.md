@@ -10,7 +10,7 @@ changing anything structural here. This file is the runbook.
 | package | what it is | status |
 | --- | --- | --- |
 | `@estiva-app/hello` | throwaway proving the pipeline. Not a library — do not depend on it | 0.0.2, retire after SHA-2 |
-| `@estiva-app/protocol` | event construction, ids, signatures, the relay client | SHA-3 |
+| `@estiva-app/protocol` | event construction, ids, signatures, the relay clients | 0.1.0 |
 | `@estiva-app/platform` | PWA: manifest, service worker, update flow | SHA-2 |
 | `@estiva-app/identity` | Estiva ID sign-in, NIP-98, remote signing | SHA-4 |
 | `@estiva-app/ui` | tokens and primitives | SHA-5 |
@@ -27,6 +27,13 @@ repository is defensible only while that line holds.
 
 Share the wire format; never the interpretation. How an app folds events into
 current truth is where apps are *supposed* to differ.
+
+**SHA-3 is where that line got tested.** `@estiva-app/protocol` took the event
+builders, the id preimage, NIP-19, NIP-98, signing and both relay clients, and
+left behind Ship's `foldFolder`, Peek's `foldResolution` and its projection —
+each with its own conformance fixture. The test that decided each case was not
+"do both apps need it" but **"would the relay notice if the two apps
+disagreed?"**
 
 ## What a package must do
 
@@ -58,8 +65,16 @@ git tag hello@0.0.2 && git push origin hello@0.0.2
 ```
 
 `.github/workflows/release.yml` checks the tag against `package.json`, builds,
-and publishes with `NPM_TOKEN` — a **granular** access token scoped to
-`@estiva-app`, not a personal classic one. Nobody publishes from a laptop.
+and publishes through **trusted publishing (OIDC)**. There is no npm credential
+in GitHub at all — a granular token was tried first and npm answered `EOTP`,
+because the account requires 2FA for writes and the token may not bypass it.
+ADR 0002 §4c has the whole story, including that npm removes direct publish from
+2FA-bypass tokens entirely in January 2027.
+
+Nobody publishes from a laptop, with **exactly one exception**: a package's very
+first version. A trusted publisher can only be configured on a package that
+already exists, so creating one is a once-ever manual act — see §7 of the ADR and
+the recipe below.
 
 Semver per package. Packages start at `0.x` and stay there until two apps consume
 them in production; within `0.x`, MINOR carries the break.
@@ -74,28 +89,54 @@ including when the answer is `Wire behaviour: unchanged`.
 in [CONSUMERS.md](CONSUMERS.md) is open before the major publishes, authored by
 that person. ADR §5.
 
-## First publish, once the npm org exists
+## Creating a new package
 
-Nothing here has reached the public registry yet. In order:
+The org, the scope and the pipeline exist. `@estiva-app/hello@0.0.2`,
+`@estiva-app/ui@0.1.0` and `@estiva-app/protocol` have all been through this.
+The ordering is the part that is not obvious, because two of the steps cannot be
+done the other way round — ADR 0002 §7:
 
-1. Create the **`@estiva-app`** org on npm; give at least two people publish
-   rights.
-2. Mint a **granular access token**, read-write, scoped to `@estiva-app`, and add
-   it as the `NPM_TOKEN` repo secret.
-3. Publish, and then verify by installing from a *clean* checkout — a package
-   that resolves out of a local `node_modules` is not published:
+1. **Write the package** against `tsconfig.base.json`, with
+   `publishConfig.access: "public"`, MIT, and a `LICENSE` in `files`.
+2. **Publish the first version by hand**, from a maintainer's machine:
+
+   ```bash
+   npm publish --auth-type=web --browser=false
+   ```
+
+   It prints a URL, you authenticate in a browser, it completes. Passkeys work;
+   there is no OTP to type. On WSL the browser is on the other side, so
+   `--browser=false` prints the URL rather than failing to open one. **This step
+   cannot be skipped or automated.**
+3. **Register the trusted publisher** on npmjs.com: GitHub Actions, org
+   `estiva-app`, this repo, workflow `release.yml`, no environment. Allowed
+   actions: `npm publish` only. Publishing access: *require two-factor
+   authentication and disallow bypass 2fa tokens*.
+4. **Every release after that is a tag.**
+5. **Add it to [CONSUMERS.md](CONSUMERS.md)** in the same PR that gives it its
+   first consumer.
+
+Then verify by installing from a *clean* checkout — a package that resolves out of
+a local `node_modules` is not published:
 
 ```bash
-npm ci && npm run build -w packages/hello && npm publish -w packages/hello
+cd "$(mktemp -d)" && npm init -y >/dev/null && npm install @estiva-app/protocol && node -e "import('@estiva-app/protocol').then(m => console.log(m.PROTOCOL_VERSION))"
 ```
 
-```bash
-cd "$(mktemp -d)" && npm init -y >/dev/null && npm install @estiva-app/hello@0.0.2 && node -e "import('@estiva-app/hello').then(m => console.log(m.hello('a clean checkout')))"
-```
+**A new package *name* 404s on the read path for minutes after a successful
+publish** — 204 seconds measured for `hello` — while `npm access list packages
+@estiva-app` already lists it. A new *version* of an existing package appears in
+about a second. A 404 straight after publishing a new name is not a failed
+publish.
 
-Then install it in Peek and Ship, rebuild each, and check that `0.0.2` appears in
-the **built bundle** — not just in the lockfile. That is the check the version
+Then install it in Peek and Ship, rebuild each, and check the version appears in
+the **built bundle** — not just in the lockfile. That is the check a version
 constant exists for.
+
+**Still open, and it is the bus factor:** publish rights are held by one npm
+account, `estiva-admin`. A second person should hold them before it matters — and
+for `protocol` it now does matter, because three repositories cannot merge their
+upgrade PRs until somebody with those rights runs one command.
 
 ## Local development, before publishing anything
 

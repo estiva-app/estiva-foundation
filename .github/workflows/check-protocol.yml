@@ -30,9 +30,16 @@ jobs:
       - run: npm ci
       - run: npm run build -w packages/protocol
 
+      # Both passes: the package's own `types: []` build, and a second one over
+      # `test/*.test.ts`. `node --test` strips types rather than checking them,
+      # which is the hole vitest has too — and it found a real error on the day
+      # it was added, in a test that had been passing.
+      - run: npm run typecheck -w packages/protocol
+
       # Includes the wire vectors recorded from Peek's and Ship's own trees
-      # before this package existed. A failure here is a MAJOR, not a red build
-      # to be made green — see packages/protocol/CHANGELOG.md.
+      # before this package existed, and the ids Buzz's own Rust crates produced,
+      # ported here from peek-app with the code. A failure is a MAJOR, not a red
+      # build to be made green — see packages/protocol/CHANGELOG.md.
       - run: npm test -w packages/protocol
 
       # The emitted specifier is the thing three toolchains disagree about, and

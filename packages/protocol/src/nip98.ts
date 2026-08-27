@@ -47,6 +47,7 @@
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, randomBytes, utf8ToBytes } from '@noble/hashes/utils'
 import { KIND, type NostrTag, type SignedEvent, type UnsignedEvent } from './events.js'
+import type { Signer } from './sign.js'
 
 /** The relay rejects auth events outside ±60s (`TIMESTAMP_TOLERANCE_SECS`). */
 export const TIMESTAMP_TOLERANCE_SECS = 60
@@ -137,4 +138,27 @@ export function base64(input: string): string {
  */
 export function authorizationHeaderFor(signed: SignedEvent): string {
   return `Nostr ${base64(JSON.stringify(signed))}`
+}
+
+/**
+ * Build, sign and encode the header in one step.
+ *
+ * **The auth event is signed by the same signer as the content**, which is what
+ * makes a keyless signer work at all: Buzz's bridge authenticates with NIP-98,
+ * so an app holding a perfectly signed issue and no way to sign a `27235` can
+ * still publish nothing. Signing content but not auth leaves the seam
+ * half-built, and it looks finished (PEEK-44).
+ *
+ * That rule has exactly one definition, here, and {@link Relay} uses it rather
+ * than inlining it — because an app with its own transport needs the same rule
+ * and would otherwise write it out again.
+ *
+ * Async for the same reason `Signer.sign` is: a remote signer or a browser
+ * extension cannot answer synchronously.
+ */
+export async function authorizationHeader(
+  signer: Signer,
+  args: Omit<AuthEventArgs, 'pubkey'>,
+): Promise<string> {
+  return authorizationHeaderFor(await signer.sign(buildUnsignedAuthEvent({ ...args, pubkey: signer.pubkey })))
 }

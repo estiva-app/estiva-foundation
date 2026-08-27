@@ -24,7 +24,7 @@
  * shares the *interpretation of the answer*. Getting the bytes right and then
  * reading `200` as success is a way to fail that no test notices.
  */
-import { authorizationHeaderFor, buildUnsignedAuthEvent } from './nip98.js'
+import { authorizationHeader } from './nip98.js'
 import type { SignedEvent } from './events.js'
 import type { Signer } from './sign.js'
 
@@ -156,14 +156,7 @@ export class Relay {
   private async post(path: string, payload: unknown): Promise<{ status: number; text: string }> {
     const url = `${this.url}${path}`
     const body = JSON.stringify(payload)
-    // **The auth event is signed by the same signer as the content**, which is
-    // what makes a keyless signer work at all: Buzz's bridge authenticates with
-    // NIP-98, so an app holding a perfectly signed issue and no way to sign a
-    // `27235` can still publish nothing. Signing content but not auth would
-    // leave the seam half-built (PEEK-44).
-    const auth = await this.signer.sign(
-      buildUnsignedAuthEvent({ pubkey: this.signer.pubkey, url, method: 'POST', body }),
-    )
+    const auth = await authorizationHeader(this.signer, { url, method: 'POST', body })
     const send = this.transport ?? fetch
     const res = await send(url, {
       method: 'POST',
@@ -177,7 +170,7 @@ export class Relay {
         // Listed after the spread so a caller's headers cannot displace it:
         // authorization is this client's own contract with the relay, not
         // something an ambient credential gets to override.
-        authorization: authorizationHeaderFor(auth),
+        authorization: auth,
       },
       body,
     })

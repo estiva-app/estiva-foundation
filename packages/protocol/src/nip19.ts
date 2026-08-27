@@ -170,7 +170,15 @@ export function encodeNaddr(pointer: AddressPointer): string {
 
   push(TLV_IDENTIFIER, utf8ToBytes(pointer.identifier))
   for (const relay of pointer.relays) push(TLV_RELAY, utf8ToBytes(relay))
-  push(TLV_AUTHOR, hexToBytes(pointer.pubkey))
+  // Peek's encoder checked the author's length and Ship's did not, and the
+  // difference is not cosmetic: `hexToBytes` is happy with any even-length hex,
+  // so a 20-byte author encoded into a *valid* naddr that every decoder then
+  // refused as "author must be 32 bytes". A pointer that cannot be read back is
+  // worse than an error, because it is produced silently and only fails at
+  // whoever pastes it. Peek's guard is the one that ships.
+  const author = hexToBytes(pointer.pubkey)
+  if (author.length !== 32) throw new Error(`author must be 32 bytes, got ${author.length}`)
+  push(TLV_AUTHOR, author)
   // Kind is a 4-byte big-endian integer, not a decimal string.
   push(
     TLV_KIND,
