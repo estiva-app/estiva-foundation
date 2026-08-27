@@ -56,13 +56,13 @@ A missing line is what lets a bytes-changing release pass as a refactor.
 
 ## What holds that claim up
 
-Four checks, and the important thing about them is that none of the four is a
-green tick next to a value somebody chose.
+Four checks in CI and a fifth by hand, and the important thing about them is
+that none is a green tick next to a value somebody chose.
 
 | check | what it is |
 | --- | --- |
 | `test/wire.test.mjs` | 21 vectors **recorded from `peek-app/convex/nostr/` and `estiva-ship/lib/nostr/` before this package existed** — the bytes the two apps were already publishing. All 12 shapes both apps implemented had identical ids in both. |
-| the same file, `production kind:*` | 8 events read back off `https://estiva.estiva.app`. Their `id` and `sig` are the **relay's**, so reproducing the id checks against the authority rather than against ourselves. |
+| the same file, `production kind:*` | 7 events read back off `https://estiva.estiva.app`. Their `id` and `sig` are the **relay's**, so reproducing the id checks against the authority rather than against ourselves. Sampled from the 96 *recorded* events in Ship's fold fixture, not the 7 adversarial ones beside them — those are hand-built and were never published, and one of them sat in this set until the live check queried it back and could not find it. |
 | `test/oracle.test.mjs` | `nostr-tools` as an independent implementation, with a negative control that fails when the bytes are wrong. Plus the canonical NIP-19 `npub` vector from the specification, which is the only thing that catches bech32m-instead-of-bech32. |
 | `test/runtime.test.mjs` | the barrel imports and works with `WebSocket`, `fetch`, `btoa`, `document`, `process`, `Buffer` and friends deleted — with its own negative control. |
 
