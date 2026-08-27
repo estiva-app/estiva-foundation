@@ -1,0 +1,53 @@
+{
+  "name": "@estiva-app/identity",
+  "version": "0.1.0",
+  "description": "Estiva ID sign-in: authorization code + PKCE, token storage, silent renewal, sign-out, and the auth-shell state machine. Knows nothing about any app's data layer.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estiva-app/estiva-foundation.git",
+    "directory": "packages/identity"
+  },
+  "keywords": [
+    "estiva",
+    "estiva-id",
+    "oauth",
+    "pkce",
+    "nostr"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs test/*.test.ts",
+    "typecheck": "npm run build && tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "~5.9.3"
+  }
+}

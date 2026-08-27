@@ -1,0 +1,24 @@
+{
+  "$comment": [
+    "Typecheck-only, for `test/*.test.ts`. NOT used to build the package.",
+    "",
+    "`node --test` on Node 24 strips types rather than checking them, which is",
+    "the same hole vitest has — ADR 0002 §4a's measurement exists because a",
+    "transpiler's silence is not a compiler's approval, and Ship's CI once",
+    "reported success for 49 commits of a React rewrite it never compiled. So the",
+    "tests get their own pass.",
+    "",
+    "`types: [\"node\"]` and `lib` including DOM appear here and MUST NOT leak into",
+    "tsconfig.json: the tests import node:test and touch globalThis on purpose,",
+    "while the published package may reach for neither. That the two configs",
+    "disagree is the point.",
+    "",
+    "This pass needs `dist/` to exist, because the tests import `../dist/index.js`",
+    "on purpose — dist is what ships. So `npm run typecheck` builds first. It read",
+    "`tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json` for one commit,",
+    "which passed in CI (where a build step runs before it) and failed on a fresh",
+    "clone with eleven TS2307s that look like the package is broken."
+  ],
+  "extends": "./tsconfig.base.test.json",
+  "include": ["test/**/*.ts"]
+}

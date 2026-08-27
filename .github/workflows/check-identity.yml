@@ -1,0 +1,111 @@
+name: check identity
+
+# One workflow per package, filtered by path — ADR 0002 §2. A change to
+# `protocol` must not run `ui`'s jsdom tests, or a flaky UI test becomes a
+# blocked wire-format release.
+#
+# Known cost of `paths`: a PR touching no package never runs this job, so it
+# cannot be a *required* check that must report success.
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/identity/**', '.github/workflows/check-identity.yml', 'tsconfig.base.json']
+  pull_request:
+    paths: ['packages/identity/**', '.github/workflows/check-identity.yml', 'tsconfig.base.json']
+
+concurrency:
+  group: check-identity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/identity
+
+      # Both passes: the package's own `types: []` build, and a second one over
+      # `test/*.test.ts`. `node --test` strips types rather than checking them,
+      # which is the hole vitest has too — and it found a real error on the day
+      # it was added, in a test that had been passing.
+      - run: npm run typecheck -w packages/identity
+
+      # Includes the wire vectors recorded from Peek's and Ship's own trees
+      # before this package existed, and the ids Buzz's own Rust crates produced,
+      # ported here from peek-app with the code. A failure is a MAJOR, not a red
+      # build to be made green — see packages/identity/CHANGELOG.md.
+      - run: npm test -w packages/identity
+
+      # The emitted specifier is the thing three toolchains disagree about, and
+      # it is invisible until a consumer's build fails. `tsc` copies relative
+      # specifiers through untouched, so an extensionless one ships broken.
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/identity/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      # `types: []` and `lib: ["es2022"]` in tsconfig.base.json make an ambient
+      # global a compile error, so the build above is the guard for the source.
+      # This is the guard for the *emitted declarations*: a `.d.ts` that names a
+      # DOM or Node type compiles in Peek (types: ["vite/client"]) and fails in
+      # Ship (types: ["node"]), or the reverse, and neither repo's CI would say
+      # why. `@estiva-app/ui` ships `.d.ts` files naming `HTMLButtonElement` and
+      # gets away with it only because both its consumers happen to be browser
+      # apps; this package is imported by a Convex backend as well.
+      #
+      # Comments are stripped first — the prose here talks about `WebSocket` and
+      # `fetch` constantly, and it should be able to.
+      - name: The published declarations name no DOM or Node global
+        run: |
+          BAD=$(cat packages/identity/dist/*.d.ts \
+            | sed -E 's:/\*.*\*/::g' \
+            | awk '/\/\*/{c=1} !c{print} /\*\//{c=0}' \
+            | sed -E 's://.*$::' \
+            | grep -nE '\b(WebSocket|Window|Document|HTMLElement|HTMLButtonElement|Element|Response|Request|Headers|NodeJS|Buffer|ProcessEnv|Timeout)\b' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::A published declaration reaches for an ambient global. Make it a parameter or declare the shape locally (ADR 0002 §4a): $BAD"
+            exit 1
+          fi
+
+      # The seam this package exists for. `useEstivaIdAuth.ts` is Peek's
+      # ConvexProviderWithAuth adapter, and if it ever lands here then Ship and
+      # every future app inherit a Convex dependency to work around — which is
+      # exactly the failure SHA-4's sequencing exists to avoid. The test that the
+      # line held is that Ship needs no adapter at all.
+      #
+      # Also guarded: @estiva-app/ui. ADR 0002 §2 names identity depending on ui
+      # as the trigger that folds ui back into the foundation repo. That should be
+      # a decision somebody makes, not one a sign-in screen makes by accident.
+      - name: No data layer, no UI, no dependencies at all
+        run: |
+          node -e "
+            const p = require('./packages/identity/package.json');
+            const deps = Object.keys(p.dependencies || {});
+            if (deps.length) {
+              console.error('::error::@estiva-app/identity must have no runtime dependencies. Found: ' + deps.join(', '));
+              process.exit(1);
+            }
+          "
+          # Comments stripped first: index.ts explains at length WHY Convex and
+          # the UI package are excluded, and it should be able to. What is
+          # forbidden is importing them, which only shows up in code.
+          BAD=$(for f in packages/identity/src/*.ts; do
+            sed -E 's:/\*.*\*/::g' "$f" \
+              | awk '/\/\*/{c=1} !c{print} /\*\//{c=0}' \
+              | sed -E 's://.*$::' \
+              | grep -nE "(from|require\\()[[:space:]]*\\(?['\"][^'\"]*(convex|@estiva-app/ui)" \
+              | sed "s|^|$f:|"
+          done || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::identity must not import a data layer or the UI package (ADR 0002 §2, SHA-4's seam decision): $BAD"
+            exit 1
+          fi
