@@ -4,6 +4,29 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.1.2 — 2026-08-27
+
+**Wire behaviour: unchanged.** One constant added. No builder, tag layout, id
+computation or signature input moved, and nothing an app already publishes
+changes shape.
+
+- **`KIND.APP_DATA = 30078`.** Two things in the suite need this number —
+  NIP-RS read state (SPEC §11.6) and app-private user-owned storage (SPEC §12) —
+  and a kind number is a fact about the relay rather than about an app, so the
+  alternative was each of them defining it separately. Added when the second
+  consumer appeared (CRO-11's stars migration) rather than speculatively.
+
+  It carries the correction that made §12 possible: **the kind is not reserved
+  for read state**, despite the relay naming its own constant `KIND_READ_STATE`.
+  The NIP-RS handling is a narrow predicate — kind 30078, exactly one `d`
+  matching `read-state:<32 lowercase hex>`, exactly one `["t","read-state"]` —
+  and ingest performs no other `d`-tag validation. Anything outside it is an
+  ordinary addressable event. A `d` beginning `read-state:` brings hard-deletion
+  of superseded blobs with it, which app data must not acquire by accident, and
+  the doc comment says so at the point of use.
+
+Additive, so a PATCH: ADR 0002 §4b puts the break on MINOR within `0.x`.
+
 ## 0.1.1 — 2026-08-27
 
 **Wire behaviour: unchanged.** Nothing in `src/` changed except the version

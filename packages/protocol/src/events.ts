@@ -94,6 +94,22 @@ export const KIND = {
   COMMENT: 1111,
   /** NIP-84 highlight. */
   HIGHLIGHT: 9802,
+  /**
+   * NIP-78 arbitrary custom app data — and **it is not reserved for read state**,
+   * despite the relay naming its own constant `KIND_READ_STATE`.
+   *
+   * The relay's NIP-RS handling is a narrow predicate: kind 30078, exactly one
+   * `d` matching `read-state:<32 lowercase hex>`, and exactly one
+   * `["t","read-state"]`. Ingest performs no other `d`-tag validation on the
+   * kind, so anything outside that predicate is an ordinary addressable event
+   * with ordinary replaceable semantics.
+   *
+   * Two uses in the suite, and the constant is here so neither invents its own
+   * number: NIP-RS read state (SPEC §11.6) and app-private user-owned storage
+   * (SPEC §12). A `d` beginning `read-state:` brings hard-deletion of superseded
+   * blobs with it, which is a property app data must not acquire by accident.
+   */
+  APP_DATA: 30078,
   /** NIP-FC File — see docs/buzz-compat/nips/NIP-FC.md in the Peek repo. */
   FILE: 30840,
   /** NIP-FC Component. */
