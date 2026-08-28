@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.1.2'
+export const PROTOCOL_VERSION = '0.2.0'
 
 export {
   // types
@@ -136,6 +136,7 @@ export {
   type FetchLike,
   parsePublishResponse,
   parseQueryResponse,
+  RELAY_PAGE_CEILING,
   Relay,
 } from './bridge.js'
 

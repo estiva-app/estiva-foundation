@@ -47,6 +47,26 @@ export interface PublishResult {
  * is not decoration: once no app can sign locally, an identity-service outage
  * looks exactly like nothing happening.
  */
+/**
+ * The most events one `/query` will return, however large a `limit` the filter
+ * names.
+ *
+ * Buzz clamps a REQ to the NIP-11 `limitation.max_limit` it advertises. That
+ * value **halved from 10000 to 1000** when the fork caught up with upstream
+ * (upstream #3635 aligned the advertised limit with the REQ ceiling), and
+ * **NIP-01 has no truncation signal** — a caller asking for more receives a
+ * short list and no indication why. Peek loses old history, Ship loses issues,
+ * and every local signal stays green.
+ *
+ * It lives here because the number is a property of the *relay*, and had been
+ * copied as a literal into four call sites across two apps and the agent, none
+ * of which could know when the relay changed it.
+ *
+ * A page size, not a promise: {@link Relay.queryAll} never assumes this value
+ * is the relay's real ceiling — see its note on why.
+ */
+export const RELAY_PAGE_CEILING = 1000
+
 export function parsePublishResponse(status: number, text: string): PublishResult {
   let parsed: { accepted?: boolean; event_id?: string; message?: string; error?: string }
   try {
@@ -194,5 +214,72 @@ export class Relay {
     const result = parseQueryResponse(status, text)
     if (!result.ok) throw new Error(`query failed: ${result.reason}`)
     return result.events
+  }
+
+  /**
+   * Every event matching `filters`, paged, rather than the first page.
+   *
+   * `query` returns whatever one request yielded, which is a trap the moment a
+   * kind grows past the relay's ceiling: the caller cannot distinguish "that is
+   * all of them" from "that is as many as I will give you".
+   *
+   * **Why this does not stop at a short page.** The obvious loop — page until a
+   * page comes back smaller than the page size — is wrong, because it trusts
+   * {@link RELAY_PAGE_CEILING} to equal the relay's real limit. If the relay's
+   * were ever *lower*, every page would look short and the first one would be
+   * mistaken for the whole set: the original bug, reintroduced. So the rule is
+   * **whether the `until` cursor still advances**, which holds whatever the true
+   * ceiling is, at the cost of one extra round trip at the end.
+   *
+   * `until` is inclusive in NIP-01, so the boundary event repeats on the next
+   * page; dedup by id absorbs that. Dedup is deliberately *not* the termination
+   * signal — under two filters matching the same events, a page of already-seen
+   * ids means "this filter overlaps the last one", not "stop".
+   *
+   * **Throws rather than truncating** when the cursor cannot advance and the
+   * page is full: more than `pageSize` events then share one `created_at`, no
+   * value of `until` reaches past them without skipping some, and no correct
+   * answer exists from this API — so it says so instead of returning a
+   * plausible subset.
+   */
+  async queryAll(
+    filters: Record<string, unknown>[],
+    options: { pageSize?: number; maxPages?: number } = {},
+  ): Promise<SignedEvent[]> {
+    const pageSize = options.pageSize ?? RELAY_PAGE_CEILING
+    const maxPages = options.maxPages ?? 100
+    const seen = new Set<string>()
+    const out: SignedEvent[] = []
+
+    for (const filter of filters) {
+      let until: number | undefined
+      for (let page = 0; ; page++) {
+        if (page >= maxPages) {
+          throw new Error(
+            `queryAll: gave up after ${maxPages} pages — refusing to return a partial set`,
+          )
+        }
+        const events = await this.query([
+          { ...filter, limit: pageSize, ...(until === undefined ? {} : { until }) },
+        ])
+        if (events.length === 0) break
+        for (const e of events) {
+          if (seen.has(e.id)) continue
+          seen.add(e.id)
+          out.push(e)
+        }
+        const oldest = Math.min(...events.map((e) => e.created_at))
+        if (until !== undefined && oldest >= until) {
+          if (events.length >= pageSize) {
+            throw new Error(
+              `queryAll: more than ${pageSize} events share created_at=${until} — cannot page without skipping`,
+            )
+          }
+          break
+        }
+        until = oldest
+      }
+    }
+    return out
   }
 }
