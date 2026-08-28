@@ -38,13 +38,20 @@ package come out Peek-shaped, which is the whole risk SHA-4 names.
 | --- | --- | --- |
 | `clientId` | `estiva-peek` | `estiva-ship` |
 | `redirectUri` | a fixed `/auth/callback` | its current pathname — Ship routes on `location.hash` |
-| `storage` | `sessionStorage`, which dies with the tab | `localStorage` |
+| `storage` — the session | `sessionStorage`, dies with the tab | `localStorage`, outlives a tab |
+| `pendingStore` — in-flight PKCE credentials | defaults to `storage` | `sessionStorage`, because the flow starts and ends in one tab |
 | `keyPrefix` | `peek.estivaId` | `ship.estiva-id` |
 | `navigate` | the one genuinely untestable act, so it is observable |  |
 
-**Do not unify `storage`.** NIP-RS read-state slots (CRO-4) must survive a restart
-and belong in `localStorage`; an access token does not. Different lifetimes,
-different homes.
+**Do not unify the two stores.** NIP-RS read-state slots (CRO-4) must survive a
+restart and belong in `localStorage`; an access token does not. Different
+lifetimes, different homes.
+
+`pendingStore` exists because wiring the second consumer found the package
+assuming one store — it was extracted from Peek, which uses one. That is the "a
+library pulled from one app comes out shaped like that app" failure SHA-4 names,
+caught by the mechanism SHA-4 prescribes. Worth knowing as evidence that the
+second-consumer rule earns its keep rather than being ceremony.
 
 An app instantiates once and re-exports its own names, so call sites do not churn:
 

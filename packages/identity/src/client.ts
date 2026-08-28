@@ -38,11 +38,14 @@
  *   `app_credentials` with separate `redirectUris` and separate kind ceilings.
  * - **`redirectUri`** — Peek registers a fixed `/auth/callback`; Ship routes on
  *   `location.hash` and registers its current pathname. Neither is more correct.
- * - **`storage`** — Peek keeps its token in `sessionStorage`, which dies with the
- *   tab and keeps a bearer token off a shared machine's disk. Ship uses
- *   `localStorage`. **Do not unify this**: NIP-RS slots (CRO-4) must survive a
- *   restart and belong in `localStorage`, while an access token does not.
- *   Different lifetimes, different homes.
+ * - **`storage`** and **`pendingStore`** — two stores, because Ship needs two.
+ *   Peek keeps everything in `sessionStorage`, which dies with the tab and keeps
+ *   a bearer token off a shared machine's disk. Ship keeps its *session* in
+ *   `localStorage` so it outlives a tab, and its *in-flight PKCE credentials* in
+ *   `sessionStorage` because the flow starts and ends in one tab. The package
+ *   assumed one store until the second consumer was wired — see `pendingStore`.
+ *   **Do not unify them**: NIP-RS slots (CRO-4) must survive a restart and belong
+ *   in `localStorage`, while an access token does not.
  * - **`keyPrefix`** — so two apps on one origin cannot read each other's keys.
  * - **`navigate`** — the one genuinely untestable act. Injected so a test can
  *   observe where the flow *would* go.
@@ -88,8 +91,31 @@ export interface EstivaIdConfig {
    * **exactly** — a trailing slash is a refused sign-in.
    */
   redirectUri: () => string
-  /** See the note on storage above. Returns null outside a browser. */
+  /**
+   * Where the **session** lives — the token and nothing else.
+   *
+   * Peek uses `sessionStorage`: it dies with the tab, which keeps a bearer token
+   * off a shared machine's disk. Ship uses `localStorage` so a session survives
+   * a tab close. Returns null outside a browser.
+   */
   storage: () => KeyValueStore | null
+  /**
+   * Where an **in-flight sign-in's** single-use credentials live — the verifier,
+   * the state, the returnTo, the shell reason and the silent-attempt guard.
+   *
+   * Defaults to {@link storage}, which is what Peek wants: one store for both.
+   *
+   * **Ship needs them separated, and that is why this exists.** Its session
+   * belongs in `localStorage` so it outlives a tab, while the PKCE credentials
+   * are per-tab by nature — the flow starts and ends in one tab, and the guard's
+   * whole point is that a genuinely new tab is entitled to a fresh attempt.
+   *
+   * This parameter was added by wiring the second consumer. The package had
+   * assumed one store because it was extracted from Peek, which uses one: the
+   * exact "comes out shaped like the app it came from" failure SHA-4 names, found
+   * by the mechanism SHA-4 prescribes for finding it.
+   */
+  pendingStore?: () => KeyValueStore | null
   /** Namespaces this app's keys, e.g. `peek.estivaId`. */
   keyPrefix: string
   /** Defaults to the runtime's `location.assign`-equivalent via `navigate`. */
@@ -147,6 +173,8 @@ export interface EstivaIdClient {
 
 export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   const now = config.now ?? (() => Date.now())
+  /** In-flight credentials, which may live somewhere shorter than the session. */
+  const pending = config.pendingStore ?? config.storage
   const send = () => config.fetch ?? fetch
   const go = (url: string) => {
     if (!config.navigate) throw new Error('createEstivaId: navigate is required to leave for Estiva ID')
@@ -225,9 +253,11 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * Anything that wants both says so, and only `beginSignOut` does.
    */
   const clearSession = (): void => {
-    const s = config.storage()
-    if (!s) return
-    for (const k of [TOKEN_KEY, REASON_KEY]) s.removeItem(k)
+    config.storage()?.removeItem(TOKEN_KEY)
+    // The reason lives with the in-flight credentials, which may be a different
+    // store — see `pendingStore`. Still cleared here: a reason outliving the
+    // session it described is a lie, and that was true before the split.
+    pending()?.removeItem(REASON_KEY)
   }
 
   /**
@@ -239,18 +269,18 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * different challenge. Destroying a live one is the expensive direction.
    */
   const clearPendingSignIn = (): void => {
-    const s = config.storage()
+    const s = pending()
     if (!s) return
     for (const k of [VERIFIER_KEY, STATE_KEY, RETURN_KEY]) s.removeItem(k)
   }
 
   const stashShellReason = (reason: ShellReason): void => {
-    config.storage()?.setItem(REASON_KEY, reason)
+    pending()?.setItem(REASON_KEY, reason)
   }
 
   /** Read once. Single-use: a stale reason outliving its cause is a lie. */
   const takeShellReason = (): ShellReason | null => {
-    const s = config.storage()
+    const s = pending()
     const raw = s?.getItem(REASON_KEY)
     if (raw) s?.removeItem(REASON_KEY)
     return (raw as ShellReason | null) ?? null
@@ -264,7 +294,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * puts people on a default screen instead of the link they opened (PEEK-123).
    */
   const takeReturnTo = (): string | null => {
-    const s = config.storage()
+    const s = pending()
     const raw = s?.getItem(RETURN_KEY)
     if (raw) s?.removeItem(RETURN_KEY)
     return raw ?? null
@@ -303,7 +333,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
      * code that just arrived belongs to anything this tab did.
      */
     hasPendingSignIn: () => {
-      const s = config.storage()
+      const s = pending()
       return Boolean(s?.getItem(VERIFIER_KEY) && s.getItem(STATE_KEY))
     },
 
@@ -316,7 +346,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
      * compared.
      */
     async beginSignIn(returnTo: string, { silent = false }: { silent?: boolean } = {}): Promise<void> {
-      const s = config.storage()
+      const s = pending()
       if (!s) throw new Error('sign-in requires a browser')
 
       const verifier = randomUrlSafe()
@@ -373,8 +403,9 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
      * on this side of the exchange.
      */
     async completeSignIn(search: string): Promise<{ token: StoredToken; returnTo: string }> {
-      const s = config.storage()
-      if (!s) throw new SignInError('sign-in requires a browser')
+      const s = pending()
+      const sessionStore = config.storage()
+      if (!s || !sessionStore) throw new SignInError('sign-in requires a browser')
 
       const params = new URLSearchParams(search)
       const error = params.get('error')
@@ -427,7 +458,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       if (!body.access_token || !body.pubkey) throw new SignInError('Estiva ID returned no token.')
 
       const token = tokenFrom(body, body.pubkey)
-      s.setItem(TOKEN_KEY, JSON.stringify(token))
+      sessionStore.setItem(TOKEN_KEY, JSON.stringify(token))
       // The attempt worked, so the next boot is entitled to a fresh silent one.
       clearGuard(s)
       return { token, returnTo }
