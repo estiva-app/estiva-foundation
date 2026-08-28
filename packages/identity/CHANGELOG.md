@@ -1,5 +1,31 @@
 # @estiva-app/identity
 
+## 0.1.1 — 2026-08-28
+
+**No wire behaviour**, and no break: `pendingStore` is optional and defaults to
+`storage`, so a consumer on `^0.1.0` needs no change. Additive, so a PATCH —
+ADR 0002 §4b puts the break on MINOR within `0.x`.
+
+- **`pendingStore`**, a second storage seam. Wiring Ship — the second consumer —
+  found that the package assumed **one** store because it was extracted from
+  Peek, which uses one. Ship uses two, with different lifetimes on purpose: its
+  *session* lives in `localStorage` so it outlives a tab, and its *in-flight PKCE
+  credentials* live in `sessionStorage` because the flow starts and ends in one
+  tab, which is also why the silent-attempt guard belongs there.
+
+  This is the exact "a library pulled from one app comes out shaped like that
+  app" failure SHA-4 names, found by the mechanism SHA-4 prescribes for finding
+  it. The ticket said wiring Ship was the point rather than a formality; it was
+  right, and this is what it caught.
+
+  `clearSession` now spans both stores — the token from `storage`, the shell
+  reason from `pendingStore` — while still leaving the verifier, state and
+  returnTo alone. PEEK-167's separation had to survive the split, or the split
+  would have reintroduced the bug the separation exists to prevent. A test
+  asserts exactly that, and a control asserts the single-store default still
+  behaves as Peek expects, so none of it can pass on a package that quietly
+  ignores the new parameter.
+
 ## 0.1.0 — 2026-08-27
 
 First release. SHA-4, extracted during REW-2.

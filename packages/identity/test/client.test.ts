@@ -417,3 +417,90 @@ describe('the injection seams are real differences, not test scaffolding', () =>
     assert.doesNotThrow(() => nowhere.clearSession())
   })
 })
+
+describe('two stores, because the second consumer needed two', () => {
+  /*
+    The package assumed a single store, because it was extracted from Peek, which
+    uses one. Ship keeps its session in localStorage so it outlives a tab, and its
+    in-flight PKCE credentials in sessionStorage because the flow starts and ends
+    in one tab. That is the "comes out shaped like the app it came from" failure
+    SHA-4 names, and wiring the second consumer is the mechanism SHA-4 prescribes
+    for finding it. These tests are what that finding left behind.
+  */
+  const split = () => {
+    const session = memoryStore()
+    const pendingStore = memoryStore()
+    const navigated: string[] = []
+    const client = createEstivaId({
+      base: 'https://id.estiva.app',
+      clientId: 'estiva-ship',
+      redirectUri: () => 'https://ship.estiva.app/',
+      storage: () => session,
+      pendingStore: () => pendingStore,
+      keyPrefix: 'ship.estiva-id',
+      navigate: (url) => void navigated.push(url),
+      now: () => 1_787_142_018_561,
+      fetch: async () => ({ ok: true, status: 200, json: async () => ({ access_token: 'at', pubkey: 'b3'.repeat(32), expires_in: 3600 }) }),
+    })
+    return { client, session, pendingStore, navigated }
+  }
+
+  it('puts the in-flight credentials in the pending store and nothing else there', async () => {
+    const s = split()
+    await s.client.beginSignIn('#/p/abc', { silent: true })
+    for (const k of ['ship.estiva-id.codeVerifier', 'ship.estiva-id.state', 'ship.estiva-id.returnTo']) {
+      assert.ok(s.pendingStore.getItem(k), `${k} belongs to the in-flight attempt`)
+      assert.equal(s.session.getItem(k), null, `${k} must NOT be in the session store`)
+    }
+    // The guard is per-tab for the same reason: a genuinely new tab is entitled
+    // to a fresh silent attempt.
+    assert.notEqual(readGuard(s.pendingStore), null)
+    assert.equal(readGuard(s.session), null)
+  })
+
+  it('puts the session in the session store, so it can outlive a tab', async () => {
+    const s = split()
+    await s.client.beginSignIn('#/p/abc')
+    const state = s.pendingStore.getItem('ship.estiva-id.state')!
+    await s.client.completeSignIn(`?code=abc&state=${state}`)
+    assert.ok(s.session.getItem('ship.estiva-id.token'), 'the token belongs to the durable store')
+    assert.equal(s.pendingStore.getItem('ship.estiva-id.token'), null)
+    assert.equal(s.client.validToken()?.accessToken, 'at')
+  })
+
+  it('clearSession drops the token without touching the in-flight attempt', async () => {
+    const s = split()
+    await s.client.beginSignIn('#/p/abc')
+    s.session.setItem('ship.estiva-id.token', JSON.stringify({ accessToken: 'at', expiresAt: 9e15, pubkey: 'p' }))
+    s.client.clearSession()
+    assert.equal(s.session.getItem('ship.estiva-id.token'), null)
+    // PEEK-167 across two stores: the separation has to survive the split, or the
+    // split reintroduces exactly the bug the separation exists to prevent.
+    assert.ok(s.pendingStore.getItem('ship.estiva-id.codeVerifier'))
+    assert.ok(s.pendingStore.getItem('ship.estiva-id.state'))
+  })
+
+  /*
+    The control. Without it, every test above would pass on a package that quietly
+    ignored `pendingStore` and wrote everything to `storage` — the two stores would
+    simply be the same store as far as the assertions could tell.
+  */
+  it('CONTROL: defaults pendingStore to storage, so Peek still gets one store', async () => {
+    const only = memoryStore()
+    const client = createEstivaId({
+      base: 'https://id.estiva.app',
+      clientId: 'estiva-peek',
+      redirectUri: () => 'https://peek.estiva.app/auth/callback',
+      storage: () => only,
+      keyPrefix: 'peek.estivaId',
+      navigate: () => {},
+      now: () => 1,
+    })
+    await client.beginSignIn('/topics/abc')
+    // One store holds both, which is what Peek asked for and what the package did
+    // before `pendingStore` existed.
+    assert.ok(only.getItem('peek.estivaId.codeVerifier'))
+    only.setItem('peek.estivaId.token', JSON.stringify({ accessToken: 'at', expiresAt: 9e15, pubkey: 'p' }))
+    assert.equal(client.validToken()?.accessToken, 'at')
+  })
+})
