@@ -6,7 +6,31 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.1.0 — unreleased
+## 0.1.1 — 2026-08-31
+
+**Manifest behaviour: unchanged.** No resolution, declaration or export moved.
+
+- **`peerDependencies` relaxed to `@estiva-app/protocol >=0.1.2`**, from
+  `>=0.2.0`.
+
+  The stricter range was not justified by anything this package uses. It was
+  chosen because the foundation repo happened to sit at 0.2.0 when the package
+  was written — a fact about the workspace, not about the dependency.
+
+  Found the way these things are found: **the second consumer tried to install
+  it.** Peek is on `protocol@0.1.2` and `npm install` refused with `ERESOLVE`,
+  which would have forced an unrelated protocol upgrade to adopt this package.
+  Verified rather than assumed before relaxing — all four symbols this package
+  imports (`encodeNaddr`, `pointerToAddress`, `referenceToPointer`,
+  `parseProfile`) are exported by 0.1.2, and 0.2.0's change was to `Relay`'s
+  paging, which this package does not use because it takes a `QueryFn` instead
+  of a client.
+
+  This is SHA-7's lesson one level up. The package shipped with one consumer
+  that happened to be on the newer protocol, so nothing exercised the floor of
+  the range until somebody else installed it.
+
+## 0.1.0 — 2026-08-31
 
 First publish. Extracted from `peek-app/interop/`, which was extracted from
 `peek-app/convex/nostr/projection.ts` (PRO-1) — a path that said Convex about a
