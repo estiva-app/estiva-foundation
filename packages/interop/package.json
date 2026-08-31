@@ -1,0 +1,55 @@
+{
+  "name": "@estiva-app/interop",
+  "version": "0.1.0",
+  "description": "Render and act on another app's objects from its published NIP-89 manifest. The owner defines the projection; the consumer decides how it looks.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estiva-app/estiva-foundation.git",
+    "directory": "packages/interop"
+  },
+  "keywords": [
+    "nostr",
+    "nip-89",
+    "interop",
+    "projection",
+    "estiva"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "npm run build && tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@estiva-app/protocol": ">=0.2.0"
+  },
+  "devDependencies": {
+    "@estiva-app/protocol": "^0.2.0",
+    "typescript": "~5.9.3"
+  }
+}
