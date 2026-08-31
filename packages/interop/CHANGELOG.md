@@ -6,7 +6,27 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.1.1 — 2026-08-31
+## 0.1.2 — 2026-08-31
+
+**Manifest behaviour: unchanged.** A build fix; 0.1.1 was tagged and never
+published, so this is the first release carrying its peer-range change.
+
+- **`prebuild` builds `@estiva-app/protocol` first.** This package resolves that
+  one's *types* through its `dist/`, which does not exist in a fresh checkout
+  until it has been built — so `npm run build -w packages/interop`, which is
+  exactly what the release workflow runs, failed with four TS2307s that read as
+  if this package were broken.
+
+  **It is the first foundation package that depends on another one.** protocol,
+  identity and hello have no workspace siblings, so every release before this
+  was independent and the workflow never had to care.
+
+  Building every package instead would not have fixed it: `npm run build
+  --workspaces` runs alphabetically, and `interop` sorts before `protocol`.
+  Measured rather than assumed — that was the first fix attempted and it failed
+  the same way. The dependency belongs in the package that has it.
+
+## 0.1.1 — 2026-08-31 (tagged, never published)
 
 **Manifest behaviour: unchanged.** No resolution, declaration or export moved.
 
