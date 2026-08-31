@@ -71,6 +71,12 @@ jobs:
         run: node -v && npm -v
 
       - run: npm ci
+
+      # Only the package being released. A package that needs a *sibling* built
+      # first says so in its own `prebuild` — `interop` is the first to need it,
+      # because `npm run build --workspaces` runs alphabetically rather than in
+      # dependency order, so building everything would not have helped: interop
+      # sorts before protocol.
       - run: npm run build -w "packages/${{ steps.tag.outputs.name }}"
 
       # `publishConfig.access: public` lives in every package.json, so a scoped
