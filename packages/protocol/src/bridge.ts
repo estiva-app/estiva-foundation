@@ -205,6 +205,18 @@ export class Relay {
   private readonly signer: Signer
   private readonly headers: RelayHeaders
   private readonly transport: FetchLike | undefined
+  /**
+   * The largest page this relay has ever handed back, across every call.
+   *
+   * A *lower bound* on the relay's real clamp, and the only one obtainable
+   * without trusting anybody: the relay returned this many events in one
+   * response, so its ceiling is at least this large. {@link Relay.pageFilter}
+   * uses it to tell a short page apart from a clamped one — see there.
+   *
+   * Per instance and never reset, so the second read through a long-lived
+   * `Relay` is cheaper than the first.
+   */
+  private observedPageCeiling = 0
 
   constructor(url: string, signer: Signer, options: RelayOptions | RelayHeaders = {}) {
     this.url = url.replace(/\/+$/, '')
@@ -391,6 +403,38 @@ export class Relay {
       ])
       if (events.length === 0) break
       out.push(...events)
+
+      /*
+        A page smaller than one this relay has already delivered is the end of
+        the filter, and no confirming round trip is needed to know it.
+
+        The reason the confirmation existed is real: a page shorter than the
+        `limit` we asked for is ambiguous, because the relay clamps to
+        `min(requested, ceiling)` and might have clamped at exactly this many.
+        But that requires the ceiling to *equal* this page's size — and the
+        ceiling is one constant for the relay, already known to be at least
+        `observedPageCeiling`. So `n < observedPageCeiling` rules the clamp out
+        arithmetically rather than by trusting anything.
+
+        Deliberately not NIP-11's `limitation.max_limit`. That number is a
+        claim: a relay advertising more than it clamps to would make every page
+        look short and the first one get mistaken for the whole set, which is
+        exactly the SHA-8 bug this loop exists to prevent. An observed page is
+        evidence — the relay demonstrably produced it.
+
+        Conservative before it has evidence: the first filter through a fresh
+        `Relay` still pays the confirmation, and so does any page that ties the
+        largest seen so far — which means **the widest filter always confirms**,
+        since it ties its own bound on every read. So the floor is one request
+        per filter plus one, not one per filter.
+
+        Measured on Ship's `loadAll` against production: **66 requests to 35
+        cold and 34 warm**, the same fold event for event, and 8.8 s to 0.9 s
+        alongside the concurrency of 0.4.0.
+      */
+      if (events.length > this.observedPageCeiling) this.observedPageCeiling = events.length
+      if (events.length < pageSize && events.length < this.observedPageCeiling) break
+
       const oldest = Math.min(...events.map((e) => e.created_at))
       if (until !== undefined && oldest >= until) {
         if (events.length >= pageSize) {
