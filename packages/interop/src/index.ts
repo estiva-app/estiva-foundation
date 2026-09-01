@@ -51,6 +51,7 @@ export {
   type FolderProject,
   type ResolvedSlot,
   type ResolvedAction,
+  type ActionFormField,
   type ManifestAction,
   type ActionEffect,
   ACTION_EFFECTS,

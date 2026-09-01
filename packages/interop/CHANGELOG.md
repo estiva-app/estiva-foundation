@@ -6,6 +6,57 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.6.0 — 2026-09-01
+
+**Manifest behaviour: an object-creating action is now offered instead of
+skipped.** No manifest changes shape; one that already declares
+`input.type: "object"` starts being rendered, which is the point (RFC 0.4
+§13.4).
+
+- **`resolveActions` no longer drops them.** It used to say why: *"an action
+  that creates a whole new object needs a form and a parent, so it is skipped
+  rather than drawn as a control that cannot work."* True until something drew
+  one — and the consequence was that a manifest could describe the single most
+  useful cross-app action and no app could offer it. Ship has declared
+  `add-issue` with a real schema the whole time.
+
+  They resolve with `control: 'form'`, `fields` (each with any vocabulary
+  already looked up, the same service `options` performs for a `select`), and
+  **`createsUnder`** — the other half of "needs a form *and a parent*". A
+  consumer drawing only the properties would publish an orphan.
+
+- **`buildActionEvent` takes `{ property: value }`** for those actions, and a
+  `newId` for the object being created.
+
+  `newId` is supplied rather than generated: ADR 0002 §10 constraint 2 — the
+  runtime reaches for nothing and is handed everything — and it makes the built
+  event a pure function of its inputs. It is **required** for a kind in NIP-01's
+  parameterized-replaceable range, because an object published without a `d` has
+  no address at all: nothing can reference it, comment on it, or act on it.
+
+**The rule that makes construction possible, previously implicit: a property's
+name is the tag its value is written to.** It held for Ship by a coincidence of
+naming — `add-issue` declares `{ title }` and a Ship issue carries
+`["title", …]` — and nothing said so, while RFC 0.4 §13.4 asserts the existing
+declaration is already sufficient for a consumer to try. Stated now at the point
+of use.
+
+Its limit, recorded rather than designed around: **nothing can target an event's
+`content`.** Ship's issue description lives there and is therefore not creatable
+from another app, which is why `add-issue` declares only a title.
+
+**Every refusal names what was allowed** — an undeclared field, a required one
+left empty, a value outside a declared vocabulary, and a scalar handed to a form
+or the reverse. That is a requirement rather than a nicety: the owning app
+cannot enforce any of it, so a consumer that guesses is the one putting junk in
+a shared record, and one told only "invalid" cannot do better next time.
+
+Verified against production, through Ship's live manifest: resolved as a form,
+built, published, **and Ship's own fold shows an ordinary issue** — right title,
+default status, right parent. The fixture was deleted afterwards.
+
+Additive, so a MINOR by the rule ADR 0002 §4b sets for `0.x`.
+
 ## 0.5.0 — 2026-09-01
 
 **Manifest behaviour: two optional fields an action may now declare.** Nothing

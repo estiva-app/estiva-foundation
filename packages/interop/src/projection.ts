@@ -370,7 +370,28 @@ export interface ManifestAction {
      */
     alsoRead?: number[]
   }
-  input?: { type: string; enum?: string }
+  input?: {
+    type: string
+    /** For a scalar input: the vocabulary its value must come from. */
+    enum?: string
+    /**
+     * For `type: 'object'`: the fields a consumer draws, and which are required.
+     *
+     * **A property's name is the tag its value is written to** (PRO-4). That
+     * rule was implicit — Ship's `add-issue` declares `{ title }` and a Ship
+     * issue carries `["title", …]`, so it held by coincidence of naming and
+     * nothing said so. It is stated here because a consumer cannot construct
+     * the event without it, and RFC 0.4 §13.4 asserts the existing declaration
+     * is already sufficient for one to try.
+     *
+     * Its limit, recorded rather than designed around: **nothing can target an
+     * event's `content`.** Ship's issue description lives there and is
+     * therefore not creatable from another app, which is why `add-issue`
+     * declares only a title.
+     */
+    properties?: Record<string, { type?: string; enum?: string }>
+    required?: string[]
+  }
 }
 
 /**
@@ -383,6 +404,16 @@ export interface ManifestAction {
  * them on this side is what lets the React component stay a dumb renderer that
  * would work for any app.
  */
+/** One field of an object-creating action's form. */
+export interface ActionFormField {
+  /** Also the tag its value is written to — see {@link ManifestAction.input}. */
+  name: string
+  type: string
+  required: boolean
+  /** When the property names a vocabulary, its entries, already looked up. */
+  options?: { value: string; label: string; colour?: string }[]
+}
+
 export interface ResolvedAction {
   id: string
   label: string
@@ -393,9 +424,23 @@ export interface ResolvedAction {
    * something this version does not recognise — both meaning *unknown*.
    */
   effect?: ActionEffect
-  control: 'select' | 'pubkey' | 'text'
+  control: 'select' | 'pubkey' | 'text' | 'form'
   /** For `select`: the declared vocabulary, already looked up. */
   options?: { value: string; label: string; colour?: string }[]
+  /**
+   * For `form`: the fields to draw, in declaration order, with any vocabulary
+   * already looked up — the same service `options` performs for a `select`.
+   */
+  fields?: ActionFormField[]
+  /**
+   * For `form`: that the new object hangs under the one the action was invoked
+   * on (`emits.toAddressOf: 'self'`).
+   *
+   * Surfaced because it is the other half of "needs a form **and a parent**",
+   * which is what made these unrenderable: a consumer drawing only the
+   * properties would publish an orphan.
+   */
+  createsUnder?: string
   /** The value this field holds right now, so a control can show it. */
   current?: string
   field?: string
@@ -422,12 +467,50 @@ function resolveActions(
   const out: ResolvedAction[] = []
   for (const action of manifest.actions ?? []) {
     if (!applies(action)) continue
-    // Only field-setting changes and comments are renderable today. An action
-    // that creates a whole new object (`add-issue`) needs a form and a parent,
-    // so it is skipped rather than drawn as a control that cannot work.
+    /*
+      Three shapes now, where there were two.
+
+      A field-setting change and a comment each render as one control. An action
+      that creates a whole new object was skipped, because it "needs a form and
+      a parent" — and that was true right up until something drew one. It is
+      the single most useful cross-app action there is, so the manifest could
+      describe it and no app could offer it (PRO-4).
+    */
     const isChange = !!action.emits.field
     const isComment = action.emits.scope === 'address'
-    if (!isChange && !isComment) continue
+    const isCreation = action.input?.type === 'object' && !!action.input.properties
+    if (!isChange && !isComment && !isCreation) continue
+
+    if (isCreation) {
+      const properties = action.input!.properties!
+      const required = new Set(action.input!.required ?? [])
+      out.push({
+        id: action.id,
+        label: action.label,
+        ...(action.description ? { description: action.description } : {}),
+        ...(action.effect ? { effect: action.effect } : {}),
+        control: 'form',
+        fields: Object.entries(properties).map(([name, spec]) => ({
+          name,
+          type: spec.type ?? 'string',
+          required: required.has(name),
+          ...(spec.enum && manifest.vocabularies?.[spec.enum]
+            ? {
+                options: manifest.vocabularies[spec.enum].map((v) => ({
+                  value: v.value,
+                  label: v.label,
+                  colour: v.colour,
+                })),
+              }
+            : {}),
+        })),
+        // The parent is not a property and never appears in `properties`; it
+        // comes from `emits`, and a form that omitted it would publish an
+        // orphan the owning app cannot show anywhere.
+        ...(action.emits.toAddressOf ? { createsUnder: action.emits.toAddressOf } : {}),
+      })
+      continue
+    }
 
     const vocab = action.input?.enum ? manifest.vocabularies?.[action.input.enum] : undefined
     out.push({
@@ -2168,6 +2251,95 @@ export async function resolveFolderProject(
  * Returns a string on refusal rather than throwing — every failure here is
  * something a user should read.
  */
+/**
+ * NIP-01's parameterized-replaceable range. An event in it is addressed by
+ * `(kind, pubkey, d)`, so one created without a `d` has no address — it cannot
+ * be referenced, commented on, or acted upon, and the owning app will not find
+ * it where it looks.
+ */
+const isAddressableKind = (kind: number) => kind >= 30000 && kind < 40000
+
+/**
+ * The event an object-creating action publishes.
+ *
+ * Split out because it shares almost nothing with a change: the tags come from
+ * the form rather than from `records`, and the result is a new object rather
+ * than a statement about an existing one.
+ *
+ * **Every refusal names what was allowed**, and that is the requirement rather
+ * than a nicety. The owning app cannot enforce any of this — anyone can publish
+ * anything — so a consumer that guesses is the one putting junk in a shared
+ * record, and a consumer told only "invalid" cannot do better next time.
+ */
+function buildCreationEvent(args: {
+  declared: ManifestAction
+  vocabularies?: Manifest['vocabularies']
+  address: string
+  folder: string
+  value: string | Record<string, string>
+  newId?: string
+  pubkey: string
+  createdAtMs: number
+}): UnsignedActionEvent | string {
+  const { declared, address, folder, value, newId } = args
+  const properties = declared.input!.properties!
+  const required = declared.input!.required ?? []
+
+  if (typeof value === 'string') {
+    return `"${declared.label}" takes a form: ${Object.keys(properties).join(', ')}.`
+  }
+
+  const allowed = Object.keys(properties)
+  for (const name of Object.keys(value)) {
+    if (!allowed.includes(name)) {
+      return `"${name}" is not a field of "${declared.label}" — it takes ${allowed.join(', ')}.`
+    }
+  }
+  for (const name of required) {
+    if (!value[name]?.trim()) return `"${name}" is required by "${declared.label}".`
+  }
+  /*
+    A property may name a vocabulary of its own, checked exactly as a scalar
+    action's is — the honour system does not get weaker because there are
+    several fields. Ship declares none today (`add-issue` takes a bare title),
+    so this is a path an app grows into rather than one in use.
+  */
+  for (const [name, held] of Object.entries(value)) {
+    const vocabName = properties[name]?.enum
+    if (!vocabName || !held) continue
+    const vocab = args.vocabularies?.[vocabName] ?? []
+    if (!vocab.some((entry) => entry.value === held)) {
+      return `"${held}" is not one of ${vocab.map((e) => e.value).join(', ')}.`
+    }
+  }
+
+  if (isAddressableKind(declared.emits.kind) && !newId) {
+    return `Creating a kind ${declared.emits.kind} needs an identifier, and none was supplied.`
+  }
+
+  const tags: string[][] = []
+  if (isAddressableKind(declared.emits.kind)) tags.push(['d', newId!])
+  // A property's name is the tag it writes. See `ManifestAction.input`.
+  for (const [name, held] of Object.entries(value)) {
+    if (held !== '') tags.push([name, held])
+  }
+  // The parent. `toAddressOf: "self"` names the object the action was invoked
+  // on; any other value is a shape nothing declares yet, and guessing at one
+  // would publish a link the owning app never asked for.
+  if (declared.emits.setTag && declared.emits.toAddressOf === 'self') {
+    tags.push([declared.emits.setTag, address])
+  }
+  tags.push(['h', folder])
+
+  return {
+    pubkey: args.pubkey,
+    created_at: Math.floor(args.createdAtMs / 1000),
+    kind: declared.emits.kind,
+    tags,
+    content: '',
+  }
+}
+
 export function buildActionEvent(args: {
   manifest: { records?: RecordsRule; actions?: ManifestAction[]; vocabularies?: Manifest['vocabularies'] }
   kind: number
@@ -2177,7 +2349,20 @@ export function buildActionEvent(args: {
   objectAuthor: string
   folder: string
   actionId: string
-  value: string
+  /**
+   * A scalar for a change or a comment; `{ property: value }` for an
+   * object-creating action, whose form has several fields.
+   */
+  value: string | Record<string, string>
+  /**
+   * A fresh identifier for an object being created, when its kind is
+   * parameterized-replaceable and therefore needs a `d`.
+   *
+   * Supplied rather than generated: ADR 0002 §10 constraint 2 — the runtime
+   * reaches for nothing and is handed everything. It also makes the built event
+   * a pure function of its inputs, which is what lets a test assert on one.
+   */
+  newId?: string
   pubkey: string
   createdAtMs: number
 }): UnsignedActionEvent | string {
@@ -2190,6 +2375,16 @@ export function buildActionEvent(args: {
   const appliesTo = Array.isArray(declared.appliesTo) ? declared.appliesTo : [declared.appliesTo]
   if (!appliesTo.includes(String(kind))) {
     return `"${declared.label}" does not apply to a kind ${kind}.`
+  }
+
+  // An object-creating action is a different event entirely — a new object
+  // rather than a change to one — so it branches before the scalar path.
+  if (declared.input?.type === 'object' && declared.input.properties) {
+    return buildCreationEvent({ ...args, declared, vocabularies: manifest.vocabularies })
+  }
+
+  if (typeof value !== 'string') {
+    return `"${declared.label}" takes a single value, not a form.`
   }
 
   // Validate against the manifest's own vocabulary. The owning app cannot
