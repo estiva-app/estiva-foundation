@@ -6,6 +6,43 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.4.0 — 2026-09-01
+
+**Manifest behaviour: unchanged.** Nothing a manifest may declare moved. What
+moves is a cache that had been living in one app.
+
+- **`createPeopleCache()`** — the foreign-profile cache, with its batching and
+  its two TTLs, lifted out of Peek.
+
+  It was written there for PEE-3, and the shape is the interesting part.
+  `PROFILE_HIT_TTL_MS` is ten minutes because names change rarely;
+  `PROFILE_MISS_TTL_MS` is one, because **a miss is somebody who has not
+  finished setting up their identity — precisely the person whose name is about
+  to arrive.** Cached as long as a hit, they render as `nostr:<8 chars>` until a
+  full reload, and a consumer that re-reads on a timer looks like its refresh is
+  broken.
+
+  Ship needed the same behaviour, and a second consumer is what moves something
+  out of one app rather than duplicating it. Without it Ship re-read `kind:0`
+  for every author of every child on every tick: a referenced Peek topic with 50
+  messages cost **2 requests a tick where a Ship object cost 1** — the cross-app
+  case PRO-7 exists for being the dearest rather than the cheapest.
+
+  **Store and lookup have different lifetimes**, which is why this is a cache
+  with `through(fromRelay)` rather than a wrapped function. A consumer builds
+  its query per call — Peek's carries the viewer's token — while the profiles it
+  finds are public and worth keeping across all of them. `viaRelay(query)` is
+  the common case. Caller-owned, like `createProjectionCache`; Peek's original
+  was a module-level `Map`, which worked but meant every test needed a reset
+  hook to undo the previous one.
+
+  Peek's seven cases travel with it, converted from vitest **by hand** — a regex
+  pass over an earlier suite produced assertions with no `assert` in them, which
+  read fine and test nothing — and five more pin the store's lifetime, which the
+  original could not express.
+
+Additive, so a MINOR by the rule ADR 0002 §4b sets for `0.x`.
+
 ## 0.3.0 — 2026-09-01
 
 **Manifest behaviour: unchanged.** Nothing a manifest may declare moved, and
