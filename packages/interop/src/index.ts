@@ -27,6 +27,7 @@
 export {
   resolveManifest,
   resolveForeignObject,
+  resolveForeignEvent,
   resolveFolderProject,
   commentKindsOf,
   buildActionEvent,
