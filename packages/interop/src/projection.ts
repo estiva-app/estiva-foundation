@@ -50,6 +50,92 @@ export type People = Record<string, Profile>
 export type PeopleFn = (pubkeys: string[]) => Promise<People>
 
 /** The default: one kind:0 query, straight to the relay. */
+/**
+ * How long a *name* may be believed.
+ *
+ * Names change rarely, so this is generous. See {@link PROFILE_MISS_TTL_MS} for
+ * the half that matters.
+ */
+export const PROFILE_HIT_TTL_MS = 10 * 60_000
+
+/**
+ * How long an *absent* profile may be believed, and it is deliberately short.
+ *
+ * A miss is somebody who has not finished setting up their identity — which is
+ * to say, precisely the person whose name is about to arrive. Cached as long as
+ * a hit, they render as `nostr:<8 chars>` until a full reload, and a consumer
+ * that re-reads on a timer looks like its refresh is broken. That is PEE-3,
+ * found in Peek once its panels started polling.
+ */
+export const PROFILE_MISS_TTL_MS = 60_000
+
+export interface PeopleCacheOptions {
+  hitTtlMs?: number
+  missTtlMs?: number
+  /** Injectable clock. A test needs to move time, not wait ten minutes. */
+  now?: () => number
+}
+
+/**
+ * A profile store that outlives any one lookup.
+ *
+ * The store and the lookup have different lifetimes, which is why this is not
+ * simply a wrapped {@link PeopleFn}: a consumer builds its query per call —
+ * Peek's carries the viewer's token — while the profiles it finds are public
+ * and worth keeping across all of them. `through` takes the lookup of the
+ * moment and answers from one store.
+ *
+ * **Caller-owned**, like {@link createProjectionCache}. Peek's original lived in
+ * a module-level `Map`, which worked but meant every test needed a reset hook
+ * to undo the previous one.
+ */
+export interface PeopleCache {
+  /** Wrap a lookup so it batches and expires against this store. */
+  through(fromRelay: PeopleFn): PeopleFn
+  /** The common case: {@link peopleViaRelay}, cached. */
+  viaRelay(query: QueryFn): PeopleFn
+  /** Forget everything. What a sign-out should call. */
+  clear(): void
+}
+
+/** A profile with nothing in it is a miss — the relay had no `kind:0`. */
+const isMiss = (person: People[string]) => Object.keys(person).length === 0
+
+export function createPeopleCache(options: PeopleCacheOptions = {}): PeopleCache {
+  const hitTtlMs = options.hitTtlMs ?? PROFILE_HIT_TTL_MS
+  const missTtlMs = options.missTtlMs ?? PROFILE_MISS_TTL_MS
+  const now = options.now ?? Date.now
+  const known = new Map<string, { person: People[string]; expiresAt: number }>()
+
+  const through = (fromRelay: PeopleFn): PeopleFn => async (pubkeys) => {
+    const at = now()
+    /*
+      One lookup for the whole unknown set, never one per key. A screen with ten
+      reference widgets asks about the same handful of people, and asking
+      separately would turn one request into N — which is the cost this exists
+      to avoid, not a detail of it.
+    */
+    const unknown = pubkeys.filter((key) => {
+      const cached = known.get(key)
+      return cached === undefined || cached.expiresAt <= at
+    })
+    if (unknown.length > 0) {
+      const found = await fromRelay(unknown)
+      for (const key of unknown) {
+        const person = found[key] ?? {}
+        known.set(key, { person, expiresAt: at + (isMiss(person) ? missTtlMs : hitTtlMs) })
+      }
+    }
+    return Object.fromEntries(pubkeys.map((key) => [key, known.get(key)?.person ?? {}]))
+  }
+
+  return {
+    through,
+    viaRelay: (query) => through(peopleViaRelay(query)),
+    clear: () => known.clear(),
+  }
+}
+
 export function peopleViaRelay(query: QueryFn): PeopleFn {
   return async (pubkeys) => {
     if (pubkeys.length === 0) return {}
