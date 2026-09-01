@@ -4,6 +4,51 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.5.0 — 2026-09-01
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. `queryAll` returns the same events; it asks for them in
+half as many requests.
+
+- **A short page no longer always costs a confirming round trip.** `queryAll`
+  spent two requests on every filter, including one holding three events, and
+  on Ship's `loadAll` that doubling was **33 filters → 66 requests** against a
+  relay that meters `POST /query` at 300 a minute.
+
+  The confirmation existed for a real reason: a page shorter than the requested
+  `limit` is ambiguous, because the relay clamps to `min(requested, ceiling)`
+  and may have clamped at exactly that many. The ambiguity dissolves
+  arithmetically rather than by trusting anyone — a clamp at `n` requires the
+  ceiling to *equal* `n`, the ceiling is one constant for the relay, and the
+  largest page it has already handed back is a lower bound on it. So
+  `n < observedPageCeiling` rules the clamp out on evidence the relay itself
+  produced.
+
+  **Deliberately not NIP-11's `limitation.max_limit`.** That number is a claim,
+  and a relay advertising more than it clamps to would make every page look
+  short and the first one get mistaken for the whole set — the SHA-8 bug, back.
+  Buzz currently advertises 1000 and clamps at 1000, so trusting it would work
+  today; the source default in `nip11.rs` is 10000 against a `buzz-db` clamp of
+  1000, so it has not always been true, and being right by luck is not a
+  design. Substituting a trusted 1000 for the observed bound fails the SHA-8
+  regression test outright, which is the control that settles it.
+
+  Conservative before it has evidence: the first filter through a fresh `Relay`
+  still confirms, and so does the **widest** filter on every read, since it
+  ties its own bound. The floor is therefore one request per filter *plus one*.
+
+  Measured on Ship's `loadAll` against production, published client versus this
+  one: **66 requests → 35 cold, 34 warm — 48% fewer — 8.8 s → 0.9 s, and the
+  fold compares equal event for event** (every project and issue address with
+  its status, every change id, every conversation id).
+
+- **This still does not fit a five-second poll.** 34 requests × 12 reads a
+  minute is 408 against a 300 budget; at a ten-second poll it is 204 and fits.
+  The remaining half is the caller's cadence, not this package's.
+
+Additive with no signature change, but the request pattern a caller produces
+changes, so a MINOR: ADR 0002 §4b puts the break on MINOR within `0.x`.
+
 ## 0.4.0 — 2026-09-01
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
