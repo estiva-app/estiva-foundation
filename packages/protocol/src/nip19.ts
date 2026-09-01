@@ -161,6 +161,118 @@ const TLV_KIND = 3
  * TLV order is identifier, relays, author, kind — see the header on why that is
  * a choice rather than a rule.
  */
+/**
+ * A pointer to **one event**, by its id — NIP-19 `nevent`.
+ *
+ * The counterpart to `AddressPointer`, and the two are not interchangeable.
+ * An address names *whatever is currently at* `(kind, pubkey, d)` and survives
+ * its author replacing the event. An event id names one immutable event and
+ * nothing else: a `kind:9` message has no `d`, so an address cannot be built
+ * for it at all.
+ *
+ * `author` and `kind` are optional in the format and worth including whenever
+ * they are known — a reader that has them can query by author and kind rather
+ * than scanning, and a consumer can find the manifest that renders the kind
+ * before it has the event.
+ */
+export interface EventPointer {
+  /** 32-byte event id, hex. */
+  id: string
+  relays: string[]
+  /** Optional in NIP-19; include it when known. */
+  pubkey?: string
+  /** Optional in NIP-19; include it when known. */
+  kind?: number
+}
+
+/**
+ * `nevent1…` for one event.
+ *
+ * The TLV layout is `naddr`'s with one difference that matters: type 0 holds
+ * the event id as **32 raw bytes**, where an naddr holds the `d` identifier as
+ * UTF-8. Encoding an id as text produces a bech32 string every decoder accepts
+ * and no relay can answer — the same silent-but-invalid shape the author-length
+ * guard below was added for.
+ */
+export function encodeNevent(pointer: EventPointer): string {
+  const bytes: number[] = []
+  const push = (type: number, value: Uint8Array) => {
+    if (value.length > 255) throw new Error(`TLV value too long for type ${type}`)
+    bytes.push(type, value.length, ...value)
+  }
+
+  const id = hexToBytes(pointer.id)
+  if (id.length !== 32) throw new Error(`event id must be 32 bytes, got ${id.length}`)
+  push(TLV_IDENTIFIER, id)
+
+  for (const relay of pointer.relays) push(TLV_RELAY, utf8ToBytes(relay))
+
+  if (pointer.pubkey !== undefined) {
+    const author = hexToBytes(pointer.pubkey)
+    if (author.length !== 32) throw new Error(`author must be 32 bytes, got ${author.length}`)
+    push(TLV_AUTHOR, author)
+  }
+
+  if (pointer.kind !== undefined) {
+    push(
+      TLV_KIND,
+      new Uint8Array([
+        (pointer.kind >>> 24) & 0xff,
+        (pointer.kind >>> 16) & 0xff,
+        (pointer.kind >>> 8) & 0xff,
+        pointer.kind & 0xff,
+      ]),
+    )
+  }
+
+  return bech32Encode('nevent', convertBits(bytes, 8, 5, true))
+}
+
+/** The inverse of `encodeNevent`. Throws on anything that is not an `nevent`. */
+export function decodeNevent(encoded: string): EventPointer {
+  const { hrp, data } = bech32Decode(encoded.replace(/^nostr:/i, '').toLowerCase())
+  if (hrp !== 'nevent') throw new Error(`expected an nevent, got ${hrp}`)
+  const bytes = convertBits(data, 5, 8, false)
+
+  let id: string | undefined
+  let pubkey: string | undefined
+  let kind: number | undefined
+  const relays: string[] = []
+
+  for (let i = 0; i < bytes.length; ) {
+    const type = bytes[i]
+    const length = bytes[i + 1]
+    const value = bytes.slice(i + 2, i + 2 + length)
+    if (value.length !== length) throw new Error('truncated TLV')
+    i += 2 + length
+
+    switch (type) {
+      case TLV_IDENTIFIER:
+        if (length !== 32) throw new Error(`event id must be 32 bytes, got ${length}`)
+        id = bytesToHex(new Uint8Array(value))
+        break
+      case TLV_RELAY:
+        relays.push(new TextDecoder().decode(new Uint8Array(value)))
+        break
+      case TLV_AUTHOR:
+        if (length !== 32) throw new Error(`author must be 32 bytes, got ${length}`)
+        pubkey = bytesToHex(new Uint8Array(value))
+        break
+      case TLV_KIND:
+        if (length !== 4) throw new Error(`kind must be 4 bytes, got ${length}`)
+        kind = ((value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3]) >>> 0
+        break
+      // Unknown TLV types are skipped rather than rejected, as in `decodeNaddr`.
+    }
+  }
+
+  // Only the id is required. An `nevent` carrying nothing else is legal and
+  // still resolvable — by scanning, which is why the optional fields are worth
+  // writing when they are known.
+  if (id === undefined) throw new Error('nevent is missing its event id')
+  return { id, relays, ...(pubkey !== undefined ? { pubkey } : {}), ...(kind !== undefined ? { kind } : {}) }
+}
+
 export function encodeNaddr(pointer: AddressPointer): string {
   const bytes: number[] = []
   const push = (type: number, value: Uint8Array) => {
