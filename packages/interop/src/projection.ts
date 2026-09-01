@@ -12,7 +12,7 @@
  * anything: it becomes an integration written against one app, which is the
  * thing the whole exercise argues against.
  */
-import { encodeNaddr, pointerToAddress, referenceToPointer, type AddressPointer } from '@estiva-app/protocol'
+import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
@@ -901,6 +901,84 @@ function buildObject(args: {
  * unresolvable reference in a chat message should degrade to plain text, not
  * break the message around it.
  */
+/**
+ * Resolve one event by id — `nevent1…`, or a bare 64-hex id.
+ *
+ * The counterpart to `resolveForeignObject`, and the reason it has to exist:
+ * **not every object has an address.** A `kind:9` message carries no `d`, so
+ * `(kind, pubkey, d)` cannot be built for it and every resolver keyed on an
+ * address is blind to it. Measured on production during PRO-6; PRO-11 is this.
+ *
+ * ## What it does *not* do, and why the function is short
+ *
+ * A regular event is immutable and has no folded state, so there is no `records`
+ * rule to apply, no change events to fetch, and no "current value" that differs
+ * from what is on the event. It also cannot be the target of an `a` tag, so it
+ * has no comments addressed to it and **no actions** — a change names its target
+ * by address, and there is nothing here to name. That absence is the model being
+ * honest rather than a gap to fill later.
+ *
+ * ## Two round trips, and the order depends on the reference
+ *
+ * A manifest is found by kind. An `nevent` *may* carry its kind, and when it
+ * does the manifest and the event can be fetched together. When it does not —
+ * a bare id, which is what a pasted `e` tag gives you — the event has to be
+ * read first to learn what kind it is. Both paths are supported because both
+ * arrive in practice, and a resolver that required the richer form would refuse
+ * references other clients legitimately produce.
+ */
+export async function resolveForeignEvent(
+  reference: string,
+  query: QueryFn,
+  /** Defaults to asking the relay. The browser passes a cached lookup. */
+  lookupPeople?: PeopleFn,
+): Promise<ForeignObject | null> {
+  let pointer: EventPointer
+  try {
+    pointer = /^[0-9a-f]{64}$/i.test(reference.replace(/^nostr:/i, ''))
+      ? { id: reference.replace(/^nostr:/i, '').toLowerCase(), relays: [] }
+      : decodeNevent(reference)
+  } catch {
+    return null
+  }
+
+  const [root] = await query([{ ids: [pointer.id], limit: 1 }])
+  if (!root) {
+    // Nothing to draw and nothing to say about it: unlike an addressable
+    // object, there is no manifest resolved yet that could name the app or
+    // offer a way in. `unreachable` needs a projection to be a useful state.
+    return null
+  }
+
+  // Whoever signed it is the app's own author, which is what a `#k` lookup
+  // needs when no recommendation exists. The pointer's `author` is a hint and
+  // may disagree with the event; the event wins, because it is the thing.
+  const resolved = await resolveManifest(
+    { kind: root.kind, pubkey: root.pubkey, identifier: '', relays: pointer.relays },
+    query,
+  )
+  if (!resolved) return null
+
+  const projection = resolved.manifest.projections?.[String(root.kind)]
+  if (!projection) return null
+
+  const object = buildChildObject({
+    root,
+    manifest: resolved.manifest,
+    projection,
+    records: foldRuleOf(resolved.manifest),
+    webTemplate: resolved.webTemplate,
+    viaRecommendation: resolved.viaRecommendation,
+    // The reference as given, so "open this in the app that owns it" points at
+    // the event rather than at nothing. A bare id is upgraded to an `nevent`
+    // carrying what we now know, which is more than the caller had.
+    nevent: encodeNevent({ id: root.id, relays: pointer.relays, pubkey: root.pubkey, kind: root.kind }),
+  })
+
+  const people = await (lookupPeople ?? peopleViaRelay(query))(pubkeysIn(object))
+  return { ...object, people }
+}
+
 export async function resolveForeignObject(
   naddr: string,
   query: QueryFn,
@@ -1098,8 +1176,17 @@ function buildChildObject(args: {
   records: RecordsRule
   webTemplate?: string
   viaRecommendation: boolean
+  /**
+   * The `nevent1…` for a non-addressable object, when the caller has one.
+   *
+   * Only `resolveForeignEvent` passes it: a child reached through a `list` slot
+   * is drawn inside its parent and has nowhere of its own to open, while an
+   * event somebody referenced directly does. Without it a message has no
+   * `openUrl` at all, which is PRO-11's "its web link opens that message".
+   */
+  nevent?: string
 }): ForeignObject {
-  const { root, manifest, projection, webTemplate, viaRecommendation } = args
+  const { root, manifest, projection, webTemplate, viaRecommendation, nevent } = args
   const identifier = tagValue(root, 'd')
   const addressable = identifier !== undefined
   const pointer: AddressPointer = {
@@ -1126,7 +1213,16 @@ function buildChildObject(args: {
     meta,
     comments: [],
     folder: tagValue(root, 'h'),
-    openUrl: naddr ? webTemplate?.replace('<bech32>', naddr) : undefined,
+    /*
+      `<bech32>` is whichever form this object actually has.
+
+      NIP-89's template says nothing about which NIP-19 entity it will be handed
+      — Ship's declares `naddr` in its own tag because every Ship object is
+      addressable, and a template for an app with non-addressable objects is
+      handed an `nevent`. Substituting the one the object *has* is what makes a
+      single template serve both, and what stops a message linking to nothing.
+    */
+    openUrl: (naddr ?? nevent) ? webTemplate?.replace('<bech32>', (naddr ?? nevent) as string) : undefined,
     // See the note above: nothing can be declared to act on a regular event.
     actions: [],
     viaRecommendation,

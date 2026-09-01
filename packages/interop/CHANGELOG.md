@@ -6,6 +6,41 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.2.0 — 2026-09-01
+
+**Manifest behaviour: unchanged for addressable objects.** What changes is that
+objects which have *no address* can now be resolved at all.
+
+- **`resolveForeignEvent(reference, query)`** — resolve one event by id, from an
+  `nevent1…` or a bare 64-hex id.
+
+  The counterpart to `resolveForeignObject`, and PRO-11's reason to exist: a
+  `kind:9` message carries no `d`, so `(kind, pubkey, d)` cannot be built for it
+  and every resolver keyed on an address is blind to it. Measured on production
+  during PRO-6.
+
+  It is deliberately thinner. A regular event is immutable and has no folded
+  state, so there is no `records` rule to apply and no change events to fetch;
+  it cannot be the target of an `a` tag, so it has no comments addressed to it
+  and **no actions**. That last absence is the model being honest rather than a
+  gap — a change names its target by address, and there is nothing here to name.
+
+  Two round trips, and the order depends on the reference. A manifest is found
+  by kind; an `nevent` *may* carry its kind, and a bare id — which is what a
+  pasted `e` tag gives you — does not, so the event is read first to learn what
+  it is. Both arrive in practice.
+
+- **`<bech32>` in a `web` template is substituted with whichever form the object
+  has.** NIP-89 says nothing about which NIP-19 entity a template is handed;
+  Ship's declares `naddr` because every Ship object is addressable. Substituting
+  the form the object *actually has* is what lets one template serve both, and
+  what stops a message linking to nothing.
+
+- **`peerDependencies` rise to `@estiva-app/protocol >=0.3.0`**, which is where
+  `decodeNevent` lives. Unlike 0.1.0's `>=0.2.0`, this range is justified by
+  something the package uses — that one was a fact about the workspace and this
+  is a fact about the code.
+
 ## 0.1.2 — 2026-08-31
 
 **Manifest behaviour: unchanged.** A build fix; 0.1.1 was tagged and never
