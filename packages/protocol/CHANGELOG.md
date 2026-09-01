@@ -4,6 +4,72 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.4.0 — 2026-09-01
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. `queryAll` returns the same array it always did — see
+below, that is the property the tests are about.
+
+- **`queryAll` runs its filters concurrently**, bounded by the new
+  `DEFAULT_QUERY_CONCURRENCY` (8) and overridable per call via
+  `QueryAllOptions.concurrency`. `concurrency: 1` is the old serial read
+  exactly.
+
+  Filters handed to one call are independent; only the pages *inside* a filter
+  are a cursor walk, and those stay sequential because page N+1's `until` is
+  not known until page N has answered. Running the filters in sequence made a
+  read cost the sum of every filter's latency. Measured on Ship's `loadAll`
+  against production: **33 filters, 66 round trips, median 206 ms, 100% of wall
+  clock spent inside `query` one request at a time.** The same read, same relay,
+  same credentials, through this build: **9.0 s → 1.68 s, and the fold compares
+  equal event for event** — every project and issue address with its status,
+  every change id, every conversation id.
+
+  The concurrency is deliberately not observable in the answer. Results are
+  collected per filter and concatenated in filter order, and a failure reports
+  the **lowest-indexed** filter's error rather than whichever request lost the
+  race — so a broken read names the same filter twice running.
+
+- **What this does not buy you: relay budget.** Buzz meters `POST /query`
+  against `human_api_calls_per_min` — a fixed 60-second window, default 300,
+  applied to every bridge call whatever tier the caller is. One Ship workspace
+  read is 66 of those. Concurrency changes when a read spends its requests,
+  never how many, so a poller that simply reads more often now spends the same
+  allowance sooner. Documented at `DEFAULT_QUERY_CONCURRENCY` because it is the
+  first thing a caller will get wrong.
+
+Additive, and behaviour under a caller's existing call changes (requests now
+overlap), so a MINOR: ADR 0002 §4b puts the break on MINOR within `0.x`.
+
+## 0.3.0 — 2026-09-01
+
+*Backfilled 2026-09-01. This release shipped without an entry, and so did 0.2.0
+below — the file's own rule is that every release answers the wire question, and
+twice it went unanswered. Recorded now from the release commits rather than left
+as a gap.*
+
+**Wire behaviour: unchanged.** NIP-19 is an encoding of a pointer, not of an
+event; nothing an app publishes moved.
+
+- **`nevent`** — `EventPointer`, `encodeNevent`, `decodeNevent`. An event that
+  is not addressable had no reference form at all, so a plain `kind:9` message
+  could be resolved by nothing. TLV type 0 carries the event id as 32 raw
+  bytes, where `naddr` carries a UTF-8 `d`; that difference is the whole of the
+  codec.
+
+## 0.2.0 — 2026-08-28
+
+*Backfilled 2026-09-01, from the release commit — see the note under 0.3.0.*
+
+**Wire behaviour: unchanged.** A read-path fix; no published bytes moved.
+
+- **`RELAY_PAGE_CEILING`, and `queryAll` pages instead of truncating.** Buzz
+  clamps a REQ to its advertised NIP-11 `max_limit`, which halved from 10000 to
+  1000, and NIP-01 has no truncation signal — so a caller asking for 2000 got
+  1000 and no indication why. `limit: 2000` was a literal at four call sites
+  across two apps and the agent, none of which could know when the relay changed
+  it.
+
 ## 0.1.2 — 2026-08-27
 
 **Wire behaviour: unchanged.** One constant added. No builder, tag layout, id
