@@ -52,5 +52,7 @@ export {
   type ResolvedSlot,
   type ResolvedAction,
   type ManifestAction,
+  type ActionEffect,
+  ACTION_EFFECTS,
   type UnsignedActionEvent,
 } from './projection.js'

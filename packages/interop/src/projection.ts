@@ -300,10 +300,50 @@ interface SlotSpec {
   }
 }
 
+/**
+ * What invoking an action does, coarsely enough for a caller to decide whether
+ * to ask first (RFC 0.4 §13.4).
+ *
+ * Closed, and the closure is the point: a value only means something if every
+ * consumer reads it the same way.
+ *
+ * | | |
+ * | --- | --- |
+ * | `safe` | changes nothing an author would mind — invoking unprompted is fine |
+ * | `writes` | publishes a change somebody will see |
+ * | `destructive` | removes or supersedes something |
+ *
+ * **Only an explicit `safe` may be read as safe.** Absent, unrecognised, or
+ * from a manifest published before this field existed all mean *unknown*, and
+ * unknown has to fall on the cautious side — a consumer testing
+ * `effect !== 'destructive'` gets `true` for a manifest that never said, which
+ * is the wrong direction to be wrong in. That is why {@link withKnownEffect} drops
+ * a value outside this set rather than passing it through: an unrecognised
+ * effect is not a fourth meaning, it is a consumer that does not understand
+ * this manifest yet.
+ */
+export type ActionEffect = 'safe' | 'writes' | 'destructive'
+
+export const ACTION_EFFECTS: readonly ActionEffect[] = ['safe', 'writes', 'destructive']
+
 /** An action the owning app says other apps may perform. */
 export interface ManifestAction {
   id: string
   label: string
+  /**
+   * Prose aimed at a machine, distinct from `label`, which is a button caption
+   * (RFC 0.4 §13.4).
+   *
+   * "Change status" tells a person which button to press and tells a caller
+   * choosing *between* actions nothing at all. Nothing reads this yet, and that
+   * is expected: it is here because adding a field costs a line and adding one
+   * after several apps have published manifests is a migration across every one
+   * of them — a manifest is republished by its owner alone. The same argument
+   * `emits.alsoRead` makes one level down.
+   */
+  description?: string
+  /** See {@link ActionEffect}. */
+  effect?: ActionEffect
   /** Kind(s) this applies to, as strings. */
   appliesTo: string | string[]
   emits: {
@@ -346,6 +386,13 @@ export interface ManifestAction {
 export interface ResolvedAction {
   id: string
   label: string
+  /** See {@link ManifestAction.description}. Carried through, never rendered here. */
+  description?: string
+  /**
+   * See {@link ActionEffect}. Absent when the manifest did not say, or said
+   * something this version does not recognise — both meaning *unknown*.
+   */
+  effect?: ActionEffect
   control: 'select' | 'pubkey' | 'text'
   /** For `select`: the declared vocabulary, already looked up. */
   options?: { value: string; label: string; colour?: string }[]
@@ -386,6 +433,8 @@ function resolveActions(
     out.push({
       id: action.id,
       label: action.label,
+      ...(action.description ? { description: action.description } : {}),
+      ...(action.effect ? { effect: action.effect } : {}),
       control: vocab ? 'select' : action.input?.type === 'pubkey' ? 'pubkey' : 'text',
       options: vocab?.map((v) => ({ value: v.value, label: v.label, colour: v.colour })),
       current: action.emits.field ? folded[action.emits.field]?.value : undefined,
@@ -410,13 +459,41 @@ const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === n
 const hasTagValue = (e: SignedEvent, name: string, value: string) =>
   e.tags.some((t) => t[0] === name && t[1] === value)
 
-/** A manifest event's `content`, or null when it is not parseable JSON. */
+/**
+ * A manifest event's `content`, or null when it is not parseable JSON.
+ *
+ * Deliberately not a validator. A manifest is another app's declaration and
+ * this layer's whole posture is to render what it is given — a field this
+ * version does not recognise is a newer app, not a broken one, and dropping
+ * unknown structure would make the layer refuse the future.
+ *
+ * `effect` is the one exception, and only because misreading it is unsafe
+ * rather than merely wrong. See {@link ActionEffect}.
+ */
 function parseManifest(event: SignedEvent): Manifest | null {
   try {
-    return JSON.parse(event.content) as Manifest
+    const manifest = JSON.parse(event.content) as Manifest
+    if (manifest?.actions) manifest.actions = manifest.actions.map(withKnownEffect)
+    return manifest
   } catch {
     return null
   }
+}
+
+/**
+ * An action whose `effect` this version understands, or one with none.
+ *
+ * A value outside {@link ACTION_EFFECTS} is dropped rather than carried,
+ * because every way of reading an unrecognised effect is a claim nobody made.
+ * Absent already means "unknown, be careful"; leaving `"nuke"` in place would
+ * let a consumer's `effect !== 'destructive'` answer *true* about an action
+ * whose own manifest was trying to warn it.
+ */
+function withKnownEffect(action: ManifestAction): ManifestAction {
+  if (action.effect === undefined) return action
+  if (ACTION_EFFECTS.includes(action.effect)) return action
+  const { effect: _dropped, ...rest } = action
+  return rest
 }
 
 const asArray = (value: string | string[]) => (Array.isArray(value) ? value : [value])

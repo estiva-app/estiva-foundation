@@ -6,6 +6,44 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.5.0 — 2026-09-01
+
+**Manifest behaviour: two optional fields an action may now declare.** Nothing
+already published means anything different, and a manifest that declares neither
+resolves exactly as before.
+
+- **`ManifestAction.description`** — prose aimed at a machine, distinct from
+  `label`, which is a button caption (RFC 0.4 §13.4). "Change status" tells a
+  person which control to press and tells a caller choosing *between* actions
+  nothing.
+
+- **`ManifestAction.effect`** — `safe` | `writes` | `destructive`, whether
+  invoking without confirmation is acceptable. Exported as `ActionEffect` and
+  `ACTION_EFFECTS` so no consumer has to spell the set out.
+
+Both are carried onto `ResolvedAction`. **Nothing reads them yet, and that is
+expected** — they are here because adding a field costs a line and adding one
+after several apps have published manifests is a migration across every one of
+them, and a manifest is republished by its owner alone. The same argument
+`emits.alsoRead` makes one level down.
+
+**An unrecognised `effect` is dropped rather than carried**, which is the only
+part of this that is a decision rather than a declaration. Every way of reading
+`"nuke"` is a claim nobody made; absent already means *unknown, be careful*, and
+leaving an uninterpretable value in place would let a consumer's
+`effect !== 'destructive'` answer **true** about an action whose own manifest was
+trying to warn it. Forward compatibility falls out of the same rule: a consumer
+that does not know a future `reversible` treats it as unknown rather than as
+permission.
+
+That is the one field `parseManifest` sanitises, and deliberately the only one.
+A manifest is another app's declaration and this layer renders what it is given
+— a field this version does not recognise is a newer app, not a broken one.
+`effect` is the exception because misreading it is *unsafe* rather than merely
+wrong.
+
+Additive, so a MINOR by the rule ADR 0002 §4b sets for `0.x`.
+
 ## 0.4.0 — 2026-09-01
 
 **Manifest behaviour: unchanged.** Nothing a manifest may declare moved. What
