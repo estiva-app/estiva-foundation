@@ -6,6 +6,55 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.3.0 — 2026-09-01
+
+**Manifest behaviour: unchanged.** Nothing a manifest may declare moved, and
+nothing already published means anything different. What changes is how many
+round trips reading one costs.
+
+- **`createProjectionCache()`**, passed as the last argument to
+  `resolveForeignObject`, `resolveForeignEvent` and `resolveFolderProject`.
+  Omitting it is exactly the old behaviour.
+
+  A consumer that re-resolves on a timer paid the whole resolve every tick, and
+  **two of the four round trips were NIP-89 discovery** — the author's
+  `kind:31989` recommendation, then the `kind:31990` manifest. Those answer the
+  same thing until an app republishes. Memoised per kind and author with a
+  five-minute TTL; a negative answer is cached too, because "no app claims this
+  kind" costs the same two round trips and is just as stable.
+
+  **Owned by the caller.** A module-level cache would be invisible global state
+  shared by every consumer in a process, impossible to scope to a screen and
+  awkward to reset in a test.
+
+  Deliberately only the manifest. The object, its changes, its comments and its
+  children are what a refresh exists to notice — caching those is how a live
+  widget becomes a screenshot, which is the defect PRO-10 was filed for.
+
+- **A `list` slot no longer costs a round trip of its own.** The child filter is
+  built from the manifest and the *pointer*, and an addressable event's `d` is
+  `pointer.identifier` by definition — it is what the root filter matches on. So
+  the second query never needed to wait for the first, and the children now ride
+  in the same request.
+
+  The two together: **10 requests a tick to 3** for three references on one Ship
+  issue, measured against production — one per reference — rendering identically
+  (title, kind, comment count, child count, widget). A comment posted between
+  ticks appeared on the next one-request resolve, so the widget is still live.
+
+- **Comments and children are now matched on their filter's own criteria**, not
+  on kind. This is load-bearing rather than tidying: Peek's Topic declares
+  `kind:9` messages as children *and* `kind:9` as its comment kind, so merging
+  the two filters into one request puts both under one number and only the tag
+  separates them. Matching on kind alone would have made every message in a
+  Folder a comment on its own Topic. The predicate uses **any** matching tag,
+  as a relay's `#a` does — an event may carry several, and reading only the
+  first would silently drop a comment that references something else before its
+  parent.
+
+Additive, with a changed request pattern, so a MINOR: ADR 0002 §4b puts the
+break on MINOR within `0.x`.
+
 ## 0.2.0 — 2026-09-01
 
 **Manifest behaviour: unchanged for addressable objects.** What changes is that

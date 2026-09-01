@@ -311,6 +311,19 @@ function resolveActions(
 
 const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1]
 
+/**
+ * Does the event carry this tag with this value — on **any** of them?
+ *
+ * `tagValue` reads the first tag with a given name, which is the wrong test for
+ * deciding whether an event would have matched a filter: a relay's `#a` matches
+ * if *any* `a` tag equals the wanted value, and an event may legitimately carry
+ * several. Used where a filter's own predicate is re-applied to a merged
+ * response (SHI-13), so that "did this come back because of that filter?" is
+ * answered the way the relay answered it.
+ */
+const hasTagValue = (e: SignedEvent, name: string, value: string) =>
+  e.tags.some((t) => t[0] === name && t[1] === value)
+
 /** A manifest event's `content`, or null when it is not parseable JSON. */
 function parseManifest(event: SignedEvent): Manifest | null {
   try {
@@ -358,16 +371,100 @@ function webTemplate(event: SignedEvent, entity: string): string | undefined {
   return undefined
 }
 
-export async function resolveManifest(
-  pointer: AddressPointer,
-  query: QueryFn,
-): Promise<{
+/** What {@link resolveManifest} answers with. */
+export interface ResolvedManifest {
   manifest: Manifest
   address: string
   viaRecommendation: boolean
   /** NIP-89 `web` template, `<bech32>` not yet substituted. */
   webTemplate?: string
-} | null> {
+}
+
+/**
+ * A memo for the half of a resolve that does not change between refreshes.
+ *
+ * Resolving one reference costs four round trips, and **two of them are NIP-89
+ * discovery** — the author's `kind:31989` recommendation, then the `kind:31990`
+ * manifest itself. A consumer that re-resolves on a timer pays for both every
+ * time, and they answer the same thing until an app republishes its manifest.
+ * Measured on Ship, where a reference widget re-resolves on the poll: 4
+ * requests per reference per tick, identical on the second resolve, against a
+ * relay that meters reads at 300 a minute.
+ *
+ * **Owned by the caller, not this module.** A module-level cache would be
+ * invisible global state shared by every consumer in the process, impossible to
+ * scope to a screen and awkward to reset in a test. A caller that wants no
+ * caching passes nothing and gets exactly the old behaviour.
+ *
+ * Deliberately only the manifest. The object, its changes, its comments and its
+ * children are the parts a refresh exists to notice, and caching those is how
+ * a live widget becomes a screenshot.
+ */
+export interface ProjectionCache {
+  /** Forget everything. Worth calling after publishing a manifest. */
+  clear(): void
+  /** @internal */
+  lookup(key: string, now: number): { value: ResolvedManifest | null } | undefined
+  /** @internal */
+  remember(key: string, value: ResolvedManifest | null, now: number): void
+}
+
+/**
+ * How long a manifest may be believed without asking again.
+ *
+ * Five minutes is a compromise with one real cost: republish a manifest and
+ * consumers keep drawing the old projection for up to that long. That is
+ * recoverable and self-correcting, where the alternative — asking twice per
+ * reference per tick, for ever — is neither.
+ */
+export const MANIFEST_TTL_MS = 5 * 60_000
+
+export function createProjectionCache(ttlMs: number = MANIFEST_TTL_MS): ProjectionCache {
+  const entries = new Map<string, { at: number; value: ResolvedManifest | null }>()
+  return {
+    clear: () => entries.clear(),
+    lookup(key, now) {
+      const found = entries.get(key)
+      if (!found) return undefined
+      // `>=`, not `>`: a TTL of 0 must mean "never believe it", and an entry
+      // exactly at the boundary has expired rather than being on its last tick.
+      if (now - found.at >= ttlMs) {
+        entries.delete(key)
+        return undefined
+      }
+      return { value: found.value }
+    },
+    remember(key, value, now) {
+      entries.set(key, { at: now, value })
+    },
+  }
+}
+
+/**
+ * A negative answer is cached too.
+ *
+ * "No app claims this kind" costs the same two round trips as a hit and is just
+ * as stable. Caching only successes would leave the expensive case — a
+ * reference nothing can draw — paying full price on every tick for ever.
+ */
+export async function resolveManifest(
+  pointer: AddressPointer,
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<ResolvedManifest | null> {
+  const key = `${pointer.kind}:${pointer.pubkey}`
+  const now = Date.now()
+  const memo = cache?.lookup(key, now)
+  if (memo) return memo.value
+  const answer = await resolveManifestUncached(pointer, query)
+  cache?.remember(key, answer, now)
+  return answer
+}
+
+async function resolveManifestUncached(
+  pointer: AddressPointer,
+  query: QueryFn,
+): Promise<ResolvedManifest | null> {
   const parse = parseManifest
   const addressOf = (event: SignedEvent) =>
     `${event.kind}:${event.pubkey}:${tagValue(event, 'd') ?? ''}`
@@ -932,6 +1029,8 @@ export async function resolveForeignEvent(
   query: QueryFn,
   /** Defaults to asking the relay. The browser passes a cached lookup. */
   lookupPeople?: PeopleFn,
+  /** See {@link ProjectionCache}. Omitting it is exactly the old behaviour. */
+  cache?: ProjectionCache,
 ): Promise<ForeignObject | null> {
   let pointer: EventPointer
   try {
@@ -956,6 +1055,7 @@ export async function resolveForeignEvent(
   const resolved = await resolveManifest(
     { kind: root.kind, pubkey: root.pubkey, identifier: '', relays: pointer.relays },
     query,
+    cache,
   )
   if (!resolved) return null
 
@@ -990,6 +1090,11 @@ export async function resolveForeignObject(
    * recursing forever. See `MAX_LIST_DEPTH`.
    */
   depth = 0,
+  /**
+   * Optional memo for the NIP-89 discovery half. See {@link ProjectionCache} —
+   * omitting it is exactly the old behaviour.
+   */
+  cache?: ProjectionCache,
 ): Promise<ForeignObject | null> {
   let pointer: AddressPointer
   try {
@@ -1001,7 +1106,7 @@ export async function resolveForeignObject(
   }
   const address = pointerToAddress(pointer)
 
-  const resolved = await resolveManifest(pointer, query)
+  const resolved = await resolveManifest(pointer, query, cache)
   if (!resolved) return null
   const { manifest, viaRecommendation } = resolved
   // Substituted here rather than in the component: `<bech32>` is a NIP-89
@@ -1013,15 +1118,29 @@ export async function resolveForeignObject(
   if (!projection) return null
   const records = foldRuleOf(manifest)
 
-  // One round trip for the root, its changes and its comments. `#a` on both the
-  // change and the comment kind, because both point at the object by *address*
-  // rather than by event id — which is what makes them survive the author
-  // replacing the root event.
+  /*
+    One round trip for the root, its changes, its comments **and its children**.
+
+    `#a` on both the change and the comment kind, because both point at the
+    object by *address* rather than by event id — which is what makes them
+    survive the author replacing the root event.
+
+    The children used to be a second round trip, issued after the root came
+    back. They never needed to be: the child filter is built from the manifest
+    and the *pointer*, and an addressable event's `d` is `pointer.identifier` by
+    definition — it is what we just queried by. So once the manifest is known,
+    nothing about the child filter depends on the root's contents (SHI-13).
+
+    That is the difference between two requests per reference per refresh and
+    one, and with the manifest memoised it is the whole cost of a tick.
+  */
+  const childFilter = childFilterFor({ projection, manifest, pointer, depth })
   const events = await query([
     { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
     // Only when the app actually declares a change kind — see `foldRuleOf`.
     ...(manifest.records ? [{ kinds: [manifest.records.changeKind], '#a': [address], limit: 500 }] : []),
     { kinds: commentKinds, '#a': [address], limit: 200 },
+    ...(childFilter ? [childFilter.filter] : []),
   ])
 
   const root = events.find(
@@ -1059,8 +1178,19 @@ export async function resolveForeignObject(
     records,
   )
 
+  /*
+    Matched on the comment filter's own criteria — the kind **and** the `a` tag.
+
+    Kind alone was safe while this was its own query: the relay only returned
+    what the comment filter asked for. Now that the children ride in the same
+    request (SHI-13), a child sharing the comment kind would arrive here too and
+    be counted as a comment on its own parent. Peek is exactly that shape: its
+    Topic declares `kind:9` messages as children and `kind:9` as its comment
+    kind, so every message in the Folder would have become a comment on the
+    Topic — a widget silently showing a conversation twice.
+  */
   const comments = events
-    .filter((e) => commentKinds.includes(e.kind))
+    .filter((e) => commentKinds.includes(e.kind) && hasTagValue(e, 'a', address))
     .sort(byOrder)
     .map((e) => ({ id: e.id, author: e.pubkey, body: e.content, createdAt: e.created_at }))
 
@@ -1089,12 +1219,10 @@ export async function resolveForeignObject(
     A child may be a regular event with no address of its own (Peek's messages
     are), so this builds by event rather than by pointer.
   */
-  const children = await resolveChildren({
-    projection,
-    root,
+  const children = childrenFrom({
+    events,
+    childFilter,
     manifest,
-    query,
-    depth,
     webTemplate: resolved.webTemplate,
     viaRecommendation,
   })
@@ -1113,48 +1241,82 @@ export async function resolveForeignObject(
 }
 
 /**
- * Resolve a projection's `list` slot into child objects.
+ * The filter for a projection's `list` slot, or nothing.
  *
- * Returns undefined when no `list` is declared — distinct from `[]`, which
- * means "declared, and nothing matched". A renderer needs to tell "this holds
- * nothing" from "this holds no list".
+ * Split out from fetching so it can be built **before** the root event is in
+ * hand and merged into the object's own round trip (SHI-13). Everything it
+ * needs is in the manifest and the pointer: an addressable event's `d` *is*
+ * `pointer.identifier`, since that is what the root filter matches on, so
+ * reading it back off the root taught us nothing we did not already know.
+ *
+ * Returns undefined when no `list` is declared — distinct from a declared list
+ * that matches nothing, which a renderer must be able to tell apart. The two
+ * other "declared but not renderable" cases are folded in here too, and both
+ * come back as `[]` from {@link childrenFrom}: a depth budget already spent,
+ * and a child kind the manifest never says how to draw.
  */
-async function resolveChildren(args: {
+function childFilterFor(args: {
   projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
-  root: SignedEvent
   manifest: Manifest
-  query: QueryFn
+  pointer: AddressPointer
   depth: number
-  webTemplate?: string
-  viaRecommendation: boolean
-}): Promise<ForeignObject[] | undefined> {
-  const { projection, root, manifest, query, depth, webTemplate, viaRecommendation } = args
+}): { filter: Record<string, unknown>; kind: number; via: string; parent: string } | null | undefined {
+  const { projection, manifest, pointer, depth } = args
   const spec = projection.slots.list
   const children = !Array.isArray(spec) ? spec?.children : undefined
   if (!children) return undefined
   // The consumer's budget, not the manifest's — see MAX_LIST_DEPTH.
-  if (depth >= MAX_LIST_DEPTH) return []
-
-  const childProjection = manifest.projections?.[String(children.kind)]
+  if (depth >= MAX_LIST_DEPTH) return null
   // A declared list whose child kind has no projection is not renderable, and
   // an empty list is the honest answer: the objects exist, this app has not
   // said how to draw them.
-  if (!childProjection) return []
+  if (!manifest.projections?.[String(children.kind)]) return null
 
-  const identifier = tagValue(root, 'd') ?? ''
   const parent =
     children.match === 'identifier'
-      ? identifier
-      : pointerToAddress({ kind: root.kind, pubkey: root.pubkey, identifier, relays: [] })
+      ? pointer.identifier
+      : pointerToAddress({ ...pointer, relays: [] })
 
-  const found = await query([
-    { kinds: [children.kind], [`#${children.via}`]: [parent], limit: children.limit ?? 100 },
-  ])
+  return {
+    filter: { kinds: [children.kind], [`#${children.via}`]: [parent], limit: children.limit ?? 100 },
+    kind: children.kind,
+    via: children.via,
+    parent,
+  }
+}
 
+/**
+ * The child objects, picked back out of the merged result set.
+ *
+ * **Matched on the filter's own criteria, never on kind alone.** Peek's Topic
+ * declares `kind:9` messages as its children and `kind:9` as its comment kind,
+ * so a merged response carries both under one number and only the tag tells
+ * them apart. An event can honestly be both — Ship writes a `kind:9` with an
+ * `a` naming the object *and* an `h` naming the Folder — and it appeared in
+ * both result sets when these were two queries. Re-applying each filter's own
+ * predicate reproduces that, rather than making them compete.
+ */
+function childrenFrom(args: {
+  events: SignedEvent[]
+  childFilter: ReturnType<typeof childFilterFor>
+  manifest: Manifest
+  webTemplate?: string
+  viaRecommendation: boolean
+}): ForeignObject[] | undefined {
+  const { events, childFilter, manifest, webTemplate, viaRecommendation } = args
+  if (childFilter === undefined) return undefined
+  if (childFilter === null) return []
+
+  const childProjection = manifest.projections?.[String(childFilter.kind)]
+  if (!childProjection) return []
   const records = foldRuleOf(manifest)
-  return found.sort(byOrder).map((event) =>
-    buildChildObject({ root: event, manifest, projection: childProjection, records, webTemplate, viaRecommendation }),
-  )
+
+  return events
+    .filter((e) => e.kind === childFilter.kind && hasTagValue(e, childFilter.via, childFilter.parent))
+    .sort(byOrder)
+    .map((event) =>
+      buildChildObject({ root: event, manifest, projection: childProjection, records, webTemplate, viaRecommendation }),
+    )
 }
 
 /**
@@ -1472,6 +1634,8 @@ export async function resolveFolderProject(
    * own `list` is a budget check rather than a thing nobody remembered.
    */
   depth = 0,
+  /** See {@link ProjectionCache}. Omitting it is exactly the old behaviour. */
+  cache?: ProjectionCache,
 ): Promise<FolderProject | null> {
   // The render loop this forbids is not hypothetical: two folders naming each
   // other's projects resolve forever, and the manifest declaring them is
@@ -1684,7 +1848,7 @@ export async function resolveFolderProject(
 
   // 3. Now the authoritative manifest — the object's author gets to say which
   //    app renders their project (kind:31989), same as for an inline reference.
-  const resolved = await resolveManifest(pointer, query)
+  const resolved = await resolveManifest(pointer, query, cache)
   if (!resolved) {
     return null
   }
