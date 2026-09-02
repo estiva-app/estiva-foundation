@@ -1,0 +1,105 @@
+name: check interop
+
+# One workflow per package, filtered by path — ADR 0002 §2. A change to
+# `protocol` must not run `ui`'s jsdom tests, or a flaky UI test becomes a
+# blocked wire-format release.
+#
+# Known cost of `paths`: a PR touching no package never runs this job, so it
+# cannot be a *required* check that must report success.
+#
+# This file arrived late. `interop` was published through 0.6.0 with no check
+# workflow at all, so its suite ran on nobody's machine but the author's, and
+# `release` publishes on a tag without running tests. Four releases went out
+# that way. The three sibling packages each had one; this package was simply
+# never given one, and nothing reported its absence — a PR against it showed
+# "no checks", which reads like a repo that does not gate rather than a gap.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      ['packages/interop/**', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+  pull_request:
+    paths:
+      ['packages/interop/**', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+
+concurrency:
+  group: check-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/interop
+
+      # Both passes: the package's own `types: []` build, and a second one over
+      # `test/*.test.ts`. `node --test` strips types rather than checking them,
+      # which is the hole vitest has too. It earned its place immediately: the
+      # 74 cases PRO-13 moved in from Peek were type-checked there by `tsc -b`
+      # because they sat in `src/`, and arriving in `test/` they would have lost
+      # that silently while still reporting 131 passing. Seven translated
+      # assertions were reaching through an optional chain the parentheses had
+      # already short-circuited — `(found?.tickets).length` throws a TypeError
+      # rather than failing an assertion, so a regression would have crashed the
+      # test instead of naming it.
+      - run: npm run typecheck -w packages/interop
+
+      - run: npm test -w packages/interop
+
+      # The emitted specifier is the thing three toolchains disagree about, and
+      # it is invisible until a consumer's build fails. `tsc` copies relative
+      # specifiers through untouched, so an extensionless one ships broken.
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/interop/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      # The guard for the *emitted declarations*: a `.d.ts` naming a DOM or Node
+      # type compiles in Peek (types: ["vite/client"]) and fails in Ship
+      # (types: ["node"]), or the reverse, and neither repo's CI would say why.
+      # This package is deliberately handed its relay as a function rather than
+      # opening a socket, which is what keeps the list below empty — the guard
+      # is what stops that drifting.
+      #
+      # Comments are stripped first: the prose talks about `fetch` and
+      # `WebSocket` constantly, and it should be able to.
+      - name: The published declarations name no DOM or Node global
+        run: |
+          BAD=$(cat packages/interop/dist/*.d.ts \
+            | sed -E 's:/\*.*\*/::g' \
+            | awk '/\/\*/{c=1} !c{print} /\*\//{c=0}' \
+            | sed -E 's://.*$::' \
+            | grep -nE '\b(WebSocket|Window|Document|HTMLElement|HTMLButtonElement|Element|Response|Request|Headers|NodeJS|Buffer|ProcessEnv|Timeout)\b' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::A published declaration reaches for an ambient global. Make it a parameter or declare the shape locally (ADR 0002 §4a): $BAD"
+            exit 1
+          fi
+
+      # ADR 0002 §10 constraint 2. This package is what a consumer adds to read
+      # another app's objects; a runtime dependency here lands in every one of
+      # their trees. `protocol` is a peer on purpose, so a consumer that already
+      # has it does not get a second copy at a different major.
+      - name: protocol stays a peer, and nothing else is a runtime dependency
+        run: |
+          node -e "
+            const p = require('./packages/interop/package.json');
+            const deps = Object.keys(p.dependencies || {});
+            if (deps.length) {
+              console.error('::error::Unexpected runtime dependency: ' + deps.join(', '));
+              process.exit(1);
+            }
+            if (!(p.peerDependencies || {})['@estiva-app/protocol']) {
+              console.error('::error::@estiva-app/protocol must stay a peerDependency — as a dependency it ships a second copy into every consumer that already has one');
+              process.exit(1);
+            }
+          "
