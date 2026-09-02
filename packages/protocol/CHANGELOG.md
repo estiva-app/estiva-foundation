@@ -4,6 +4,51 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.7.0 — 2026-09-02
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. This release adds a second content model — the one SPEC
+§13.3 specifies for a rich text field — and nothing yet publishes one.
+
+- **New: `blocks.ts` — the rich text field, SPEC §13.3.** `parseBlockDocument`,
+  `serializeBlockDocument`, `validateBlockDocument`, `newBlockId`,
+  `assignMissingBlockIds`, `blockIds`, `findBlock`, `inlineTextOf`,
+  `documentText`.
+
+  **`assignMissingBlockIds` mints only what is missing**, and that is the whole
+  point rather than an optimisation. An editor rebuilds its document on every
+  keystroke; a rebuild that re-mints ids detaches every anchored comment on the
+  next edit, and nothing reports it. A block id is what RFC 0.4 §6 anchoring
+  binds to, so the function makes the safe path the easy one. There is a test
+  that fails if it is changed to mint unconditionally.
+
+- **New: the inline vocabulary's second serialisation** (§13.1) —
+  `markersToInlineNodes`, `inlineNodesToMarkers`, `inlineNodesToText`. Held back
+  from 0.6.0 on purpose: it had no consumer until the block model existed.
+
+  Mark order in the JSON encoding is **deterministic**, because two encoders
+  disagreeing about array order produce documents that differ byte-for-byte
+  while meaning the same thing, and every equality check downstream — a diff, a
+  dedupe, a cache key — is then wrong about it.
+
+- **An unknown block type is not an error anywhere in this module.** §13.3
+  requires a reader to draw its inline text and forbids dropping it silently,
+  the same discipline §7.5 applies to widgets and for the same reason:
+  consumers upgrade at different times. `validateBlockDocument` passes it,
+  round-tripping preserves it whole, and `inlineTextOf` reads its text by shape
+  rather than by name.
+
+- **The `content-format` tag is deliberately NOT defined here.** §13.4's read
+  rule is `contentFormatOf` in `@estiva-app/interop`, added in #26, because it
+  is a question about an event and its slot rather than about a document.
+  A second copy of `'estiva-blocks-1'` in this package is precisely the
+  divergence this package exists to prevent, so `blocks.ts` never names it.
+
+- **Tests: the claim §13 makes, checked rather than asserted.** The 152 real
+  published bodies from 0.6.0 now go through both encodings, and no character
+  changes its marks. Two controls were run against it — dropping `code` from
+  the JSON encoding fails 4 tests, re-minting ids unconditionally fails 2.
+
 ## 0.6.0 — 2026-09-02
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or

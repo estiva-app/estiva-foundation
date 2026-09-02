@@ -292,3 +292,59 @@ export function stripInlineFormatting(text: string): string {
     .map((line) => parseInlineMarks(stripLinePrefixes(line)).map((s) => s.text).join(''))
     .join('\n')
 }
+
+// ── The inline vocabulary's second serialisation — SPEC §13.1 ──
+//
+// The same marks, encoded as JSON nodes instead of markers, because a block
+// document's inline content is an array of these (§13.3). RIC-4 shipped the
+// marker side and deliberately stopped there: this half had no consumer until
+// the block model existed, and designing an encoding against no caller is how
+// you get one nobody can use.
+//
+// **The vocabulary is shared; the encoding is not.** That is the whole shape of
+// SPEC §13 — a message and a paragraph mean the same thing by "bold", and agree
+// about nothing else.
+
+/** A mark on an inline run, in the JSON encoding. */
+export type InlineMarkNode = { type: InlineMark }
+
+/** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
+export interface InlineTextNode {
+  type: 'text'
+  text: string
+  marks?: InlineMarkNode[]
+}
+
+/** Deterministic order, so the same marks always serialise to the same JSON.
+ *  Two encoders disagreeing about array order would produce documents that
+ *  differ byte-for-byte while meaning the same thing, and every equality check
+ *  downstream — a diff, a dedupe, a cache key — would be wrong about it. */
+const MARK_ORDER: InlineMark[] = ['bold', 'italic', 'underline', 'code']
+
+/** Marker text → inline JSON nodes. */
+export function markersToInlineNodes(text: string): InlineTextNode[] {
+  return parseInlineMarks(text).map((span) => {
+    const marks = MARK_ORDER.filter((m) => span[m]).map((type) => ({ type }))
+    return marks.length ? { type: 'text' as const, text: span.text, marks } : { type: 'text' as const, text: span.text }
+  })
+}
+
+/**
+ * Inline JSON nodes → marker text.
+ *
+ * The inverse of {@link markersToInlineNodes} for every mark the dialect can
+ * spell, which is all four of them. Whitespace at a run's edges is hoisted
+ * outside the markers by `wrapInlineMarks`, because §13.2 rule 1 would not
+ * parse it back otherwise — so this round-trips the *marks on each character*
+ * rather than the span boundaries. See the corpus tests.
+ */
+export function inlineNodesToMarkers(nodes: readonly InlineTextNode[]): string {
+  return nodes
+    .map((node) => wrapInlineMarks(node.text, new Set((node.marks ?? []).map((m) => m.type))))
+    .join('')
+}
+
+/** The plain text of a run of inline nodes, marks discarded. */
+export function inlineNodesToText(nodes: readonly InlineTextNode[]): string {
+  return nodes.map((n) => n.text).join('')
+}
