@@ -1047,23 +1047,33 @@ function firstTag(root: SignedEvent, tag: string | string[] | undefined): string
 /**
  * A slot's value, and the content model it is written in when it has one.
  *
- * `format` is set only where the value can be a **body**, which is true in two
- * places and no others:
+ * **A `body` slot always has a format; nothing else ever does.**
  *
- * 1. `{field: "content"}` — an event's own body, content by definition. It gets
- *    a format whatever slot it was declared into, which is what keeps the PRO-8
- *    guard below reachable: `{"subtitle": {"field": "content", "truncate": 120}}`
- *    is a mis-declaration, and it must not also escape the truncation rule.
- * 2. a slot named `body` — SPEC §7.2's closed set gives that name one meaning,
- *    "structured content per §13". A `fold` is how §13.4's own example arrives
- *    (a description created as marker text and later edited into blocks is a
- *    root with no tag and a change with one), so it must be able to carry a
- *    format — but only when the slot says it is a body.
+ * The slot name is what decides, because nothing in the data can. A folded
+ * `status` arrives through the same `value` tag a folded description does, and
+ * — this is the part I got wrong first — a project's description arrives
+ * through a *root tag*, exactly like its title. Ship writes
+ * `["description", …]` and leaves `content` empty on purpose, so a reader
+ * holding only tags has it without fetching content (`events.ts`). Eleven of
+ * fifteen production projects are that shape.
  *
- * Everything else reports nothing. A tag is a short scalar and is never a body,
- * so a `title` reports no format even on an event whose *content* is a block
- * document; and a folded `lead` is a pubkey, not prose. Reporting `marker` for
- * those would be a claim about a value that is not content at all.
+ * So "a tag is a scalar and never a body" was false, and it was false in the
+ * common case. The rule is the slot, not the source:
+ *
+ * - a change event → the format that change declared, else `marker`
+ * - a root tag, or the root's `content` → `contentFormatOf(root)`, because both
+ *   are the same event and §13.4's tag describes that event's body wherever the
+ *   event keeps it
+ * - a `default` → `marker`; it is a literal in the manifest, so it is plain
+ *   text by construction
+ *
+ * The one exception is `{field: "content"}`, which reports a format whatever
+ * slot it was declared into. That is what keeps the PRO-8 guard below
+ * reachable: `{"subtitle": {"field": "content", "truncate": 120}}` is a
+ * mis-declaration, and it must not also escape the truncation rule.
+ *
+ * Everything else reports nothing, and `undefined` means *not a body* rather
+ * than *marker*. A consumer reading `slots.body` never needs a fallback.
  */
 interface RawSlotValue {
   value: string
@@ -1106,15 +1116,20 @@ function rawSlotValue(
       truncation guard reachable.
     */
     const seedTag = firstTag(root, spec.tag)
-    if (seedTag !== undefined) return { value: seedTag }
+    if (seedTag !== undefined) return { value: seedTag, format: isBody ? contentFormatOf(root) : undefined }
     if (spec.field === 'content' && root.content !== '') {
       return { value: root.content, format: contentFormatOf(root) }
     }
-    return spec.default === undefined ? undefined : { value: spec.default }
+    if (spec.default === undefined) return undefined
+    // A default is a literal in the manifest, not a value any event carries, so
+    // it is plain text by construction. Reported as `marker` rather than as
+    // nothing so that a `body` always has a format — see below.
+    return { value: spec.default, format: isBody ? 'marker' : undefined }
   }
   if (spec.tag) {
     const value = firstTag(root, spec.tag)
-    return value === undefined ? undefined : { value }
+    if (value === undefined) return undefined
+    return { value, format: isBody ? contentFormatOf(root) : undefined }
   }
   if (spec.field === 'content') return { value: root.content, format: contentFormatOf(root) }
   /*

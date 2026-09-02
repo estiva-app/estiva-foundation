@@ -1603,8 +1603,70 @@ describe('a body slot carries the content model it is written in', () => {
       ],
     )
     assert.equal(found?.slots.body?.value, 'from the tag')
-    // A tag is a scalar, not a body — even standing in for one.
-    assert.ok(!('format' in (found?.slots.body ?? {})))
+    // And it is still a body. Ship writes a project's description to a root
+    // tag and leaves `content` empty on purpose, so a reader holding only tags
+    // has it without fetching content — 11 of 15 production projects are that
+    // shape. "A tag is a scalar and never a body" was false in the common case.
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('takes a tag-carried body’s format from the root, which is the event it came from', async () => {
+    const found = await resolve(
+      { title: { tag: 'title' }, body: { fold: 'description', tag: 'description', field: 'content' } },
+      [
+        project('p1', {
+          tags: [
+            ['d', 'p1'],
+            ['title', 'P'],
+            ['h', FOLDER],
+            ['description', BLOCKS],
+            ['content-format', 'estiva-blocks-1'],
+          ],
+          content: '',
+        }),
+      ],
+    )
+    // §13.4's tag describes that event's body wherever the event keeps it. A
+    // root tag and the root's content are the same event.
+    assert.equal(found?.slots.body?.format, 'blocks')
+  })
+
+  it('reports a format for a body declared as a bare tag', async () => {
+    // An app simpler than Ship — one whose description is a root tag and which
+    // has no change events at all — declares `{"body": {"tag": "description"}}`
+    // and never reaches the fold branch. It is no less a body for that.
+    const found = await resolve({ title: { tag: 'title' }, body: { tag: 'description' } }, [
+      project('p1', {
+        tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['description', 'plain **text**']],
+        content: '',
+      }),
+    ])
+    assert.equal(found?.slots.body?.value, 'plain **text**')
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('gives a body a format even when nothing but the default answers', async () => {
+    // So a consumer reading `slots.body` never needs its own `?? 'marker'`.
+    // A default is a literal in the manifest, so it is plain text by
+    // construction.
+    const found = await resolve(
+      { title: { tag: 'title' }, body: { fold: 'description', default: 'No description yet' } },
+      [project('p1', { tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER]], content: '' })],
+    )
+    assert.equal(found?.slots.body?.value, 'No description yet')
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('still reports nothing for a title on an event whose body is blocks', async () => {
+    // The other half: `undefined` means *not a body*, not *marker*. A title
+    // read from a tag on a block-document event must not claim to be JSON.
+    const found = await resolve(slots, [
+      project('p1', {
+        content: BLOCKS,
+        tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
+      }),
+    ])
+    assert.ok(!('format' in (found?.slots.title ?? {})))
   })
 
   it('never truncates a block document, whatever slot it was declared into', async () => {
