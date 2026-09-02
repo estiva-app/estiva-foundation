@@ -6,6 +6,40 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.8.0 — 2026-09-02
+
+**Manifest behaviour: a `body` slot now always reports a format, whichever
+source it came from.** 0.7.0 reported one only for `{field: "content"}` and for
+a folded change, on the reasoning that *a tag is a scalar and never a body*.
+
+**That was false, and false in the common case.** Ship writes a project's
+description to a root `description` tag and leaves `content` empty on purpose,
+so a reader holding only tags has it without fetching content (`events.ts`).
+Found by resolving production rather than by re-reading the rule: 11 of 15
+projects resolve a body and **2 of them reported `format: undefined`**, because
+nobody had ever changed their description and it lives in the tag.
+
+A consumer seeing `undefined` cannot tell which model it has, and §13 forbids
+guessing — so those two were exactly the objects the format exists for.
+
+The rule is now the slot, not the source:
+
+| the value came from | format |
+| --- | --- |
+| a change event | what that change declared, else `marker` |
+| a root tag, or the root's `content` | `contentFormatOf(root)` — both are the same event, and §13.4's tag describes that event's body wherever it keeps it |
+| a `default` | `marker`; a literal in the manifest is plain text by construction |
+
+So **`slots.body` always carries a format and a consumer never needs its own
+`?? 'marker'`**, which is the whole reason the default lives in this package.
+
+Unchanged: `{field: "content"}` reports a format whatever slot it was declared
+into, which keeps the truncation guard reachable for the
+`{"subtitle": {"field": "content", "truncate": 120}}` mis-declaration. And
+everything that is not a body still reports nothing — `undefined` means *not a
+body*, not *marker*. A `title` on a block-document event still reports nothing,
+and a folded `lead` is a pubkey rather than prose.
+
 ## 0.7.0 — 2026-09-02
 
 **Manifest behaviour: a `body` slot now reports which content model it is
