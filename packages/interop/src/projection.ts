@@ -803,7 +803,18 @@ function byOrder(a: SignedEvent, b: SignedEvent): number {
  * several paragraphs establishing is the worst available outcome, because a
  * blank card reads as "that app is broken". It was never caught because Ship
  * is the only app that had ever published a manifest, and Ship folds. Nothing
- * in RFC 0.4 §13.1 makes `records` mandatory.
+ * in RFC 0.4 §13.1 makes `records` mandatory — but SPEC §7 did, and that is the
+ * document a stranger implements from. It said an app **MUST** publish a
+ * manifest whose content carries `records` and `projections`, so the code was
+ * right and the specification was wrong, in a way that would have made anyone
+ * following the text declare change events they do not have. SPEC §7.1 now says
+ * `records` is OPTIONAL and states the consumer's obligation as a MUST: render
+ * the projection, treat every `fold` slot as absent, fall through to its
+ * `default`, and do not refuse (PRO-12).
+ *
+ * The citation is corrected in place rather than deleted because the two
+ * documents disagreeing is the thing worth remembering: reasoning from the RFC
+ * alone reached the right behaviour and the wrong justification.
  *
  * The substitute rule below is only ever used to *fold*, never to query, and
  * that distinction is load-bearing. The first attempt used `changeKind: -1` as
