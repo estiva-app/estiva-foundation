@@ -40,7 +40,19 @@ export interface InlineMarkSpan {
 export type BodySegment =
   | { type: 'text'; lines: string[] }
   | { type: 'bullet'; items: string[] }
-  | { type: 'numbered'; items: string[] }
+  | {
+      type: 'numbered'
+      items: string[]
+      /**
+       * The number the author actually wrote, when it is not 1.
+       *
+       * A body can hold two numbered runs separated by a paragraph, the second
+       * written to continue the first — `2.` after an earlier `1.`. Discarding
+       * it renumbers somebody's list, which is a change to what they wrote
+       * rather than a rendering choice. Absent means 1.
+       */
+      start?: number
+    }
   | { type: 'heading'; level: 1 | 2; text: string }
   | { type: 'quote'; lines: string[] }
   | { type: 'code'; language?: string; lines: string[] }
@@ -225,11 +237,12 @@ export function parseBodySegments(body: string): BodySegment[] {
       segments.push({ type: 'bullet', items })
     } else if (/^\d+\.\s/.test(line)) {
       const items: string[] = []
+      const first = Number.parseInt(line, 10)
       while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
         items.push(lines[i].replace(/^\d+\.\s/, ''))
         i++
       }
-      segments.push({ type: 'numbered', items })
+      segments.push({ type: 'numbered', items, ...(first > 1 ? { start: first } : {}) })
     } else if (QUOTE_LINE_RE.test(line)) {
       const quoteLines: string[] = []
       while (i < lines.length && QUOTE_LINE_RE.test(lines[i])) {

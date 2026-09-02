@@ -4,6 +4,50 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.10.0 — 2026-09-02
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. What this adds is the bridge that lets an app with a
+*text* editor publish a **block document**, which is how a description acquires
+addressable blocks before anybody builds a block editor.
+
+- **New: `markerTextToBlockDocument` and `blockDocumentToMarkerText`.** Marker
+  text in, a §13.3 document out, and back again.
+
+  **`markerTextToBlockDocument` takes the previous document and carries its ids
+  across**, and that is the entire point rather than a nicety. A description is
+  replaced wholesale on every save; re-parsing into fresh blocks each time
+  re-mints every id, and **every comment anchored to one detaches silently** —
+  a detached comment renders exactly like one that was never anchored. The
+  matching rule is written down in the module header: same type and identical
+  text wherever it moved to, then same type at the same index, then a fresh id.
+
+  Its limit is documented *and asserted*: a block moved **and** edited in one
+  save matches neither pass and gets a new id. There is a test that fails if
+  that ever silently changes, so the header cannot drift from the behaviour.
+
+  Control: disabling the carry-forward fails 5 tests, including the corpus one.
+
+- **An ordered list keeps the number its author wrote.** `BodySegment` of type
+  `numbered` gains `start`, `RenderBlock` gains `start`, and a block document
+  carries `attrs.start` — all absent when the list begins at 1.
+
+  This is a **pre-existing rendering defect**, not something the bridge
+  introduced. A body can hold two numbered runs split by a paragraph, the
+  second written `2.` to continue the first; every renderer built on
+  `parseBodySegments` has drawn it as `1.` since the dialect existed. One real
+  body in the 152-body corpus does exactly this, and the round trip is what
+  made it visible — renumbering somebody's list is a change to what they wrote,
+  and it would have been written back to the relay permanently once a
+  description is re-saved as blocks.
+
+- **A NUL byte, removed from this package's own source.** `keyOf` used a
+  literal `\x00` as its separator, which makes a file *binary* to the tools
+  that read source: `grep` skips it and reports nothing, so a search for a
+  symbol in that file comes back empty and looks like an answer. Ship's
+  `fold.ts` carries a comment about this exact trap; this hit it anyway. It is
+  an escape now.
+
 ## 0.9.0 — 2026-09-02
 
 **Wire behaviour: unchanged.** Nothing about the bytes moved. One function and

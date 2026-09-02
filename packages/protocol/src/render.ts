@@ -62,6 +62,8 @@ export interface RenderBlock {
   id?: string
   level?: 1 | 2 | 3
   language?: string
+  /** An ordered list's first number, when the author did not start at 1. */
+  start?: number
   attrs?: Record<string, unknown>
   /** What the document actually called it, when `type` is `'unknown'`. */
   typeName?: string
@@ -158,6 +160,7 @@ function blockFromSegment(seg: BodySegment): RenderBlock {
     case 'numbered':
       return {
         type: 'orderedList',
+        ...(seg.start ? { start: seg.start } : {}),
         children: seg.items.map((item) => ({ type: 'listItem' as const, inline: inlineFromMarkers(item) })),
       }
     case 'quote':
@@ -189,6 +192,8 @@ function blockFromDocument(block: Block): RenderBlock {
   if (block.type === 'heading' && (level === 1 || level === 2 || level === 3)) out.level = level
   const language = block.attrs?.language
   if (block.type === 'codeBlock' && typeof language === 'string') out.language = language
+  const start = block.attrs?.start
+  if (block.type === 'orderedList' && typeof start === 'number' && start > 1) out.start = start
 
   if (Array.isArray(block.content)) {
     if (isInlineRun(block.content)) {
