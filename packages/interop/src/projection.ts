@@ -839,13 +839,71 @@ function foldRuleOf(manifest: Manifest): RecordsRule {
   )
 }
 
+/**
+ * What content model a body is written in — SPEC §13.4.
+ *
+ * Three values, not two, and not the raw tag string. A consumer has to make a
+ * three-way decision and **must not guess the third**:
+ *
+ * - `marker` — the §13.2 dialect. The default, permanently. 731 published
+ *   bodies carry no tag and none of them can be given one, so this is not a
+ *   migration window that closes.
+ * - `blocks` — a §13.3 JSON block document.
+ * - `unknown` — a format declared after this runtime was written. Render the
+ *   body as plain text; §13.5 says declining to format is conformant, and
+ *   parsing it as either known model is what §13 forbids outright.
+ *
+ * It is resolved here rather than left to each consumer for the same reason
+ * `CLOSED_WIDGETS` is: two copies of `tag === undefined ? marker : tag ===
+ * 'estiva-blocks-1' ? blocks : text` disagree the first time a third format
+ * exists, and the disagreement shows up as one app rendering JSON at a person.
+ */
+export type ContentFormat = 'marker' | 'blocks' | 'unknown'
+
+/**
+ * The one slot in SPEC §7.2's closed set that means "structured content".
+ *
+ * Named rather than inlined because the runtime keys behaviour on it twice —
+ * whether a value carries a content format, and whether it may be truncated —
+ * and a consumer reads `slots.body` to find it.
+ */
+export const BODY_SLOT = 'body'
+
+/** The tag SPEC §13.4 defines. Absence is a declaration, not an omission. */
+export const CONTENT_FORMAT_TAG = 'content-format'
+
+/** The one format §13.3 names today. */
+export const BLOCK_DOCUMENT_FORMAT = 'estiva-blocks-1'
+
+/**
+ * The content model an event's body is in.
+ *
+ * **Decided by the tag alone.** §13.4 is explicit that a reader MUST NOT decide
+ * by inspecting the body: a legacy description that happens to begin with `{`
+ * is marker text, because it carries no tag.
+ */
+export function contentFormatOf(event: SignedEvent): ContentFormat {
+  const declared = tagValue(event, CONTENT_FORMAT_TAG)
+  if (declared === undefined || declared === '') return 'marker'
+  return declared === BLOCK_DOCUMENT_FORMAT ? 'blocks' : 'unknown'
+}
+
 function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
-  const fields: Record<string, { value: string; by: string; at: number }> = {}
+  const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat }> = {}
   for (const change of [...changes].sort(byOrder)) {
     const field = tagValue(change, rule.fieldTag)
     const value = tagValue(change, rule.valueTag)
     if (!field || value === undefined) continue // a partial change sets nothing
-    fields[field] = { value, by: change.pubkey, at: change.created_at }
+    // The format travels with the *winning* change, not with the object. SPEC
+    // §13.4: "an app MUST read the tag from the event it took the value from,
+    // never from the object's root" — a description created as marker text and
+    // later edited into blocks is a root with no tag and a change with one.
+    fields[field] = {
+      value,
+      by: change.pubkey,
+      at: change.created_at,
+      format: contentFormatOf(change),
+    }
   }
   return fields
 }
@@ -940,6 +998,19 @@ export interface ResolvedSlot {
   /** True when the value is a pubkey and should be shown as a person. */
   isPubkey?: boolean
   /**
+   * The content model this value is written in — SPEC §13.4.
+   *
+   * Set only for a slot whose source can carry a body (`{field: "content"}`, or
+   * a `fold` a change event has actually set). **Undefined means the value is
+   * not a body at all** — a tag, a seed, a default — not that it is marker
+   * text. `'marker'` is what "a body with no declared format" resolves to, and
+   * that is permanent rather than a migration state.
+   *
+   * A consumer rendering `slots.body` must branch on this. Parsing a block
+   * document as marker text, or the reverse, is forbidden outright by §13.
+   */
+  format?: ContentFormat
+  /**
    * The underlying field this slot reads, when it has a name.
    *
    * Carried so a renderer can tell that a slot and an action are two views of
@@ -973,21 +1044,79 @@ function firstTag(root: SignedEvent, tag: string | string[] | undefined): string
   return undefined
 }
 
+/**
+ * A slot's value, and the content model it is written in when it has one.
+ *
+ * `format` is set only where the value can be a **body**, which is true in two
+ * places and no others:
+ *
+ * 1. `{field: "content"}` — an event's own body, content by definition. It gets
+ *    a format whatever slot it was declared into, which is what keeps the PRO-8
+ *    guard below reachable: `{"subtitle": {"field": "content", "truncate": 120}}`
+ *    is a mis-declaration, and it must not also escape the truncation rule.
+ * 2. a slot named `body` — SPEC §7.2's closed set gives that name one meaning,
+ *    "structured content per §13". A `fold` is how §13.4's own example arrives
+ *    (a description created as marker text and later edited into blocks is a
+ *    root with no tag and a change with one), so it must be able to carry a
+ *    format — but only when the slot says it is a body.
+ *
+ * Everything else reports nothing. A tag is a short scalar and is never a body,
+ * so a `title` reports no format even on an event whose *content* is a block
+ * document; and a folded `lead` is a pubkey, not prose. Reporting `marker` for
+ * those would be a claim about a value that is not content at all.
+ */
+interface RawSlotValue {
+  value: string
+  format?: ContentFormat
+}
+
 function rawSlotValue(
   spec: SlotSpec,
   root: SignedEvent,
-  folded: Record<string, { value: string }>,
-): string | undefined {
+  folded: Record<string, { value: string; format?: ContentFormat }>,
+  isBody: boolean,
+): RawSlotValue | undefined {
   // `fold` first, and a spec may carry both: a field that starts as a tag on
   // the root event and is then overridden by changes (a project's lead is the
   // case in hand). Reading the tag first would render the value the object was
   // created with forever — which is exactly what someone sees right after
   // reassigning it from here.
   if (spec.fold) {
-    return folded[spec.fold]?.value ?? firstTag(root, spec.tag) ?? spec.default
+    const change = folded[spec.fold]
+    if (change) return { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined }
+    /*
+      Nobody has changed this field, so the object's own creation value stands.
+      §7.2 rule 2 covers seeding from a tag; `field: "content"` seeds from the
+      event body, and the two compose — tag first, then content.
+
+      **Needed because a description is where an app puts its body and `content`
+      is where the body goes.** Ship's issue description is
+      `fields.description?.value ?? event.content` and its project description
+      puts a `description` tag between the two (`fold.ts`), and neither could be
+      declared before this. The nearest expressible declarations were both
+      wrong in the way §7.2 rule 1 already warns about: `{field: "content"}`
+      alone renders the value the object was created with for ever, and
+      `{fold: "description"}` alone renders blank for every object nobody has
+      edited — which is most of them, and blank reads as "that app is broken"
+      (PEE-10).
+
+      The seed tag reports no format: a tag is a scalar. Content does, because
+      it is the event's body whatever slot it was declared into — the same rule
+      the direct `field: "content"` branch below follows, and what keeps the
+      truncation guard reachable.
+    */
+    const seedTag = firstTag(root, spec.tag)
+    if (seedTag !== undefined) return { value: seedTag }
+    if (spec.field === 'content' && root.content !== '') {
+      return { value: root.content, format: contentFormatOf(root) }
+    }
+    return spec.default === undefined ? undefined : { value: spec.default }
   }
-  if (spec.tag) return firstTag(root, spec.tag)
-  if (spec.field === 'content') return root.content
+  if (spec.tag) {
+    const value = firstTag(root, spec.tag)
+    return value === undefined ? undefined : { value }
+  }
+  if (spec.field === 'content') return { value: root.content, format: contentFormatOf(root) }
   /*
     `pubkey` — the event's author — added by PRO-6.
 
@@ -1002,21 +1131,37 @@ function rawSlotValue(
     in a new source. Paired with `as: "pubkey"` it renders as a person, which is
     what a message wants as its title everywhere it appears.
   */
-  if (spec.field === 'pubkey') return root.pubkey
+  if (spec.field === 'pubkey') return { value: root.pubkey }
   return undefined
 }
 
 function resolveSlot(
   spec: SlotSpec,
   root: SignedEvent,
-  folded: Record<string, { value: string }>,
+  folded: Record<string, { value: string; format?: ContentFormat }>,
   manifest: Manifest,
+  name?: string,
 ): ResolvedSlot | null {
-  const raw = rawSlotValue(spec, root, folded)
+  const source = rawSlotValue(spec, root, folded, name === BODY_SLOT)
 
-  if (raw === undefined || raw === '') return null
+  if (source === undefined || source.value === '') return null
+  const raw = source.value
 
-  let value = truncate(raw, spec.truncate)
+  /*
+    PRO-8's rule, now enforceable rather than only written down.
+
+    `truncate` is a plain-text operation. Ship's manifest carried a comment
+    saying so and a type that forbade the pairing, but nothing stopped another
+    app publishing `{"field": "content", "truncate": 120}` — and the consumer
+    would happily slice 120 characters out of a JSON block document and render
+    the fragment. That is the PRO-8 defect exactly: output that is wrong and
+    cannot tell that it is wrong.
+
+    Marker text is still truncated. It degrades honestly — a cut `**bold` is
+    visibly a cut, and 548 published messages are written in it.
+  */
+  const structured = source.format === 'blocks' || source.format === 'unknown'
+  let value = structured ? raw : truncate(raw, spec.truncate)
   let colour: string | undefined
   if (spec.map) {
     const entry = manifest.vocabularies?.[spec.map]?.find((v) => v.value === raw)
@@ -1032,6 +1177,11 @@ function resolveSlot(
     colour,
     isPubkey: spec.as === 'pubkey',
     field: spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag),
+    // Present only on a slot that can carry a body. Absent is the honest shape
+    // for a title read from a tag — and it keeps the key out of every existing
+    // consumer's deep comparisons, which is not the reason but is a real cost
+    // avoided: `format: undefined` is an own property to `deepStrictEqual`.
+    ...(source.format ? { format: source.format } : {}),
   }
 }
 
@@ -1045,7 +1195,7 @@ function resolveSlot(
 function resolveSlots(
   projection: { slots: Record<string, SlotSpec | SlotSpec[]> },
   root: SignedEvent,
-  folded: Record<string, { value: string }>,
+  folded: Record<string, { value: string; format?: ContentFormat }>,
   manifest: Manifest,
 ): { slots: Record<string, ResolvedSlot>; meta: ResolvedSlot[] } {
   const slots: Record<string, ResolvedSlot> = {}
@@ -1053,11 +1203,13 @@ function resolveSlots(
   for (const [name, spec] of Object.entries(projection.slots)) {
     if (Array.isArray(spec)) {
       for (const one of spec) {
+        // An array spec collects into `meta`, so the name it was declared under
+        // is not the slot's meaning — nothing in an array is a body.
         const value = resolveSlot(one, root, folded, manifest)
         if (value) meta.push(value)
       }
     } else {
-      const value = resolveSlot(spec, root, folded, manifest)
+      const value = resolveSlot(spec, root, folded, manifest, name)
       if (value) slots[name] = value
     }
   }
@@ -1193,7 +1345,7 @@ function buildObject(args: {
   pointer: AddressPointer
   manifest: Manifest
   projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
-  folded: Record<string, { value: string }>
+  folded: Record<string, { value: string; format?: ContentFormat }>
   viaRecommendation: boolean
   webTemplate?: string
   comments?: ForeignObject['comments']
@@ -1218,7 +1370,7 @@ function buildObject(args: {
     // *is* keyed on is the first, which is the one the app writes today. The
     // rest are only there to keep older records rendering.
     const field = spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
-    const raw = field && rawSlotValue(spec, root, folded)
+    const raw = field ? rawSlotValue(spec, root, folded, false)?.value : undefined
     if (field && raw !== undefined) held[field] = raw
   }
   const objectAddress = pointerToAddress(pointer)
@@ -2206,7 +2358,7 @@ export async function resolveFolderProject(
     const ticketChanges = changesFor(pointerToAddress(ticketPointer))
     const folded = foldChanges(ticketChanges, records)
     const status = statusSpec ? resolveSlot(statusSpec, event, folded, manifest) : null
-    const raw = statusSpec ? rawSlotValue(statusSpec, event, folded) : undefined
+    const raw = statusSpec ? rawSlotValue(statusSpec, event, folded, false)?.value : undefined
 
     // The owning app's declaration first, the label guess only if it has none.
     const stage = declaredStage(manifest, statusSpec, raw)

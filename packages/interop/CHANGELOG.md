@@ -6,6 +6,69 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.7.0 — 2026-09-02
+
+**Manifest behaviour: a `body` slot now reports which content model it is
+written in, and a structured value is no longer truncated.** No manifest changes
+shape. A manifest that already declares `{"body": {"field": "content"}}` starts
+resolving with a `format`; one that declares `truncate` on a value whose event
+says it is a block document stops having it applied.
+
+PRO-2 held the `body` slot open because "structured content" had no specified
+format. RIC-1 decided it (SPEC §13): messages are marker text, rich text fields
+are JSON block documents, and the two share an inline vocabulary and nothing
+else. §13 forbids reading either as the other, so a consumer needs to be told
+which one it has — and that is what a `ResolvedSlot` now carries.
+
+- **`ResolvedSlot.format`** — `'marker' | 'blocks' | 'unknown'`, and **absent
+  when the value is not a body at all**. Absent is not the same as `'marker'`: a
+  folded `status` arrives through the same `value` tag a folded description
+  does, so nothing in the data distinguishes them and only the slot they were
+  declared into does.
+
+  `'unknown'` exists so a consumer can decline. A format specified after this
+  runtime was written must not be parsed as either model, and §13.5 makes
+  rendering it as plain text conformant.
+
+- **`contentFormatOf(event)`, `CONTENT_FORMAT_TAG`, `BLOCK_DOCUMENT_FORMAT`,
+  `BODY_SLOT`** are exported. The default lives here rather than in each
+  consumer for the reason `CLOSED_WIDGETS` does: two copies of *absent means
+  marker* disagree the first time a third format exists, and the disagreement
+  shows up as one app rendering JSON at a person.
+
+- **The format is read from the event the value came from**, never from the
+  object's root — SPEC §13.4. A description created as marker text and later
+  edited into blocks is a root with no tag and a change with one, and the fold
+  takes the change's value, tag and all.
+
+- **A `fold` may now be seeded from `content`, not only from a tag** —
+  `{"fold": "description", "field": "content"}`. §7.2 rule 2 already allowed a
+  fold seeded from a tag, for the reason that tag-alone goes stale and
+  fold-alone loses the creation value. A body lives in `content`, so the same
+  argument reaches there, and until now neither of Ship's descriptions could be
+  declared at all: an issue's is `fields.description?.value ?? event.content`,
+  and a project's puts a `description` tag between the two. The chain is fold,
+  then tag, then content.
+
+  Found by trying to declare the slot rather than by reading the spec. The two
+  expressible declarations were both wrong in the way §7.2 rule 1 warns about:
+  `{field: "content"}` renders the creation value for ever, and
+  `{fold: "description"}` renders blank for every object nobody has edited —
+  most of them — and blank reads as "that app is broken" (PEE-10).
+
+- **`truncate` is refused on a structured value.** PRO-8 established that
+  truncating structure produces output that is wrong and cannot tell that it is
+  wrong; it was enforced by a comment in Ship's manifest and a type only Ship
+  had. Any manifest could publish `{"field": "content", "truncate": 120}`, and
+  the consumer would have sliced a JSON document. Marker text is still
+  truncated — a cut `**bold` is visibly cut.
+
+**Absence of a declaration stays a declaration, permanently.** 731 published
+bodies carry no `content-format` tag and none of them can be given one: roots
+are replaceable by their author alone, messages and changes not at all, and
+REW-11 established that rewriting stamps a `created_at` the relay will not
+backdate. Untagged means marker text for good, not during a window.
+
 ## 0.6.0 — 2026-09-01
 
 **Manifest behaviour: an object-creating action is now offered instead of
