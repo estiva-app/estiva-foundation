@@ -4,6 +4,45 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.8.0 — 2026-09-02
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. This release adds a resolver, and a resolver reads what
+somebody else published.
+
+- **New: `render.ts` — one resolved tree, whichever model the body is in.**
+  `toRenderTree(value, format)` and `renderTreeText`. Marker text and a block
+  document both become the same `RenderBlock[]`, so a consumer writes one
+  mapper instead of two, and a block document's ids survive into it while
+  marker text correctly has none.
+
+  **This is what SPEC §13.5's "safe by construction" means in practice.** The
+  safety is not a component — it is that an app is never handed a string it has
+  to interpret. Marks are decided, blocks are decided, and there is nothing
+  left to parse, so an app that maps this tree *cannot* accidentally render
+  markup. There is a corpus test asserting every character of output came from
+  the input; making the resolver append four characters fails 4 tests.
+
+- **A tree rather than a shared component, and not for the reason the ticket
+  said.** RIC-6 justified it as "Ship is vanilla `h()` and Peek is React". That
+  was true when the ticket was written and is no longer: Ship's UI is React +
+  Vite and both apps already depend on `@estiva-app/ui`, so a shared component
+  was available. It is still a tree, for a better reason — **how rich text
+  looks is the consumer's**, which is RFC 0.4 §13.1's rule for projections and
+  SPEC §10's line about sharing the wire and never the interpretation. A shared
+  component would make Ship and Peek look alike by construction, which nobody
+  asked for.
+
+- **`'unknown'` is handled here rather than in each consumer.** A format
+  declared after this code was written becomes one unmarked paragraph of the
+  raw value, which §13.5 says is conformant. Leaving that to consumers is how
+  one of them ends up guessing.
+
+- **A mis-tagged body degrades instead of throwing.** A `'blocks'` value that
+  is not a document renders as its own text. A reader that throws renders an
+  empty field, and an empty field is indistinguishable from a description
+  nobody wrote.
+
 ## 0.7.0 — 2026-09-02
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
