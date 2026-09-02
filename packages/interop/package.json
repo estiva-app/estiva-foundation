@@ -42,7 +42,7 @@
   "scripts": {
     "prebuild": "npm run build --workspace @estiva-app/protocol",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test test/*.test.mjs test/*.test.ts",
     "typecheck": "npm run build && tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
     "prepublishOnly": "npm run build"
   },
