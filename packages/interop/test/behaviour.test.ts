@@ -1434,3 +1434,162 @@ describe('widgetChainProblem', () => {
     }
   })
 })
+
+/**
+ * SPEC §13.4 — which content model a body is written in, and where that is
+ * recorded. PRO-2's `body` slot, unblocked by RIC-1 deciding the formats.
+ *
+ * The rule under test is *the absence of a declaration is a declaration*: 731
+ * published bodies carry no `content-format` tag and none of them can be given
+ * one, so untagged means marker text permanently rather than during a window.
+ */
+describe('a body slot carries the content model it is written in', () => {
+  const bodyManifest = (slots: Record<string, unknown>) =>
+    event({
+      kind: 31990,
+      tags: [['d', 'app'], ['k', String(PROJECT_KIND)], ['k', String(ISSUE_KIND)]],
+      content: JSON.stringify({
+        name: 'Linear-lite',
+        records: {
+          changeKind: CHANGE_KIND,
+          targetTag: 'a',
+          fieldTag: 'field',
+          valueTag: 'value',
+          order: ['ts', 'created_at', 'id'],
+          rule: 'last-write-wins-per-field',
+        },
+        projections: { [PROJECT_KIND]: { widget: 'card', slots } },
+      }),
+    })
+
+  const P1 = `${PROJECT_KIND}:${AUTHOR}:p1`
+  const resolve = async (slots: Record<string, unknown>, events: SignedEvent[]) =>
+    await resolveForeignObject(P1, relay([bodyManifest(slots), ...events]))
+
+  const BLOCKS = JSON.stringify({
+    type: 'doc',
+    content: [{ type: 'paragraph', id: 'b1', content: [{ type: 'text', text: 'Hello' }] }],
+  })
+
+  const slots = { title: { tag: 'title' }, body: { field: 'content' } }
+
+  it('reports marker text for a body with no declared format', async () => {
+    const found = await resolve(slots, [project('p1')])
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('reports blocks for a body whose event declares the block document format', async () => {
+    const root = project('p1', {
+      content: BLOCKS,
+      tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
+    })
+    const found = await resolve(slots, [root])
+    assert.equal(found?.slots.body?.format, 'blocks')
+  })
+
+  it('refuses to guess at a format it does not know, rather than picking one', async () => {
+    // A format specified after this runtime was written. Parsing it as either
+    // known model is what §13 forbids outright, so the consumer is told the
+    // truth and §13.5 lets it fall back to plain text.
+    const root = project('p1', {
+      content: BLOCKS,
+      tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-2']],
+    })
+    const found = await resolve(slots, [root])
+    assert.equal(found?.slots.body?.format, 'unknown')
+  })
+
+  it('decides by the tag alone, never by looking at the body', async () => {
+    // §13.4 names this case: "a legacy description that happens to begin with
+    // `{` is marker text, because it carries no tag". Inspecting the body is
+    // how a reader silently reclassifies 731 published events.
+    const found = await resolve(slots, [project('p1', { content: BLOCKS })])
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('reads the format from the event the value came from, not from the root', async () => {
+    // The fold takes the change's value, tag and all. A description created as
+    // marker text and later edited into blocks is a root with no tag and a
+    // change with one — reading the root would render JSON at a person.
+    const found = await resolve({ title: { tag: 'title' }, body: { fold: 'description' } }, [
+      project('p1'),
+      change(P1, 'description', BLOCKS, {
+        tags: [
+          ['a', P1],
+          ['field', 'description'],
+          ['value', BLOCKS],
+          ['h', FOLDER],
+          ['content-format', 'estiva-blocks-1'],
+        ],
+      }),
+    ])
+    assert.equal(found?.slots.body?.format, 'blocks')
+  })
+
+  it('follows the value back to a change that declares nothing, even when the root declares blocks', async () => {
+    // The same rule in the direction that catches a reader who took the short
+    // cut of reading the root once: here the root is blocks and the current
+    // value is not.
+    const root = project('p1', {
+      content: BLOCKS,
+      tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
+    })
+    const found = await resolve({ title: { tag: 'title' }, body: { fold: 'description' } }, [
+      root,
+      change(P1, 'description', 'plain **text** now'),
+    ])
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('reports no format for a folded value that is not a body', async () => {
+    // The load-bearing half of the rule. A `status` arrives the same way a
+    // folded description does — a change event's `value` tag — so nothing in
+    // the *data* distinguishes them; only the slot it was declared into does.
+    // Claiming `marker` about a status is a claim about content, and a consumer
+    // acting on it would push `in_progress` through a body renderer.
+    //
+    // A tag-sourced title is the easy half and cannot fail: no tag source ever
+    // reports a format. It is asserted anyway, on the event whose *content* is
+    // a block document, because that is where a reader tempted to read the
+    // root's tag once and apply it everywhere would get it wrong.
+    const root = project('p1', {
+      content: BLOCKS,
+      tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
+    })
+    const found = await resolve(
+      { title: { tag: 'title' }, status: { fold: 'status', default: 'planned' } },
+      [root, change(P1, 'status', 'in_progress')],
+    )
+    assert.equal(found?.slots.status?.value, 'in_progress')
+    assert.ok(!('format' in (found?.slots.status ?? {})))
+    assert.ok(!('format' in (found?.slots.title ?? {})))
+  })
+
+  it('never truncates a block document, whatever slot it was declared into', async () => {
+    // PRO-8's rule, now enforced rather than only written down: `truncate` is a
+    // plain-text operation. Slicing 40 characters out of JSON produces a
+    // fragment that is wrong and cannot tell that it is wrong.
+    const root = project('p1', {
+      content: BLOCKS,
+      tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
+    })
+    const found = await resolve(
+      { title: { tag: 'title' }, subtitle: { field: 'content', truncate: 40 } },
+      [root],
+    )
+    assert.equal(found?.slots.subtitle?.value, BLOCKS)
+    assert.ok(!found?.slots.subtitle?.value.endsWith('…'))
+  })
+
+  it('still truncates marker text, which degrades honestly', async () => {
+    // A cut `**bold` is visibly cut. 548 published messages are marker text and
+    // truncation is what makes them fit a row.
+    const long = 'x'.repeat(200)
+    const found = await resolve(
+      { title: { tag: 'title' }, subtitle: { field: 'content', truncate: 40 } },
+      [project('p1', { content: long })],
+    )
+    assert.equal(found?.slots.subtitle?.value.length, 41)
+    assert.ok(found?.slots.subtitle?.value.endsWith('…'))
+  })
+})
