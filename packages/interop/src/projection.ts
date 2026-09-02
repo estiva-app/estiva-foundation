@@ -1083,12 +1083,34 @@ function rawSlotValue(
   // reassigning it from here.
   if (spec.fold) {
     const change = folded[spec.fold]
-    // Only the folded value can be a body. The seed tag and the default are
-    // not: falling back to either means no change has ever set this field, so
-    // there is no event whose `content-format` could describe it.
     if (change) return { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined }
-    const seeded = firstTag(root, spec.tag) ?? spec.default
-    return seeded === undefined ? undefined : { value: seeded }
+    /*
+      Nobody has changed this field, so the object's own creation value stands.
+      §7.2 rule 2 covers seeding from a tag; `field: "content"` seeds from the
+      event body, and the two compose — tag first, then content.
+
+      **Needed because a description is where an app puts its body and `content`
+      is where the body goes.** Ship's issue description is
+      `fields.description?.value ?? event.content` and its project description
+      puts a `description` tag between the two (`fold.ts`), and neither could be
+      declared before this. The nearest expressible declarations were both
+      wrong in the way §7.2 rule 1 already warns about: `{field: "content"}`
+      alone renders the value the object was created with for ever, and
+      `{fold: "description"}` alone renders blank for every object nobody has
+      edited — which is most of them, and blank reads as "that app is broken"
+      (PEE-10).
+
+      The seed tag reports no format: a tag is a scalar. Content does, because
+      it is the event's body whatever slot it was declared into — the same rule
+      the direct `field: "content"` branch below follows, and what keeps the
+      truncation guard reachable.
+    */
+    const seedTag = firstTag(root, spec.tag)
+    if (seedTag !== undefined) return { value: seedTag }
+    if (spec.field === 'content' && root.content !== '') {
+      return { value: root.content, format: contentFormatOf(root) }
+    }
+    return spec.default === undefined ? undefined : { value: spec.default }
   }
   if (spec.tag) {
     const value = firstTag(root, spec.tag)

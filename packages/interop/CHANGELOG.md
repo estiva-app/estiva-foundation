@@ -41,6 +41,21 @@ which one it has — and that is what a `ResolvedSlot` now carries.
   edited into blocks is a root with no tag and a change with one, and the fold
   takes the change's value, tag and all.
 
+- **A `fold` may now be seeded from `content`, not only from a tag** —
+  `{"fold": "description", "field": "content"}`. §7.2 rule 2 already allowed a
+  fold seeded from a tag, for the reason that tag-alone goes stale and
+  fold-alone loses the creation value. A body lives in `content`, so the same
+  argument reaches there, and until now neither of Ship's descriptions could be
+  declared at all: an issue's is `fields.description?.value ?? event.content`,
+  and a project's puts a `description` tag between the two. The chain is fold,
+  then tag, then content.
+
+  Found by trying to declare the slot rather than by reading the spec. The two
+  expressible declarations were both wrong in the way §7.2 rule 1 warns about:
+  `{field: "content"}` renders the creation value for ever, and
+  `{fold: "description"}` renders blank for every object nobody has edited —
+  most of them — and blank reads as "that app is broken" (PEE-10).
+
 - **`truncate` is refused on a structured value.** PRO-8 established that
   truncating structure produces output that is wrong and cannot tell that it is
   wrong; it was enforced by a comment in Ship's manifest and a type only Ship

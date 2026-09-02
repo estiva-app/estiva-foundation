@@ -1565,6 +1565,48 @@ describe('a body slot carries the content model it is written in', () => {
     assert.ok(!('format' in (found?.slots.title ?? {})))
   })
 
+  it('seeds a folded body from the event content when nothing has changed it', async () => {
+    // Ship's issue description is `fields.description?.value ?? event.content`.
+    // Declaring `{fold: "description"}` alone renders blank for every issue
+    // nobody has edited — which is most of them — and blank reads as "that app
+    // is broken" (PEE-10). §7.2 rule 2 already seeds a fold from a tag; a body
+    // lives in `content`, so it has to seed from there too.
+    const found = await resolve({ title: { tag: 'title' }, body: { fold: 'description', field: 'content' } }, [
+      project('p1'),
+    ])
+    assert.equal(found?.slots.body?.value, 'Stripe Checkout for workspace billing — redirect flow.')
+    assert.equal(found?.slots.body?.format, 'marker')
+  })
+
+  it('prefers a change over the content it was seeded from', async () => {
+    // The other half of §7.2 rule 1: seeded alone renders the value the object
+    // was created with for ever, which is what someone sees right after editing
+    // the description from another app.
+    const found = await resolve({ title: { tag: 'title' }, body: { fold: 'description', field: 'content' } }, [
+      project('p1'),
+      change(P1, 'description', 'edited since'),
+    ])
+    assert.equal(found?.slots.body?.value, 'edited since')
+  })
+
+  it('prefers a seed tag over the content behind it', async () => {
+    // Ship's *project* description puts a `description` tag between the fold
+    // and the content, and takes the tag at its word even when something also
+    // left content behind (`fold.ts`). The chain is fold, tag, content.
+    const found = await resolve(
+      { title: { tag: 'title' }, body: { fold: 'description', tag: 'description', field: 'content' } },
+      [
+        project('p1', {
+          tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['description', 'from the tag']],
+          content: 'from the content',
+        }),
+      ],
+    )
+    assert.equal(found?.slots.body?.value, 'from the tag')
+    // A tag is a scalar, not a body — even standing in for one.
+    assert.ok(!('format' in (found?.slots.body ?? {})))
+  })
+
   it('never truncates a block document, whatever slot it was declared into', async () => {
     // PRO-8's rule, now enforced rather than only written down: `truncate` is a
     // plain-text operation. Slicing 40 characters out of JSON produces a
