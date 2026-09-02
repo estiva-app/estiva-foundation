@@ -4,6 +4,54 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.6.0 — 2026-09-02
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. This release adds a parser, and a parser reads bytes
+somebody else already published.
+
+**What it does change is what readers draw**, which is not the wire and is not
+nothing: an app that upgrades starts rendering backtick spans in messages that
+have been on the relay for weeks. Measured 2026-09-02, that is **200 of 548
+published message bodies** — the most common construct in the corpus, more
+common than bold, and until now rendered by nobody. Upgrading is visible to
+users on history, not only on new messages.
+
+- **New: `content.ts` — the message marker dialect, SPEC §13.2.** `parseInlineMarks`,
+  `wrapInlineMarks`, `parseBodySegments` and `stripInlineFormatting`, moved out
+  of Peek's `src/lib/textParsing.ts` rather than written fresh, so the behaviour
+  that was already shipping is preserved by construction. Peek's own tests for
+  them are ported verbatim into `test/content.test.ts` as the proof.
+
+  Only the **mark** layer moved. Peek's mentions and bracket references resolve
+  against its own directory and fixtures, and they stay there — a mention is
+  RIC-2's, and dragging its regexes along would have imported one app's mock
+  data into the shared package.
+
+- **New in the dialect: `code` and fenced code** (SPEC §13.1, §13.2). A code
+  span carries `code` and never combines with another mark, and its content is
+  never parsed for further marks — so `` `**x**` `` is four literal characters
+  and a name.
+
+- **SPEC §13.2's rule 2 does not fence a backtick**, and the corpus is why.
+  Rule 2 keeps `2*3*4` literal, which an asymmetric prose marker needs and a
+  backtick does not — applying it anyway left `` `main`s `` unparsed, a code
+  span followed by a plural or possessive. Eight such spans in six published
+  messages. SPEC was amended to say so (estiva-docs#56) rather than the parser
+  quietly disagreeing with it.
+
+- **Fixed while extracting: `stripInlineFormatting` was not idempotent.** It
+  removed the heading prefix before the quote prefix, so `> # Heading` — the
+  shape every project brief in this workspace is written in — came back as
+  `# Heading` and previews showed a stray `#`. Prefixes are now stripped until
+  the line stops changing. **This bug was invisible to the tests it shipped
+  with** and was found by running the function over 152 real published bodies.
+
+- **New: `test/corpus-bodies.json`** — 152 real message bodies from production.
+  A parser checked only against fixtures written beside it is checked against
+  its own assumptions; both defects above came from this file and neither came
+  from the unit tests.
+
 ## 0.5.0 — 2026-09-01
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
