@@ -840,28 +840,34 @@ function foldRuleOf(manifest: Manifest): RecordsRule {
 }
 
 /**
- * What content model a body is written in — SPEC §13.4.
+ * SPEC §13.4's content format — **re-exported from `@estiva-app/protocol`.**
  *
- * Three values, not two, and not the raw tag string. A consumer has to make a
- * three-way decision and **must not guess the third**:
+ * These were defined here first, because the projection layer is what needed
+ * them: a slot has to tell a consumer which model its value is in. Reading a
+ * tag off an event turned out to be a question about the *event* rather than
+ * about the slot, and two folds outside this layer now need it — Ship's and the
+ * agent's, one fold in two repositories held to a single recorded state. Making
+ * either depend on the projection layer to read a tag is the wrong direction,
+ * and a second copy of `'estiva-blocks-1'` is what the protocol package exists
+ * to prevent.
  *
- * - `marker` — the §13.2 dialect. The default, permanently. 731 published
- *   bodies carry no tag and none of them can be given one, so this is not a
- *   migration window that closes.
- * - `blocks` — a §13.3 JSON block document.
- * - `unknown` — a format declared after this runtime was written. Render the
- *   body as plain text; §13.5 says declining to format is conformant, and
- *   parsing it as either known model is what §13 forbids outright.
- *
- * It is resolved here rather than left to each consumer for the same reason
- * `CLOSED_WIDGETS` is: two copies of `tag === undefined ? marker : tag ===
- * 'estiva-blocks-1' ? blocks : text` disagree the first time a third format
- * exists, and the disagreement shows up as one app rendering JSON at a person.
+ * So the definitions moved down and this re-exports them. **Nothing this
+ * package published has changed** — same names, same values, same behaviour.
  */
-export type ContentFormat = 'marker' | 'blocks' | 'unknown'
+export {
+  type ContentFormat,
+  CONTENT_FORMAT_TAG,
+  BLOCK_DOCUMENT_FORMAT,
+  contentFormatOf,
+} from '@estiva-app/protocol'
+// Re-exporting does not bind the names locally, and this file folds with them.
+import { contentFormatOf, type ContentFormat } from '@estiva-app/protocol'
 
 /**
  * The one slot in SPEC §7.2's closed set that means "structured content".
+ *
+ * Stays here: a *slot* is this layer's subject, and the protocol package has no
+ * opinion about which of them carries a body.
  *
  * Named rather than inlined because the runtime keys behaviour on it twice —
  * whether a value carries a content format, and whether it may be truncated —
@@ -869,24 +875,6 @@ export type ContentFormat = 'marker' | 'blocks' | 'unknown'
  */
 export const BODY_SLOT = 'body'
 
-/** The tag SPEC §13.4 defines. Absence is a declaration, not an omission. */
-export const CONTENT_FORMAT_TAG = 'content-format'
-
-/** The one format §13.3 names today. */
-export const BLOCK_DOCUMENT_FORMAT = 'estiva-blocks-1'
-
-/**
- * The content model an event's body is in.
- *
- * **Decided by the tag alone.** §13.4 is explicit that a reader MUST NOT decide
- * by inspecting the body: a legacy description that happens to begin with `{`
- * is marker text, because it carries no tag.
- */
-export function contentFormatOf(event: SignedEvent): ContentFormat {
-  const declared = tagValue(event, CONTENT_FORMAT_TAG)
-  if (declared === undefined || declared === '') return 'marker'
-  return declared === BLOCK_DOCUMENT_FORMAT ? 'blocks' : 'unknown'
-}
 
 function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
   const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat }> = {}

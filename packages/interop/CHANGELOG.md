@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.9.0 — 2026-09-02
+
+**Behaviour unchanged, and no export moved.** `contentFormatOf`,
+`CONTENT_FORMAT_TAG`, `BLOCK_DOCUMENT_FORMAT` and `ContentFormat` are now
+**re-exported from `@estiva-app/protocol`** rather than defined here. Same
+names, same values, same results; the 147 tests are untouched and pass.
+
+They were defined here because this layer needed them first — a slot has to
+tell a consumer which model its value is in. Reading a tag off an event is a
+question about the event rather than the slot, and two folds outside this layer
+now need it: Ship's and the agent's, one fold in two repositories held to a
+single recorded state. Making either depend on the projection layer to read a
+tag is the wrong direction.
+
+**The peer floor moves to `>=0.9.0`**, which is not cosmetic: with an older
+protocol these re-exports do not exist and this package would fail at import.
+
+`BODY_SLOT` stays here. A slot is this layer's subject.
+
 ## 0.8.0 — 2026-09-02
 
 **Manifest behaviour: a `body` slot now always reports a format, whichever
