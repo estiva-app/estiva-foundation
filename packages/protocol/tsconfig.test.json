@@ -19,6 +19,6 @@
     "which passed in CI (where a build step runs before it) and failed on a fresh",
     "clone with eleven TS2307s that look like the package is broken."
   ],
-  "extends": "./tsconfig.base.test.json",
+  "extends": "../../tsconfig.base.test.json",
   "include": ["test/**/*.ts"]
 }

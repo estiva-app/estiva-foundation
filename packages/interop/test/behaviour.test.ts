@@ -381,7 +381,7 @@ describe('resolveFolderProject', () => {
 
     const found = await resolveFolderProject(FOLDER, relay(events))
 
-    assert.equal((found?.tickets).length, 10)
+    assert.equal(found?.tickets.length, 10)
     assert.equal(found?.openCount, 10)
   })
 
@@ -963,7 +963,7 @@ describe('a manifest that declares its own containment and stages', () => {
         ...ticket('t4', 'todo'),
       ]),
     )
-    assert.equal((found?.tickets).length, 2)
+    assert.equal(found?.tickets.length, 2)
     // "2 of 4" would be a lie about the project; the budget is about drawing.
     assert.equal(found?.openCount, 4)
   })
@@ -1033,7 +1033,7 @@ describe('a child that names its parent by identifier, not address', () => {
       relay([peekManifest('identifier'), topic, message('m1'), message('m2')]),
     )
     assert.equal(found?.slots.title.value, 'design')
-    assert.equal((found?.children).length, 2)
+    assert.equal(found?.children?.length, 2)
   })
 
   it('finds none when it defaults to address, which is why match exists', async () => {
@@ -1044,7 +1044,7 @@ describe('a child that names its parent by identifier, not address', () => {
       TOPIC_ADDRESS,
       relay([peekManifest(), topic, message('m1'), message('m2')]),
     )
-    assert.equal((found?.children).length, 0)
+    assert.equal(found?.children?.length, 0)
   })
 
   it('keeps address matching the default, so Ship’s manifest is unchanged', async () => {
@@ -1224,7 +1224,7 @@ describe('resolveForeignObject — the list slot', () => {
 
   it('stops at the depth budget rather than following a child’s own list', async () => {
     const events = [peekManifest(), topic, message('one')]
-    assert.equal(((await resolveForeignObject(TOPIC_ADDR, relay(events), undefined, 0))?.children).length, 1)
+    assert.equal((await resolveForeignObject(TOPIC_ADDR, relay(events), undefined, 0))?.children?.length, 1)
     assert.deepEqual((await resolveForeignObject(TOPIC_ADDR, relay(events), undefined, 1))?.children, [])
   })
 
@@ -1407,13 +1407,13 @@ describe('widgetChainProblem', () => {
 
   it('rejects a bare unknown type and says how to fix it', () => {
     const problem = widgetChainProblem('profile')
-    assert.ok((problem).includes('"profile", "card"'))
+    assert.ok(problem?.includes('"profile", "card"'))
   })
 
   it('names the offending entry rather than saying "invalid"', () => {
     // Read by a person publishing a manifest. "invalid widget" tells them
     // neither which one nor what to do about it.
-    assert.ok((widgetChainProblem(['gantt'])).includes('gantt'))
+    assert.ok(widgetChainProblem(['gantt'])?.includes('gantt'))
   })
 
   it('rejects the shapes that are not chains at all', () => {

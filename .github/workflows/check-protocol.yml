@@ -10,9 +10,9 @@ name: check protocol
 on:
   push:
     branches: [main]
-    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json']
+    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
   pull_request:
-    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json']
+    paths: ['packages/protocol/**', '.github/workflows/check-protocol.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
 
 concurrency:
   group: check-protocol-${{ github.ref }}
