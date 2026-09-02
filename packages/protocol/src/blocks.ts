@@ -10,13 +10,10 @@
  *
  * ## What is deliberately not here
  *
- * **The `content-format` tag.** SPEC §13.4's read rule already lives in
- * `@estiva-app/interop` as `contentFormatOf`, alongside `CONTENT_FORMAT_TAG`
- * and `BLOCK_DOCUMENT_FORMAT`, because it is a question about an *event and its
- * slot* rather than about a document. Defining the same wire string here would
- * be a second copy of exactly the kind this package exists to prevent, so this
- * module never names it: a document does not know its own tag, and the reader
- * that does is one layer up.
+ * **The `content-format` tag.** A document does not know its own tag — the tag
+ * is on the event that carries it, and SPEC §13.4's read rule is
+ * `contentFormatOf` in `render.ts`. (It lived in `@estiva-app/interop` until
+ * two folds outside the projection layer needed it; see that function's note.)
  *
  * **Rendering.** §13.5's safe renderer is RIC-6's, where Ship is the consumer
  * that needs it. What this module owes a renderer is {@link inlineTextOf}, so

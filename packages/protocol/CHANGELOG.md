@@ -4,6 +4,35 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.9.0 — 2026-09-02
+
+**Wire behaviour: unchanged.** Nothing about the bytes moved. One function and
+two constants moved *between packages*, and `@estiva-app/interop` re-exports
+them, so **no consumer of either package has to change anything.**
+
+- **`contentFormatOf`, `CONTENT_FORMAT_TAG` and `BLOCK_DOCUMENT_FORMAT` move
+  here from `@estiva-app/interop`.** They were defined there because the
+  projection layer needed them first, and reading a tag off an event looked
+  like a question about a slot.
+
+  It is not — it is a question about an event, which is this package's subject.
+  **Two folds outside the projection layer now need it**: Ship's and the
+  agent's, which are one fold in two repositories held to a single recorded
+  state by a conformance fixture. Making either depend on the projection layer
+  to read a tag is the wrong direction, and a second copy of
+  `'estiva-blocks-1'` is what this package exists to prevent.
+
+- **`ContentFormat` is the name; `RenderFormat` is now an alias for it.** 0.8.0
+  shipped `RenderFormat` and `interop` shipped `ContentFormat`, and they were
+  the same three-value union declared twice — a duplicate introduced by 0.8.0
+  and removed by this release. The old name still exports, so 0.8.0's consumers
+  keep compiling.
+
+- `interop` is unchanged in behaviour and re-exports all three names, with its
+  147 tests passing untouched. `BODY_SLOT` stays in `interop`: a *slot* is that
+  layer's subject, and this package has no opinion about which one carries a
+  body.
+
 ## 0.8.0 — 2026-09-02
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or

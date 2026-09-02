@@ -11,6 +11,9 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
+  BLOCK_DOCUMENT_FORMAT,
+  CONTENT_FORMAT_TAG,
+  contentFormatOf,
   assignMissingBlockIds,
   renderTreeText,
   serializeBlockDocument,
@@ -155,5 +158,30 @@ describe('nothing is invented — 152 real published bodies', () => {
     for (const body of corpus.bodies) {
       assert.equal(renderTreeText(toRenderTree(body, 'unknown')), body)
     }
+  })
+})
+
+describe('contentFormatOf — SPEC §13.4, moved here from interop', () => {
+  const ev = (tags: string[][]) => ({ id: '', pubkey: '', created_at: 0, kind: 30851, tags, content: '', sig: '' })
+
+  it('absent is marker, permanently — 731 bodies depend on it', () => {
+    assert.equal(contentFormatOf(ev([['d', 'x']])), 'marker')
+  })
+
+  it('an empty tag value is absent, not a third thing', () => {
+    assert.equal(contentFormatOf(ev([[CONTENT_FORMAT_TAG, '']])), 'marker')
+  })
+
+  it('the one declared format is blocks', () => {
+    assert.equal(contentFormatOf(ev([[CONTENT_FORMAT_TAG, BLOCK_DOCUMENT_FORMAT]])), 'blocks')
+  })
+
+  it('refuses to guess a format it does not know', () => {
+    assert.equal(contentFormatOf(ev([[CONTENT_FORMAT_TAG, 'estiva-blocks-2']])), 'unknown')
+  })
+
+  it('never inspects the body — a {-leading body with no tag is marker', () => {
+    const looksLikeJson = { ...ev([['d', 'x']]), content: '{"type":"doc","content":[]}' }
+    assert.equal(contentFormatOf(looksLikeJson), 'marker')
   })
 })

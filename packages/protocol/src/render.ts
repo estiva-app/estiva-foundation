@@ -37,6 +37,7 @@ import {
   parseInlineMarks,
 } from './content.js'
 import { type Block, type BlockDocument, parseBlockDocument, inlineTextOf } from './blocks.js'
+import type { SignedEvent } from './events.js'
 
 /** A run of text and the marks on it. Nothing here needs escaping; it is text. */
 export interface RenderInline {
@@ -68,8 +69,62 @@ export interface RenderBlock {
   children?: RenderBlock[]
 }
 
-/** The content models a body can be in — `contentFormatOf`'s three values. */
-export type RenderFormat = 'marker' | 'blocks' | 'unknown'
+/**
+ * What content model a body is written in — SPEC §13.4.
+ *
+ * Three values, not two, and not the raw tag string. A consumer makes a
+ * three-way decision and **must not guess the third**:
+ *
+ * - `marker` — the §13.2 dialect. The default, permanently. 731 published
+ *   bodies carry no tag and none of them can be given one, so this is not a
+ *   migration window that closes.
+ * - `blocks` — a §13.3 JSON block document.
+ * - `unknown` — a format declared after this runtime was written. Render the
+ *   body as plain text; §13.5 says declining to format is conformant, and
+ *   parsing it as either known model is what §13 forbids outright.
+ *
+ * Resolved in one place rather than per consumer for the reason `CLOSED_WIDGETS`
+ * is: two copies of `tag === undefined ? marker : tag === 'estiva-blocks-1' ?
+ * blocks : text` disagree the first time a third format exists, and the
+ * disagreement shows up as one app rendering JSON at a person.
+ */
+export type ContentFormat = 'marker' | 'blocks' | 'unknown'
+
+/**
+ * @deprecated The name this shipped under in 0.8.0. It is `ContentFormat`.
+ * Kept as an alias so 0.8.0's consumers keep compiling.
+ */
+export type RenderFormat = ContentFormat
+
+/** The tag SPEC §13.4 defines. Absence is a declaration, not an omission. */
+export const CONTENT_FORMAT_TAG = 'content-format'
+
+/** The one format §13.3 names today. */
+export const BLOCK_DOCUMENT_FORMAT = 'estiva-blocks-1'
+
+/**
+ * The content model an event's body is in.
+ *
+ * **Decided by the tag alone.** §13.4 is explicit that a reader MUST NOT decide
+ * by inspecting the body: a legacy description that happens to begin with `{`
+ * is marker text, because it carries no tag.
+ *
+ * **Why this lives here and not in `@estiva-app/interop`, where it was born.**
+ * It arrived with the projection layer because that is what needed it first,
+ * and reading a tag off an event looked like a question about a slot. It is
+ * not — it is a question about an event, which is this package's subject. Two
+ * folds now need it and neither is a projection consumer: Ship's and the
+ * agent's, which are the same fold in two repositories held to one recorded
+ * state. Making either of them depend on the projection layer to read a tag
+ * would be the wrong direction, and a second copy of the rule is what this
+ * package exists to prevent. `interop` re-exports these, so nothing it
+ * published has moved.
+ */
+export function contentFormatOf(event: SignedEvent): ContentFormat {
+  const declared = event.tags.find((t) => t[0] === CONTENT_FORMAT_TAG)?.[1]
+  if (declared === undefined || declared === '') return 'marker'
+  return declared === BLOCK_DOCUMENT_FORMAT ? 'blocks' : 'unknown'
+}
 
 const KNOWN: ReadonlySet<string> = new Set([
   'paragraph', 'heading', 'bulletList', 'orderedList', 'listItem',
