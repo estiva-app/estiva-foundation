@@ -6,6 +6,47 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.10.0 — 2026-09-03
+
+**RFC 0.5 §7's URL grammar, which was accepted with amendments today.** No
+existing manifest changes meaning; this adds a shape an app MAY declare and the
+matching a consumer needs to read it.
+
+### Added
+
+- **`slugify`, `objectRef`, `identifierFromRef`** — `<type>/<slug>-<d>`, built
+  and read. **Moved from Peek** (`src/lib/objectUrl.ts`, PEE-14) rather than
+  rewritten, with its cases, because an extraction that changes behaviour while
+  every test still passes is the thing to guard against.
+
+  Here rather than in each app because §7.1's argument is that the URL one app
+  puts in the address bar must be resolvable by another — SPEC §10's test for
+  something the protocol owns. Two implementations would disagree about what a
+  slug may contain, and the disagreement shows up as a link that resolves only
+  in the app that wrote it. Ship was about to grow the second copy (SHI-16).
+
+- **`urlPatternsOf`, `matchObjectUrl`, `UrlPattern`, `MatchedObjectUrl`** —
+  §7.5's inbound half: given a pasted link and the shapes apps publish, recover
+  which object it names. A URL no pattern claims returns `null`, which is the
+  honest outcome — it is a link, and nothing should claim otherwise.
+
+### The amendment this implements
+
+§7.2 said a consumer MUST ignore *everything* before the final uuid, which
+contradicted the paragraph above it and, read literally, resolves
+`evil.example.com/issue/<uuid>` as a Ship issue. **The host and the `<type>`
+segment select the app and the kind; only the slug is decoration**, and
+`matchObjectUrl` enforces that. It is the difference between a resolver and a
+gadget for rendering an attacker's chosen object inside your app.
+
+### One thing §7.5 leaves open, decided here
+
+A bare pattern tells a consumer *which app*, not which kind: `/issue/` means
+`30851` only to the app serving it. So `urls` MAY carry the kind as a third tag
+element. When it does not, a consumer falls back to the kinds that manifest
+declares it handles — sound because no `d` is reused under two kinds, measured
+across all 280 production records at §7's acceptance.
+
 ## 0.9.1 — 2026-09-03
 
 **No behaviour change. The README was wrong, and this is the release that fixes
