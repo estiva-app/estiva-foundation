@@ -4,6 +4,45 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.12.0 — 2026-09-03
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. This adds a codec and a mark; nothing here changes what
+an app publishes.
+
+- **New: `encodeNpub` / `decodeNpub`.** NIP-19's simplest form and the one a
+  mention needs — no TLV, just the 32 bytes bech32-encoded. `decodeNpub` is
+  forgiving about a `nostr:` prefix and about case, for the same reason
+  `decodeNaddr` is: what arrives was pasted by a person.
+
+- **New: SPEC §13.1's `reference` mark is now parsed.** It was specified in
+  §13.1 and implemented nowhere; a `nostr:` URI in a body was plain text. Now
+  `parseInlineMarks` splits it into its own run carrying `reference`, the JSON
+  encoding gets `{"type":"reference","attrs":{"uri":…}}`, and `RenderInline`
+  carries it through to a consumer.
+
+  **Why this matters, and it is not presentation.** A mention written as a
+  display name needs the reader to hold the writer's directory, and message
+  content is immutable — so a rename desynchronises the text from the `p` tags
+  **permanently**. An `npub` needs nothing and survives a rename, because it
+  never said the name.
+
+  `text` stays the URI, which is what §13.1 requires a reader that cannot
+  resolve one to show: "the URI's own label or its shortened form, never
+  blank."
+
+- **A reference inside `code` is not split.** Code content is literal (§13.1),
+  and a URI somebody quoted as an example is not a link to follow. A reference
+  inside *bold* keeps the bold, because the reference pass runs after the
+  marker scan rather than instead of it.
+
+- **New: `findNostrUris` and `NOSTR_URI_RE`** — every `nostr:` reference in a
+  body, people included. Broader than `findNaddrs`, which answers "what objects
+  does this embed" and drives widgets; this answers "what does this point at
+  inline".
+
+  Control: neutering the reference pass fails 5 tests.
+
 ## 0.11.0 — 2026-09-03
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
