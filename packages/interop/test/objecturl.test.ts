@@ -132,6 +132,34 @@ describe('matchObjectUrl', () => {
     assert.equal(renamed?.identifier, UUID)
   })
 
+  it('matches a fragment route, which is how a pre-SHI-16 link still resolves', () => {
+    // Ship served `#/issue/<d>` until it moved to paths, and declares both
+    // shapes so links already in other people's messages keep working. A
+    // production probe caught this: the parser stopped at the `#`, so every one
+    // of those matched nothing.
+    const withHash = [{ pattern: 'https://ship.estiva.app/#/issue/<d>', kind: 30851 }]
+    assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/#/issue/${UUID}`, withHash), {
+      identifier: UUID,
+      kind: 30851,
+    })
+  })
+
+  it('keeps a fragment route and a path route apart', () => {
+    // Otherwise a pattern for one claims the other, and an app that means
+    // different things by them resolves the wrong object.
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/#/issue/x-${UUID}`, SHIP), null)
+    const withHash = [{ pattern: 'https://ship.estiva.app/#/issue/<d>', kind: 30851 }]
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/x-${UUID}`, withHash), null)
+  })
+
+  it('counts a sub-path and a fragment together, as a dev deploy has both', () => {
+    // Ship's own dev URL is `localhost:5190/ship/#/…`, where both halves carry
+    // meaning — dropping either would match the wrong app or nothing at all.
+    const dev = [{ pattern: 'http://localhost:5190/ship/#/issue/<d>', kind: 30851 }]
+    assert.equal(matchObjectUrl(`http://localhost:5190/ship/#/issue/${UUID}`, dev)?.identifier, UUID)
+    assert.equal(matchObjectUrl(`http://localhost:5190/#/issue/${UUID}`, dev), null)
+  })
+
   it('carries no kind when the app declared none', () => {
     // §7.5's example declares bare patterns. A consumer then falls back to the
     // kinds the manifest handles, which is sound because no `d` is reused

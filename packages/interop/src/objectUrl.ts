@@ -145,6 +145,8 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
     const shape = splitUrl(pattern)
     if (!shape) continue
     if (shape.scheme !== target.scheme || shape.host !== target.host) continue
+    // A fragment route and a path route are different shapes, not one.
+    if (shape.fragmented !== target.fragmented) continue
 
     // The pattern's path up to its final segment: `/issue/` out of
     // `/issue/<slug>-<d>`. Compared literally and at equal depth, so `/issues`
@@ -180,13 +182,34 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
  * refusal local to the parser rather than a consequence of what apps happen to
  * declare.
  */
-function splitUrl(raw: string): { scheme: string; host: string; segments: string[] } | null {
-  const match = /^(https?):\/\/([^/?#]+)([^?#]*)/i.exec(raw.trim())
+function splitUrl(raw: string): { scheme: string; host: string; segments: string[]; fragmented: boolean } | null {
+  const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#(.*))?$/i.exec(raw.trim())
   if (!match) return null
-  const [, scheme, host, path] = match
+  const [, scheme, host, path, fragment] = match
+
+  /*
+    A fragment route counts as path.
+
+    Ship served `#/issue/<d>` until SHI-16 and still declares those shapes, so
+    that links already sitting in other people's messages resolve rather than
+    rendering as plain text for ever. A parser that stopped at the `#` — this
+    one did — matched none of them, which a production probe caught before any
+    consumer was built on it.
+
+    Segments from the path and the fragment are concatenated rather than
+    swapped, because an app may be served under a sub-path *and* use a
+    fragment: Ship's own dev URL is `localhost:5190/ship/#/…`, where both
+    halves carry meaning.
+
+    `fragmented` is kept so the two do not collapse into each other. Without it
+    a pattern for `/issue/<slug>-<d>` would also claim `/#/issue/<d>`, and an
+    app that means different things by the two would resolve the wrong object.
+  */
+  const fragmentPath = fragment && fragment.startsWith('/') ? fragment : ''
   return {
     scheme: scheme.toLowerCase(),
     host: host.toLowerCase(),
-    segments: (path ?? '').split('/').filter(Boolean),
+    segments: [...(path ?? '').split('/'), ...fragmentPath.split('/')].filter(Boolean),
+    fragmented: fragmentPath !== '',
   }
 }
