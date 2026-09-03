@@ -6,6 +6,41 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.9.1 — 2026-09-03
+
+**No behaviour change. The README was wrong, and this is the release that fixes
+the page people are told to start from** (PRO-9).
+
+- **§2's example did not compile, and its copy-paste path published an error
+  message.** It called `buildActionEvent({ object, actionId, value })`, which is
+  not the signature: the function takes the manifest, the kind, the address, the
+  object's author, the folder, the signer's pubkey and a clock, because this
+  package reaches for none of them. And it returns `UnsignedActionEvent | string`
+  where **the string is the refusal** — the example signed and published the
+  result without checking, so a reader following it would have put the words
+  "This app does not offer …" on the relay.
+
+- **The content model was undocumented.** `ResolvedSlot.format` shipped in 0.7.0
+  and a body cannot be rendered safely without it: §13 forbids reading either
+  content model as the other, and the page said nothing about which one you
+  have. Now a table of the three values, `toRenderTree`, and the rule that the
+  format is decided by the declaration and never by looking at the body.
+
+- **Object-creating actions were undocumented** — `control: 'form'`, `fields`,
+  `createsUnder`, and passing an object plus a `newId`, all shipped in 0.6.0.
+  With the producer's side too, since `required` is a list of names on `input`
+  rather than a flag on each property, which is the sort of thing a page is for.
+
+### Added
+
+- **`test/readme.test.ts` — the README, executed.** Every assertion is a claim
+  the page makes in prose, and it lives in `test/` so `npm run typecheck`
+  compiles it against the real declarations. The published example, pasted in
+  verbatim, fails that pass with `TS2353: 'object' does not exist in type`.
+
+  The page's examples had been run once, in a scratch project, when the package
+  was first published. That is a snapshot; this is a check.
+
 ## 0.9.0 — 2026-09-02
 
 **Behaviour unchanged, and no export moved.** `contentFormatOf`,

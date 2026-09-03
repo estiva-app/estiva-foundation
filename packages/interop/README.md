@@ -55,6 +55,7 @@ What comes back:
     title:    { value: 'Billing entry' },
     status:   { value: 'In Progress', colour: 'blue' },
     subtitle: { value: 'Settings entry point.' },
+    body:     { value: '**Stripe Checkout** for billing.', format: 'marker' },
   },
   meta: [{ label: 'Assignee', value: 'abc…', isPubkey: true }],
   children: [ /* … more of the same, if the owner declared a list */ ],
@@ -68,6 +69,36 @@ What comes back:
 politeness, it is required: the slot set is closed but it *grows*, and producers
 upgrade before consumers do. `title` is always present, so an object you only
 half understand still renders as a named, resolvable thing.
+
+### A `body` says which content model it is in — read it, do not guess
+
+`body` is the one slot that carries structure, and it arrives in one of two
+models that must never be read as each other. **The slot tells you which**, so
+you never have to look at the text:
+
+| `slot.body.format` | what you have |
+| --- | --- |
+| `'marker'` | the marker dialect — `**bold**`, `# heading`, `> quote`, fenced code |
+| `'blocks'` | a JSON block document |
+| `'unknown'` | a model published after your app was written |
+
+```ts
+import { toRenderTree } from '@estiva-app/protocol'
+
+// One tree, whichever model it came in. Marks decided, blocks decided,
+// nothing left to parse — so you cannot render markup by accident.
+const blocks = toRenderTree(object.slots.body.value, object.slots.body.format)
+```
+
+**Never decide the model by inspecting the body.** A description that happens to
+begin with `{` is marker text if its event carries no `content-format` tag, and
+there are hundreds of those already published. `'unknown'` exists so you can
+decline: rendering a body you do not understand as plain text is correct, and
+guessing at it is not.
+
+A slot that is *not* a body carries no `format` at all — that is how you tell
+"this is prose in the marker dialect" from "this is a title, and models do not
+apply to it".
 
 ### The states you must draw, and the one that catches everyone
 
@@ -94,15 +125,88 @@ An action is **an event to publish**, never an endpoint to call. There is no
 server in the loop, and the owning app can be offline.
 
 ```ts
-import { buildActionEvent } from '@estiva-app/interop'
+import { buildActionEvent, resolveManifest } from '@estiva-app/interop'
 
-const unsigned = buildActionEvent({ object, actionId: 'set-issue-status', value: 'done' })
-const signed = await signer.sign(unsigned)
-await relay.publish(signed)
+const resolved = await resolveManifest(object.kind, query)
+
+const built = buildActionEvent({
+  manifest: resolved.manifest,
+  kind: object.kind,
+  address: object.ref,
+  objectAuthor: pointer.pubkey,
+  folder,                       // the object's channel — see below
+  actionId: 'set-issue-status',
+  value: 'done',
+  pubkey: me,                   // whoever is about to sign
+  createdAtMs: Date.now(),
+})
+
+// A refusal is a string, and it is written for a person to read.
+if (typeof built === 'string') return show(built)
+
+await relay.publish(await signer.sign(built))
 ```
+
+**Check the string.** `buildActionEvent` returns `UnsignedActionEvent | string`,
+and the string is why it refused — an undeclared field, a required one left
+empty, a value outside the declared vocabulary. Treat the result as an event
+without checking and you will sign the refusal.
+
+Everything it needs is passed in rather than reached for: this package opens no
+socket, reads no clock and holds no identity, so the built event is a pure
+function of its inputs and the whole suite runs against an array.
 
 `object.actions` is already resolved against the owner's vocabularies, so a
 `select` arrives with its options and the value it currently holds.
+
+### Actions that create an object, not just change one
+
+An action with `control: 'form'` makes a whole new object rather than setting a
+field on this one. It arrives with the schema already resolved:
+
+```ts
+const action = object.actions.find((a) => a.control === 'form')
+
+action.fields        // [{ name: 'title', type: 'string', required: true }, …]
+action.createsUnder  // the address the new object will hang under
+```
+
+Draw the fields, then pass an object rather than a scalar, plus an id for the
+thing being made:
+
+```ts
+const built = buildActionEvent({
+  /* …as above… */
+  actionId: action.id,
+  value: { title: 'Payment fails on retry' },
+  newId: crypto.randomUUID(),
+})
+```
+
+Declaring one, from the producer's side — `required` is a list of names, not a
+flag on each property:
+
+```jsonc
+{
+  "id": "add-issue", "label": "Add issue", "appliesTo": "31800",
+  "emits": { "kind": 31801, "setTag": "a", "toAddressOf": "self" },
+  "input": {
+    "type": "object",
+    "properties": { "title": { "type": "string" }, "note": { "type": "string" } },
+    "required": ["title"]
+  }
+}
+```
+
+`newId` is **required** for an addressable kind and is supplied by you rather
+than generated here — an object published without one has no address at all, so
+nothing could reference it, comment on it or act on it afterwards.
+
+Two rules worth knowing before you draw the form. **A property's name is the tag
+its value is written to**, which is what lets a consumer build an event for an
+app it has never seen. And **nothing can target an event's `content`** — an app
+whose body lives there cannot have it filled from outside, which is why an
+action may declare a `description` field that ends up in a tag.
 
 Two consequences worth knowing before you ship it. **Validation is an honour
 system** — nothing stops you publishing a status outside the declared
