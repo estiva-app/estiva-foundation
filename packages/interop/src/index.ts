@@ -62,3 +62,21 @@ export {
   ACTION_EFFECTS,
   type UnsignedActionEvent,
 } from './projection.js'
+
+/**
+ * RFC 0.5 §7's URL grammar — how an object is named in an address bar, and how
+ * a pasted link is matched back to one.
+ *
+ * Separate from the projection surface above because it answers a different
+ * question: those resolve an object you already hold, these turn a string
+ * somebody pasted into one you can hold.
+ */
+export {
+  slugify,
+  objectRef,
+  identifierFromRef,
+  urlPatternsOf,
+  matchObjectUrl,
+  type UrlPattern,
+  type MatchedObjectUrl,
+} from './objectUrl.js'
