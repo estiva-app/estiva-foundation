@@ -4,6 +4,36 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.11.0 — 2026-09-03
+
+**Wire behaviour: unchanged.** No builder, tag layout, id computation or
+signature input moved. This adds a reader for a tag SPEC §13.6 defines, and
+nothing here writes one.
+
+- **New: `anchors.ts` — a comment anchored to one block, SPEC §13.6.**
+  `BLOCK_ANCHOR_TAG`, `blockAnchorOf`, `resolveBlockAnchor`, and the
+  `BlockAnchor` union.
+
+  **`resolveBlockAnchor` returns which of four states an anchor is in, rather
+  than a block or `undefined`**, and that shape is the point. §13.6 requires a
+  reader to distinguish *unanchored*, *resolved*, *unaddressable* and
+  *detached*, because the pair that matters — detached and unanchored — render
+  identically and mean opposite things: a remark about a paragraph somebody
+  deleted, versus a remark about the whole object. A signature that lets a
+  caller collapse them is a signature that invites the defect.
+
+  Control: making `detached` return `unanchored` fails exactly the two tests
+  written to catch it.
+
+- **`unaddressable` is its own state, not a kind of detachment.** Marker text
+  has no addressable sub-unit (§13.1), so an anchor against it never resolves
+  and nothing was deleted. A reader saying "that paragraph is gone" about a
+  marker-text description is wrong twice over.
+
+- **A body that claims `blocks` and does not parse is `unaddressable`, not an
+  exception.** It has no parts either, and a reader that throws renders nothing
+  at all.
+
 ## 0.10.0 — 2026-09-02
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
