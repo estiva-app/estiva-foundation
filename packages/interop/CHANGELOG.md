@@ -6,6 +6,27 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.10.1 — 2026-09-03
+
+**`matchObjectUrl` matched no fragment route at all.** The parser's path capture
+stopped at the `#`, so `https://ship.estiva.app/#/issue/<uuid>` reduced to no
+segments and matched nothing — including patterns declaring exactly that shape.
+
+That is not a corner. Ship served fragment routes until SHI-16 and declares them
+still, so that links already sitting in other people's messages resolve rather
+than rendering as plain text for ever. A consumer on 0.10.0 would have silently
+failed every one of them.
+
+Found by a production probe before any consumer was built on it, which is the
+argument for probing the mechanism rather than the fixture.
+
+- Path and fragment segments are concatenated rather than swapped, because an
+  app may be served under a sub-path *and* use a fragment — Ship's own dev URL
+  is `localhost:5190/ship/#/…`, where both halves carry meaning.
+- A fragment route and a path route stay distinct shapes. Collapsing them would
+  let a pattern for `/issue/<slug>-<d>` claim `/#/issue/<d>`, and an app that
+  means different things by the two would resolve the wrong object.
+
 ## 0.10.0 — 2026-09-03
 
 **RFC 0.5 §7's URL grammar, which was accepted with amendments today.** No
