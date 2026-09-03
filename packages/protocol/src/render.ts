@@ -278,3 +278,49 @@ export function renderTreeText(blocks: readonly RenderBlock[]): string {
     .filter((s) => s !== '')
     .join('\n')
 }
+
+// ── Where a reference belongs — SPEC §13.1, RIC-10 ─────────────────────────
+
+/**
+ * The URI, when this block is nothing but one reference.
+ *
+ * **Two apps must agree about this or the same body reads differently in each**,
+ * which is the test SPEC §10 applies and the reason the rule is here rather
+ * than in either app. A reference that is the whole of a paragraph is somebody
+ * attaching an object; a reference inside a sentence is somebody naming one
+ * mid-thought, and cutting it out of the prose loses the sentence.
+ *
+ * That distinction used to be unavailable: `stripNaddrs` removed every pointer
+ * from every body before rendering, because a description had no structure to
+ * put a widget into. §13.3 gave it one.
+ *
+ * Whitespace around the reference does not change the answer — a pointer alone
+ * on its line is alone on its line whether or not somebody left a space after
+ * it.
+ */
+export function standaloneReference(block: RenderBlock): string | undefined {
+  if (block.type !== 'paragraph' || block.children?.length) return undefined
+  const runs = (block.inline ?? []).filter((run) => run.text.trim() !== '')
+  if (runs.length !== 1) return undefined
+  const only = runs[0]
+  return only.reference && only.text.trim() === only.reference ? only.reference : undefined
+}
+
+/**
+ * Every `nostr:` reference in a resolved tree, in the order they are written.
+ *
+ * The tree rather than the raw text, so a URI inside a code span is not counted
+ * — §13.1 makes code literal, and a pointer somebody quoted as an example is
+ * not one they are attaching. `findNaddrs` reads the string and cannot tell.
+ */
+export function referencesIn(blocks: readonly RenderBlock[]): string[] {
+  const out: string[] = []
+  const walk = (bs: readonly RenderBlock[]) => {
+    for (const block of bs) {
+      for (const run of block.inline ?? []) if (run.reference) out.push(run.reference)
+      if (block.children) walk(block.children)
+    }
+  }
+  walk(blocks)
+  return out
+}
