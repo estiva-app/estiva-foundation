@@ -464,3 +464,48 @@ export function stripNaddrs(text: string): string {
       .trim()
   )
 }
+
+// ── npub — NIP-19's simplest form, and the one a mention needs ──────────────
+
+/**
+ * A public key as `npub1…`.
+ *
+ * No TLV: an npub is the 32 raw bytes, bech32-encoded. That is why it is the
+ * right thing to put inside a message body — it is short, it is self-describing,
+ * and unlike a display name it does not need the reader to hold the writer's
+ * directory to know who is meant.
+ */
+export function encodeNpub(pubkey: string): string {
+  const bytes = hexToBytes(pubkey)
+  if (bytes.length !== 32) throw new Error(`pubkey must be 32 bytes, got ${bytes.length}`)
+  return bech32Encode('npub', convertBits(bytes, 8, 5, true))
+}
+
+/**
+ * `npub1…` back to hex, with or without a `nostr:` prefix, in any case.
+ *
+ * Forgiving in the same way {@link decodeNaddr} is, and for the same reason:
+ * what arrives here was pasted by a person.
+ */
+export function decodeNpub(encoded: string): string {
+  const { hrp, data } = bech32Decode(encoded.replace(/^nostr:/i, '').toLowerCase())
+  if (hrp !== 'npub') throw new Error(`expected an npub, got ${hrp}`)
+  const bytes = convertBits(data, 5, 8, false)
+  if (bytes.length !== 32) throw new Error(`npub must decode to 32 bytes, got ${bytes.length}`)
+  return bytesToHex(Uint8Array.from(bytes))
+}
+
+/**
+ * Every `nostr:` reference in a body, in order — npub, naddr, note or nevent.
+ *
+ * Broader than {@link findNaddrs}, which answers "what objects does this body
+ * embed" and is used to draw widgets. This answers "what does this body point
+ * at inline", which includes people, and is what SPEC §13.1's `reference` mark
+ * is parsed from.
+ */
+export const NOSTR_URI_RE =
+  /nostr:((?:npub|naddr|note|nevent)1[023456789acdefghjklmnpqrstuvwxyz]+)/gi
+
+export function findNostrUris(text: string): string[] {
+  return [...(text ?? '').matchAll(NOSTR_URI_RE)].map((m) => `nostr:${m[1].toLowerCase()}`)
+}

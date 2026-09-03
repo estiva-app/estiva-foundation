@@ -24,6 +24,8 @@
  * scope, but what a mention does is RIC-2's.
  */
 
+import { NOSTR_URI_RE } from './nip19.js'
+
 /** Marks a run of text can carry. `code` is exclusive — see {@link parseInlineMarks}. */
 export type InlineMark = 'bold' | 'italic' | 'underline' | 'code'
 
@@ -34,6 +36,15 @@ export interface InlineMarkSpan {
   italic?: boolean
   underline?: boolean
   code?: boolean
+  /**
+   * The `nostr:` URI this run points at — SPEC §13.1's `reference` mark.
+   *
+   * A value rather than a flag, because the whole point of a reference is
+   * *what* it names. `text` stays the URI itself, which is what a reader that
+   * cannot resolve it must show (§13.1: "the URI's own label or its shortened
+   * form, never blank").
+   */
+  reference?: string
 }
 
 /** A block-level run, parsed from line prefixes. */
@@ -150,7 +161,31 @@ function scanMarks(text: string, active: InlineMark[]): InlineMarkSpan[] {
  * about marks and nothing else.
  */
 export function parseInlineMarks(text: string): InlineMarkSpan[] {
-  return scanMarks(text, [])
+  return scanMarks(text, []).flatMap(splitReferences)
+}
+
+/**
+ * Split a run on its `nostr:` URIs — SPEC §13.1's `reference` mark.
+ *
+ * A separate pass because a reference is not a delimiter pair: there is nothing
+ * to open and close, only a token to recognise. Running it *after* the marker
+ * scan means a reference inside bold stays bold, and a reference inside `code`
+ * is never split at all — code content is literal (§13.1), and a URI somebody
+ * quoted as an example is not a link to follow.
+ */
+function splitReferences(span: InlineMarkSpan): InlineMarkSpan[] {
+  if (span.code || !span.text.includes('nostr:')) return [span]
+  const out: InlineMarkSpan[] = []
+  let last = 0
+  for (const match of span.text.matchAll(NOSTR_URI_RE)) {
+    const at = match.index ?? 0
+    if (at > last) out.push({ ...span, text: span.text.slice(last, at) })
+    const uri = `nostr:${match[1].toLowerCase()}`
+    out.push({ ...span, text: match[0], reference: uri })
+    last = at + match[0].length
+  }
+  if (last < span.text.length) out.push({ ...span, text: span.text.slice(last) })
+  return out
 }
 
 /**
@@ -162,6 +197,10 @@ export function parseInlineMarks(text: string): InlineMarkSpan[] {
  * `code` wins alone, for the same reason the parser never emits it combined.
  */
 export function wrapInlineMarks(text: string, markNames: ReadonlySet<string>): string {
+  // A reference needs no markers: the URI *is* its marker-text form, which is
+  // why §13.1 can share one vocabulary across two encodings without the message
+  // dialect growing a syntax for it.
+  if (markNames.has('reference')) return text
   if (!text) return text
   const bold = markNames.has('bold')
   const italic = markNames.has('italic')
@@ -319,7 +358,10 @@ export function stripInlineFormatting(text: string): string {
 // about nothing else.
 
 /** A mark on an inline run, in the JSON encoding. */
-export type InlineMarkNode = { type: InlineMark }
+export type InlineMarkNode =
+  | { type: InlineMark }
+  /** §13.1's `reference`, which carries what it points at. */
+  | { type: 'reference'; attrs: { uri: string } }
 
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
 export interface InlineTextNode {
@@ -337,7 +379,8 @@ const MARK_ORDER: InlineMark[] = ['bold', 'italic', 'underline', 'code']
 /** Marker text → inline JSON nodes. */
 export function markersToInlineNodes(text: string): InlineTextNode[] {
   return parseInlineMarks(text).map((span) => {
-    const marks = MARK_ORDER.filter((m) => span[m]).map((type) => ({ type }))
+    const marks: InlineMarkNode[] = MARK_ORDER.filter((m) => span[m]).map((type) => ({ type }))
+    if (span.reference) marks.push({ type: 'reference', attrs: { uri: span.reference } })
     return marks.length ? { type: 'text' as const, text: span.text, marks } : { type: 'text' as const, text: span.text }
   })
 }

@@ -43,6 +43,14 @@ import type { SignedEvent } from './events.js'
 export interface RenderInline {
   text: string
   marks: InlineMark[]
+  /**
+   * The `nostr:` URI this run points at — SPEC §13.1's `reference` mark.
+   *
+   * A value rather than a mark name, because a consumer needs *what* it points
+   * at to draw anything useful. `text` remains the URI, so an app that resolves
+   * nothing still shows the token rather than a blank.
+   */
+  reference?: string
 }
 
 /**
@@ -143,7 +151,11 @@ const marksOf = (span: { bold?: boolean; italic?: boolean; underline?: boolean; 
 }
 
 const inlineFromMarkers = (text: string): RenderInline[] =>
-  parseInlineMarks(text).map((s) => ({ text: s.text, marks: marksOf(s) }))
+  parseInlineMarks(text).map((s) => ({
+    text: s.text,
+    marks: marksOf(s),
+    ...(s.reference ? { reference: s.reference } : {}),
+  }))
 
 /** One inline run per line, joined by the `\n` the interface documents. */
 const inlineFromLines = (lines: string[]): RenderInline[] => inlineFromMarkers(lines.join('\n'))
@@ -197,10 +209,15 @@ function blockFromDocument(block: Block): RenderBlock {
 
   if (Array.isArray(block.content)) {
     if (isInlineRun(block.content)) {
-      out.inline = block.content.map((node) => ({
-        text: node.text,
-        marks: (node.marks ?? []).map((m) => m.type),
-      }))
+      out.inline = block.content.map((node) => {
+        const marks = node.marks ?? []
+        const reference = marks.find((m) => m.type === 'reference')
+        return {
+          text: node.text,
+          marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type) as InlineMark[],
+          ...(reference && 'attrs' in reference ? { reference: reference.attrs.uri } : {}),
+        }
+      })
     } else {
       out.children = (block.content as Block[]).map(blockFromDocument)
     }
