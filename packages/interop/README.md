@@ -286,7 +286,7 @@ A chat app now renders your candidate — with your stages, your colours, your
 recruiter — in **its** design language, and lets someone move a stage without
 leaving the conversation. It knows nothing about hiring.
 
-Five things that will bite, each of them something we got wrong first:
+Six things that will bite, each of them something we got wrong first:
 
 - **`title` is required.** It is what makes ignoring an unknown slot safe.
 - **A mutable field must be a `fold`, never a `tag`.** A status that can be set
@@ -303,6 +303,11 @@ Five things that will bite, each of them something we got wrong first:
 - **A widget chain must terminate in a closed type.** `["candidate"]` is not
   publishable. `widgetChainProblem()` is exported so you can check before you
   sign — a manifest is read by apps that cannot ask what you meant.
+- **An action's `description` is read by a machine, not shown on a button.**
+  A caller choosing between every action every app declares has that prose and
+  nothing else. `"Add"` is not rejected anywhere — your action is simply never
+  the one chosen, and nothing tells you. `actionProblems()` is exported for the
+  same reason as the check above: run it in your own tests before you sign.
 
 ---
 

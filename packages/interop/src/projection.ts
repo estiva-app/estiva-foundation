@@ -335,11 +335,17 @@ export interface ManifestAction {
    * (RFC 0.4 §13.4).
    *
    * "Change status" tells a person which button to press and tells a caller
-   * choosing *between* actions nothing at all. Nothing reads this yet, and that
-   * is expected: it is here because adding a field costs a line and adding one
-   * after several apps have published manifests is a migration across every one
-   * of them — a manifest is republished by its owner alone. The same argument
-   * `emits.alsoRead` makes one level down.
+   * choosing *between* actions nothing at all. It was taken early because
+   * adding a field costs a line and adding one after several apps have
+   * published manifests is a migration across every one of them — a manifest is
+   * republished by its owner alone. The same argument `emits.alsoRead` makes one
+   * level down.
+   *
+   * **Something reads it now.** Peek's launcher selects an action from a
+   * conversation by matching on this prose (INT-5), across every manifest it can
+   * resolve. So a `description` written for a screen is not merely unused, it is
+   * an action a caller never picks — a failure with no error in it.
+   * {@link actionProblems} is the check to run before signing.
    */
   description?: string
   /** See {@link ActionEffect}. */
@@ -964,6 +970,88 @@ export function widgetChainProblem(declared: unknown): string | null {
     return `["${declared.join('", "')}"] ends in "${last}", which no consumer is required to implement. A chain must end in one of ${CLOSED_WIDGETS.join(', ')} so there is always something left to draw.`
   }
   return null
+}
+
+/**
+ * The shortest `description` that could plausibly distinguish one action from
+ * another.
+ *
+ * A proxy, and a weak one — forty characters of nonsense passes. It is here
+ * because the failure it does catch is the common one: a label pasted into the
+ * description field, or a two-word caption where a sentence was wanted. Lifted
+ * from Ship, which has enforced exactly this privately since PRO-5.
+ */
+export const MIN_ACTION_DESCRIPTION = 40
+
+/**
+ * Why an action is not worth publishing yet, or an empty list when it is.
+ *
+ * **The producer half of action selection**, and the same division of labour
+ * {@link widgetChainProblem} draws for widgets: a consumer must stay safe
+ * against a declaration it did not expect, *and* the unusable declaration
+ * should not be signed in the first place. Both are needed and they fail
+ * differently — a consumer alone cannot tell a bad description from a bad
+ * match, and a producer alone cannot know what a consumer required.
+ *
+ * The failure is silent, which is the whole reason this exists. Peek's launcher
+ * matches an action from a conversation on `description` (INT-5) and gates on
+ * `effect`; an app whose description restates its label is not rejected
+ * anywhere — its actions are simply never the one chosen, and nothing tells
+ * anybody. There is no error to find.
+ *
+ * **Advisory, never fatal, and nothing in resolution calls it.** A weak
+ * description is a worse match, not an invalid manifest — refusing to render an
+ * app over its prose would be the objection that rules out iframes, wearing a
+ * different hat. It is exported so a producer can run it in its own suite, the
+ * way Ship does.
+ *
+ * Returns sentences rather than codes, for {@link widgetChainProblem}'s reason:
+ * this is read by a person publishing a manifest, and "invalid description"
+ * tells them neither which action nor what to write instead.
+ *
+ * A list rather than the first problem, because an action carries three
+ * independent declarations and fixing them one round-trip at a time is a poor
+ * trade for a producer. At most one is reported per declaration: a description
+ * that restates its label is told that, not also that it is short.
+ */
+export function actionProblems(declared: unknown): string[] {
+  if (typeof declared !== 'object' || declared === null || Array.isArray(declared)) {
+    return ['an action must be an object declaring at least id, label and description.']
+  }
+  const action = declared as { id?: unknown; label?: unknown; description?: unknown; effect?: unknown }
+  const id = typeof action.id === 'string' && action.id.trim() ? action.id.trim() : null
+  const label = typeof action.label === 'string' ? action.label.trim() : ''
+  const description = typeof action.description === 'string' ? action.description.trim() : ''
+  const name = id ? `"${id}"` : 'an action with no id'
+
+  const problems: string[] = []
+  if (!id) problems.push('an action must declare an id — it is what a caller names when it picks one.')
+
+  if (!description) {
+    problems.push(
+      `${name} declares no description. A caller choosing between actions reads that prose and nothing else, so an action without one is one it can never pick. Say what the action makes, for whom, and when it applies.`,
+    )
+  } else if (label && description.toLowerCase() === label.toLowerCase()) {
+    problems.push(
+      `${name} gives its label ("${label}") as its description. The label is a button caption the caller already has; the description is what tells it this action rather than another.`,
+    )
+  } else if (description.length < MIN_ACTION_DESCRIPTION) {
+    problems.push(
+      `${name} describes itself in ${description.length} characters ("${description}"). That is a caption, not prose a caller can match on — under ${MIN_ACTION_DESCRIPTION} is nearly always a label in disguise.`,
+    )
+  }
+
+  if (action.effect === undefined || action.effect === null) {
+    problems.push(
+      `${name} declares no effect, which every consumer must read as *unknown* — so a consumer that only offers safe actions will not offer this one, and one that avoids destructive actions may. Declare ${ACTION_EFFECTS.join(', ')}.`,
+    )
+  } else if (typeof action.effect !== 'string' || !(ACTION_EFFECTS as readonly string[]).includes(action.effect)) {
+    problems.push(
+      `${name} declares effect ${JSON.stringify(action.effect)}, which is not one of ${ACTION_EFFECTS.join(', ')}. An unrecognised value is dropped rather than passed through, so this reads as if the field were absent — a typo here is invisible.`,
+    )
+  }
+
+  return problems
 }
 
 export function pickWidget<T extends string>(
