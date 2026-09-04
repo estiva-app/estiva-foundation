@@ -43,6 +43,15 @@
 const TRAILING_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
+ * A 64-character event id at the very end of a ref.
+ *
+ * The second identity shape, for an object that has no `d` — a `kind:9`
+ * message is the case in hand, and §7.6 recorded it as outside the grammar
+ * until this. Anchored at the end for the same positional reason as the uuid.
+ */
+const TRAILING_EVENT_ID_RE = /(?:^|[^0-9a-f])([0-9a-f]{64})$/i
+
+/**
  * Slugs are cut here. Long enough to stay recognisable in a chat client's link
  * preview, short enough that the uuid is not pushed off the end of a rendered
  * URL — which is the only thing in the ref that carries meaning.
@@ -84,6 +93,26 @@ export function identifierFromRef(ref: string): string | null {
 }
 
 /**
+ * The event id out of a ref, or null.
+ *
+ * **Why an event id in a URL rather than an `nevent`.** §7.3 rejects bech32 in
+ * a URL on two grounds, and both apply to `nevent` exactly as they do to
+ * `naddr`: a slice of it is checksum bytes rather than the identity, and relay
+ * hints are part of the encoding, so one object has more than one spelling.
+ *
+ * A raw event id has neither problem. It is the whole identity of an event that
+ * has no `d`, it is stable because nothing optional is encoded into it, and it
+ * resolves with `{ids: ["<id>"]}` — one query, no index, exactly the property
+ * §7.2 chose the bare uuid for. So the rule generalises rather than gaining an
+ * exception: **the identity goes in the path, unencoded, and everything before
+ * it is decoration.**
+ */
+export function eventIdFromRef(ref: string): string | null {
+  const match = TRAILING_EVENT_ID_RE.exec(ref)
+  return match ? match[1].toLowerCase() : null
+}
+
+/**
  * A URL shape an app says it serves — RFC 0.5 §7.5's `urls`, read off the
  * manifest event the way `web` is.
  *
@@ -121,7 +150,17 @@ export function urlPatternsOf(event: { tags: string[][] }): UrlPattern[] {
 
 /** What a pasted URL turned out to name. */
 export interface MatchedObjectUrl {
+  /** A `d` for an addressable object, or an event id for one without. */
   identifier: string
+  /**
+   * How to resolve `identifier`: by `#d` for an addressable object, by `ids`
+   * for an event that has none.
+   *
+   * Declared by the pattern's placeholder — `<d>` or `<id>` — rather than
+   * guessed from the string, because a consumer that inspected the value would
+   * be deciding a kind's addressing model from the shape of a hex string.
+   */
+  by: 'd' | 'id'
   /** Present only when the matched pattern named one. */
   kind?: number
 }
@@ -157,9 +196,19 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
       .every((segment, i) => segment === target.segments[i])
     if (!prefixMatches) continue
 
-    const identifier = identifierFromRef(target.segments[target.segments.length - 1] ?? '')
+    const tail = target.segments[target.segments.length - 1] ?? ''
+    /*
+      The pattern says which identity it carries. `<id>` is an event id, for a
+      kind with no `d`; anything else is the `<d>` uuid this grammar started
+      with. Read from the declaration rather than sniffed from the value: a
+      64-hex string and a uuid are distinguishable today, and a consumer that
+      relied on that would be inferring an app's addressing model from a
+      character class.
+    */
+    const wantsEventId = shape.segments[shape.segments.length - 1]?.includes('<id>') ?? false
+    const identifier = wantsEventId ? eventIdFromRef(tail) : identifierFromRef(tail)
     if (!identifier) continue
-    return { identifier, ...(kind === undefined ? {} : { kind }) }
+    return { identifier, by: wantsEventId ? 'id' : 'd', ...(kind === undefined ? {} : { kind }) }
   }
   return null
 }

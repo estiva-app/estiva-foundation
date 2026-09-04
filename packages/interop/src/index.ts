@@ -75,6 +75,7 @@ export {
   slugify,
   objectRef,
   identifierFromRef,
+  eventIdFromRef,
   urlPatternsOf,
   matchObjectUrl,
   type UrlPattern,

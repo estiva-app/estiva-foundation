@@ -83,7 +83,7 @@ describe('identifierFromRef', () => {
 describe('matchObjectUrl', () => {
   it('recovers the identity and the kind from a declared shape', () => {
     const found = matchObjectUrl(`https://ship.estiva.app/issue/billing-entry-${UUID}`, SHIP)
-    assert.deepEqual(found, { identifier: UUID, kind: 30851 })
+    assert.deepEqual(found, { identifier: UUID, by: 'd', kind: 30851 })
   })
 
   it('reads the kind from the segment that was matched, not from the uuid', () => {
@@ -140,6 +140,7 @@ describe('matchObjectUrl', () => {
     const withHash = [{ pattern: 'https://ship.estiva.app/#/issue/<d>', kind: 30851 }]
     assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/#/issue/${UUID}`, withHash), {
       identifier: UUID,
+      by: 'd',
       kind: 30851,
     })
   })
@@ -167,6 +168,7 @@ describe('matchObjectUrl', () => {
     const bare = [{ pattern: 'https://peek.estiva.app/topic/<slug>-<d>' }]
     assert.deepEqual(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}`, bare), {
       identifier: UUID,
+      by: 'd',
     })
   })
 })
@@ -189,5 +191,48 @@ describe('urlPatternsOf', () => {
 
   it('is empty for a manifest that declares none, which is most of them today', () => {
     assert.deepEqual(urlPatternsOf({ tags: [['d', 'app']] }), [])
+  })
+})
+
+describe('an event id as the identity', () => {
+  // A `kind:9` message has no `d`, so its event id is the whole of it. §7.6
+  // recorded that as outside this grammar until PEE-17 needed a message link.
+  const EVENT = 'a3f1'.repeat(16)
+  const PEEK = [{ pattern: 'https://peek.estiva.app/message/<id>', kind: 9 }]
+
+  it('reads an event id when the pattern declares one', () => {
+    assert.deepEqual(matchObjectUrl(`https://peek.estiva.app/message/${EVENT}`, PEEK), {
+      identifier: EVENT,
+      by: 'id',
+      kind: 9,
+    })
+  })
+
+  it('says how to resolve it, rather than leaving the consumer to guess', () => {
+    // `by` is the difference between `{ids: [...]}` and `{"#d": [...]}`, and a
+    // consumer inferring it from the string would be deciding an app's
+    // addressing model from a character class.
+    const found = matchObjectUrl(`https://peek.estiva.app/message/${EVENT}`, PEEK)
+    assert.equal(found?.by, 'id')
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/x-${UUID}`, SHIP)?.by, 'd')
+  })
+
+  it('does not read a uuid where an event id was declared', () => {
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/message/${UUID}`, PEEK), null)
+  })
+
+  it('does not read an event id where a uuid was declared', () => {
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/x-${EVENT}`, SHIP), null)
+  })
+
+  it('ignores a slug in front of the event id, like any other identity', () => {
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/message/re-the-build-${EVENT}`, PEEK)?.identifier, EVENT)
+  })
+
+  it('refuses a hex run that is not 64 characters', () => {
+    // Truncation is the failure worth catching: a short id resolves to nothing
+    // or, worse, to a prefix match somebody did not intend.
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/message/${EVENT.slice(0, 63)}`, PEEK), null)
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/message/${EVENT}ab`, PEEK), null)
   })
 })

@@ -6,6 +6,36 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.11.0 — 2026-09-04
+
+**A second identity shape: an event id, for an object that has no `d`.** No
+existing manifest changes meaning; a pattern declaring `<id>` instead of `<d>`
+is new, and `MatchedObjectUrl` gains `by` so a consumer knows which query to
+make.
+
+RFC 0.5 §7.6 recorded a message as *addressed by `nevent`, outside this
+grammar*. PEE-17 needed a link to one, and following that literally would have
+put bech32 in a URL — which §7.3 argues against on two grounds that apply to
+`nevent` exactly as they do to `naddr`: a slice of it is checksum bytes rather
+than the identity, and relay hints are part of the encoding, so one object has
+more than one spelling.
+
+**A raw event id has neither problem**, and resolves with `{ids: ["<id>"]}` —
+one query, no index, the same property §7.2 chose the bare uuid for. So the rule
+generalises rather than gaining an exception: the identity goes in the path,
+unencoded, and everything before it is decoration.
+
+- **`eventIdFromRef`** reads a 64-character id off a ref's tail.
+- **`MatchedObjectUrl.by`** is `'d'` or `'id'` — the difference between
+  `{"#d": […]}` and `{ids: […]}`.
+- **The pattern decides which**, by carrying `<id>` or `<d>`. Not sniffed from
+  the value: a uuid and a 64-hex string are distinguishable today, and a
+  consumer relying on that would be inferring an app's addressing model from a
+  character class.
+
+Exactly 64 hex is required. A shorter run is a truncated id, which resolves to
+nothing or — worse — to something nobody intended.
+
 ## 0.10.1 — 2026-09-03
 
 **`matchObjectUrl` matched no fragment route at all.** The parser's path capture
