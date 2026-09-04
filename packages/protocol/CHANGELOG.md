@@ -4,6 +4,33 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.13.0 — 2026-09-03
+
+**Wire behaviour: unchanged.** Two readers over the resolved tree; nothing
+about what an app publishes moves.
+
+- **New: `standaloneReference` and `referencesIn` — where a reference belongs.**
+
+  A reference that is the whole of a paragraph is somebody **attaching** an
+  object. A reference inside a sentence is somebody **naming** one mid-thought,
+  and cutting it out of the prose loses the sentence. Until now every app cut
+  out every pointer, because a description had no structure to put a widget
+  into; §13.3 gave it one.
+
+  **The rule is here rather than in either app because two apps disagreeing
+  about it makes the same body read differently in each** — SPEC §10's test.
+  `stripNaddrs` applied separately by each consumer was never going to hold
+  that line.
+
+- **`referencesIn` reads the tree, not the string.** So a pointer quoted inside
+  `` `code` `` is not counted: §13.1 makes code literal, and a pointer somebody
+  quoted as an example is not one they are attaching. `findNaddrs` reads the
+  raw text and cannot tell the difference — it stays, because widgets below the
+  text are still driven from it, but this is the one to reach for when the
+  question is what the *reader* sees.
+
+  Control: letting any block count as standalone fails 1 test.
+
 ## 0.12.0 — 2026-09-03
 
 **Wire behaviour: unchanged.** No builder, tag layout, id computation or
