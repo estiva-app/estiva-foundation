@@ -240,6 +240,25 @@ interface RecordsRule {
    * which field and which value, and this stays out of it.
    */
   hiddenWhen?: { field: string; equals: string }
+  /**
+   * Where this app's objects say which Folder they belong to — PRO-18.
+   *
+   * Absent, and the answer is the tags: NIP-29's `h`, or the relay's own
+   * `buzz-channel` for a record published *globally* while still naming a
+   * Folder. {@link folderOf} reads both and always has to.
+   *
+   * `"identifier"` is the third case and the reason this field exists: an
+   * object that **is** a container names no Folder because it is one, and its
+   * `d` is that Folder's id. A Peek topic is the case in hand — a `kind:39000`
+   * whose identifier is the channel — and without this an action performed on
+   * one fails with "that object has no Folder, so there is nowhere to write",
+   * which is true of the tags and false of the object.
+   *
+   * Declared rather than inferred from the kind. A consumer that special-cased
+   * 39000 would know what Peek is, which is the one thing this layer may not
+   * do; the owner says it, and the rule works for an app nobody here wrote.
+   */
+  folder?: 'identifier'
 }
 
 interface SlotSpec {
@@ -390,12 +409,17 @@ export interface ManifestAction {
      * the event without it, and RFC 0.4 §13.4 asserts the existing declaration
      * is already sufficient for one to try.
      *
-     * Its limit, recorded rather than designed around: **nothing can target an
-     * event's `content`.** Ship's issue description lives there and is
-     * therefore not creatable from another app, which is why `add-issue`
-     * declares only a title.
+     * **A property may instead target the event's `content`** — PRO-18. That
+     * limit used to be recorded here as one designed around: *"nothing can
+     * target an event's `content`"*. It is what made a conversation
+     * undeclarable, because a message with its body in a tag is not a message,
+     * and the empty `actions: []` in Peek's manifest says so in its own words.
+     *
+     * At most one property may do it. Two would be two writers of one field,
+     * and the second silently winning is exactly the shape of bug this
+     * vocabulary exists to make impossible.
      */
-    properties?: Record<string, { type?: string; enum?: string }>
+    properties?: Record<string, { type?: string; enum?: string; target?: 'content' }>
     required?: string[]
   }
 }
@@ -416,6 +440,14 @@ export interface ActionFormField {
   name: string
   type: string
   required: boolean
+  /**
+   * Written to the event's `content` rather than to a tag — PRO-18.
+   *
+   * Absent for every field that is a tag, which is nearly all of them. A
+   * consumer may use it to draw prose instead of a single line; it does not
+   * have to, and one that ignores it still publishes the right event.
+   */
+  target?: 'content'
   /** When the property names a vocabulary, its entries, already looked up. */
   options?: { value: string; label: string; colour?: string }[]
 }
@@ -500,6 +532,16 @@ function resolveActions(
           name,
           type: spec.type ?? 'string',
           required: required.has(name),
+          /*
+            Where the value is written, when it is not a tag — PRO-18.
+
+            Carried rather than acted on here. A consumer that ignores it still
+            publishes a correct event, because `buildCreationEvent` is what
+            places the value; what this buys a consumer is knowing the field is
+            a body rather than a label, which is the difference between drawing
+            a one-line input and drawing prose.
+          */
+          ...(spec.target ? { target: spec.target } : {}),
           ...(spec.enum && manifest.vocabularies?.[spec.enum]
             ? {
                 options: manifest.vocabularies[spec.enum].map((v) => ({
@@ -534,6 +576,35 @@ function resolveActions(
 }
 
 const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1]
+
+/**
+ * Which Folder an object belongs to — the three spellings, in one place.
+ *
+ * **This lived in Peek and had to move** (PRO-18). Its comment there said so:
+ * reading only `h` made five of Ship's fifteen projects unactionable, because
+ * a record published globally names its Folder with `buzz-channel` instead,
+ * and the fix "does belong one layer down in the runtime, where every consumer
+ * would get it rather than each discovering it". This is that layer. Both tags
+ * are the relay's and NIP-29's, so knowing them is not knowing what any app
+ * is.
+ *
+ * The third case is new and is the one an app must declare: an object that is
+ * itself a container carries no Folder tag, because it *is* the Folder, and
+ * its identifier is that Folder's id. See {@link RecordsRule.folder}.
+ *
+ * Returns `null` when nothing says — which is a real answer. An object with no
+ * Folder has nowhere for a write to go, and guessing at one publishes into
+ * somebody else's channel.
+ */
+export function folderOf(
+  root: SignedEvent,
+  records?: { folder?: 'identifier' },
+): string | null {
+  const tagged = tagValue(root, 'h') ?? tagValue(root, 'buzz-channel')
+  if (tagged) return tagged
+  if (records?.folder === 'identifier') return tagValue(root, 'd') ?? null
+  return null
+}
 
 /**
  * Does the event carry this tag with this value — on **any** of them?
@@ -1049,6 +1120,35 @@ export function actionProblems(declared: unknown): string[] {
     problems.push(
       `${name} declares effect ${JSON.stringify(action.effect)}, which is not one of ${ACTION_EFFECTS.join(', ')}. An unrecognised value is dropped rather than passed through, so this reads as if the field were absent — a typo here is invisible.`,
     )
+  }
+
+  /*
+    Where a property is written — PRO-18.
+
+    Both of these are producer mistakes a consumer cannot report at the moment
+    they matter: `buildCreationEvent` refuses two content fields, but that is a
+    person pressing a button and getting a sentence, long after the manifest
+    was signed. This is the check that runs before signing.
+  */
+  const properties = (action as { input?: { properties?: Record<string, unknown> } }).input?.properties
+  if (properties && typeof properties === 'object') {
+    const targeted: string[] = []
+    for (const [property, spec] of Object.entries(properties)) {
+      const target = (spec as { target?: unknown } | null)?.target
+      if (target === undefined) continue
+      if (target !== 'content') {
+        problems.push(
+          `${name} declares "${property}" targeting ${JSON.stringify(target)}, and the only target is "content". An unrecognised one is ignored, so the value goes to a tag named "${property}" instead — which publishes, and is not where the owner meant it.`,
+        )
+        continue
+      }
+      targeted.push(property)
+    }
+    if (targeted.length > 1) {
+      problems.push(
+        `${name} writes ${targeted.length} properties to content (${targeted.join(', ')}), and an event has one. A consumer refuses the whole action rather than choosing between them.`,
+      )
+    }
   }
 
   return problems
@@ -2571,11 +2671,26 @@ function buildCreationEvent(args: {
     return `Creating a kind ${declared.emits.kind} needs an identifier, and none was supplied.`
   }
 
+  /*
+    At most one property may target `content` — PRO-18.
+
+    Checked before anything is built rather than trusted, because two of them
+    is a producer bug whose symptom is one field silently disappearing into the
+    other. The honour system means a manifest can say this; it does not mean a
+    consumer has to publish the result.
+  */
+  const bodyFields = Object.keys(properties).filter((name) => properties[name]?.target === 'content')
+  if (bodyFields.length > 1) {
+    return `"${declared.label}" declares ${bodyFields.length} fields writing to content (${bodyFields.join(', ')}), and an event has one.`
+  }
+  const bodyField = bodyFields[0]
+
   const tags: string[][] = []
   if (isAddressableKind(declared.emits.kind)) tags.push(['d', newId!])
-  // A property's name is the tag it writes. See `ManifestAction.input`.
+  // A property's name is the tag it writes, unless it declared `content`. See
+  // `ManifestAction.input`.
   for (const [name, held] of Object.entries(value)) {
-    if (held !== '') tags.push([name, held])
+    if (held !== '' && name !== bodyField) tags.push([name, held])
   }
   // The parent. `toAddressOf: "self"` names the object the action was invoked
   // on; any other value is a shape nothing declares yet, and guessing at one
@@ -2590,7 +2705,7 @@ function buildCreationEvent(args: {
     created_at: Math.floor(args.createdAtMs / 1000),
     kind: declared.emits.kind,
     tags,
-    content: '',
+    content: bodyField ? (value[bodyField] ?? '') : '',
   }
 }
 
