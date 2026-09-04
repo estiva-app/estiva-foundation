@@ -240,25 +240,6 @@ interface RecordsRule {
    * which field and which value, and this stays out of it.
    */
   hiddenWhen?: { field: string; equals: string }
-  /**
-   * Where this app's objects say which Folder they belong to — PRO-18.
-   *
-   * Absent, and the answer is the tags: NIP-29's `h`, or the relay's own
-   * `buzz-channel` for a record published *globally* while still naming a
-   * Folder. {@link folderOf} reads both and always has to.
-   *
-   * `"identifier"` is the third case and the reason this field exists: an
-   * object that **is** a container names no Folder because it is one, and its
-   * `d` is that Folder's id. A Peek topic is the case in hand — a `kind:39000`
-   * whose identifier is the channel — and without this an action performed on
-   * one fails with "that object has no Folder, so there is nowhere to write",
-   * which is true of the tags and false of the object.
-   *
-   * Declared rather than inferred from the kind. A consumer that special-cased
-   * 39000 would know what Peek is, which is the one thing this layer may not
-   * do; the owner says it, and the rule works for an app nobody here wrote.
-   */
-  folder?: 'identifier'
 }
 
 interface SlotSpec {
@@ -578,7 +559,7 @@ function resolveActions(
 const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1]
 
 /**
- * Which Folder an object belongs to — the three spellings, in one place.
+ * Which Folder an object belongs to — both spellings, in one place.
  *
  * **This lived in Peek and had to move** (PRO-18). Its comment there said so:
  * reading only `h` made five of Ship's fifteen projects unactionable, because
@@ -588,22 +569,21 @@ const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === n
  * are the relay's and NIP-29's, so knowing them is not knowing what any app
  * is.
  *
- * The third case is new and is the one an app must declare: an object that is
- * itself a container carries no Folder tag, because it *is* the Folder, and
- * its identifier is that Folder's id. See {@link RecordsRule.folder}.
+ * **0.13.0 had a third case and 0.14.0 withdrew it.** A manifest could declare
+ * `records.folder: "identifier"`, meaning *my objects are containers, so the
+ * Folder is the object's own `d`*. Its only instance was a Peek topic, and
+ * RFC 0.5 §1 retires that shape: a Folder holds several files of the same kind
+ * — three topics and two projects — so a topic becomes a file inside a Folder
+ * and carries an `h` like everything else. A vocabulary field whose only
+ * instance is going away is one every future producer has to read and none can
+ * use.
  *
- * Returns `null` when nothing says — which is a real answer. An object with no
- * Folder has nowhere for a write to go, and guessing at one publishes into
+ * Returns `null` when neither tag says — which is a real answer. An object with
+ * no Folder has nowhere for a write to go, and guessing at one publishes into
  * somebody else's channel.
  */
-export function folderOf(
-  root: SignedEvent,
-  records?: { folder?: 'identifier' },
-): string | null {
-  const tagged = tagValue(root, 'h') ?? tagValue(root, 'buzz-channel')
-  if (tagged) return tagged
-  if (records?.folder === 'identifier') return tagValue(root, 'd') ?? null
-  return null
+export function folderOf(root: SignedEvent): string | null {
+  return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel') ?? null
 }
 
 /**
