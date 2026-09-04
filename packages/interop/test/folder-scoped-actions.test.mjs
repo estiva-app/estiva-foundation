@@ -16,12 +16,18 @@
  * 2. **An object that *is* a Folder names none.** A Peek topic is a
  *    `kind:39000` whose identifier is the channel, so the `h`/`buzz-channel`
  *    read that serves every Ship record finds nothing on it and the write is
- *    refused for having nowhere to go. So an app may declare where its objects
- *    say which Folder they belong to.
+ *    refused for having nowhere to go.
  *
- * Neither is Peek-shaped. The fixtures below are an app nobody wrote, for the
- * same reason `action-conformance` uses one: the test of a vocabulary is that
- * it works for an app this team has never seen.
+ * The second was answered in 0.13.0 with `records.folder: "identifier"` and
+ * **withdrawn in 0.14.0**, before any manifest declared it. RFC 0.5 §1 retires
+ * the shape it served: a Folder holds several files of the same kind — three
+ * topics and two projects — so a topic becomes a file inside a Folder and
+ * carries an `h` like everything else. What remains of it here is `folderOf`,
+ * which consolidates the two tag spellings and is worth having on its own.
+ *
+ * The fixtures below are an app nobody wrote, for the same reason
+ * `action-conformance` uses one: the test of a vocabulary is that it works for
+ * an app this team has never seen.
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
@@ -188,8 +194,7 @@ describe('the producer check catches it before the manifest is signed', () => {
   })
 })
 
-describe('an object that is itself a container', () => {
-  const topic = event({ kind: COLONY, tags: [['d', 'weir']] })
+describe('finding the Folder to write into', () => {
   const record = event({ kind: 30851, tags: [['d', 'i1'], ['h', FOLDER]] })
   const global = event({ kind: 30850, tags: [['d', 'p1'], ['buzz-channel', FOLDER]] })
 
@@ -200,16 +205,22 @@ describe('an object that is itself a container', () => {
     assert.equal(folderOf(global), FOLDER)
   })
 
-  test('an object with no Folder tag has none, unless its app says otherwise', () => {
-    assert.equal(folderOf(topic), null)
-    assert.equal(folderOf(topic, { folder: 'identifier' }), 'weir')
+  test('an object carrying neither tag has no Folder, and that is the answer', () => {
+    /*
+      0.13.0 let an app declare its way out of this with
+      `records.folder: "identifier"`, for an object that *is* a container.
+      0.14.0 withdrew it: RFC 0.5 §1 makes a topic a file inside a Folder
+      rather than the Folder, so the one instance it served stops existing.
+
+      Null stays a real answer rather than a gap. An object with nowhere to
+      write is not one to guess a channel for — that publishes into somebody
+      else's.
+    */
+    assert.equal(folderOf(event({ kind: COLONY, tags: [['d', 'weir']] })), null)
   })
 
-  test('a tag still wins over the declaration', () => {
-    // The rule answers "this object carries no Folder tag". It is not licence
-    // to ignore one that is there, which would write into the wrong channel
-    // for any object that has both.
-    const both = event({ kind: COLONY, tags: [['d', 'weir'], ['h', FOLDER]] })
-    assert.equal(folderOf(both, { folder: 'identifier' }), FOLDER)
+  test('`h` wins over `buzz-channel` when an object carries both', () => {
+    const both = event({ kind: 30850, tags: [['d', 'p1'], ['h', FOLDER], ['buzz-channel', 'other']] })
+    assert.equal(folderOf(both), FOLDER)
   })
 })

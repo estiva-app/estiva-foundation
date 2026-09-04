@@ -263,7 +263,6 @@ this suite knows nothing about, which is the point.
   "records": {
     "changeKind": 1851, "targetTag": "a", "fieldTag": "field", "valueTag": "value",
     "order": ["ts", "created_at", "id"], "rule": "last-write-wins-per-field"
-    // "folder": "identifier"  — only if your object *is* a container; see below
   },
   "projections": {
     "31800": {
@@ -301,7 +300,7 @@ A chat app now renders your candidate — with your stages, your colours, your
 recruiter — in **its** design language, and lets someone move a stage without
 leaving the conversation. It knows nothing about hiring.
 
-Seven things that will bite, each of them something we got wrong first:
+Six things that will bite, each of them something we got wrong first:
 
 - **`title` is required.** It is what makes ignoring an unknown slot safe.
 - **A mutable field must be a `fold`, never a `tag`.** A status that can be set
@@ -323,14 +322,11 @@ Seven things that will bite, each of them something we got wrong first:
   nothing else. `"Add"` is not rejected anywhere — your action is simply never
   the one chosen, and nothing tells you. `actionProblems()` is exported for the
   same reason as the check above: run it in your own tests before you sign.
-- **If your object *is* a container, say so.** A consumer finds the Folder to
-  write into by reading `h`, then the relay's `buzz-channel`, on the object
-  being acted on. An object that is itself a Folder carries neither — it *is*
-  the Folder — so every action on one is refused for having nowhere to go.
-  `"records": { "folder": "identifier" }` says the Folder is the object's own
-  `d`. Nothing can infer this: a consumer that guessed from the kind would be
-  hardcoding one app. `folderOf()` is exported so you can check what a consumer
-  will conclude about your records.
+- **Your objects need a Folder tag to be actionable.** A consumer finds where to
+  write by reading `h`, then the relay's `buzz-channel`, on the object being
+  acted on; an object carrying neither is refused for having nowhere to go.
+  `folderOf()` is exported so you can check what a consumer will conclude about
+  your records.
 
 ---
 
