@@ -34,6 +34,7 @@ export {
   pickWidget,
   widgetChainProblem,
   actionProblems,
+  folderOf,
   MIN_ACTION_DESCRIPTION,
   CLOSED_WIDGETS,
   contentFormatOf,

@@ -192,7 +192,10 @@ flag on each property:
   "emits": { "kind": 31801, "setTag": "a", "toAddressOf": "self" },
   "input": {
     "type": "object",
-    "properties": { "title": { "type": "string" }, "note": { "type": "string" } },
+    "properties": {
+      "title": { "type": "string" },
+      "note": { "type": "string", "target": "content" }
+    },
     "required": ["title"]
   }
 }
@@ -204,9 +207,20 @@ nothing could reference it, comment on it or act on it afterwards.
 
 Two rules worth knowing before you draw the form. **A property's name is the tag
 its value is written to**, which is what lets a consumer build an event for an
-app it has never seen. And **nothing can target an event's `content`** — an app
-whose body lives there cannot have it filled from outside, which is why an
-action may declare a `description` field that ends up in a tag.
+app it has never seen. And **one property may target the event's `content`
+instead**, with `"target": "content"` — at most one, because an event has one
+body, and a consumer refuses the whole action rather than choosing between two.
+
+That second rule is new in 0.13.0. Before it, nothing could be written to
+`content` at all, and the consequence was not a rough edge: an app whose object
+*is* its body — a message, a note, a comment — could not declare a create
+action at all, because a body in a tag is not a body. Peek's manifest said
+`"actions": []` for exactly that reason.
+
+A field carrying `target` reaches you on the resolved action, so you can draw
+prose where the producer meant prose. Ignoring it is safe — the event is
+correct either way; you will just have drawn a single-line input for a
+paragraph.
 
 Two consequences worth knowing before you ship it. **Validation is an honour
 system** — nothing stops you publishing a status outside the declared
@@ -249,6 +263,7 @@ this suite knows nothing about, which is the point.
   "records": {
     "changeKind": 1851, "targetTag": "a", "fieldTag": "field", "valueTag": "value",
     "order": ["ts", "created_at", "id"], "rule": "last-write-wins-per-field"
+    // "folder": "identifier"  — only if your object *is* a container; see below
   },
   "projections": {
     "31800": {
@@ -286,7 +301,7 @@ A chat app now renders your candidate — with your stages, your colours, your
 recruiter — in **its** design language, and lets someone move a stage without
 leaving the conversation. It knows nothing about hiring.
 
-Six things that will bite, each of them something we got wrong first:
+Seven things that will bite, each of them something we got wrong first:
 
 - **`title` is required.** It is what makes ignoring an unknown slot safe.
 - **A mutable field must be a `fold`, never a `tag`.** A status that can be set
@@ -308,6 +323,14 @@ Six things that will bite, each of them something we got wrong first:
   nothing else. `"Add"` is not rejected anywhere — your action is simply never
   the one chosen, and nothing tells you. `actionProblems()` is exported for the
   same reason as the check above: run it in your own tests before you sign.
+- **If your object *is* a container, say so.** A consumer finds the Folder to
+  write into by reading `h`, then the relay's `buzz-channel`, on the object
+  being acted on. An object that is itself a Folder carries neither — it *is*
+  the Folder — so every action on one is refused for having nowhere to go.
+  `"records": { "folder": "identifier" }` says the Folder is the object's own
+  `d`. Nothing can infer this: a consumer that guessed from the kind would be
+  hardcoding one app. `folderOf()` is exported so you can check what a consumer
+  will conclude about your records.
 
 ---
 
