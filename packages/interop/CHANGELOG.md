@@ -6,6 +6,34 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.12.0 — 2026-09-04
+
+**No manifest changes meaning, and nothing is read differently.** This adds a
+producer-side check; it declares nothing new and alters no resolution.
+
+`ManifestAction.description` said *"nothing reads this yet, and that is
+expected."* Something does now — Peek's launcher selects an action from a
+conversation by matching on that prose, across every manifest it can resolve.
+Which makes a description written for a screen not merely unused but an action a
+caller never picks, with no error anywhere: `resolveManifest` accepts it, every
+consumer renders it, and it is quietly never chosen.
+
+- **`actionProblems`** returns the sentences a producer needs before signing —
+  a description that restates its label, one short enough to be a caption, an
+  absent `effect` (read as *unknown* in both directions), a misspelt one
+  (dropped, so a typo is invisible). Empty when the action is fine.
+- **`MIN_ACTION_DESCRIPTION`** is the threshold, exported because it is a proxy
+  rather than a truth and a producer may reasonably want to see it.
+
+The division of labour is `widgetChainProblem`'s, stated there: a consumer stays
+safe against a declaration it did not expect, *and* the unusable declaration
+should not be signed. **Advisory, never fatal** — nothing in resolution calls
+it, and a test asserts that, because a consumer refusing to render an app over
+its prose is the objection that rules out iframes wearing a different hat.
+
+Lifted from Ship, which has enforced these three rules privately since PRO-5.
+Nothing was wrong with the rules; they protected one manifest.
+
 ## 0.11.0 — 2026-09-04
 
 **A second identity shape: an event id, for an object that has no `d`.** No

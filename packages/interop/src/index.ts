@@ -33,6 +33,8 @@ export {
   buildActionEvent,
   pickWidget,
   widgetChainProblem,
+  actionProblems,
+  MIN_ACTION_DESCRIPTION,
   CLOSED_WIDGETS,
   contentFormatOf,
   BODY_SLOT,
