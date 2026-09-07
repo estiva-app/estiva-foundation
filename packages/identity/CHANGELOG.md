@@ -1,5 +1,55 @@
 # @estiva-app/identity
 
+## 0.1.2 — 2026-09-07
+
+**No wire behaviour, no break.** `scheduleRenewal` is new and the guard on
+`refreshAccessToken` only prevents a call that should never have been made, so a
+consumer on `^0.1.0` needs no change — ADR 0002 §4b puts the break on MINOR
+within `0.x`.
+
+Two of SHA-4's five "hard-won behaviour that must survive" items did not, in
+fact, survive — and both for the same reason. They lived in
+`peek-app/src/auth/useEstivaIdAuth.ts`, the `ConvexProviderWithAuth` adapter,
+which is deliberately the one file kept *out* of this package. So Peek kept them
+and Ship, the second consumer whose entire purpose was to catch exactly this,
+silently did not get them. Wiring a second consumer proves a package is not
+shaped like the first app; it does not prove the first app handed everything
+over.
+
+- **`refreshAccessToken` now coalesces concurrent callers.** A refresh token is
+  single-use and Estiva ID reads a replay as theft, revoking the whole chain — so
+  two renewals in the air at once do not waste a round trip, they sign somebody
+  out of everything. Two callers is not hypothetical: Ship signs the NIP-98 auth
+  event and the content event as separate `POST /sign` calls, and a token that
+  expires between them answers `401` to both, each of which renews.
+
+  Peek has had this since PEEK-108 as a `refreshing` ref in its hook. Ship has
+  never had it. It belongs here, where every caller of every consumer gets it
+  without having thought about it. Coalescing, not caching: the promise is
+  dropped the moment it settles, and a test asserts the *next* expiry renews
+  again — a guard that held the promise forever would pass the first test and be
+  a worse bug than the one it fixed.
+
+- **`scheduleRenewal(handlers)` renews before expiry rather than reacting to
+  it.** `tokenFrom` has always stored an expiry 30 seconds early; nothing in the
+  package acted on it. Reacting to expiry means somebody's next action is what
+  discovers the session ended. Renewing early means they notice nothing, which
+  is the whole point of PEEK-108.
+
+  The timer is injected (`setTimer`/`clearTimer`) for the same reason `fetch` and
+  `navigate` are: "we scheduled it" and "we did nothing" are otherwise the same
+  observation. The handle type never reaches the published `.d.ts` — it is
+  `number` in a browser and an object in Node, and naming either fails
+  `check-identity.yml`, correctly.
+
+  **Known limitation, documented here rather than rediscovered per app:** a
+  `setTimeout` is throttled in a background tab — to once a minute in Chrome and
+  Safari, and frozen outright after five minutes hidden — so a backgrounded tab
+  can miss its window. It degrades safely, because the refresh token long
+  outlives the access token: a late renewal is still a renewal, and anything that
+  beats the timer takes the existing `401`-and-retry path. The guard above is
+  what stops the two racing.
+
 ## 0.1.1 — 2026-08-28
 
 **No wire behaviour**, and no break: `pendingStore` is optional and defaults to

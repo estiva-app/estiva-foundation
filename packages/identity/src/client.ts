@@ -73,6 +73,19 @@ declare const URL: {
 }
 declare const URLSearchParams: { new (init: string): { get(name: string): string | null } }
 
+/**
+ * The timer pair, for {@link EstivaIdClient.scheduleRenewal}.
+ *
+ * Declared here for the same reason as everything above, and returning
+ * `unknown` for one more: the handle's real type is `number` in a browser and an
+ * object in Node, and naming either would put an ambient type in the published
+ * `.d.ts` — which `check-identity.yml` fails the build over, correctly. Nothing
+ * outside this module ever sees a handle; `scheduleRenewal` hands back a
+ * `cancel` function instead.
+ */
+declare const setTimeout: (run: () => void, ms: number) => unknown
+declare const clearTimeout: (handle: unknown) => void
+
 /** Just enough of `fetch` to redeem a code. A parameter as well as a global. */
 export type FetchLike = (
   url: string,
@@ -122,6 +135,14 @@ export interface EstivaIdConfig {
   navigate?: (url: string) => void
   now?: () => number
   fetch?: FetchLike
+  /**
+   * The timers `scheduleRenewal` runs on, injected for exactly the reason
+   * `fetch` and `navigate` are: a test cannot wait ten minutes to find out
+   * whether the renewal was scheduled, and "we scheduled it" and "we did
+   * nothing" are otherwise the same observation.
+   */
+  setTimer?: (run: () => void, ms: number) => unknown
+  clearTimer?: (handle: unknown) => void
 }
 
 export interface StoredToken {
@@ -143,7 +164,34 @@ export interface StoredToken {
   refreshToken?: string
 }
 
+/**
+ * `setTimeout`'s ceiling. Above 2^31-1 ms the delay overflows to a negative
+ * int32 and the timer fires immediately.
+ */
+const MAX_TIMER_MS = 2_147_483_647
+
 export class SignInError extends Error {}
+
+/** What a scheduled renewal reports back. Both optional; neither is required to be useful. */
+export interface RenewalHandlers {
+  /** A renewal succeeded. The session continues, on a later expiry. */
+  onRenewed?: (token: StoredToken) => void
+  /**
+   * A renewal failed, and the session is over.
+   *
+   * The only honest thing an app can do here is drop to the shell. Note this
+   * fires on refusal *and* on an unreachable network — `refreshAccessToken`
+   * distinguishes them for the purpose of clearing the stored token, but from a
+   * scheduler's point of view a renewal that did not happen is a renewal that
+   * did not happen, and the shell's own probe is what sorts out which it was.
+   */
+  onEnded?: () => void
+}
+
+export interface RenewalSchedule {
+  /** Stop renewing. Idempotent, and safe to call after the session has ended. */
+  cancel: () => void
+}
 
 interface TokenResponse {
   access_token?: string
@@ -158,6 +206,7 @@ export interface EstivaIdClient {
   beginSignIn: (returnTo: string, options?: { silent?: boolean }) => Promise<void>
   completeSignIn: (search: string) => Promise<{ token: StoredToken; returnTo: string }>
   refreshAccessToken: () => Promise<StoredToken | null>
+  scheduleRenewal: (handlers?: RenewalHandlers) => RenewalSchedule
   storedToken: () => StoredToken | null
   validToken: (now?: number) => StoredToken | null
   hasSession: () => boolean
@@ -299,6 +348,88 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
     if (raw) s?.removeItem(RETURN_KEY)
     return raw ?? null
   }
+
+  /**
+   * Renew the access token without leaving the page (PEEK-108).
+   *
+   * This is the whole reason the grant exists. Before it, an expired token
+   * could only be replaced by a top-level navigation through `/authorize`,
+   * which costs whatever the person had on screen.
+   *
+   * Returns `null` for every failure, and the failures are not worth
+   * distinguishing: Estiva ID answers `invalid_grant` for all of them by
+   * design, and the caller's only move either way is to fall back to the
+   * shell. The stored token is cleared on refusal so a spent refresh token is
+   * never presented twice — a replay is what Estiva ID treats as theft.
+   */
+  const performRefresh = async (): Promise<StoredToken | null> => {
+    const s = config.storage()
+    const current = storedToken()
+    if (!s || !current?.refreshToken) return null
+
+    let response: Awaited<ReturnType<FetchLike>>
+    try {
+      response = await send()(new URL('/token', config.base).toString(), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grantType: 'refresh_token',
+          refreshToken: current.refreshToken,
+          clientId: config.clientId,
+        }),
+      })
+    } catch {
+      // Unreachable rather than refused. The token in hand may still be fine,
+      // so this deliberately does not clear the session — a flaky network must
+      // not sign somebody out.
+      return null
+    }
+
+    if (!response.ok) {
+      clearSession()
+      return null
+    }
+
+    const body = (await response.json()) as TokenResponse
+    if (!body.access_token) {
+      clearSession()
+      return null
+    }
+
+    const next = tokenFrom(body, body.pubkey ?? current.pubkey)
+    s.setItem(TOKEN_KEY, JSON.stringify(next))
+    return next
+  }
+
+  /**
+   * The renewal in flight, if there is one.
+   *
+   * **A refresh token is single-use and a replay is read as theft**, which
+   * revokes the whole chain — so two renewals must never be in the air at once.
+   * Two easily can be: Ship signs the NIP-98 auth event and the content event as
+   * separate `POST /sign` calls, and a token that expires between them answers
+   * `401` to both, each of which renews.
+   *
+   * Peek has guarded this since PEEK-108 with a `refreshing` ref in its Convex
+   * adapter, and SHA-4 lists the guard as one of the behaviours that must
+   * survive the extraction — but the guard is the one part that did not travel,
+   * because it lived in the hook rather than the client. So Peek kept it and
+   * Ship never had it. It belongs here, where every caller of every consumer
+   * gets it whether or not they thought about it.
+   *
+   * Coalescing rather than caching: the promise is dropped the moment it
+   * settles, so the *next* expiry renews again.
+   */
+  let refreshing: Promise<StoredToken | null> | null = null
+
+  const refreshAccessToken = (): Promise<StoredToken | null> => {
+    if (refreshing) return refreshing
+    refreshing = performRefresh().finally(() => {
+      refreshing = null
+    })
+    return refreshing
+  }
+
 
   return {
     redirectUri: config.redirectUri,
@@ -464,57 +595,94 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       return { token, returnTo }
     },
 
+    refreshAccessToken,
+
     /**
-     * Renew the access token without leaving the page (PEEK-108).
+     * Renew shortly **before** the token expires, rather than reacting to it
+     * having expired.
      *
-     * This is the whole reason the grant exists. Before it, an expired token
-     * could only be replaced by a top-level navigation through `/authorize`,
-     * which costs whatever the person had on screen.
+     * SHA-4 lists this as one of the behaviours that must survive the
+     * extraction, and it is the one that reads as an optimisation and is not.
+     * Reacting to expiry means somebody's next action is the thing that
+     * discovers the session is over — a failed publish, a blank list, or at best
+     * a retry they can feel. Renewing 30 seconds early (`tokenFrom` already
+     * subtracts them) means they notice nothing at all.
      *
-     * Returns `null` for every failure, and the failures are not worth
-     * distinguishing: Estiva ID answers `invalid_grant` for all of them by
-     * design, and the caller's only move either way is to fall back to the
-     * shell. The stored token is cleared on refusal so a spent refresh token is
-     * never presented twice — a replay is what Estiva ID treats as theft.
+     * It did not travel with the rest of SHA-4: the timer lived in Peek's Convex
+     * adapter, so Peek kept it and Ship, whose whole point was to be the second
+     * consumer, silently did not get it. Ship renews only when `POST /sign`
+     * answers `401`, which is precisely "on failure".
+     *
+     * ## The timer is a `setTimeout`, and browsers throttle those
+     *
+     * A background tab gets its timers clamped — to once a minute in Chrome and
+     * Safari, and after five minutes of being hidden they may be frozen outright.
+     * So a tab left in the background can miss its renewal window entirely.
+     *
+     * This is a known limitation rather than a bug, and it is recorded here so
+     * it is not rediscovered once per app. It degrades safely: a late renewal is
+     * still a valid renewal, because the refresh token outlives the access token
+     * by a long way, and a call that beats the late timer gets the existing
+     * `401`-and-retry path. What it must not do is renew *twice* in the scramble,
+     * which is what the guard on `refreshAccessToken` is for.
+     *
+     * A `visibilitychange` listener that re-arms on foreground would tighten
+     * this, and is deliberately not here: `document` is a global this package
+     * does not touch (ADR 0002 §4a), and an app that wants it can `cancel()` and
+     * call this again.
      */
-    async refreshAccessToken(): Promise<StoredToken | null> {
-      const s = config.storage()
-      const current = storedToken()
-      if (!s || !current?.refreshToken) return null
+    scheduleRenewal(handlers: RenewalHandlers = {}): RenewalSchedule {
+      const setTimer = config.setTimer ?? ((run, ms) => setTimeout(run, ms))
+      const clearTimer = config.clearTimer ?? ((handle) => clearTimeout(handle))
 
-      let response: Awaited<ReturnType<FetchLike>>
-      try {
-        response = await send()(new URL('/token', config.base).toString(), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            grantType: 'refresh_token',
-            refreshToken: current.refreshToken,
-            clientId: config.clientId,
-          }),
-        })
-      } catch {
-        // Unreachable rather than refused. The token in hand may still be fine,
-        // so this deliberately does not clear the session — a flaky network must
-        // not sign somebody out.
-        return null
+      let handle: unknown = null
+      let cancelled = false
+
+      const arm = (): void => {
+        const token = storedToken()
+        // Nothing to renew. Not an ending — the caller is simply signed out, and
+        // an app that signs in later starts a new schedule.
+        if (!token) return
+
+        /*
+          Clamped at both ends. A negative delay is a token that already expired
+          — renew now rather than never, since the refresh token almost certainly
+          has not. The ceiling is `setTimeout`'s: a delay above 2^31-1 ms
+          overflows to a negative int32 and fires immediately, so a nonsensical
+          `expires_in` would otherwise become a hot loop against `/token` instead
+          of one very distant timer.
+        */
+        const delay = Math.min(Math.max(0, token.expiresAt - now()), MAX_TIMER_MS)
+
+        handle = setTimer(() => {
+          handle = null
+          void refreshAccessToken().then((next) => {
+            if (cancelled) return
+            if (!next) {
+              handlers.onEnded?.()
+              return
+            }
+            handlers.onRenewed?.(next)
+            // Re-armed from the *new* expiry rather than a fixed interval, so
+            // the schedule follows whatever lifetime Estiva ID actually issued.
+            arm()
+          })
+        }, delay)
       }
 
-      if (!response.ok) {
-        clearSession()
-        return null
-      }
+      arm()
 
-      const body = (await response.json()) as TokenResponse
-      if (!body.access_token) {
-        clearSession()
-        return null
+      return {
+        cancel(): void {
+          cancelled = true
+          if (handle !== null) {
+            clearTimer(handle)
+            handle = null
+          }
+        },
       }
-
-      const next = tokenFrom(body, body.pubkey ?? current.pubkey)
-      s.setItem(TOKEN_KEY, JSON.stringify(next))
-      return next
     },
+
 
     /**
      * Leave for Estiva ID to end the session *there* (PEEK-122).

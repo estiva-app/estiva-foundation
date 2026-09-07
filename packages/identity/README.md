@@ -42,6 +42,7 @@ package come out Peek-shaped, which is the whole risk SHA-4 names.
 | `pendingStore` — in-flight PKCE credentials | defaults to `storage` | `sessionStorage`, because the flow starts and ends in one tab |
 | `keyPrefix` | `peek.estivaId` | `ship.estiva-id` |
 | `navigate` | the one genuinely untestable act, so it is observable |  |
+| `setTimer` / `clearTimer` | the timers `scheduleRenewal` runs on, injected for the same reason |  |
 
 **Do not unify the two stores.** NIP-RS read-state slots (CRO-4) must survive a
 restart and belong in `localStorage`; an access token does not. Different
@@ -66,6 +67,44 @@ const client = createEstivaId({
 })
 export const { validToken, beginSignIn, completeSignIn, beginSignOut } = client
 ```
+
+## Renewal is scheduled, not reactive
+
+```ts
+const schedule = client.scheduleRenewal({
+  onRenewed: (token) => setSignedIn(true),
+  onEnded: () => setSignedIn(false),   // drop to the shell
+})
+// later, on sign-out or unmount
+schedule.cancel()
+```
+
+`tokenFrom` stores an expiry 30 seconds early on purpose, and `scheduleRenewal`
+is what acts on it. Reacting to expiry instead means somebody's *next action* is
+what discovers the session is over — a failed publish, a blank list, at best a
+retry they can feel. Renewing early means they notice nothing, which is the whole
+point of PEEK-108.
+
+**Two renewals must never be in the air at once.** A refresh token is single-use
+and Estiva ID reads a replay as evidence of theft, revoking the whole chain — so
+a duplicate renewal does not waste a round trip, it signs somebody out of
+everything. `refreshAccessToken` coalesces concurrent callers into one request,
+and it does so for every caller, not only the scheduler: Ship signs the NIP-98
+auth event and the content event as two separate `POST /sign` calls, and a token
+that expires between them answers `401` to both.
+
+**Known limitation: `setTimeout` is throttled in a background tab.** Chrome and
+Safari clamp a hidden tab's timers to roughly once a minute, and may freeze them
+outright after five minutes hidden, so a backgrounded tab can miss its renewal
+window. This is recorded here rather than rediscovered once per app.
+
+It degrades safely. The refresh token outlives the access token by a long way, so
+a late renewal is still a renewal, and anything that beats the late timer takes
+the existing `401`-and-retry path — which is exactly why the coalescing guard
+above is not an optimisation. A `visibilitychange` listener that re-armed on
+foreground would tighten it and is deliberately absent: `document` is a global
+this package does not touch (ADR 0002 §4a). An app that wants it can `cancel()`
+and call `scheduleRenewal` again.
 
 ## The prediction this package falsified
 
