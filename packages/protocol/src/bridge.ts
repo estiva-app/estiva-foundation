@@ -68,6 +68,20 @@ export interface PublishResult {
 export const RELAY_PAGE_CEILING = 1000
 
 /**
+ * The most filters one `POST /query` will carry.
+ *
+ * Measured against production 2026-09-07 by binary search: **128 accepted, 129
+ * refused** with `too many explicit channels`. The relay counts filter
+ * *occurrences*, not distinct Folders — 300 filters over 36 Folders is refused
+ * just the same — so the bound is on the array's length and nothing else.
+ *
+ * Like {@link RELAY_PAGE_CEILING} this is a property of the relay rather than
+ * of this client, and it is a *page size, not a promise*: a batch that is
+ * refused falls back rather than assuming this number is still right.
+ */
+export const MAX_FILTERS_PER_QUERY = 128
+
+/**
  * How many of a {@link Relay.queryAll} call's filters may be in flight at once.
  *
  * Filters are independent — only paging *within* one is a cursor walk — and
@@ -109,6 +123,14 @@ export interface QueryAllOptions {
   maxPages?: number
   /** Filters in flight at once. Defaults to {@link DEFAULT_QUERY_CONCURRENCY}; 1 is serial. */
   concurrency?: number
+  /**
+   * Ask for every filter's first page in one request. On by default.
+   *
+   * `false` restores the pre-PER-1 shape — one request per filter — which is
+   * what the paging tests drive, and what a caller wants if it has reason to
+   * distrust the relay's per-filter clamp.
+   */
+  batch?: boolean
 }
 
 export function parsePublishResponse(status: number, text: string): PublishResult {
@@ -200,6 +222,83 @@ export interface RelayOptions {
  * same class serve a script holding a secret key and a browser signing through a
  * remote service.
  */
+/**
+ * A function saying which filter of a batch an event came from, or `null` when
+ * that cannot be decided with certainty.
+ *
+ * Two discriminators, both exact, and between them they cover every batched
+ * read the suite performs:
+ *
+ * - **`#h`**, when every filter names exactly one Folder and no two name the
+ *   same. A filter asking for Folder A cannot match an event that is not in A,
+ *   so the event's own `h` tag is the answer. This is the workspace read.
+ * - **`kinds`**, when every filter names a non-empty kind list and no kind
+ *   appears in two of them. Then the event's `kind` is the answer, whatever
+ *   else the filters constrain — extra constraints only ever narrow a filter,
+ *   they cannot make it match a kind it did not ask for. This is the discovery
+ *   pair, `{kinds:[30850]}` and `{kinds:[30851]}`.
+ *
+ * Anything else returns `null` and the chunk is paged the old way. The bar is
+ * "certain", not "usually right": a wrong attribution under-counts a run,
+ * declares a clamped filter complete, and silently drops the rest of a Folder —
+ * the exact bug this read path exists to prevent.
+ */
+type Discriminator = (event: SignedEvent) => number | null
+
+function byFolder(filters: Record<string, unknown>[]): Discriminator | null {
+  const slot = new Map<string, number>()
+  for (const [index, filter] of filters.entries()) {
+    const h = filter['#h']
+    if (!Array.isArray(h) || h.length !== 1 || typeof h[0] !== 'string') return null
+    if (slot.has(h[0])) return null
+    slot.set(h[0], index)
+  }
+  return (event) => {
+    let found: number | null = null
+    for (const tag of event.tags) {
+      if (tag[0] !== 'h' || typeof tag[1] !== 'string') continue
+      const candidate = slot.get(tag[1])
+      if (candidate === undefined) continue
+      // Two `h` tags naming two different filters: no answer exists.
+      if (found !== null && found !== candidate) return null
+      found = candidate
+    }
+    return found
+  }
+}
+
+function byKind(filters: Record<string, unknown>[]): Discriminator | null {
+  const slot = new Map<number, number>()
+  for (const [index, filter] of filters.entries()) {
+    const kinds = filter.kinds
+    if (!Array.isArray(kinds) || kinds.length === 0) return null
+    for (const kind of kinds) {
+      if (typeof kind !== 'number' || slot.has(kind)) return null
+      slot.set(kind, index)
+    }
+  }
+  return (event) => slot.get(event.kind) ?? null
+}
+
+function discriminate(filters: Record<string, unknown>[]): Discriminator | null {
+  return byFolder(filters) ?? byKind(filters)
+}
+
+/** The batched response split into one run per filter, or `null` if any event is unclaimed. */
+function splitRuns(
+  count: number,
+  events: SignedEvent[],
+  which: Discriminator,
+): SignedEvent[][] | null {
+  const runs: SignedEvent[][] = Array.from({ length: count }, () => [])
+  for (const event of events) {
+    const index = which(event)
+    if (index === null) return null
+    runs[index].push(event)
+  }
+  return runs
+}
+
 export class Relay {
   private readonly url: string
   private readonly signer: Signer
@@ -331,6 +430,45 @@ export class Relay {
     const perFilter: SignedEvent[][] = new Array(filters.length)
     const failures: unknown[] = new Array(filters.length)
 
+    /*
+      One request for every filter's first page, before any of them is paged.
+
+      The old shape spent one HTTP request per filter, and that is the unit the
+      relay meters: `enforce_http_admission` runs on the *call*, before the
+      filters are even parsed, at 300 a minute shared across every app one
+      person has open. Measured on Ship's `loadAll` against production
+      2026-09-07: **39 requests and 1015 ms warm, 2.83 MiB down**, of which
+      every single request was a first page — nothing was paging at all.
+
+      What makes this safe rather than merely cheaper is that `POST /query`
+      **concatenates per filter, in filter order, and clamps `limit` per
+      filter** — all three measured, not assumed:
+
+      - 10 filters at `limit: 5` returned 48 events, not 5.
+      - The same filter twice in one POST returned 236 events, not 118: the
+        relay does not dedupe across filters, so a run's length is its own.
+      - Three Folder filters batched came back element-for-element identical to
+        the same three read one at a time.
+
+      That last one is the whole argument. `queryAll`'s contract is that the
+      answer is the serial concatenation; a batched response *is* that
+      concatenation, so this is a transport change and not a semantic one.
+    */
+    const unresolved = new Set<number>(filters.map((_, index) => index))
+    /*
+      A filter the batch could not settle keeps its first page anyway: it is
+      handed back as a seed so `pageFilter` resumes from that page's cursor
+      instead of asking for it a second time. Without this the widest filter —
+      which ties its own bound on every read and so is never settled — would pay
+      for its first page twice, and the widest filter is the one every workspace
+      read has.
+    */
+    const seeds: (SignedEvent[] | undefined)[] = new Array(filters.length)
+    if (options.batch !== false && filters.length > 1) {
+      await this.batchFirstPages(filters, pageSize, perFilter, unresolved, seeds)
+    }
+
+    const remaining = [...unresolved]
     let next = 0
     let failed = false
 
@@ -340,10 +478,11 @@ export class Relay {
         // reached them at all; this is as close as a fan-out gets, and it keeps
         // a broken read from firing the whole remaining queue at the relay.
         if (failed) return
-        const index = next++
-        if (index >= filters.length) return
+        const slot = next++
+        if (slot >= remaining.length) return
+        const index = remaining[slot]
         try {
-          perFilter[index] = await this.pageFilter(filters[index], pageSize, maxPages)
+          perFilter[index] = await this.pageFilter(filters[index], pageSize, maxPages, seeds[index])
         } catch (error) {
           failures[index] = error
           failed = true
@@ -353,7 +492,7 @@ export class Relay {
     }
 
     await Promise.all(
-      Array.from({ length: Math.min(concurrency, filters.length) }, () => worker()),
+      Array.from({ length: Math.min(concurrency, remaining.length) }, () => worker()),
     )
 
     /*
@@ -380,6 +519,109 @@ export class Relay {
   }
 
   /**
+   * Every filter's first page, in as few requests as the relay will allow.
+   *
+   * Fills `perFilter` for each filter it can prove complete and removes it from
+   * `unresolved`; everything else is left for {@link Relay.pageFilter}, which is
+   * unchanged and remains the only thing that pages.
+   *
+   * **Proving a filter complete needs its own run's length**, and a flat
+   * response only yields that if the events can be attributed. Two ways, and
+   * the code takes whichever applies:
+   *
+   * 1. **By `h` tag**, when every filter in the chunk names exactly one Folder
+   *    and no two name the same one. Exact — an event carries the Folder it is
+   *    in — and it is the shape every workspace read in the suite actually
+   *    sends.
+   * 2. **By the total**, otherwise. If the whole chunk came back under the
+   *    largest page this relay has ever produced, no single run reached that
+   *    bound either, so none was clamped. Weaker, and it cannot fire on a cold
+   *    `Relay` that has no evidence yet — deliberately, per SHA-15.
+   *
+   * When neither applies the chunk is simply left unresolved: one request is
+   * spent and the old path runs, which is a cost in requests and never in
+   * correctness.
+   */
+  private async batchFirstPages(
+    filters: Record<string, unknown>[],
+    pageSize: number,
+    perFilter: SignedEvent[][],
+    unresolved: Set<number>,
+    seeds: (SignedEvent[] | undefined)[],
+  ): Promise<void> {
+    for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+      const indices = filters
+        .slice(start, start + MAX_FILTERS_PER_QUERY)
+        .map((_, offset) => start + offset)
+      if (indices.length < 2) continue
+
+      /*
+        Do not spend a request on a batch whose answer could not be used.
+
+        Both proofs can be checked before asking: attribution is a property of
+        the filters alone, and the total rule needs a ceiling this `Relay` has
+        actually observed. With neither available the batch would cost one
+        request and resolve nothing — a real regression for a cold read of
+        filters that carry no `#h`, which is Ship's own discovery pair.
+      */
+      const which = discriminate(indices.map((i) => filters[i]))
+      if (!which && this.observedPageCeiling === 0) continue
+
+      /*
+        A refused batch fails the whole read. It is **not** caught and retried
+        one filter at a time.
+
+        Falling back would be the friendlier-looking choice and it is the wrong
+        one: the most likely reason a batch is refused is the quota, and the
+        single worst response to being told to slow down is to turn one request
+        into another thirty-six. `queryAll` already refuses to fire the rest of
+        a queue once a filter has failed; this is that same rule for the batch.
+
+        The cost is error *identity* — a caller sees the batch's error rather
+        than the lowest-indexed filter's. For a transport refusal, which is
+        what this path actually meets, those are the same error.
+      */
+      const events = await this.query(indices.map((i) => ({ ...filters[i], limit: pageSize })))
+
+      const runs = which ? splitRuns(indices.length, events, which) : null
+      if (runs) {
+        /*
+          Update the observed ceiling from each run *before* testing it, exactly
+          as `pageFilter` does — so the widest filter ties its own bound and is
+          left to confirm itself rather than being declared complete.
+
+          Never from the chunk total. That number is the sum of several runs,
+          and a bound raised above what the relay actually produced would make a
+          genuinely clamped page look short — SHA-8, reintroduced through the
+          back door.
+        */
+        for (const run of runs) {
+          if (run.length > this.observedPageCeiling) this.observedPageCeiling = run.length
+        }
+        for (const [offset, run] of runs.entries()) {
+          if (run.length < pageSize && run.length < this.observedPageCeiling) {
+            perFilter[indices[offset]] = run
+            unresolved.delete(indices[offset])
+          } else {
+            seeds[indices[offset]] = run
+          }
+        }
+        continue
+      }
+
+      if (events.length < pageSize && events.length < this.observedPageCeiling) {
+        // No run can exceed the total, so no run reached the ceiling. The
+        // response is already the serial concatenation, so it can be adopted
+        // whole: the first slot carries it and the rest are empty, which
+        // concatenates to exactly the same array.
+        perFilter[indices[0]] = events
+        for (const index of indices.slice(1)) perFilter[index] = []
+        for (const index of indices) unresolved.delete(index)
+      }
+    }
+  }
+
+  /**
    * One filter, paged to exhaustion. The sequential half, and it has to be:
    * `until` is a cursor, so page N+1's request is not known until page N has
    * answered. Only the filters are independent, which is why they are the
@@ -389,9 +631,21 @@ export class Relay {
     filter: Record<string, unknown>,
     pageSize: number,
     maxPages: number,
+    seed?: SignedEvent[],
   ): Promise<SignedEvent[]> {
     const out: SignedEvent[] = []
     let until: number | undefined
+    /*
+      `seed` is this filter's first page, already fetched in the batch and
+      already judged inconclusive there — so the completeness test is not
+      repeated here, only the cursor is taken from it. The request that produced
+      it is the one this loop would otherwise make first: same filter, same
+      `limit`, no `until`.
+    */
+    if (seed && seed.length > 0) {
+      out.push(...seed)
+      until = Math.min(...seed.map((e) => e.created_at))
+    }
     for (let page = 0; ; page++) {
       if (page >= maxPages) {
         throw new Error(

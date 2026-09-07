@@ -4,6 +4,56 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.15.0 — 2026-09-07
+
+**Wire behaviour: unchanged.** Nothing about what an app publishes moves, and
+`queryAll`'s answer is element-for-element what it was. This is a change to how
+many HTTP requests a read costs, and to nothing else.
+
+- **New: `queryAll` asks for every filter's first page in one request.**
+
+  Ship's workspace read was **39 requests and 1015 ms** warm, measured against
+  production 2026-09-07 — and every one of those requests was a first page:
+  nothing was paging at all. Buzz meters `POST /query` per *call*
+  (`enforce_http_admission` runs before the filters are parsed) at 300 a minute
+  per pubkey, shared across every app one person has open, so the request count
+  was the entire cost.
+
+  The same read is now **3 requests and 568 ms**, with the folded state
+  byte-identical — 2,376,942 characters either way.
+
+  Three measured facts make this a transport change rather than a semantic one:
+  `limit` clamps **per filter** (10 filters at `limit: 5` returned 48 events,
+  not 5); responses **concatenate rather than dedupe** (the same filter twice in
+  one POST returned 236, not 118); and runs come back **grouped in filter
+  order**, element-for-element identical to reading them singly. `queryAll`'s
+  contract has always been that the answer is the serial concatenation — a
+  batched response simply *is* that concatenation.
+
+- **A filter is only settled by the batch when its own run can be identified.**
+
+  Deciding "can this filter have more?" needs that filter's run length, and a
+  flat response only yields it when the events can be attributed. Two exact
+  discriminators, and between them they cover every batched read in the suite:
+  distinct single `#h` values (the workspace read) and pairwise-disjoint `kinds`
+  (the discovery pair). Anything else pages the old way, and a batch that could
+  prove nothing is not even sent — a cold read of unattributable filters costs
+  exactly what it did before.
+
+  The bar is certainty rather than likelihood: a wrong attribution would
+  under-count a run, call a clamped filter complete, and silently drop the rest
+  of a Folder. That is SHA-8, which this read path exists to prevent.
+
+- **New: `MAX_FILTERS_PER_QUERY`, and it is measured.** 128 accepted, 129
+  refused with `too many explicit channels`, by binary search against production.
+  The relay counts filter occurrences, not distinct Folders. Batches are chunked
+  below it; a refused batch **fails the read** rather than being retried one
+  filter at a time, because the likeliest reason for a refusal is the quota and
+  the worst answer to that is thirty-six more requests.
+
+- **New: `QueryAllOptions.batch`.** `false` restores the pre-0.15 shape, one
+  request per filter.
+
 ## 0.13.0 — 2026-09-03
 
 **Wire behaviour: unchanged.** Two readers over the resolved tree; nothing
