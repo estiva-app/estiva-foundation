@@ -21,6 +21,7 @@ import {
   buildCreateChannel,
   buildDeleteChannel,
   buildDeletion,
+  buildEdit,
   buildMessage,
   buildProfile,
   buildReaction,
@@ -185,6 +186,58 @@ describe('shape rules taken from builders.rs', () => {
     assert.equal(event.kind, 5)
     assert.deepEqual(event.tags, [['e', target]])
     assert.equal(event.content, '')
+  })
+
+  /*
+    kind:40003 — the one builder here that deliberately does NOT mirror Buzz's
+    tags exactly. `build_edit` emits h and e only; this adds `ts`, because two
+    edits published in the same second otherwise have no defined order and, unlike
+    a change event, there is no per-field last-write-wins to limit the damage
+    (RFC 0.4 §7.2.1). The relay validates kind, `h` and ownership and ignores tags
+    it has no rule for, so the addition is safe in the direction that matters.
+  */
+  it('kind:40003 edit carries the channel, the target and a millisecond ts', () => {
+    const target = '5'.repeat(64)
+    const event = buildEdit(PUBKEY, 1_753_300_200_999, {
+      channelUuid: CHANNEL,
+      targetEventId: target,
+      body: 'Corrected: the deploy is Thursday.',
+    })
+    assert.equal(event.kind, 40003)
+    assert.deepEqual(event.tags, [
+      ['h', CHANNEL],
+      ['e', target],
+      ['ts', '1753300200999'],
+    ])
+    assert.equal(event.content, 'Corrected: the deploy is Thursday.')
+  })
+
+  /*
+    The `ts` rule is "honour it only when it agrees with created_at to the
+    second". A rounded ts on a .999 instant would land in the NEXT second and be
+    discarded by that very rule, so the floor is load-bearing rather than
+    stylistic.
+  */
+  it('  …whose ts agrees with created_at to the second, which is what makes it usable', () => {
+    const event = buildEdit(PUBKEY, 1_753_300_200_999, {
+      channelUuid: CHANNEL,
+      targetEventId: '5'.repeat(64),
+      body: 'x',
+    })
+    const ts = Number(event.tags.find((t) => t[0] === 'ts')![1])
+    assert.equal(Math.floor(ts / 1000), event.created_at)
+  })
+
+  it('kind:40003 refuses a body past the 64KB cap, as build_edit does', () => {
+    assert.throws(
+      () =>
+        buildEdit(PUBKEY, 0, {
+          channelUuid: CHANNEL,
+          targetEventId: '5'.repeat(64),
+          body: 'x'.repeat(64 * 1024 + 1),
+        }),
+      /max 65536/,
+    )
   })
 
   it('truncates Peek’s millisecond timestamps to Nostr seconds', () => {
