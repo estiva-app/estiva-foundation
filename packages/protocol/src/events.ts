@@ -125,6 +125,19 @@ export const KIND = {
    */
   RELAY_AUTH: 22242,
   HTTP_AUTH: 27235,
+  /**
+   * Buzz's message edit (`KIND_STREAM_MESSAGE_EDIT`) — RFC 0.4 §7.2.1.
+   *
+   * A `kind:9` and a `kind:1111` are both non-replaceable, so an edit cannot
+   * overwrite what it edits. It is a separate event naming its target, and what
+   * an app shows as "edited" is a fold over the pair.
+   *
+   * **Channel-scoped.** 40003 is in the relay's `requires_h_channel_scope`, so
+   * an edit without an `h` comes back `accepted: false` even when the kind is
+   * granted and the signature is fine — two gates, and the kind ceiling is only
+   * the first.
+   */
+  MESSAGE_EDIT: 40003,
 } as const
 
 /** `build_reaction` (builders.rs:463) caps the emoji at 64 chars. */
@@ -421,10 +434,20 @@ export function buildReaction(
 /**
  * kind:5 deletion — mirrors `build_remove_reaction` (builders.rs:495).
  *
- * Buzz accepts self-authored deletions (and an owner deleting their agent's).
- * NIP-09 is a *request*, author-scoped, and it removes the record rather than
- * the work — so an app must hide the control from non-authors rather than offer
- * one that silently fails (SPEC §6.5).
+ * A NIP-09 *request*: it removes the record rather than the work, and a relay
+ * may decline it.
+ *
+ * **It is not author-scoped**, and this comment said it was until 2026-09-07.
+ * `validate_standard_deletion_event` accepts the target's **effective** author
+ * *or* the NIP-OA owner of an authoring agent, on the `a` branch and the `e`
+ * branch alike. And no client can evaluate the second half — ownership is
+ * written from the attestation and read server-side only — so an app MUST NOT
+ * gate the control on an author check of its own; it offers it, attempts the
+ * write, and reports the refusal (SPEC §6.5, corrected).
+ *
+ * That the wrong rule sat *here* is why it is worth calling out: this package
+ * is what a third app reads, so a mistaken MUST propagates to every adopter
+ * before anyone notices.
  */
 export function buildDeletion(
   pubkey: string,
@@ -439,6 +462,78 @@ export function buildDeletion(
     kind: KIND.DELETION,
     tags: [['e', args.targetEventId]],
     content: '',
+  }
+}
+
+/**
+ * kind:40003 message edit — mirrors `build_edit` (builders.rs:378), plus `ts`.
+ *
+ * An edit never rewrites. `kind:9` and `kind:1111` are non-replaceable, so this
+ * is a separate event naming its target, and what a reader shows as "edited" is
+ * a fold over the pair — latest edit wins.
+ *
+ * ## `ts`, and why this adds a tag Buzz's builder does not
+ *
+ * `build_edit` emits `h` and `e` only, which leaves two edits published in the
+ * same second with no defined order. That is worse here than for a change
+ * event: `kind:1851` is last-write-wins **per field**, so a collision costs one
+ * field, whereas two disagreeing edits of one message resolve to whichever the
+ * reader happens to sort first.
+ *
+ * So an edit carries `ts` in epoch **milliseconds**, under exactly the rule
+ * SPEC §6.2 already gives it: a reader honours `ts` only when it agrees with
+ * `created_at` to the second, and ignores it otherwise. An app that does not
+ * implement `ts` still folds correctly, at one-second resolution.
+ *
+ * Adding a tag the relay has no rule for is safe in the direction that matters
+ * — it validates the kind, the `h` and the ownership, and ignores the rest.
+ *
+ * ## Who may edit is the relay's answer
+ *
+ * `validate_edit_ownership` accepts the target's effective author or the NIP-OA
+ * owner of an authoring agent, and on the author path re-checks channel
+ * membership — so somebody removed from a private channel cannot go back and
+ * rewrite what they said while they were in it. No client can evaluate that, so
+ * an app MUST NOT gate the control on an author check of its own. Same rule as
+ * `buildDeletion` above, and wrong in the same way until it was corrected.
+ *
+ * ## The `h` is required
+ *
+ * 40003 is in the relay's `requires_h_channel_scope`. An edit without one is
+ * refused with `accepted: false` while the kind is granted and the signature is
+ * fine — which is why it is an argument here rather than an option.
+ */
+export function buildEdit(
+  pubkey: string,
+  createdAtMs: number,
+  args: {
+    /** The target's channel. REQUIRED — see above. */
+    channelUuid: string
+    /** The event being edited. */
+    targetEventId: string
+    /** The new body, in the target's own format. */
+    body: string
+  },
+): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  assertHex64(args.targetEventId, 'targetEventId')
+  const bytes = utf8ToBytes(args.body).length
+  if (bytes > MAX_MESSAGE_BYTES) {
+    throw new Error(`content is ${bytes} bytes, max ${MAX_MESSAGE_BYTES}`)
+  }
+  return {
+    pubkey,
+    created_at: toNostrSeconds(createdAtMs),
+    kind: KIND.MESSAGE_EDIT,
+    tags: [
+      ['h', args.channelUuid],
+      ['e', args.targetEventId],
+      // Floor, not round: `created_at` is `toNostrSeconds` of the same instant,
+      // and a rounded `ts` could land in the next second and be discarded by
+      // its own agreement rule.
+      ['ts', String(Math.floor(createdAtMs))],
+    ],
+    content: args.body,
   }
 }
 

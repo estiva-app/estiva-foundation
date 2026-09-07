@@ -85,6 +85,7 @@ export {
   buildAddMember,
   buildReaction,
   buildDeletion,
+  buildEdit,
   buildMessage,
   buildResolution,
   buildFile,
