@@ -7,7 +7,8 @@ renewal, sign-out, and the auth-shell state machine.
 npm install @estiva-app/identity
 ```
 
-No runtime dependencies. CI enforces that.
+Nothing from outside the `@estiva-app` foundation, no data layer, and no UI.
+CI enforces all three.
 
 ## The seam this package exists for
 

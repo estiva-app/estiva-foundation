@@ -76,6 +76,23 @@ jobs:
             exit 1
           fi
 
+      # NARROWED for SHA-4, and the narrowing is the point rather than a
+      # loosening. This step used to read "no runtime dependencies at all",
+      # which is stricter than any decision on record: ADR 0002 section 2 says
+      # in as many words that "identity and platform will both depend on
+      # protocol", and offers that as a reason those three share a repo.
+      #
+      # What the blanket rule cost. The POST /sign round trip and its
+      # expectedPubkey guard could not live here, because they need protocol's
+      # Signer and its event types. So they stayed in the apps: byte-identical
+      # in ship and estiva-agent, and a third time in Peek as signViaEstivaId.
+      # Three implementations of the one call that decides who authored an
+      # event, held apart by a guard defending nothing anybody had decided.
+      #
+      # What is actually being defended is unchanged and still enforced below:
+      # no data layer, no UI, and nothing from outside @estiva-app. A
+      # third-party dependency here is inherited by every app in the suite.
+      #
       # The seam this package exists for. `useEstivaIdAuth.ts` is Peek's
       # ConvexProviderWithAuth adapter, and if it ever lands here then Ship and
       # every future app inherit a Convex dependency to work around — which is
@@ -85,13 +102,18 @@ jobs:
       # Also guarded: @estiva-app/ui. ADR 0002 §2 names identity depending on ui
       # as the trigger that folds ui back into the foundation repo. That should be
       # a decision somebody makes, not one a sign-in screen makes by accident.
-      - name: No data layer, no UI, no dependencies at all
+      - name: No data layer, no UI, and nothing from outside the foundation
         run: |
           node -e "
             const p = require('./packages/identity/package.json');
-            const deps = Object.keys(p.dependencies || {});
-            if (deps.length) {
-              console.error('::error::@estiva-app/identity must have no runtime dependencies. Found: ' + deps.join(', '));
+            const declared = Object.keys({ ...p.dependencies, ...p.peerDependencies });
+            const outside = declared.filter((d) => !d.startsWith('@estiva-app/'));
+            if (outside.length) {
+              console.error('::error::@estiva-app/identity takes nothing from outside the foundation. Found: ' + outside.join(', '));
+              process.exit(1);
+            }
+            if (declared.includes('@estiva-app/ui')) {
+              console.error('::error::identity depending on ui is ADR 0002 section 2 trigger to fold ui back into this repo. That is a decision, not a dependency bump.');
               process.exit(1);
             }
           "
