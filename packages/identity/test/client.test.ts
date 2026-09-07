@@ -504,3 +504,195 @@ describe('two stores, because the second consumer needed two', () => {
     assert.equal(client.validToken()?.accessToken, 'at')
   })
 })
+
+/*
+  The renewal guard, and the schedule that leans on it.
+
+  Both are SHA-4 "hard-won behaviour that must survive" items that did NOT
+  survive the first pass, for the same reason: they lived in
+  `peek-app/src/auth/useEstivaIdAuth.ts` — the Convex adapter, which is
+  deliberately the one file that stays out of this package — rather than in the
+  client. So Peek kept them and Ship, the second consumer whose whole purpose was
+  to catch exactly this, silently did not get them.
+*/
+const NOW = 1_787_142_018_561
+/** `signedIn` above uses this expiry; the delay it implies is 981,438 ms. */
+const EXPIRES_AT = 1_787_142_999_999
+
+function seedSession(h: Harness, over: Record<string, unknown> = {}): void {
+  h.store.setItem(
+    KEYS.token,
+    JSON.stringify({ accessToken: 'old', expiresAt: EXPIRES_AT, pubkey: 'b3'.repeat(32), refreshToken: 'rt', ...over }),
+  )
+}
+
+/** Timers as data, so a test can read what was scheduled instead of waiting for it. */
+function fakeTimers() {
+  const armed: Array<{ id: number; run: () => void; ms: number }> = []
+  const cleared: unknown[] = []
+  let nextId = 1
+  return {
+    armed,
+    cleared,
+    setTimer: (run: () => void, ms: number): unknown => {
+      const id = nextId++
+      armed.push({ id, run, ms })
+      return id
+    },
+    clearTimer: (handle: unknown): void => void cleared.push(handle),
+    /** Run the timer armed most recently. */
+    fire: (): void => armed[armed.length - 1].run(),
+  }
+}
+
+describe('two renewals are never in the air at once', () => {
+  it('coalesces concurrent callers into ONE call to /token', async () => {
+    const h = harness()
+    seedSession(h)
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    const [a, b] = await Promise.all([h.client.refreshAccessToken(), h.client.refreshAccessToken()])
+
+    /*
+      The whole point. A refresh token is single-use and Estiva ID reads a replay
+      as theft, revoking the chain — so a second POST here does not merely waste a
+      round trip, it signs the person out of everything. Two callers is not
+      hypothetical: Ship signs the NIP-98 auth event and the content event as
+      separate `POST /sign` calls, and a token that expires between them answers
+      401 to both.
+    */
+    assert.equal(h.requests.length, 1, 'a replayed refresh token is read as theft')
+    assert.equal(a?.accessToken, 'new')
+    assert.equal(b?.accessToken, 'new', 'the second caller gets the same answer, not null')
+  })
+
+  it('does not cache — the NEXT expiry renews again', async () => {
+    /*
+      The control. A guard that held the promise forever would pass the test
+      above and be a worse bug than the one it fixed: the session would never
+      renew a second time and would die at the first expiry it was supposed to
+      survive.
+    */
+    const h = harness()
+    seedSession(h)
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+    await h.client.refreshAccessToken()
+    await h.client.refreshAccessToken()
+    assert.equal(h.requests.length, 2)
+  })
+})
+
+describe('renewing before expiry rather than reacting to it', () => {
+  it('arms a timer for the moment the token expires', () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+
+    h.client.scheduleRenewal()
+
+    assert.equal(t.armed.length, 1)
+    // `tokenFrom` already subtracted 30s when it stored this, so the timer fires
+    // while the token is still good — which is what makes the renewal invisible.
+    assert.equal(t.armed[0].ms, EXPIRES_AT - NOW)
+  })
+
+  it('renews when it fires, and re-arms from the NEW expiry', async () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    let renewed: (token: unknown) => void = () => {}
+    const done = new Promise<unknown>((resolve) => (renewed = resolve))
+    h.client.scheduleRenewal({ onRenewed: renewed })
+
+    t.fire()
+    await done
+
+    assert.equal(h.requests.length, 1)
+    assert.equal(h.client.storedToken()?.accessToken, 'new')
+    assert.equal(t.armed.length, 2, 'a renewal that does not re-arm renews exactly once')
+    // 3600s less the 30s `tokenFrom` holds back. Read off the new token rather
+    // than a fixed interval, so the schedule follows whatever Estiva ID issued.
+    assert.equal(t.armed[1].ms, (3600 - 30) * 1000)
+  })
+
+  it('ends the session on a failed renewal, and stops', async () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+    h.reply({}, { ok: false, status: 400 })
+
+    let ended: () => void = () => {}
+    const done = new Promise<void>((resolve) => (ended = resolve))
+    h.client.scheduleRenewal({ onEnded: ended })
+
+    t.fire()
+    await done
+
+    assert.equal(t.armed.length, 1, 'a dead session must not keep asking')
+    assert.equal(h.store.getItem(KEYS.token), null)
+  })
+
+  it('renews immediately when the token has already expired', () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h, { expiresAt: NOW - 60_000 })
+
+    h.client.scheduleRenewal()
+
+    // Late is not never. The refresh token outlives the access token by a long
+    // way, so a tab whose timers were throttled in the background renews on the
+    // way back rather than dropping somebody to the shell.
+    assert.equal(t.armed[0].ms, 0)
+  })
+
+  it('clamps a nonsensical expiry instead of hot-looping', () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h, { expiresAt: NOW + 10 * 365 * 24 * 3600 * 1000 })
+
+    h.client.scheduleRenewal()
+
+    // Above 2^31-1 ms a setTimeout delay overflows to a negative int32 and fires
+    // immediately — which would turn one very distant timer into a hot loop
+    // against /token.
+    assert.equal(t.armed[0].ms, 2_147_483_647)
+  })
+
+  it('does nothing at all when there is no session to renew', () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+
+    h.client.scheduleRenewal()
+
+    assert.equal(t.armed.length, 0, 'signed out is not an ending, it is a starting condition')
+  })
+
+  it('cancel stops the timer, and a renewal that lands after it reports nothing', async () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    let renewals = 0
+    const schedule = h.client.scheduleRenewal({ onRenewed: () => void renewals++ })
+    t.fire()
+    schedule.cancel()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.deepEqual(t.cleared, [], 'the timer had already fired; there is no handle left to clear')
+    assert.equal(renewals, 0, 'a cancelled schedule does not report a renewal it no longer owns')
+    assert.equal(t.armed.length, 1, 'and does not re-arm')
+  })
+
+  it('cancel before the timer fires clears the handle', () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+
+    h.client.scheduleRenewal().cancel()
+
+    assert.deepEqual(t.cleared, [1])
+  })
+})

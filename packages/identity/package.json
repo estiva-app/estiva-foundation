@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/identity",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Estiva ID sign-in: authorization code + PKCE, token storage, silent renewal, sign-out, and the auth-shell state machine. Knows nothing about any app's data layer.",
   "license": "MIT",
   "type": "module",
