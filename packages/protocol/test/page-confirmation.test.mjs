@@ -22,10 +22,13 @@ import { Relay, secretKeySigner } from '../dist/index.js'
 const SECRET = '0000000000000000000000000000000000000000000000000000000000000001'
 const hex = (n) => String(n).padStart(64, '0')
 
-const event = (id, createdAt) => ({
+// The `kind` is a parameter because the relay's answer carries it: a filter
+// asking `kinds: [1]` never comes back holding an event of another kind, and a
+// double that says otherwise cannot be used to reason about batched reads.
+const event = (id, createdAt, kind = 9) => ({
   id: hex(id),
   pubkey: hex(1),
-  kind: 9,
+  kind,
   created_at: createdAt,
   tags: [],
   content: `e${id}`,
@@ -34,24 +37,55 @@ const event = (id, createdAt) => ({
 
 /** `count` events under `kind`, one second apart, newest first. */
 const set = (kind, count) =>
-  Array.from({ length: count }, (_, i) => event(kind * 100_000 + i, 1_000_000 - i))
+  Array.from({ length: count }, (_, i) => event(kind * 100_000 + i, 1_000_000 - i, kind))
 
-/** A relay answering per kind, clamping every response to `serverCeiling`. */
+/**
+ * A relay answering per kind, clamping every response to `serverCeiling`.
+ *
+ * **Serves every filter in the body, not only the first**, because that is what
+ * Buzz does — measured against production 2026-09-07: ten filters at `limit: 5`
+ * returned 48 events rather than 5, and the same filter twice in one request
+ * returned 236 rather than 118. A double that answered only `body[0]` would
+ * make a batched read look broken here and work in production, which is the
+ * wrong way round.
+ *
+ * `requests` still records one entry per *filter*, so the existing per-kind
+ * assertions keep counting what they always counted; `calls` is the number of
+ * HTTP round trips, which is the number the relay's quota is spent in.
+ */
 function fakeRelay(byKind, serverCeiling) {
   const requests = []
+  const calls = []
   const fetch = async (_url, init) => {
-    const [filter] = JSON.parse(init.body)
-    requests.push(filter)
-    const eligible = (byKind[filter.kinds[0]] ?? [])
-      .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
-      .sort((a, b) => b.created_at - a.created_at)
-    const take = Math.min(filter.limit ?? serverCeiling, serverCeiling)
-    return { status: 200, text: async () => JSON.stringify(eligible.slice(0, take)) }
+    const filters = JSON.parse(init.body)
+    calls.push(filters)
+    const out = []
+    for (const filter of filters) {
+      requests.push(filter)
+      const eligible = (byKind[filter.kinds[0]] ?? [])
+        .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
+        .sort((a, b) => b.created_at - a.created_at)
+      const take = Math.min(filter.limit ?? serverCeiling, serverCeiling)
+      out.push(...eligible.slice(0, take))
+    }
+    return { status: 200, text: async () => JSON.stringify(out) }
   }
-  return { requests, relay: new Relay('https://r', secretKeySigner(SECRET), { fetch }) }
+  return { requests, calls, relay: new Relay('https://r', secretKeySigner(SECRET), { fetch }) }
 }
 
 const countFor = (requests, kind) => requests.filter((f) => f.kinds[0] === kind).length
+
+/**
+ * HTTP calls that carried *only* this filter — that is, calls spent paging it.
+ *
+ * Since PER-1 every filter's first page arrives in a shared batched call, so
+ * "did this filter need a confirming round trip?" is no longer the same
+ * question as "how many times does it appear in a request body". A filter the
+ * batch settled is paged 0 times; one that must confirm is paged twice, its own
+ * first page and the confirmation.
+ */
+const pagedFor = (calls, kind) =>
+  calls.filter((fs) => fs.length === 1 && fs[0].kinds[0] === kind).length
 
 test('a filter smaller than a page already seen costs one request, not two', async () => {
   // Kind 1 establishes that this relay can produce 40 events in one response.
@@ -80,11 +114,14 @@ test('the first filter through a fresh relay still confirms — there is no evid
 test('a page that merely ties the largest seen is not conclusive', async () => {
   // Both filters return 7. The second's 7 could still be a clamp at 7 — the
   // observed bound is 7, not "more than 7". Strictly less is the rule.
-  const { relay, requests } = fakeRelay({ 1: set(1, 7), 2: set(2, 7) }, 1000)
+  const { relay, calls } = fakeRelay({ 1: set(1, 7), 2: set(2, 7) }, 1000)
 
   await relay.queryAll([{ kinds: [1] }, { kinds: [2] }], { concurrency: 1 })
 
-  assert.equal(countFor(requests, 2), 2, 'equal is not smaller; it must confirm')
+  // One paging call, not none: the batch could not settle it, so it goes on to
+  // confirm. It does not re-fetch the first page — the batch's own is carried
+  // forward as the cursor — which is why this is 1 rather than 2.
+  assert.equal(pagedFor(calls, 2), 1, 'equal is not smaller; it must confirm')
 })
 
 test('a page filled to the requested limit is never conclusive, whatever has been observed', async () => {
@@ -121,17 +158,18 @@ test('the widest filter always confirms — it is the one that sets the ceiling'
     "one request per filter" and "one per filter plus one", and the arithmetic
     against a 300-a-minute quota is done in whole requests.
   */
-  const { relay, requests } = fakeRelay({ 1: set(1, 30), 2: set(2, 4) }, 1000)
+  const { relay, calls } = fakeRelay({ 1: set(1, 30), 2: set(2, 4) }, 1000)
 
   await relay.queryAll([{ kinds: [1] }, { kinds: [2] }], { concurrency: 1 })
-  const cold = requests.length
-  requests.length = 0
+  const cold = calls.length
+  calls.length = 0
 
   await relay.queryAll([{ kinds: [1] }, { kinds: [2] }], { concurrency: 1 })
 
-  assert.equal(cold, 3, 'cold: 2 for the first filter, 1 for the small one behind it')
-  assert.equal(requests.length, 3, 'warm: still 2 for the widest, 1 for the narrow one')
-  assert.equal(countFor(requests, 2), 1, 'the narrow filter is the one that got cheaper')
+  assert.equal(cold, 2, 'cold: the batch, then the widest filter confirming from it')
+  assert.equal(calls.length, 2, 'warm: the same — the widest still ties its own bound')
+  assert.equal(pagedFor(calls, 2), 0, 'the narrow filter is settled by the batch and never paged')
+  assert.equal(pagedFor(calls, 1), 1, 'the widest one still pays its confirmation')
 })
 
 test('a realistic workspace read: one request per filter once the first is warm', async () => {
@@ -139,12 +177,22 @@ test('a realistic workspace read: one request per filter once the first is warm'
   const byKind = { 1: set(1, 160) }
   for (let k = 2; k <= 11; k++) byKind[k] = set(k, 3 + k)
   const filters = Array.from({ length: 11 }, (_, i) => ({ kinds: [i + 1] }))
-  const { relay, requests } = fakeRelay(byKind, 1000)
+  const { relay, calls } = fakeRelay(byKind, 1000)
 
   const got = await relay.queryAll(filters, { concurrency: 1 })
 
   assert.equal(got.length, 160 + Array.from({ length: 10 }, (_, i) => 5 + i).reduce((a, b) => a + b, 0))
-  assert.equal(requests.length, 12, '11 filters, and only the first pays a confirmation')
+  /*
+    The same twelve filters, in three HTTP calls instead of twelve — which is
+    the only number the relay's 300-a-minute quota counts.
+
+    One batched call answers all eleven and establishes the ceiling; the widest
+    filter ties that ceiling and confirms, resuming from the page the batch
+    already fetched. Everything narrower is settled outright.
+
+    Ship's real read against production: 39 calls to 2.
+  */
+  assert.equal(calls.length, 2, 'one batch, then only the widest filter confirming')
 })
 
 test('under concurrency the saving may be smaller, but never wrong', async () => {

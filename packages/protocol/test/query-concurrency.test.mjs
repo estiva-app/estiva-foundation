@@ -22,10 +22,10 @@ const hex = (n) => String(n).padStart(64, '0')
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** An event whose id encodes which filter's set it belongs to. */
-const event = (id, createdAt) => ({
+const event = (id, createdAt, kind = 9) => ({
   id: hex(id),
   pubkey: hex(1),
-  kind: 9,
+  kind,
   created_at: createdAt,
   tags: [],
   content: `event ${id}`,
@@ -40,25 +40,40 @@ const event = (id, createdAt) => ({
  */
 function fakeRelay(answers, { delayFor = () => 0 } = {}) {
   const seenKinds = []
+  const calls = []
   let inFlight = 0
   let maxInFlight = 0
   const overlapped = []
 
+  /*
+    Serves every filter in the body, as Buzz does — measured 2026-09-07: one
+    POST carrying ten filters at `limit: 5` returns 48 events, not 5, and the
+    runs come back grouped in filter order.
+
+    The delay is the slowest filter's, not the sum: one call is one round trip
+    however many filters it carries, which is exactly why a batched read is
+    worth having.
+  */
   const fetch = async (_url, init) => {
-    const [filter] = JSON.parse(init.body)
-    const kind = filter.kinds[0]
-    seenKinds.push(kind)
+    const filters = JSON.parse(init.body)
+    calls.push(filters)
+    const kinds = filters.map((f) => f.kinds[0])
+    seenKinds.push(...kinds)
     inFlight++
     maxInFlight = Math.max(maxInFlight, inFlight)
-    if (inFlight > 1) overlapped.push(kind)
+    if (inFlight > 1) overlapped.push(...kinds)
     try {
-      await sleep(delayFor(kind))
-      const answer = answers[kind]
-      if (typeof answer === 'function') return answer()
-      const eligible = (answer ?? [])
-        .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
-        .sort((a, b) => b.created_at - a.created_at)
-      return { status: 200, text: async () => JSON.stringify(eligible.slice(0, filter.limit)) }
+      await sleep(Math.max(...kinds.map((k) => delayFor(k))))
+      const out = []
+      for (const filter of filters) {
+        const answer = answers[filter.kinds[0]]
+        if (typeof answer === 'function') return answer()
+        const eligible = (answer ?? [])
+          .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
+          .sort((a, b) => b.created_at - a.created_at)
+        out.push(...eligible.slice(0, filter.limit))
+      }
+      return { status: 200, text: async () => JSON.stringify(out) }
     } finally {
       inFlight--
     }
@@ -66,6 +81,7 @@ function fakeRelay(answers, { delayFor = () => 0 } = {}) {
 
   return {
     seenKinds,
+    calls,
     overlapped,
     get maxInFlight() {
       return maxInFlight
@@ -76,7 +92,7 @@ function fakeRelay(answers, { delayFor = () => 0 } = {}) {
 
 test('independent filters overlap instead of waiting for one another', async () => {
   // Four filters, each slow. Serial they cannot overlap at all.
-  const answers = { 1: [event(11, 100)], 2: [event(22, 100)], 3: [event(33, 100)], 4: [event(44, 100)] }
+  const answers = { 1: [event(11, 100, 1)], 2: [event(22, 100, 2)], 3: [event(33, 100, 3)], 4: [event(44, 100, 4)] }
   // `maxInFlight` is a live getter — read it off the probe, never destructure it.
   const probe = fakeRelay(answers, { delayFor: () => 15 })
 
@@ -86,7 +102,7 @@ test('independent filters overlap instead of waiting for one another', async () 
 })
 
 test('concurrency: 1 restores the strictly serial read', async () => {
-  const answers = { 1: [event(11, 100)], 2: [event(22, 100)], 3: [event(33, 100)] }
+  const answers = { 1: [event(11, 100, 1)], 2: [event(22, 100, 2)], 3: [event(33, 100, 3)] }
   const probe = fakeRelay(answers, { delayFor: () => 10 })
 
   await probe.relay.queryAll([{ kinds: [1] }, { kinds: [2] }, { kinds: [3] }], { concurrency: 1 })
@@ -98,7 +114,7 @@ test('concurrency: 1 restores the strictly serial read', async () => {
 test('the fan-out is bounded by the option, not by how many filters there are', async () => {
   // Twenty filters and a bound of three. An unbounded `Promise.all` would open
   // all twenty at once — a width set by the data, against a shared relay.
-  const answers = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [i + 1, [event(i + 1, 100)]]))
+  const answers = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [i + 1, [event(i + 1, 100, i + 1)]]))
   const filters = Array.from({ length: 20 }, (_, i) => ({ kinds: [i + 1] }))
   const probe = fakeRelay(answers, { delayFor: () => 5 })
 
@@ -173,9 +189,18 @@ test('a failure stops new filters being started, rather than firing the whole qu
 
   await assert.rejects(() => probe.relay.queryAll(filters, { concurrency: 2 }))
 
+  /*
+    Counted in HTTP calls, which is the unit the relay meters and the unit this
+    test has always been about — "firing the whole queue" is a cost because it
+    is twenty requests, not because it is twenty filters.
+
+    Since PER-1 the twenty filters travel in one call, so a read that fails at
+    the first filter costs exactly that one call: the batch is not caught and
+    re-run per filter, precisely so that a refusal cannot be amplified.
+  */
   assert.ok(
-    probe.seenKinds.length <= 4,
-    `a read that failed at the first filter still asked for ${probe.seenKinds.length} of 20`,
+    probe.calls.length <= 2,
+    `a read that failed still cost ${probe.calls.length} requests`,
   )
 })
 
