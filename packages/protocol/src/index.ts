@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.15.0'
+export const PROTOCOL_VERSION = '0.16.0'
 
 export {
   // types
@@ -227,3 +227,12 @@ export {
   blockAnchorOf,
   resolveBlockAnchor,
 } from './anchors.js'
+export {
+  type BlossomVerb,
+  type Imeta,
+  BLOSSOM_AUTH_TTL_SECS,
+  buildBlossomAuth,
+  blossomAuthHeader,
+  imetaTag,
+  imetaOf,
+} from './media.js'
