@@ -1,5 +1,44 @@
 # @estiva-app/identity
 
+## 0.1.3 — 2026-09-07
+
+**Fixes a dead end reported from production.** No API change; `expiresAt` is now
+derived differently, so a consumer needs no code change to get the fix.
+
+`expires_in` is a **duration**, so acting on it means adding it to the local
+clock. The service decides with the token's own `exp` claim, against **its**
+clock. Those two answers agree only for as long as the clocks do.
+
+When they diverge in the unsafe direction — a browser clock ahead of the
+service, which is what a machine waking from a night's sleep readily produces —
+the app holds a token it believes is live and every server refuses. And it does
+not merely retry badly, it cannot recover at all:
+
+- `POST /sign` answers `401 Invalid token: "exp" claim timestamp check failed`.
+- `validToken()` keeps returning that same token, because by its own arithmetic
+  the token is fine.
+- So every caller that asks gets the dead token again — including the one Convex
+  asks — and nothing ever renews.
+- Peek's shell then sees a live token plus an unauthenticated verdict and calls
+  it `token_rejected`, whose copy says a configuration problem that signing in
+  again will not fix. It was an expiry, and signing in again was exactly what
+  fixed it. Clearing site data was the only way out.
+
+**Both bounds are now computed and the earlier wins.** `exp` is what the service
+will actually check, so it is the one that matters; `expires_in` is kept because
+it covers a token with no readable `exp`, and a clock running *behind* the
+service's, where `exp` alone would be the more generous of the two. The 30s
+hold-back applies to whichever wins.
+
+Reading the claim is not verification — that is the resource server's job and it
+holds the key. This reads one number out of a payload the app already has, so
+that "is this token still good" is answered by the same fact the service will
+answer it with. A payload that will not parse yields no bound and the token is
+still held: a token this cannot read is still a token.
+
+5 new tests, 59 to 64, including two controls that the `expires_in` fallback is
+untouched. Reverting the clamp fails exactly the two tests that depend on it.
+
 ## 0.1.2 — 2026-09-07
 
 **No wire behaviour, no break.** `scheduleRenewal` is new and the guard on

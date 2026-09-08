@@ -67,6 +67,8 @@ declare const crypto: {
   subtle: { digest(algorithm: string, data: Uint8Array): Promise<ArrayBuffer> }
 }
 declare const btoa: (binary: string) => string
+/** Reading the `exp` claim out of a token the app already holds. */
+declare const atob: (base64: string) => string
 declare const TextEncoder: { new (): { encode(input: string): Uint8Array } }
 declare const URL: {
   new (url: string, base?: string): { searchParams: { set(k: string, v: string): void }; toString(): string }
@@ -252,17 +254,66 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   }
 
   /**
+   * The `exp` claim, in epoch ms, or null if the token does not carry a readable one.
+   *
+   * Not verification — that is the resource server's job and it holds the key.
+   * This reads one number out of a payload the app already holds, for one
+   * purpose: so that "is this token still good" is answered by the same fact the
+   * service will answer it with.
+   *
+   * Parse failures return null rather than throwing. A token this cannot read is
+   * still a token, and refusing to hold one because its middle segment is not
+   * base64url would be a worse failure than the one this prevents.
+   */
+  const expFromJwt = (accessToken: string): number | null => {
+    const payload = accessToken.split('.')[1]
+    if (!payload) return null
+    try {
+      const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+      const exp = (JSON.parse(json) as { exp?: unknown }).exp
+      return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Shape a token response into what is kept.
    *
    * The expiry is deliberately pessimistic by 30s, so a token is never presented
    * in the window where it is technically alive and about to not be.
+   *
+   * ## Why `exp` and not just `expires_in`
+   *
+   * `expires_in` describes a *duration*, so acting on it means adding it to the
+   * local clock — and the service decides using the token's own `exp` against
+   * *its* clock. Those two answers agree only while the clocks do.
+   *
+   * When they diverge in the unsafe direction the app believes a dead token is
+   * live, and the failure is genuinely nasty: `POST /sign` answers
+   * `401 Invalid token: "exp" claim timestamp check failed`, while `validToken`
+   * keeps returning that same token to every caller that asks — including the
+   * one Convex asks — so nothing ever renews and nothing ever recovers. Peek got
+   * into exactly this state overnight on a machine that had slept, and the only
+   * way out was clearing site data and signing in again.
+   *
+   * So both bounds are computed and **the earlier wins**. `exp` is what the
+   * service will actually check; `expires_in` still covers a token with no
+   * readable `exp`, and a clock that is *behind* the service's, where `exp`
+   * alone would be the more generous of the two.
    */
-  const tokenFrom = (body: TokenResponse, pubkey: string): StoredToken => ({
-    accessToken: body.access_token as string,
-    expiresAt: now() + Math.max(0, (body.expires_in ?? 600) - 30) * 1000,
-    pubkey,
-    ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}),
-  })
+  const tokenFrom = (body: TokenResponse, pubkey: string): StoredToken => {
+    const accessToken = body.access_token as string
+    const fromDuration = now() + Math.max(0, (body.expires_in ?? 600) - 30) * 1000
+    const exp = expFromJwt(accessToken)
+    const fromClaim = exp === null ? null : exp - 30_000
+    return {
+      accessToken,
+      expiresAt: fromClaim === null ? fromDuration : Math.min(fromDuration, fromClaim),
+      pubkey,
+      ...(body.refresh_token ? { refreshToken: body.refresh_token } : {}),
+    }
+  }
 
   const storedToken = (): StoredToken | null => {
     const raw = config.storage()?.getItem(TOKEN_KEY)

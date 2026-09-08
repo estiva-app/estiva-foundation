@@ -696,3 +696,80 @@ describe('renewing before expiry rather than reacting to it', () => {
     assert.deepEqual(t.cleared, [1])
   })
 })
+
+/*
+  Where the expiry comes from, and the stuck state it caused.
+
+  `expires_in` is a duration, so acting on it means trusting the local clock;
+  the service decides with the token's own `exp` against its own clock. When
+  those disagree in the unsafe direction the app holds a token it believes is
+  live and every server refuses, and — this is the part that made it a dead end
+  rather than a hiccup — `validToken` kept handing that same token to every
+  caller, so nothing renewed and nothing recovered.
+
+  Peek reached this overnight on a machine that had slept. `POST /sign` answered
+  `401 Invalid token: "exp" claim timestamp check failed` while the app showed
+  the `token_rejected` shell, which says signing in again will not help. Clearing
+  site data was the only way out.
+*/
+const b64url = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+/** A token shaped like a real one: three dot-separated segments, unpadded base64url. */
+const jwt = (claims: Record<string, unknown>) => `${b64url({ alg: 'EdDSA' })}.${b64url(claims)}.signature`
+
+describe('the expiry is the token’s own, not the clock’s', () => {
+  const refreshInto = async (h: Harness, body: Record<string, unknown>) => {
+    h.store.setItem(
+      KEYS.token,
+      JSON.stringify({ accessToken: 'old', expiresAt: EXPIRES_AT, pubkey: 'b3'.repeat(32), refreshToken: 'rt' }),
+    )
+    h.reply(body)
+    return h.client.refreshAccessToken()
+  }
+
+  it('takes exp when exp is the earlier bound — the clock-ahead case', async () => {
+    const h = harness()
+    // exp 60s out, but expires_in claims 600. A browser clock running ahead of
+    // the service produces exactly this, and it is the direction that hurts.
+    const next = await refreshInto(h, { access_token: jwt({ exp: NOW / 1000 + 60 }), expires_in: 600 })
+    assert.equal(next?.expiresAt, NOW + 30_000, 'exp minus the 30s hold-back')
+  })
+
+  it('takes expires_in when THAT is the earlier bound', async () => {
+    const h = harness()
+    const next = await refreshInto(h, { access_token: jwt({ exp: NOW / 1000 + 3600 }), expires_in: 60 })
+    assert.equal(next?.expiresAt, NOW + 30_000, 'expires_in minus the 30s hold-back')
+  })
+
+  it('falls back to expires_in for a token carrying no readable exp', async () => {
+    // The control: an opaque token, or one from a service that does not set the
+    // claim, must behave exactly as it did before this existed.
+    const h = harness()
+    assert.equal((await refreshInto(h, { access_token: 'opaque', expires_in: 600 }))?.expiresAt, NOW + 570_000)
+    const noClaim = harness()
+    assert.equal((await refreshInto(noClaim, { access_token: jwt({ sub: 'x' }), expires_in: 600 }))?.expiresAt, NOW + 570_000)
+  })
+
+  it('holds a token whose payload will not parse, rather than refusing it', async () => {
+    // A token this cannot read is still a token. Refusing to hold one because
+    // its middle segment is not base64url would be worse than what it prevents.
+    const h = harness()
+    const next = await refreshInto(h, { access_token: 'a.!!!not-base64!!!.c', expires_in: 600 })
+    assert.equal(next?.accessToken, 'a.!!!not-base64!!!.c')
+    assert.equal(next?.expiresAt, NOW + 570_000)
+  })
+
+  it('never hands out a token the service has already expired', async () => {
+    /*
+      The regression, stated as the thing that actually went wrong. Before this,
+      an `exp` in the past with a generous `expires_in` produced a stored token
+      that `validToken` returned happily — so Convex refused it, the shell
+      declared a configuration fault, and `fetchAccessToken` answered every
+      retry with the same dead token.
+    */
+    const h = harness()
+    const next = await refreshInto(h, { access_token: jwt({ exp: NOW / 1000 - 3600 }), expires_in: 600 })
+    assert.ok(next, 'the token is still stored — this is not a refusal')
+    assert.equal(h.client.validToken(), null, 'but it is never offered to a caller')
+    assert.ok(h.client.storedToken(), 'and it is still there for a renewal to replace')
+  })
+})

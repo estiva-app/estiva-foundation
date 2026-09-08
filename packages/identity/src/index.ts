@@ -46,7 +46,7 @@
  * The thing that made it possible was not cleverness — it was that a browser API
  * an app must inject is also a browser API a test can observe.
  */
-export const IDENTITY_VERSION = '0.1.2'
+export const IDENTITY_VERSION = '0.1.3'
 
 export {
   type KeyValueStore,
