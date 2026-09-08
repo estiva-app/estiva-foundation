@@ -26,7 +26,14 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildActionEvent, pickWidget, resolveForeignObject, CLOSED_WIDGETS } from '../dist/index.js'
+import {
+  buildActionEvent,
+  pickWidget,
+  resolveForeignObject,
+  resolveFolderContents,
+  listFolders,
+  CLOSED_WIDGETS,
+} from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
 
 const AUTHOR = 'a'.repeat(64)
@@ -224,5 +231,56 @@ describe('the README §2: act on it, without an API', () => {
     assert.equal(form.fields?.[0]?.name, 'title')
     assert.equal(form.fields?.[0]?.required, true)
     assert.ok(form.createsUnder)
+  })
+})
+
+/**
+ * §5. The page says a folder view is §1 in a loop, that files arrive as the
+ * same `ForeignObject`, and that a file you cannot see is absent rather than
+ * greyed out. All three are claims a reader would build on.
+ */
+describe('the README §5: read a whole folder', () => {
+  const CHANNEL_KIND = 39000
+  const RELAY_KEY = 'f'.repeat(64)
+  const manifest = event({
+    kind: 31990,
+    tags: [['d', 'app'], ['k', String(ISSUE_KIND)]],
+    content: JSON.stringify(manifestContent),
+  })
+  const issue = event({
+    kind: ISSUE_KIND,
+    tags: [['d', 'weir'], ['title', 'Payment fails on retry'], ['h', FOLDER]],
+  })
+  const channel = event({
+    kind: CHANNEL_KIND,
+    pubkey: RELAY_KEY,
+    tags: [['d', FOLDER], ['name', 'Billing']],
+  })
+
+  it('files come back as the ForeignObjects §1 draws', async () => {
+    const folder = await resolveFolderContents(FOLDER, relay([manifest, channel, issue]), async () => ({}))
+    assert.equal(folder.name, 'Billing')
+    assert.equal(folder.files.length, 1)
+    // "Every file comes back as the same ForeignObject §1 renders."
+    assert.equal(folder.files[0]?.slots.title?.value, 'Payment fails on retry')
+    assert.ok(folder.files[0]?.widget, 'a file must carry a widget, or §3 cannot draw it')
+  })
+
+  it('source says which model this is, and h alone is the approximation', async () => {
+    const folder = await resolveFolderContents(FOLDER, relay([manifest, channel, issue]), async () => ({}))
+    assert.equal(folder.source, 'channel')
+    assert.equal(folder.hasState, false)
+  })
+
+  it('a file that cannot be read is absent, and nothing counts it', async () => {
+    // The manifest and the channel resolve; the issue itself does not.
+    const folder = await resolveFolderContents(FOLDER, relay([manifest, channel]), async () => ({}))
+    assert.deepEqual(folder.files, [])
+    assert.equal(JSON.stringify(folder).includes('unreachable'), false)
+  })
+
+  it('listFolders names a folder for a sidebar', async () => {
+    const folders = await listFolders(relay([manifest, channel, issue]))
+    assert.deepEqual(folders, [{ id: FOLDER, name: 'Billing', hasState: false }])
   })
 })

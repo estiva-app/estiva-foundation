@@ -330,6 +330,66 @@ Six things that will bite, each of them something we got wrong first:
 
 ---
 
+## 5. Read a whole folder, across every app in it
+
+A Folder is where the suite's navigation lives: teams you belong to, and the
+files inside them. `resolveFolderContents` answers *"what is in this folder?"*
+without knowing what any of the answers are.
+
+```ts
+import { resolveFolderContents, createProjectionCache } from '@estiva-app/interop'
+
+const cache = createProjectionCache()
+const folder = await resolveFolderContents(folderId, query, undefined, cache)
+
+folder.name                       // the folder names itself
+folder.files                      // ForeignObjects, exactly as §1 draws them
+folder.source                     // 'state' | 'channel' — see below
+```
+
+Every file comes back as the same `ForeignObject` §1 renders, so a folder view
+is §1 in a loop. **A project from one app and a topic from another sit side by
+side as peers**, because RFC 0.4 §5.2 established that one tag type — `a` —
+names every file, topics included. Nothing here special-cases either.
+
+Reuse one `ProjectionCache` across folders. Round trips are flat in the number
+of files and linear in the number of *apps*: 24, 25 and 9 files measured at 5, 5
+and 4 requests warm.
+
+### A file you cannot see is absent, not greyed out
+
+**The count is the disclosure.** A folder that renders three rows and two
+placeholders has told an outsider exactly how much they are missing, which for a
+folder named after a person is the sensitive part. So an address that resolves
+to nothing is dropped, and nothing in the return value counts what was dropped.
+
+This is a deliberate divergence from upstream NIP-MP, whose fold requires the
+opposite for public repositories. It is also why this does not reuse
+`resolveForeignObject`, which returns `unreachable: true` — right for one pasted
+link, wrong for a list.
+
+### `source` tells you which model you are looking at
+
+`'state'` means the relay maintains the folder's contents. `'channel'` is the
+approximation available before that exists: containment read off each file's own
+`h` tag. It lists an app's records perfectly well and **cannot list a topic**,
+because under `h` a topic is the container rather than something inside it. A UI
+explaining a short list should read this field.
+
+### A sidebar
+
+```ts
+import { listFolders } from '@estiva-app/interop'
+
+const folders = await listFolders(query)   // { id, name, hasState }[]
+```
+
+Asks for folders by kind rather than walking anything else. Discovering things
+only through their parent loses them when the parent goes — the failure RFC 0.4
+§4.2 records, one level up from where it was first paid for.
+
+---
+
 ## What is not in here, deliberately
 
 **No fold.** Manifest semantics are normative; an app's interpretation of its

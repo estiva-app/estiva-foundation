@@ -6,6 +6,63 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.15.0 — 2026-09-08
+
+**No manifest changes meaning, and nothing already published is read
+differently.** This adds a reader. Every declaration it consumes — `projections`
+for which kinds are files, `records` for the fold and for `hiddenWhen`, `widget`
+for the fallback chain — is one manifests already carry, read in a new place.
+
+The folder read model RFC 0.4 §4 and §5 specify: given a folder id, list what is
+in it **across apps**, resolving each file through the manifest of whoever owns
+it. Both reference apps consume this, so it belongs here rather than in either.
+
+- **`resolveFolderContents(folder, query, lookupPeople?, cache?)`** returns the
+  folder's identity and its files as ordinary `ForeignObject`s — the same shape
+  an `naddr` in a message resolves to, carrying the same slots, actions and link
+  back into the owning app.
+- **`listFolders(query)`** is the sidebar's half: every folder this identity can
+  see, named. It asks by kind rather than by walking anything, which is §4.2's
+  own post-mortem on REW-11 — discovering children only through their parent
+  loses them when the parent goes.
+- **`KIND_FOLDER_STATE`** is `30890`, allocated by RFC 0.4 §12.1. Relay-signed,
+  addressable and **global**: §4.2 shows three of the four properties a folder
+  needs are impossible if its state carries an `h`.
+
+**A topic and a project are peers because §5.2 made them peers**, not because
+anything here special-cases either. A channel turned out to be addressable — the
+relay emits a `kind:39000` per channel whose `d` is the channel uuid — so one
+tag type, `a`, names every file, and a folder listing a topic beside a project
+needs no second mechanism.
+
+**Two rules in here are product decisions rather than mechanism**, and both are
+worth reading before changing:
+
+- **A file the reader cannot see is absent, not "unavailable".** A deliberate
+  divergence from upstream NIP-MP, whose fold requires the opposite for public
+  repositories. The count is the disclosure: a folder rendering three rows and
+  two placeholders has told an outsider how much they are missing. Nothing in
+  the return value counts what was dropped, and a test asserts that.
+- **A file is anything addressable.** A `kind:9` message carries no `d`, so it
+  is conversation rather than contents. That is the whole discriminator, and it
+  needs no kind numbers.
+
+**A folder with no state event still lists**, by containment — `h`, plus
+`buzz-channel` for a record published globally, which on production today is
+nine of nineteen projects. Kept because both wire shapes coexist permanently: no
+migration is available, and a reader that understood only folder state would
+show every folder on production as empty. It is an approximation and says so
+(`source: 'channel'`), because containment by `h` **cannot list a topic** — under
+`h` the topic is the container rather than something inside it.
+
+Measured against production reading three folders through one cache: 24, 25 and
+9 files cost 5, 5 and 4 round trips warm. Flat in the number of files, linear in
+the number of apps.
+
+**0.13.0 and 0.14.0 have no entries here.** Both were published; neither
+updated this file. Not reconstructed here, because their commit messages are
+detailed and the person who made them should say what they meant.
+
 ## 0.12.0 — 2026-09-04
 
 **No manifest changes meaning, and nothing is read differently.** This adds a

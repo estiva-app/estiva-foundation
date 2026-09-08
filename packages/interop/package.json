@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/interop",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Render and act on another app's objects from its published NIP-89 manifest. The owner defines the projection; the consumer decides how it looks.",
   "license": "MIT",
   "type": "module",
