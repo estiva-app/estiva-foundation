@@ -69,6 +69,27 @@ export class SignerTokenExpired extends Error {
   }
 }
 
+/**
+ * A refusal that is not an expiry, **carrying the status that says which**.
+ *
+ * The status is on the error rather than only in its text because consumers
+ * classify on it and a message is not an API. Peek maps `/sign` failures into
+ * the auth shell's reason vocabulary — `403` is `identity_inactive`, an
+ * administrator's problem, while a `422` policy refusal is not — and it did that
+ * by regexing its own thrown string. A package that threw a differently worded
+ * message would have quietly collapsed every one of those into the same reason,
+ * and Peek's tests pass literal strings, so nothing would have failed.
+ */
+export class SignRefused extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'SignRefused'
+  }
+}
+
 export interface SignViaEstivaIdOptions {
   /** Origin of the identity service, e.g. `https://id.estiva.app`. */
   base: string
@@ -142,7 +163,7 @@ export async function signViaEstivaId(
       // Keep the raw text. `/sign`'s error bodies are not reliably JSON, and the
       // raw text is more use to a person than "unparseable response".
     }
-    throw new Error(`Estiva ID refused to sign kind:${unsigned.kind} — ${reason}`)
+    throw new SignRefused(response.status, `Estiva ID refused to sign kind:${unsigned.kind} — ${reason}`)
   }
 
   const event = (JSON.parse(text) as { event?: SignedEvent }).event
