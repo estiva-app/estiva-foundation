@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.17.0'
+export const PROTOCOL_VERSION = '0.18.0'
 
 export {
   // types
@@ -240,4 +240,9 @@ export {
   type FetchedBlob,
   sha256FromMediaUrl,
   fetchBlob,
+  sha256Of,
+  uploadBlob,
+  imetaFor,
+  type UploadedBlob,
+  type BlobUploadFetchLike,
 } from './media.js'
