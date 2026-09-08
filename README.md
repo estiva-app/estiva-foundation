@@ -11,7 +11,7 @@ changing anything structural here. This file is the runbook.
 | --- | --- | --- |
 | `@estiva-app/hello` | throwaway proving the pipeline. Not a library — do not depend on it | 0.0.2, retire after SHA-2 |
 | `@estiva-app/protocol` | event construction, ids, signatures, the relay clients | 0.1.0 |
-| `@estiva-app/platform` | the one live socket a tab holds — credential per connect, network return, workspace watch. PWA (manifest, service worker, update flow) joins it in SHA-2 | 0.1.0, **not yet published** |
+| `@estiva-app/platform` | the one live socket a tab holds — credential per connect, network return, workspace watch. PWA (manifest, service worker, update flow) joins it in SHA-2 | 0.1.0 |
 | `@estiva-app/identity` | Estiva ID sign-in, NIP-98, remote signing | SHA-4 |
 | `@estiva-app/ui` | tokens and primitives | SHA-5 |
 
