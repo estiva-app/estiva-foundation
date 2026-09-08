@@ -69,6 +69,33 @@ const client = createEstivaId({
 export const { validToken, beginSignIn, completeSignIn, beginSignOut } = client
 ```
 
+## Signing is asking, and the answer must be checked
+
+```ts
+// Peek: one round trip, a token read fresh each time
+const event = await signViaEstivaId(unsigned, { base, token, expectedPubkey: myPubkey })
+
+// Ship: a protocol Signer, built once, renewing itself
+const signer = estivaIdSigner({ base, pubkey, token, renew: client.refreshAccessToken })
+```
+
+An app publishes as a person without ever seeing their secret. `@estiva-app/protocol`
+owns how an event gets its signature; this package owns *who is allowed to ask*.
+
+**`/sign` signs as the token's subject regardless of what it is handed.** So a
+token belonging to somebody else is not an error — it is **HTTP 200 with a valid
+event authored by that other person**. `expectedPubkey` is a check, not a
+request, and `estivaIdSigner` supplies it unconditionally from the pubkey it was
+built with. There were three copies of this round trip before SHA-4 and only one
+of them checked; the one that did not was Ship's, through which every write in
+Ship passes.
+
+A `401` throws `SignerTokenExpired` rather than a generic failure, and
+`estivaIdSigner` renews **once** and retries. Never twice: a second `401` after
+a successful renewal is a token the service will not accept, and retrying that
+is how one refused signature becomes a hot loop. Anything that is not an expiry
+is rethrown untouched, so a wrong-author refusal never spends a refresh token.
+
 ## Renewal is scheduled, not reactive
 
 ```ts
