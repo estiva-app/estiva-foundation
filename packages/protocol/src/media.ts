@@ -175,3 +175,102 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
   }
   return out
 }
+
+/**
+ * The sha256 a media path names.
+ *
+ * `/media/<sha256>.<ext>` and `/media/<sha256>.thumb.jpg` both answer the same
+ * hash — the thumbnail is a derivative of its parent, and an authorization is
+ * issued against the parent. Returns undefined for anything that is not
+ * media-shaped, so a caller cannot accidentally sign for a path it misread.
+ */
+export function sha256FromMediaUrl(url: string): string | undefined {
+  const afterMedia = url.split('/media/')[1]
+  if (afterMedia === undefined) return undefined
+  const hash = afterMedia.split('.')[0]
+  return /^[0-9a-f]{64}$/.test(hash) ? hash : undefined
+}
+
+/** A response carrying bytes. Narrower than `Response`, so no DOM lib is needed. */
+export interface BlobResponseLike {
+  status: number
+  arrayBuffer(): Promise<ArrayBuffer>
+  text(): Promise<string>
+  headers: { get(name: string): string | null }
+}
+
+/**
+ * A transport that can return bytes.
+ *
+ * Separate from {@link FetchLike}, which `Relay` uses: that one sends a string
+ * body and reads a string back, which is right for `POST /query` and cannot
+ * express a binary GET. Widening it would change `Relay`'s contract for every
+ * caller to serve this one.
+ */
+export type BlobFetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string> },
+) => Promise<BlobResponseLike>
+
+/** See {@link BlobFetchLike}. Read inside the function, so importing touches no global. */
+declare const fetch: BlobFetchLike
+
+/** What came back, and what it is. */
+export interface FetchedBlob {
+  bytes: ArrayBuffer
+  /** The relay's stored MIME, which is authoritative over anything a tag said. */
+  contentType: string
+}
+
+/**
+ * Fetch a blob the relay is holding — CON-12's read half.
+ *
+ * **An `<img src>` cannot do this**, which is the whole reason this exists.
+ * Media GET is unconditionally authenticated on the deployed relay: the
+ * `BUZZ_REQUIRE_MEDIA_GET_AUTH` flag reads like an opt-in and is inert, and a
+ * GET with no header answers 401 rather than 404 (probed 2026-09-08). So every
+ * reader — Peek showing its own attachment, Ship showing Peek's — has to sign a
+ * `get` authorization, fetch, and turn the bytes into something renderable.
+ *
+ * Shared because both apps need exactly this and neither should re-derive it:
+ * the hash the authorization must name is inside the path, the verb has to be
+ * `get` rather than `upload`, and getting either wrong fails as a 401 that
+ * looks like a session problem.
+ *
+ * Returns the bytes rather than an object URL: `URL.createObjectURL` is a DOM
+ * API and its lifetime belongs to whoever will revoke it.
+ */
+export async function fetchBlob(args: {
+  /** The relay origin, used when `url` is a bare `/media/…` path. */
+  relayUrl: string
+  /** `/media/<sha256>.<ext>`, or the absolute form of the same. */
+  url: string
+  sign: (unsigned: UnsignedEvent) => Promise<SignedEvent>
+  pubkey: string
+  transport?: BlobFetchLike
+}): Promise<FetchedBlob> {
+  const sha256 = sha256FromMediaUrl(args.url)
+  if (!sha256) throw new Error(`not a media url: ${args.url}`)
+
+  const auth = await args.sign(
+    buildBlossomAuth(args.pubkey, Date.now(), { verb: 'get', sha256, reason: 'Read attachment' }),
+  )
+
+  const absolute = args.url.startsWith('http')
+    ? args.url
+    : `${args.relayUrl.replace(/\/+$/, '')}${args.url.startsWith('/') ? '' : '/'}${args.url}`
+
+  const send = args.transport ?? fetch
+  const response = await send(absolute, {
+    method: 'GET',
+    headers: { authorization: blossomAuthHeader(auth) },
+  })
+  if (response.status < 200 || response.status >= 300) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`blob read failed: ${response.status} ${detail.slice(0, 200)}`)
+  }
+  return {
+    bytes: await response.arrayBuffer(),
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  }
+}
