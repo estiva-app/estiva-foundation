@@ -212,6 +212,58 @@ describe('estivaIdSigner', () => {
     assert.equal(f.calls[2].headers.authorization, 'Bearer fresh')
   })
 
+  it('reads the current token per signature when given a function', async () => {
+    /*
+      The reason this option exists. `scheduleRenewal` replaces the stored token
+      before it expires; a signer holding a string would keep presenting the old
+      one, pay a 401 on the next signature, and spend a SECOND grant to get back
+      to a token the app already had. Two rotations per expiry, and the renewal
+      the schedule exists to make invisible is not invisible at all.
+    */
+    const f = fakeSign([{ body: signedBy(MINE) }])
+    let current = 'first'
+    const signer = estivaIdSigner({
+      base: 'https://id.estiva.app',
+      pubkey: MINE,
+      token: () => current,
+      renew: async () => {
+        throw new Error('renew must not be reached: the reader already has a live token')
+      },
+      fetch: f.fetch,
+    })
+
+    await signer.sign(UNSIGNED)
+    current = 'renewed-by-the-schedule'
+    await signer.sign(UNSIGNED)
+
+    assert.equal(f.calls[0].headers.authorization, 'Bearer first')
+    assert.equal(f.calls[1].headers.authorization, 'Bearer renewed-by-the-schedule')
+  })
+
+  it('treats a reader with nothing to read as an expiry', async () => {
+    // Signed out mid-session. Not a signing failure — there is no token, which
+    // is the one thing `SignerTokenExpired` is for.
+    const f = fakeSign([{ body: signedBy(MINE) }])
+    const signer = estivaIdSigner({ base: 'https://id.estiva.app', pubkey: MINE, token: () => undefined, fetch: f.fetch })
+    await assert.rejects(signer.sign(UNSIGNED), SignerTokenExpired)
+    assert.equal(f.calls.length, 0, 'and does not ask /sign to judge an absent token')
+  })
+
+  it('still holds a string, so a script that obtains one token is unaffected', async () => {
+    const f = fakeSign([{ status: 401, body: {} }, { body: signedBy(MINE) }])
+    const signer = estivaIdSigner({
+      base: 'https://id.estiva.app',
+      pubkey: MINE,
+      token: 'stale',
+      renew: async () => 'fresh',
+      fetch: f.fetch,
+    })
+    await signer.sign(UNSIGNED)
+    // The renewed value is kept for later signatures, as before.
+    await signer.sign(UNSIGNED)
+    assert.equal(f.calls[2].headers.authorization, 'Bearer fresh')
+  })
+
   it('renews once and never twice', async () => {
     // A second 401 after a successful renewal is not an expiry — it is a token
     // the service will not accept, and retrying it is how one refused signature

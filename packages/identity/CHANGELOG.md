@@ -1,5 +1,42 @@
 # @estiva-app/identity
 
+## 0.2.2 — 2026-09-08
+
+**Additive.** `token` gains a function form; a string behaves exactly as before,
+so `^0.2.0` consumers need no change.
+
+- **`estivaIdSigner`'s `token` may now be `() => string | undefined`**, read per
+  signature instead of captured once.
+
+  Found while adopting `scheduleRenewal` in Ship, which builds its signer at
+  module scope (`web/src/api/store.ts`) and passed the token as a string. A
+  schedule replaces the *stored* token before it expires; a signer holding a
+  string keeps presenting the old one, pays a `401` on the next signature, and
+  its retry spends a **second** grant to reach a token the app already had. Two
+  rotations per expiry — and the renewal the schedule exists to make invisible is
+  not invisible at all. Adopting the schedule without this would have been
+  decorative on the write path.
+
+  A string stays supported deliberately: a script that obtains one token and
+  exits has nothing to read from, and making those write `() => t` would be
+  noise. With a reader, a renewal from anywhere is picked up without the signer
+  being told — including one written by another tab into shared storage.
+
+  A reader returning `undefined` is treated as {@link SignerTokenExpired} and
+  `/sign` is never called: signed out mid-session is not a signing failure, and
+  asking the service to judge an absent token is a round trip whose answer is
+  already known.
+
+- **Corrected a claim this package inherited and spread.** The `renew` doc said
+  access tokens "live ten minutes rather than an hour". Measured against
+  production on 2026-09-08, a token has ~3600s: `expires_in_sec` read 3544 on a
+  live session and 3554 immediately after a renewal. The sentence came from
+  Ship's own comment and I carried it here when `POST /sign` moved in, so it was
+  about to be the shared layer's version of a wrong fact. No behaviour depended
+  on it — `expires_in` is read from the response and never assumed.
+
+3 new tests, 80 to 83.
+
 ## 0.2.1 — 2026-09-08
 
 **Additive.** `SignRefused` is new; nothing that catches `Error` or reads a

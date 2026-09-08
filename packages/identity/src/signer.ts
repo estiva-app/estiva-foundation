@@ -184,15 +184,27 @@ export interface EstivaIdSignerOptions {
   base: string
   /** The pubkey the token was issued for — `sub` in the JWT. */
   pubkey: string
-  /** A bearer token from `POST /token`, audience-bound to this app. */
-  token: string
+  /**
+   * A bearer token from `POST /token`, audience-bound to this app — or a
+   * function returning the current one.
+   *
+   * **Pass the function if anything else can replace the token**, which
+   * {@link EstivaIdClient.scheduleRenewal} does by design. A string is captured
+   * once and held, so a scheduled renewal would refresh the *stored* token while
+   * this signer kept presenting the old one: the next signature still pays a
+   * `401`, and the retry spends a **second** grant for a token the app already
+   * holds. Two rotations per expiry, and the invisible renewal the schedule
+   * exists to provide never happens.
+   *
+   * A string stays supported because a script that obtains one token and exits
+   * has nothing to read from, and making those pass `() => t` would be noise.
+   */
+  token: string | (() => string | undefined)
   /**
    * Renew the token, once, when `/sign` says it has expired (PEEK-108).
    *
    * Optional: without it a `401` surfaces as {@link SignerTokenExpired} for the
-   * caller to deal with, exactly as before. With it, an expiry is invisible —
-   * which matters more than it used to, because access tokens live ten minutes
-   * rather than an hour, so a session of any length crosses one.
+   * caller to deal with, exactly as before. With it, an expiry is invisible.
    *
    * Returning `null` means renewal failed and the expiry is real.
    *
@@ -210,7 +222,15 @@ export interface EstivaIdSignerOptions {
  * rather than being rediscovered on each one.
  */
 export function estivaIdSigner({ base, pubkey, token, renew, fetch: send }: EstivaIdSignerOptions): Signer {
-  let bearer = token
+  /*
+    A held bearer only when there is nothing to read from. When `token` is a
+    function the current value is asked for per signature, so a renewal from
+    anywhere — a schedule, another tab's write into shared storage, the retry
+    below — is picked up without this signer being told.
+  */
+  const read = typeof token === 'function' ? token : undefined
+  let held = typeof token === 'string' ? token : undefined
+  const bearerNow = (): string | undefined => (read ? read() : held)
 
   return {
     pubkey,
@@ -229,6 +249,9 @@ export function estivaIdSigner({ base, pubkey, token, renew, fetch: send }: Esti
           ...(send ? { fetch: send } : {}),
         })
 
+      const bearer = bearerNow()
+      if (bearer === undefined) throw new SignerTokenExpired()
+
       try {
         return await once(bearer)
       } catch (error) {
@@ -244,8 +267,10 @@ export function estivaIdSigner({ base, pubkey, token, renew, fetch: send }: Esti
         if (!(error instanceof SignerTokenExpired) || !renew) throw error
         const renewed = await renew()
         if (!renewed) throw error
-        bearer = renewed
-        return await once(bearer)
+        // Only a held bearer needs replacing. A reader already sees the new one,
+        // because `renew` wrote it where the reader reads from.
+        if (read === undefined) held = renewed
+        return await once(renewed)
       }
     },
   }
