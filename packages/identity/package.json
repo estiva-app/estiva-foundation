@@ -1,7 +1,7 @@
 {
   "name": "@estiva-app/identity",
-  "version": "0.1.3",
-  "description": "Estiva ID sign-in: authorization code + PKCE, token storage, silent renewal, sign-out, and the auth-shell state machine. Knows nothing about any app's data layer.",
+  "version": "0.2.0",
+  "description": "Estiva ID sign-in: authorization code + PKCE, token storage, silent renewal, sign-out, signing via POST /sign, and the auth-shell state machine. Knows nothing about any app's data layer.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -35,11 +35,13 @@
   "keywords": [
     "estiva",
     "estiva-id",
+    "nostr",
     "oauth",
     "pkce",
-    "nostr"
+    "signer"
   ],
   "scripts": {
+    "prebuild": "npm run build --workspace @estiva-app/protocol",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs test/*.test.ts",
     "typecheck": "npm run build && tsc -p tsconfig.test.json",
@@ -47,7 +49,11 @@
   },
   "dependencies": {},
   "devDependencies": {
+    "@estiva-app/protocol": ">=0.14.0",
     "@types/node": "^24.13.3",
     "typescript": "~5.9.3"
+  },
+  "peerDependencies": {
+    "@estiva-app/protocol": ">=0.14.0"
   }
 }

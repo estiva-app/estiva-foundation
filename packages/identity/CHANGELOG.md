@@ -1,5 +1,66 @@
 # @estiva-app/identity
 
+## 0.2.0 — 2026-09-07
+
+**MINOR because it adds a peer dependency**, which is a break for a consumer
+that does not already have `@estiva-app/protocol` — ADR 0002 §4b puts the break
+on MINOR within `0.x`. Both consumers already have it, and per §5 both had an
+open upgrade PR before this published.
+
+**`POST /sign` lives here now.** SHA-3 left `estivaIdSigner` behind in the apps
+deliberately — "it knows about Estiva ID, which is this ticket" — and SHA-4's
+handoff comment called it "the one thing left duplicated between ship and
+estiva-agent, byte-identical, and it is yours to remove". This is that.
+
+- **New: `signViaEstivaId(unsigned, { base, token, expectedPubkey })`** — one
+  round trip. What Peek uses, because Peek signs per request with a token it
+  reads fresh each time.
+
+- **New: `estivaIdSigner({ base, pubkey, token, renew })`** — a `Signer` over the
+  same round trip, holding a live bearer and renewing once on a `401`. What Ship
+  uses, because Ship builds one signer at module scope for the life of the page.
+  Neither shape can be expressed as the other without one of them getting worse,
+  so both are here over one implementation.
+
+- **`SignerTokenExpired`** travels with them: "obtain a new token" and "this
+  event was refused" call for different things from the caller, and the status
+  code is the only thing that separates them.
+
+### The guard the three copies had already drifted on
+
+`/sign` **signs as the token's subject regardless of what it is handed.** So a
+token that belongs to somebody else does not produce an error — it produces
+**HTTP 200 carrying a valid event authored by that other person**, and the
+symptom arrives much later as a comment attributed to a colleague, with nothing
+in any log tying it back.
+
+SHA-4's Traps section says both apps must keep the `expectedPubkey` guard. **Only
+Peek's did.** Ship's `estivaIdSigner` — the signer every issue, comment, status
+change and assignment in Ship goes through — never had a pubkey comparison at
+all. That is precisely the drift three copies of one call produce, and the app
+that could least afford it was the one missing it.
+
+Here the guard is not optional on the `estivaIdSigner` path: it is supplied from
+the `pubkey` the signer was built with, whether or not the caller thought about
+it. Two tests cover it and a control asserts a wrong-author refusal does **not**
+trigger a renewal — spending a single-use refresh token on an error a new token
+cannot fix is how one bad signature becomes a revoked chain.
+
+### What stayed in the apps, and why
+
+`localSigner` (a per-browser anonymous key) and `nip07Signer` (a browser
+extension) are still duplicated between `ship` and `estiva-agent`, held by
+`scripts/conformance.test.ts`. Neither knows anything about Estiva ID, which is
+the line this package draws, so neither moved. Worth its own ticket rather than
+a quiet widening of this one.
+
+### The seam property still holds
+
+`@estiva-app/protocol` is a **peer** dependency, following `@estiva-app/interop`.
+Nothing here calls a protocol function — only its types are used — so the
+complete list of imports in the shipped JavaScript is still `./client.js`,
+`./shell.js` and now `./signer.js`. Only the `.d.ts` names protocol.
+
 ## 0.1.3 — 2026-09-07
 
 **Fixes a dead end reported from production.** No API change; `expiresAt` is now
@@ -38,6 +99,7 @@ still held: a token this cannot read is still a token.
 
 5 new tests, 59 to 64, including two controls that the `expires_in` fallback is
 untouched. Reverting the clamp fails exactly the two tests that depend on it.
+
 
 ## 0.1.2 — 2026-09-07
 
