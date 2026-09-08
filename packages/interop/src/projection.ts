@@ -2798,3 +2798,354 @@ export function resolveFolderProjectSlotsForTest(
   if (!projection) return undefined
   return resolveSlots(projection, root, {}, manifest).slots.title?.value
 }
+
+// ── The folder read model — RFC 0.4 §4 and §5 ───────────────────────────────
+
+/**
+ * The Folder as the relay maintains it — RFC 0.4 §12.1.
+ *
+ * Relay-signed, addressable, and **global**. §4.2 is worth reading before
+ * changing that last word: three of the four properties a folder must have are
+ * impossible if its state carries an `h`, because `h` files it under a channel
+ * and gates reads by access. Exploring folders you are not in, following one,
+ * and a file having one home while being referenced from elsewhere all need an
+ * address that resolves without membership. So the channel keeps doing access
+ * and conversation, and the folder becomes a layer above it.
+ *
+ * **Read-only here.** A client changes a folder by publishing a `kind:1852`
+ * command and the relay emits the new state (§4.1). A folder is not a
+ * user-signed event because NIP-01 addressable events are single-signer by
+ * construction — the address is `(pubkey, kind, d)`, so a second person adding
+ * a file would not replace your folder, they would create a different one.
+ */
+export const KIND_FOLDER_STATE = 30890
+
+/**
+ * NIP-29 group metadata — the Folder's channel.
+ *
+ * Named here for two unrelated jobs: it carries the folder's `name` before any
+ * folder state exists, and its own address is what makes a Peek topic a file
+ * like any other (§5.2).
+ */
+const KIND_CHANNEL = 39000
+
+/** The `name` tag, when there is an event to read it off at all. */
+const nameOf = (event: SignedEvent | undefined) => (event ? tagValue(event, 'name') : undefined)
+
+/** One folder, enough to draw a sidebar row. */
+export interface FolderSummary {
+  /**
+   * The folder's uuid. **One uuid, three roles** — the channel id, the `h` on
+   * everything in it, and the `d` on both its `39000` and its `30890` (§5.2,
+   * measured across all of production's channels).
+   */
+  id: string
+  name?: string
+  /** True once the relay maintains state for it, rather than it being a bare channel. */
+  hasState: boolean
+}
+
+/** A folder and everything in it, each file drawn through its owner's manifest. */
+export interface FolderContents extends FolderSummary {
+  /** The folder state's address, absent until a state event exists. */
+  address?: string
+  /**
+   * The files this folder holds.
+   *
+   * **Peers by construction, not by special case.** A Peek topic and a Ship
+   * project sit side by side because both are `a` tags in one list, and §5.2's
+   * finding is exactly that one tag type is enough to name either: a channel
+   * turned out to be addressable after all, so a topic needs no wrapper and no
+   * second mechanism. Nothing in this function knows what either app is.
+   *
+   * Ordered as the folder lists them. A file that resolved to nothing is
+   * **absent rather than marked** — see {@link resolveFolderContents}.
+   */
+  files: ForeignObject[]
+  /**
+   * Where the list came from, because the two are not equivalent.
+   *
+   * `state` is the model. `channel` is the approximation available before a
+   * folder has any state: containment inferred from `h`, which can list an
+   * app's records and **can never list a topic**, because under `h` the topic
+   * *is* the container rather than a thing inside it. A consumer that needs to
+   * explain a short list is reading this field.
+   */
+  source: 'state' | 'channel'
+}
+
+/**
+ * Every folder this identity can see, for a sidebar.
+ *
+ * Both shapes in one pass: folders the relay maintains state for, and bare
+ * channels that have none yet. A channel with state appears once, named by its
+ * state — the folder's name is the folder's to say.
+ *
+ * **A direct route, deliberately.** §4.2's post-mortem on REW-11 is that
+ * discovering children only through their parent loses them when the parent
+ * goes; a sidebar built by walking something else would inherit exactly that.
+ * This asks for folders by kind.
+ */
+export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
+  const events = await query([
+    { kinds: [KIND_FOLDER_STATE], limit: 500 },
+    { kinds: [KIND_CHANNEL], limit: 500 },
+  ])
+  const byId = new Map<string, FolderSummary>()
+  for (const event of events) {
+    const id = tagValue(event, 'd')
+    if (!id) continue
+    const state = event.kind === KIND_FOLDER_STATE
+    const existing = byId.get(id)
+    // State wins over the channel for the name, whichever order they arrived.
+    if (existing && !state) continue
+    byId.set(id, {
+      id,
+      name: tagValue(event, 'name') ?? existing?.name,
+      hasState: state || (existing?.hasState ?? false),
+    })
+  }
+  return [...byId.values()].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id))
+}
+
+/**
+ * Everything in one folder, resolved through the manifests of the apps that own it.
+ *
+ * The cross-app read the whole model rests on: given a folder id, list its
+ * files whatever kind they are and whoever wrote them, so two apps drawing the
+ * same folder show the same things. Both apps consume this rather than either
+ * one owning it.
+ *
+ * ## A file the reader cannot see is absent, not "unavailable"
+ *
+ * The one rule here that is a product decision rather than a mechanism, and a
+ * deliberate divergence from upstream's NIP-MP, whose fold requires the
+ * opposite for public repositories. **The count is the disclosure**: a folder
+ * that renders three rows and two greyed-out placeholders has told an outsider
+ * how much they are missing, which for a folder named after a person is the
+ * sensitive part. So an address that resolves to nothing is dropped, and
+ * nothing in the return value counts what was dropped.
+ *
+ * This is why the batch below cannot use {@link resolveForeignObject}
+ * unchanged: that returns `unreachable: true` so an inline reference can say
+ * "you may not have access", which is right for one pasted link and wrong for
+ * a list.
+ *
+ * ## Round trips do not grow with the folder
+ *
+ * **Flat in the number of files, linear in the number of apps.** The folder
+ * itself, the handler sweep, the contents, one query for every root at once
+ * and every change with it, and one for the people — then two more per
+ * distinct `(kind, author)` for NIP-89 discovery, which {@link ProjectionCache}
+ * memoises away.
+ *
+ * Measured against production, reading three folders through one cache:
+ *
+ * | folder | files | cold | warm |
+ * | --- | --- | --- | --- |
+ * | Shared foundation packages | 24 | 11 | 5 |
+ * | Feedback on Peek | 25 | 9 | 5 |
+ * | Folders | 9 | 6 | 4 |
+ *
+ * Twenty-five files and nine cost the same warm, which is the property worth
+ * having. A resolve per file would have been four *each* against a relay that
+ * meters reads at 300 a minute — a folder of twenty-five would not have loaded.
+ */
+export async function resolveFolderContents(
+  folder: string,
+  query: QueryFn,
+  /** Defaults to asking the relay. The browser passes a cached lookup. */
+  lookupPeople?: PeopleFn,
+  /** See {@link ProjectionCache}. Omitting it is exactly the old behaviour. */
+  cache?: ProjectionCache,
+): Promise<FolderContents> {
+  // 1. The folder itself. Both kinds in one trip: the state is the model and
+  //    the channel is what names a folder that has none yet.
+  const identity = await query([
+    { kinds: [KIND_FOLDER_STATE], '#d': [folder], limit: 1 },
+    { kinds: [KIND_CHANNEL], '#d': [folder], limit: 1 },
+  ])
+  const state = identity.find((e) => e.kind === KIND_FOLDER_STATE && tagValue(e, 'd') === folder)
+  const channel = identity.find((e) => e.kind === KIND_CHANNEL && tagValue(e, 'd') === folder)
+
+  const summary: FolderSummary & { address?: string } = {
+    id: folder,
+    name: nameOf(state) ?? nameOf(channel),
+    hasState: !!state,
+    ...(state
+      ? { address: pointerToAddress({ kind: state.kind, pubkey: state.pubkey, identifier: folder, relays: [] }) }
+      : {}),
+  }
+
+  const addresses = state
+    ? // §5.2: one tag type lists every file, topics included, with no special
+      //  case. The order is the folder's, so it is preserved rather than sorted.
+      [...new Set(state.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]))]
+    : await addressesByContainment(folder, query)
+
+  if (addresses.length === 0) {
+    return { ...summary, files: [], source: state ? 'state' : 'channel' }
+  }
+
+  // 2. Group by (kind, author): one manifest answers for every file an app owns
+  //    in this folder, and the cache makes the second folder free.
+  const pointers = addresses.flatMap((address) => {
+    try {
+      return [{ address, pointer: referenceToPointer(address) }]
+    } catch {
+      // An `a` tag nothing can parse is somebody else's bug and not worth a
+      // whole folder. Dropped like any other unresolvable file.
+      return []
+    }
+  })
+  const groups = new Map<string, { pointer: AddressPointer; addresses: string[] }>()
+  for (const { address, pointer } of pointers) {
+    const key = `${pointer.kind}:${pointer.pubkey}`
+    const group = groups.get(key)
+    if (group) group.addresses.push(address)
+    else groups.set(key, { pointer, addresses: [address] })
+  }
+
+  const manifests = new Map<string, ResolvedManifest>()
+  await Promise.all(
+    [...groups].map(async ([key, { pointer }]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+
+  // 3. Every root, and every change against every address, in two filters.
+  //    Change kinds are a set because two apps may fold differently, and a kind
+  //    is a u16 — the relay refuses an out-of-range one outright, so an app
+  //    declaring no `records` contributes no filter rather than an empty one.
+  const changeKinds = [
+    ...new Set(
+      [...manifests.values()].flatMap((r) => (r.manifest.records ? [r.manifest.records.changeKind] : [])),
+    ),
+  ]
+  const events = await query([
+    ...[...groups.values()].map(({ pointer, addresses: group }) => ({
+      kinds: [pointer.kind],
+      authors: [pointer.pubkey],
+      '#d': group.map((a) => referenceToPointer(a).identifier),
+      limit: group.length,
+    })),
+    ...(changeKinds.length
+      ? [{ kinds: changeKinds, '#a': addresses, limit: 500 }]
+      : []),
+  ])
+
+  // 4. Build each file, in the order the folder listed them.
+  const files: ForeignObject[] = []
+  for (const { address, pointer } of pointers) {
+    const resolved = manifests.get(`${pointer.kind}:${pointer.pubkey}`)
+    // No app claims this kind, so there is no projection to draw it with.
+    if (!resolved) continue
+    const projection = resolved.manifest.projections?.[String(pointer.kind)]
+    if (!projection) continue
+    const root = events.find(
+      (e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier,
+    )
+    // The disclosure rule. Absent, not "unavailable".
+    if (!root) continue
+
+    const records = foldRuleOf(resolved.manifest)
+    const folded = foldChanges(
+      events.filter((e) => e.kind === records.changeKind && hasTagValue(e, records.targetTag, address)),
+      records,
+    )
+    // An app hiding a record from its own lists is saying it is not part of the
+    // folder any more. `hiddenWhen` is the app's own declaration of that.
+    if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) {
+      continue
+    }
+    files.push(
+      buildObject({
+        root,
+        pointer,
+        manifest: resolved.manifest,
+        projection,
+        folded,
+        viaRecommendation: resolved.viaRecommendation,
+        webTemplate: resolved.webTemplate,
+      }),
+    )
+  }
+
+  const people = await (lookupPeople ?? peopleViaRelay(query))([
+    ...new Set(files.flatMap(pubkeysIn)),
+  ])
+  return {
+    ...summary,
+    files: files.map((file) => ({ ...file, people })),
+    source: state ? 'state' : 'channel',
+  }
+}
+
+/**
+ * The contents of a folder that has no state event — containment by `h`.
+ *
+ * **The approximation, and it is worth being precise about what it cannot do.**
+ * Before folder state exists, the only thing on the wire saying a file is in a
+ * folder is the file's own `h` (or `buzz-channel`, for a record published
+ * globally — {@link folderOf} has both spellings and why). That lists an app's
+ * records perfectly well and **cannot list a topic**: under `h` the topic is
+ * the container, so it would have to be inside itself.
+ *
+ * Kept because both wire shapes coexist permanently — no migration is
+ * available, and a reader that only understood folder state would show every
+ * folder on production as empty.
+ *
+ * Two filters rather than one: an `#h` query does not return a record placed
+ * globally, and reading only `h` was what made five of Ship's fifteen projects
+ * unactionable before `folderOf` existed.
+ */
+async function addressesByContainment(folder: string, query: QueryFn): Promise<string[]> {
+  // Which kinds could be files? Every kind any app declares a projection for.
+  // The only non-app-specific source for a kind number is a published manifest.
+  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: 50 }])
+  const kinds = [
+    ...new Set(
+      handlers.flatMap((event) =>
+        Object.keys(parseManifest(event)?.projections ?? {}).map(Number).filter(Number.isFinite),
+      ),
+    ),
+  ]
+  if (kinds.length === 0) return []
+
+  const held = await query([
+    { '#h': [folder], kinds, limit: 500 },
+    { '#buzz-channel': [folder], kinds, limit: 500 },
+  ])
+  return [
+    ...new Set(
+      held
+        .filter((event) => {
+          const d = tagValue(event, 'd')
+          /*
+            Two exclusions, and both are about what a file *is*.
+
+            **A file is addressable** — RFC 0.4 §5, "anything with an address
+            that a folder can list". A `kind:9` message carries no `d`, so it
+            has no address, so it is conversation rather than contents. That is
+            the whole discriminator and it needs no kind numbers.
+
+            **A folder is not a file inside itself.** A channel's own `39000`
+            comes back from an `#h` query for that channel — the relay scopes a
+            discovery event to the channel it describes, so it arrives with the
+            contents. What marks it out is that its `d` *is* the folder uuid.
+          */
+          return d !== undefined && d !== folder
+        })
+        .sort((a, b) => b.created_at - a.created_at)
+        .map((event) =>
+          pointerToAddress({
+            kind: event.kind,
+            pubkey: event.pubkey,
+            identifier: tagValue(event, 'd') ?? '',
+            relays: [],
+          }),
+        ),
+    ),
+  ]
+}
