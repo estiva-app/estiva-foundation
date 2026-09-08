@@ -1,0 +1,117 @@
+name: check platform
+
+# One workflow per package, filtered by path — ADR 0002 §2. A change to
+# `protocol` must not run this package's suite, or an unrelated failure becomes
+# a blocked wire-format release.
+#
+# Known cost of `paths`: a PR touching no package never runs this job, so it
+# cannot be a *required* check that must report success.
+#
+# This file arrives with the package's first commit, which is the whole lesson
+# of SHA-20: `interop` was published through 0.6.0 with no check workflow, its
+# suite ran on nobody's machine but the author's, and `release` publishes on a
+# tag without running tests. Four releases went out that way, and a PR against
+# it showed "no checks" — which reads like a repo that does not gate rather
+# than a gap.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      ['packages/platform/**', '.github/workflows/check-platform.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+  pull_request:
+    paths:
+      ['packages/platform/**', '.github/workflows/check-platform.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+
+concurrency:
+  group: check-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/platform
+
+      # Both passes: the package's own `types: []` build, and a second over
+      # `test/*.test.ts`. `node --test` strips types rather than checking them,
+      # so without this the suite is checked by nothing while reporting green.
+      - run: npm run typecheck -w packages/platform
+
+      - run: npm test -w packages/platform
+
+      # The emitted specifier is the thing three toolchains disagree about, and
+      # it is invisible until a consumer's build fails. `tsc` copies relative
+      # specifiers through untouched, so an extensionless one ships broken.
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/platform/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      # A `.d.ts` naming a DOM or Node type compiles in Peek (types:
+      # ["vite/client"]) and fails in Ship (types: ["node"]), or the reverse,
+      # and neither repo's CI would say why.
+      #
+      # This package is the one most tempted to break it — it is *about* browser
+      # lifecycle. `OnlineTarget` is the answer: the shape of `window` this needs
+      # is four lines declared in the file, so the published types name no
+      # ambient global and a Node consumer can still use it. The guard is what
+      # stops that drifting back to `Window`.
+      #
+      # Comments are stripped first: the prose talks about `WebSocket` and
+      # `window` constantly, and it should be able to.
+      - name: The published declarations name no DOM or Node global
+        run: |
+          BAD=$(cat packages/platform/dist/*.d.ts \
+            | sed -E 's:/\*.*\*/::g' \
+            | awk '/\/\*/{c=1} !c{print} /\*\//{c=0}' \
+            | sed -E 's://.*$::' \
+            | grep -nE '\b(WebSocket|Window|Document|HTMLElement|Element|Response|Request|Headers|NodeJS|Buffer|ProcessEnv|Timeout)\b' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::A published declaration reaches for an ambient global. Make it a parameter or declare the shape locally (ADR 0002 §4a): $BAD"
+            exit 1
+          fi
+
+      # ADR 0002 §10 constraint 2, and this package's entire reason for
+      # existing. `liveTopics.ts` held `let instance: Instance | null = null` at
+      # module scope, which is what made it un-instantiable twice and
+      # untestable without the environment it assumed — the bill this package
+      # was created to pay.
+      #
+      # Re-introducing one here would be worse than the original, because it
+      # would be shared by every consumer. A holder is handed to the app for
+      # exactly this reason. `const` at module scope is fine — the ban is on
+      # mutable state, not on constants.
+      - name: No mutable state at module scope
+        run: |
+          BAD=$(grep -nE '^(let|var) ' packages/platform/src/*.ts || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Mutable module-scope state in a shared package — hand the app a holder instead (ADR 0002 §10 constraint 2): $BAD"
+            exit 1
+          fi
+
+      # `protocol` is a peer on purpose, so a consumer that already has it does
+      # not get a second copy at a different major.
+      - name: protocol stays a peer, and nothing else is a runtime dependency
+        run: |
+          node -e "
+            const p = require('./packages/platform/package.json');
+            const deps = Object.keys(p.dependencies || {});
+            if (deps.length) {
+              console.error('::error::Unexpected runtime dependency: ' + deps.join(', '));
+              process.exit(1);
+            }
+            if (!(p.peerDependencies || {})['@estiva-app/protocol']) {
+              console.error('::error::@estiva-app/protocol must stay a peerDependency — as a dependency it ships a second copy into every consumer that already has one');
+              process.exit(1);
+            }
+          "

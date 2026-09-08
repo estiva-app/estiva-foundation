@@ -1,0 +1,14 @@
+{
+  "$comment": [
+    "Typecheck-only, for `test/*.test.ts`. NOT used to build the package.",
+    "",
+    "`node --test` strips types rather than checking them, so without this pass",
+    "the suite would be checked by nothing while still reporting green. Same",
+    "hole `interop` documents next door, and the same fix.",
+    "",
+    "Needs `dist/` to exist: the tests import `../dist/index.js`, because dist",
+    "is what ships. `npm run typecheck` builds first."
+  ],
+  "extends": "../../tsconfig.base.test.json",
+  "include": ["test/**/*.ts"]
+}

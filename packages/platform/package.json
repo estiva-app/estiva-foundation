@@ -1,0 +1,57 @@
+{
+  "name": "@estiva-app/platform",
+  "version": "0.1.0",
+  "description": "Browser lifecycle two Estiva apps share: the one live relay socket a tab should hold, its credential read per connect, and the network coming back.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estiva-app/estiva-foundation.git",
+    "directory": "packages/platform"
+  },
+  "keywords": [
+    "nostr",
+    "relay",
+    "websocket",
+    "nip-42",
+    "pwa",
+    "estiva"
+  ],
+  "scripts": {
+    "prebuild": "npm run build --workspace @estiva-app/protocol",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.ts",
+    "typecheck": "npm run build && tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@estiva-app/protocol": ">=0.15.0"
+  },
+  "devDependencies": {
+    "@estiva-app/protocol": ">=0.15.0",
+    "typescript": "~5.9.3"
+  }
+}
