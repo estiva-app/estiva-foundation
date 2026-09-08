@@ -46,6 +46,19 @@ Two things keep it from growing into the rule it replaced:
 `KIND_CHANNEL_METADATA` is exported for the same reason `KIND_FOLDER_STATE` is:
 a bare `39000` at a call site reads as an app's kind rather than the relay's.
 
+**`buildActionEvent` no longer needs a fold rule to build a creation.** Its
+first line refused any app declaring no `records`, which gated creations and
+comments on a rule only a *change* uses — the change tags are the only place it
+is read. PRO-12 settled this on the read side (*"SPEC mandates `records`; the
+runtime correctly stopped requiring it"*) and the write side never followed.
+
+Found against production, and findable nowhere else: every fixture in this
+package's suite declares a fold rule. Peek declares none deliberately — a
+topic's name is a tag the relay wrote and a message is immutable — so its
+first action came back "That app does not say how its records are written",
+which is true, irrelevant, and impossible to act on. A change still refuses,
+and still names the rule it is missing.
+
 **What this does not unblock.** A container-*creating* action — Ship's
 `add-project`, Peek's `create-topic` — still cannot be declared. Those need a
 Folder that does not exist yet, which is FOL-2, and PRO-18's steer stands: wait

@@ -244,6 +244,52 @@ describe('finding the Folder to write into', () => {
     `h_grammar` is the same uuid — so nothing is declared and no producer can
     opt out.
   */
+    /*
+    INT-9, and found only against production — every fixture in this suite
+    declares a fold rule, so nothing here could see it.
+
+    `buildActionEvent` opened by refusing any app with no `records`, which
+    gated creations and comments on a rule only a *change* uses. PRO-12 settled
+    this on the read side and the write side never followed. Peek declares no
+    fold rule on purpose — a topic's name is a tag the relay wrote and a
+    message is immutable — so its first action was refused with a sentence that
+    was true, irrelevant and impossible to act on.
+  */
+  describe('a fold rule is needed to write a change, and only a change', () => {
+    const noRecords = { actions: [logSighting] }
+    const args = {
+      kind: COLONY,
+      address: ADDRESS,
+      objectAuthor: AUTHOR,
+      folder: FOLDER,
+      pubkey: AUTHOR,
+      createdAtMs: 1_764_000_000_000,
+    }
+
+    test('a creation builds for an app that declares no records', () => {
+      const built = buildActionEvent({
+        ...args,
+        manifest: noRecords,
+        actionId: 'log-sighting',
+        value: { species: 'Kingfisher', note: 'On the weir' },
+        newId: 'a1b2c3d4-0000-4000-8000-000000000002',
+      })
+      assert.equal(typeof built, 'object', typeof built === 'string' ? built : '')
+      assert.equal(built.kind, logSighting.emits.kind)
+    })
+
+    test('a change still refuses, naming the rule it is missing', () => {
+      const built = buildActionEvent({
+        ...args,
+        manifest: { actions: [{ ...logSighting, id: 'set-stage', input: { type: 'string' }, emits: { kind: 30852, field: 'stage' } }] },
+        actionId: 'set-stage',
+        value: 'fledged',
+      })
+      assert.equal(typeof built, 'string')
+      assert.match(built, /records are written/)
+    })
+  })
+
   describe('a channel record names the Folder it is', () => {
     const topic = event({ kind: KIND_CHANNEL_METADATA, tags: [['d', FOLDER], ['name', 'Weir sightings']] })
 

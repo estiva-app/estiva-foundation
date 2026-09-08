@@ -2756,7 +2756,6 @@ export function buildActionEvent(args: {
   const { manifest, kind, address, folder, actionId, value } = args
   const records = manifest.records
   const declared = manifest.actions?.find((a) => a.id === actionId)
-  if (!records) return 'That app does not say how its records are written.'
   if (!declared) return `This app does not offer "${actionId}".`
 
   const appliesTo = Array.isArray(declared.appliesTo) ? declared.appliesTo : [declared.appliesTo]
@@ -2773,6 +2772,25 @@ export function buildActionEvent(args: {
   if (typeof value !== 'string') {
     return `"${declared.label}" takes a single value, not a form.`
   }
+
+  /*
+    **A fold rule is needed to write a change, and only to write a change.**
+
+    This was the first line of the function, refusing every action of every app
+    that declares no `records` — which read as a guard and was a gate on an
+    unrelated feature. PRO-12 settled the principle on the read side: *"SPEC
+    mandates `records`; the runtime correctly stopped requiring it."* The write
+    side never followed, and the tags below are the only place it is used.
+
+    Found by INT-9 against production, and only there: Peek declares no fold
+    rule, deliberately — *"a topic's name is a tag the relay wrote, and a
+    message is immutable. A consumer that folded nothing would render both
+    correctly."* So Peek's first action was refused with "That app does not say
+    how its records are written", which is true, irrelevant, and impossible to
+    act on. A creation reads nothing and folds nothing; there is nothing for a
+    fold rule to say about it.
+  */
+  if (!records) return 'That app does not say how its records are written.'
 
   // Validate against the manifest's own vocabulary. The owning app cannot
   // enforce this — anyone can publish anything (RFC_UPDATES.md §3) — so a
