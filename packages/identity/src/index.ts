@@ -46,7 +46,7 @@
  * The thing that made it possible was not cleverness — it was that a browser API
  * an app must inject is also a browser API a test can observe.
  */
-export const IDENTITY_VERSION = '0.2.0'
+export const IDENTITY_VERSION = '0.2.1'
 
 export {
   type KeyValueStore,
@@ -87,6 +87,7 @@ export {
   type EstivaIdSignerOptions,
   type SignFetchLike,
   SignerTokenExpired,
+  SignRefused,
   signViaEstivaId,
   estivaIdSigner,
 } from './signer.js'

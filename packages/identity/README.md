@@ -90,7 +90,10 @@ built with. There were three copies of this round trip before SHA-4 and only one
 of them checked; the one that did not was Ship's, through which every write in
 Ship passes.
 
-A `401` throws `SignerTokenExpired` rather than a generic failure, and
+A `401` throws `SignerTokenExpired`; any other refusal throws `SignRefused`
+carrying the HTTP `status`, because consumers classify on it and a message is not
+an API — `403` means an administrator has to restore the identity, while a `422`
+policy refusal means something else entirely. And
 `estivaIdSigner` renews **once** and retries. Never twice: a second `401` after
 a successful renewal is a token the service will not accept, and retrying that
 is how one refused signature becomes a hot loop. Anything that is not an expiry

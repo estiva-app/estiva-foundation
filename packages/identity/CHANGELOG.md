@@ -1,5 +1,28 @@
 # @estiva-app/identity
 
+## 0.2.1 — 2026-09-08
+
+**Additive.** `SignRefused` is new; nothing that catches `Error` or reads a
+message changes.
+
+- **A `/sign` refusal that is not an expiry now throws `SignRefused`, carrying
+  the HTTP `status`.** A `401` still throws `SignerTokenExpired`, which is the
+  one refusal a new token fixes.
+
+  The status belongs on the error because **consumers classify on it and a
+  message is not an API.** Found while wiring Peek as the third consumer:
+  `reasonForSignFailure` maps `/sign` failures into the auth shell's reason
+  vocabulary by regexing `POST /sign failed: (\d{3})` out of the message Peek's
+  own copy threw. `403` is `identity_inactive` — an administrator has to restore
+  the identity — while a `422` policy refusal is not, and neither is a `502`.
+
+  Swapping in this package's differently worded message would have collapsed
+  every one of those into a single reason. **Nothing would have failed**: Peek's
+  tests pass literal strings rather than real errors, so the regex kept matching
+  in the test suite while matching nothing in production. That is the shape worth
+  recording — the test and the code agreed with each other and both stopped
+  describing the app.
+
 ## 0.2.0 — 2026-09-07
 
 **MINOR because it adds a peer dependency**, which is a break for a consumer

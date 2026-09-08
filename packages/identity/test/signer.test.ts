@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { UnsignedEvent } from '@estiva-app/protocol'
-import { SignerTokenExpired, estivaIdSigner, signViaEstivaId } from '../dist/index.js'
+import { SignRefused, SignerTokenExpired, estivaIdSigner, signViaEstivaId } from '../dist/index.js'
 
 const MINE = 'a1'.repeat(32)
 const SOMEBODY_ELSE = 'ff'.repeat(32)
@@ -110,6 +110,38 @@ describe('POST /sign', () => {
       signViaEstivaId(UNSIGNED, { base: 'https://id.estiva.app', token: 'at', fetch: plain.fetch }),
       /refused to sign kind:1111 — upstream unavailable/,
     )
+  })
+
+  it('carries the status on a refusal, because consumers classify on it', async () => {
+    /*
+      A message is not an API. Peek maps `/sign` failures into the shell's reason
+      vocabulary and `403` is `identity_inactive` — an administrator's problem —
+      while a `422` policy refusal is not. It did that by regexing its own thrown
+      string, so a package throwing a differently worded message would have
+      collapsed every one of those into a single reason with nothing failing:
+      Peek's tests pass literal strings, not real errors.
+    */
+    for (const status of [403, 422, 502]) {
+      const f = fakeSign([{ status, body: { error: { message: 'nope' } } }])
+      const refusal = await signViaEstivaId(UNSIGNED, { base: 'https://id.estiva.app', token: 'at', fetch: f.fetch }).then(
+        () => null,
+        (e: unknown) => e,
+      )
+      assert.ok(refusal instanceof SignRefused, `status ${status} should be a SignRefused`)
+      assert.equal((refusal as SignRefused).status, status)
+      assert.match((refusal as SignRefused).message, /refused to sign kind:1111/)
+    }
+  })
+
+  it('keeps an expiry a SignerTokenExpired, not a SignRefused', async () => {
+    // 401 is the one refusal a new token fixes, so it stays its own type.
+    const f = fakeSign([{ status: 401, body: {} }])
+    const refusal = await signViaEstivaId(UNSIGNED, { base: 'https://id.estiva.app', token: 'at', fetch: f.fetch }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    assert.ok(refusal instanceof SignerTokenExpired)
+    assert.ok(!(refusal instanceof SignRefused))
   })
 
   it('refuses a 200 that carries no event', async () => {
