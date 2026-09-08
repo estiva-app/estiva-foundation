@@ -6,6 +6,51 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.16.0 — 2026-09-08
+
+**No manifest changes meaning, and nothing already published is read
+differently.** Nothing new may be declared: this is a rule about an event the
+*relay* signs, so no producer writes it, reads it or can opt out of it. A
+manifest published yesterday means exactly what it meant.
+
+`folderOf` resolves a NIP-29 `kind:39000` to its own `d`. Measured on
+production 2026-09-08: **0 of 40 channel records carry `h` or `buzz-channel`,
+and 40 of 40 carry `d`** — so every write aimed at a topic was refused for
+having nowhere to go, and Peek could declare no action on one (INT-9).
+
+**This is the case 0.13.0 added as vocabulary and 0.14.0 withdrew.** The
+withdrawal was right and is not being reversed: `records.folder: "identifier"`
+asked every future producer to read a field whose only instance RFC 0.5 §1
+retires. What went unnoticed is that it took a working feature with it, four
+days after PRO-18 concluded a conversation had become declarable — because
+nothing had declared the field yet, so nothing broke visibly.
+
+So the same fact arrives as protocol instead, which is the distinction 0.14.0
+was actually about. A `kind:39000` is relay-signed group metadata whose `d` *is*
+the channel id: buzz's `NOSTR.md` §"Group metadata" states it,
+`channel_info_from_event` reads it, and the relay's `h_grammar` is the same
+uuid. That is the same standing `h` and `buzz-channel` already have here.
+
+Two things keep it from growing into the rule it replaced:
+
+- **`kind:39000` and nothing else.** Not "any addressable kind" — that would
+  hand every `30000`–`39999` record its own `d` as a Folder and land a
+  consumer's write in a channel that may not exist. A container-shaped
+  addressable kind that is not the relay's still answers `null`, and a test
+  holds it.
+- **It is last in the chain, so it decays into dead code.** FOL-3 gives a topic
+  an `h`; from that day the first clause answers and this one is unreachable.
+  A shape a model change retires should stop firing, not start lying — the
+  test named for FOL-3 pins the order that makes it a no-op.
+
+`KIND_CHANNEL_METADATA` is exported for the same reason `KIND_FOLDER_STATE` is:
+a bare `39000` at a call site reads as an app's kind rather than the relay's.
+
+**What this does not unblock.** A container-*creating* action — Ship's
+`add-project`, Peek's `create-topic` — still cannot be declared. Those need a
+Folder that does not exist yet, which is FOL-2, and PRO-18's steer stands: wait
+for the folder model rather than invent a shape it contradicts.
+
 ## 0.15.0 — 2026-09-08
 
 **No manifest changes meaning, and nothing already published is read

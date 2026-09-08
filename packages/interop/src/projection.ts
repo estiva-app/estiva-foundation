@@ -556,6 +556,14 @@ function resolveActions(
   return out
 }
 
+/**
+ * NIP-29 group metadata — the relay's own record for a channel.
+ *
+ * Named here because {@link folderOf} keys on it, and a bare `39000` in that
+ * one comparison would read as an app's kind rather than as the relay's.
+ */
+export const KIND_CHANNEL_METADATA = 39000
+
 const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1]
 
 /**
@@ -569,20 +577,50 @@ const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === n
  * are the relay's and NIP-29's, so knowing them is not knowing what any app
  * is.
  *
- * **0.13.0 had a third case and 0.14.0 withdrew it.** A manifest could declare
- * `records.folder: "identifier"`, meaning *my objects are containers, so the
- * Folder is the object's own `d`*. Its only instance was a Peek topic, and
- * RFC 0.5 §1 retires that shape: a Folder holds several files of the same kind
- * — three topics and two projects — so a topic becomes a file inside a Folder
- * and carries an `h` like everything else. A vocabulary field whose only
- * instance is going away is one every future producer has to read and none can
- * use.
+ * **0.13.0 had a third case as manifest vocabulary and 0.14.0 withdrew it.** A
+ * manifest could declare `records.folder: "identifier"`, meaning *my objects
+ * are containers, so the Folder is the object's own `d`*. The withdrawal was
+ * right and stands: its only instance was a Peek topic, RFC 0.5 §1 retires
+ * that shape, and a vocabulary field whose only instance is going away is one
+ * every future producer has to read and none can use.
  *
- * Returns `null` when neither tag says — which is a real answer. An object with
- * no Folder has nowhere for a write to go, and guessing at one publishes into
+ * **What the withdrawal took with it was a working feature, and nothing
+ * noticed because nothing had declared the field yet** (INT-9). A channel
+ * record names no Folder by either tag above, so every write aimed at one is
+ * refused for having nowhere to go — which is why Peek can declare no action on
+ * a topic, four days after PRO-18 concluded a conversation had become
+ * declarable. Measured on production 2026-09-08: **0 of 40 `kind:39000` events
+ * carry `h` or `buzz-channel`, and 40 of 40 carry `d`.**
+ *
+ * So the third case comes back **as protocol rather than as vocabulary**, which
+ * is the distinction 0.14.0 was actually about. A `kind:39000` is NIP-29 group
+ * metadata, relay-signed, and its `d` *is* the channel id — buzz's `NOSTR.md`
+ * §"Group metadata" states it, `channel_info_from_event` reads it, and the
+ * relay's `h_grammar` is the same uuid. Nobody declares that and no producer
+ * can opt out of it, exactly like `h` and `buzz-channel` above. It asks nothing
+ * of any manifest, so it cannot be the field that every future producer reads
+ * and none can use.
+ *
+ * **It is the last of the three to fire, and it goes quiet on its own.** FOL-3
+ * makes a topic a file that carries an `h`; from that day the first clause
+ * answers and this one is unreachable. A shape retired by a model change should
+ * decay into dead code, not into a wrong answer — which is what the `??` order
+ * buys and what the "still resolves after FOL-3" test pins.
+ *
+ * Narrow on purpose: **`kind:39000` and nothing else.** Not "any addressable
+ * kind", which would hand every `30000`–`39999` record its own `d` as a Folder
+ * and put a consumer's write in a channel that may not exist. An addressable
+ * kind that is not the relay's channel record still answers `null` below, and a
+ * test holds that line.
+ *
+ * Returns `null` when nothing says — which is a real answer. An object with no
+ * Folder has nowhere for a write to go, and guessing at one publishes into
  * somebody else's channel.
  */
 export function folderOf(root: SignedEvent): string | null {
+  if (root.kind === KIND_CHANNEL_METADATA) {
+    return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel') ?? tagValue(root, 'd') ?? null
+  }
   return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel') ?? null
 }
 
