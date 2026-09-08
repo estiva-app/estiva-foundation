@@ -8,7 +8,17 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildBlossomAuth, blossomAuthHeader, imetaTag, imetaOf, KIND, type BlossomVerb } from '../dist/index.js'
+import {
+  buildBlossomAuth,
+  blossomAuthHeader,
+  imetaTag,
+  imetaOf,
+  sha256FromMediaUrl,
+  fetchBlob,
+  KIND,
+  type BlossomVerb,
+  type BlobFetchLike,
+} from '../dist/index.js'
 
 const PUBKEY = 'a'.repeat(64)
 const SHA = 'b'.repeat(64)
@@ -115,5 +125,123 @@ describe('the imeta tag', () => {
   it('reads several attachments on one message', () => {
     const second = { ...meta, x: 'c'.repeat(64), url: '/media/' + 'c'.repeat(64) + '.png', m: 'image/png' }
     assert.equal(imetaOf({ tags: [imetaTag(meta), imetaTag(second)] }).length, 2)
+  })
+})
+
+describe('the sha256 a media path names', () => {
+  it('reads the hash out of a media url', () => {
+    assert.equal(sha256FromMediaUrl(`/media/${SHA}.jpg`), SHA)
+    assert.equal(sha256FromMediaUrl(`https://buzz.estiva.app/media/${SHA}.png`), SHA)
+  })
+
+  /* A thumbnail is a derivative of its parent and the relay issues no separate
+     hash for it, so an authorization for `.thumb.jpg` names the PARENT. Reading
+     up to the last dot instead of the first would produce `<sha>.thumb`, which
+     signs for a blob that does not exist and answers 401. */
+  it('reads the parent hash out of a thumbnail path', () => {
+    assert.equal(sha256FromMediaUrl(`/media/${SHA}.thumb.jpg`), SHA)
+  })
+
+  it('refuses anything not media-shaped, rather than signing for a misread path', () => {
+    assert.equal(sha256FromMediaUrl('/media/not-a-hash.jpg'), undefined)
+    assert.equal(sha256FromMediaUrl(`/files/${SHA}.jpg`), undefined)
+    assert.equal(sha256FromMediaUrl(`/media/${SHA.toUpperCase()}.jpg`), undefined)
+    assert.equal(sha256FromMediaUrl(''), undefined)
+  })
+})
+
+describe('fetching a blob', () => {
+  const sign = async (u: { kind: number; tags: string[][]; content: string; created_at: number }) => ({
+    ...u,
+    pubkey: PUBKEY,
+    id: 'd'.repeat(64),
+    sig: 'e'.repeat(128),
+  })
+  const ok = (body = 'bytes', type = 'image/jpeg') => ({
+    status: 200,
+    arrayBuffer: async () => new TextEncoder().encode(body).buffer as ArrayBuffer,
+    text: async () => body,
+    headers: { get: (n: string) => (n.toLowerCase() === 'content-type' ? type : null) },
+  })
+
+  const recording = () => {
+    const calls: { url: string; headers: Record<string, string> }[] = []
+    const transport: BlobFetchLike = async (url, init) => {
+      calls.push({ url, headers: init.headers })
+      return ok()
+    }
+    return { calls, transport }
+  }
+
+  /* The whole reason this function exists: an <img src> sends no header, and
+     media GET is unconditionally authenticated on the deployed relay — so a
+     plain fetch answers 401, which reads like a session problem. */
+  it('sends a Blossom authorization', async () => {
+    const { calls, transport } = recording()
+    await fetchBlob({ relayUrl: 'https://buzz.estiva.app', url: `/media/${SHA}.jpg`, sign, pubkey: PUBKEY, transport })
+    assert.equal(calls.length, 1)
+    const header = calls[0].headers.authorization
+    assert.ok(header?.startsWith('Nostr '), 'the relay looks for a Nostr scheme')
+    const event = JSON.parse(Buffer.from(header.slice('Nostr '.length), 'base64').toString())
+    assert.equal(event.kind, KIND.BLOSSOM_AUTH)
+    assert.deepEqual(event.tags.find((t: string[]) => t[0] === 't'), ['t', 'get'])
+    assert.deepEqual(event.tags.find((t: string[]) => t[0] === 'x'), ['x', SHA])
+  })
+
+  it('authorizes a thumbnail against its parent blob', async () => {
+    const { calls, transport } = recording()
+    await fetchBlob({ relayUrl: 'https://buzz.estiva.app', url: `/media/${SHA}.thumb.jpg`, sign, pubkey: PUBKEY, transport })
+    const event = JSON.parse(Buffer.from(calls[0].headers.authorization.slice(6), 'base64').toString())
+    assert.deepEqual(event.tags.find((t: string[]) => t[0] === 'x'), ['x', SHA])
+  })
+
+  it('resolves a bare path against the relay, and leaves an absolute url alone', async () => {
+    const { calls, transport } = recording()
+    await fetchBlob({ relayUrl: 'https://buzz.estiva.app/', url: `/media/${SHA}.jpg`, sign, pubkey: PUBKEY, transport })
+    await fetchBlob({ relayUrl: 'https://buzz.estiva.app', url: `https://other.example/media/${SHA}.jpg`, sign, pubkey: PUBKEY, transport })
+    assert.equal(calls[0].url, `https://buzz.estiva.app/media/${SHA}.jpg`, 'a trailing slash must not double')
+    assert.equal(calls[1].url, `https://other.example/media/${SHA}.jpg`)
+  })
+
+  it('returns the bytes and the type the relay stored', async () => {
+    const transport: BlobFetchLike = async () => ok('hello', 'image/png')
+    const got = await fetchBlob({ relayUrl: 'https://b', url: `/media/${SHA}.png`, sign, pubkey: PUBKEY, transport })
+    assert.equal(new TextDecoder().decode(got.bytes), 'hello')
+    assert.equal(got.contentType, 'image/png')
+  })
+
+  it('falls back to a generic type when the relay sends none', async () => {
+    const transport: BlobFetchLike = async () => ({ ...ok(), headers: { get: () => null } })
+    const got = await fetchBlob({ relayUrl: 'https://b', url: `/media/${SHA}.png`, sign, pubkey: PUBKEY, transport })
+    assert.equal(got.contentType, 'application/octet-stream')
+  })
+
+  /* A 401 body is bytes too. Without a status check the caller would render
+     the error text as if it were the image. */
+  it('throws on a refusal rather than returning the error body as content', async () => {
+    const transport: BlobFetchLike = async () => ({ ...ok('unauthorized'), status: 401 })
+    await assert.rejects(
+      () => fetchBlob({ relayUrl: 'https://b', url: `/media/${SHA}.jpg`, sign, pubkey: PUBKEY, transport }),
+      /401/,
+    )
+  })
+
+  it('refuses a url it cannot read a hash out of, without signing anything', async () => {
+    let signed = false
+    await assert.rejects(
+      () =>
+        fetchBlob({
+          relayUrl: 'https://b',
+          url: '/media/nope.jpg',
+          sign: async (u) => {
+            signed = true
+            return sign(u)
+          },
+          pubkey: PUBKEY,
+          transport: async () => ok(),
+        }),
+      /not a media url/,
+    )
+    assert.equal(signed, false)
   })
 })
