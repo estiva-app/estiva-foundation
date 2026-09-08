@@ -15,6 +15,8 @@
 import type { NostrTag, SignedEvent, UnsignedEvent } from './events.js'
 import { KIND, toNostrSeconds } from './events.js'
 import { authorizationHeaderFor } from './nip98.js'
+import { sha256 } from '@noble/hashes/sha256'
+import { bytesToHex } from '@noble/hashes/utils'
 
 /** What a Blossom authorization permits. One verb per event. */
 export type BlossomVerb = 'upload' | 'get' | 'list' | 'delete'
@@ -212,8 +214,17 @@ export type BlobFetchLike = (
   init: { method: string; headers: Record<string, string> },
 ) => Promise<BlobResponseLike>
 
-/** See {@link BlobFetchLike}. Read inside the function, so importing touches no global. */
-declare const fetch: BlobFetchLike
+/**
+ * The platform `fetch`, in the two shapes this file asks of it.
+ *
+ * An intersection rather than two declarations, because there is one global and
+ * TypeScript will not let a module name it twice. It really does accept both
+ * calls — a GET with no body and a PUT with bytes — so an overloaded type is
+ * the accurate description rather than a convenience.
+ *
+ * Read inside a function, so importing this module touches no global.
+ */
+declare const fetch: BlobFetchLike & BlobUploadFetchLike
 
 /** What came back, and what it is. */
 export interface FetchedBlob {
@@ -272,5 +283,143 @@ export async function fetchBlob(args: {
   return {
     bytes: await response.arrayBuffer(),
     contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  }
+}
+
+/**
+ * A blob's identity: its sha256, lowercase hex.
+ *
+ * `@noble/hashes` rather than `crypto.subtle`, which is async, absent from
+ * older Node without a flag, and unavailable on an insecure origin. This
+ * package already hashes every event id with it.
+ */
+export function sha256Of(bytes: ArrayBuffer | Uint8Array): string {
+  return bytesToHex(sha256(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)))
+}
+
+/** What the relay hands back once it holds the bytes — BUD-02 descriptor. */
+export interface UploadedBlob {
+  /** Where the bytes are. Already rewritten for the tenant, so it goes straight into `imeta`. */
+  url: string
+  sha256: string
+  size: number
+  /** MIME **as the relay stored it**. `imeta`'s `m` must equal this exactly. */
+  type: string
+  /** `<width>x<height>`, computed by the relay rather than by the client. */
+  dim?: string
+  /** The relay's generated thumbnail, when it made one. */
+  thumb?: string
+}
+
+/**
+ * A transport that can send bytes.
+ *
+ * A third shape, and for the third reason: {@link FetchLike} sends a string
+ * body, {@link BlobFetchLike} sends none and reads bytes, this one sends bytes
+ * and reads a string. One type that did all three would be loose enough to let
+ * any of them be called wrongly.
+ */
+export type BlobUploadFetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: ArrayBuffer },
+) => Promise<{ status: number; text(): Promise<string> }>
+
+/**
+ * Put a file on the relay — CON-12's write half, BUD-01/BUD-11.
+ *
+ * **The upload must land before the message that names it.** Ingest runs
+ * `verify_imeta_blobs` and refuses a message whose blob it does not already
+ * hold, so this is not an optimisation to reorder — it is the only order that
+ * works. A dangling attachment reference cannot be published at all, which is
+ * a constraint worth being glad about.
+ *
+ * The hash is computed here rather than read off the response, because it is
+ * what the authorization has to name: BUD-11 requires the `x` tag to match, so
+ * the client must know the digest *before* it may ask permission to send the
+ * bytes. `x-sha-256` carries it again on the PUT, where the relay checks the
+ * bytes against it rather than trusting either side's arithmetic.
+ *
+ * Takes bytes rather than a `File`: `File` is a DOM type, this package builds
+ * without `lib.dom`, and a caller that has one passes `await file.arrayBuffer()`.
+ *
+ * Throws with the relay's own words. What that means is the caller's to decide.
+ */
+export async function uploadBlob(args: {
+  /** The relay origin. `/upload` is appended. */
+  relayUrl: string
+  bytes: ArrayBuffer
+  /** The MIME to send. The relay stores its own answer, which wins — see {@link UploadedBlob.type}. */
+  contentType?: string
+  /** Display name. Goes in the authorization's human-readable reason, nowhere else. */
+  filename?: string
+  sign: (unsigned: UnsignedEvent) => Promise<SignedEvent>
+  pubkey: string
+  transport?: BlobUploadFetchLike
+}): Promise<UploadedBlob> {
+  const digest = sha256Of(args.bytes)
+  const auth = await args.sign(
+    buildBlossomAuth(args.pubkey, Date.now(), {
+      verb: 'upload',
+      sha256: digest,
+      reason: args.filename ? `Upload ${args.filename}` : 'Upload attachment',
+    }),
+  )
+
+  const send = args.transport ?? fetch
+  const response = await send(`${args.relayUrl.replace(/\/+$/, '')}/upload`, {
+    method: 'PUT',
+    headers: {
+      authorization: blossomAuthHeader(auth),
+      // BUD-11 makes this mandatory on PUT /upload.
+      'x-sha-256': digest,
+      'content-type': args.contentType || 'application/octet-stream',
+    },
+    body: args.bytes,
+  })
+
+  const body = await response.text()
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`upload failed: ${response.status} ${body.slice(0, 200)}`)
+  }
+
+  let descriptor: Partial<UploadedBlob>
+  try {
+    descriptor = JSON.parse(body) as Partial<UploadedBlob>
+  } catch {
+    throw new Error('upload returned no blob descriptor')
+  }
+  // `url` is the relay's own, already rewritten for the tenant — assembling a
+  // host here would produce something `validate_imeta_tags` rejects as
+  // non-local on any deployment whose tenant host is not the configured one.
+  if (!descriptor.url || !descriptor.sha256) throw new Error('upload returned no blob descriptor')
+  return {
+    url: descriptor.url,
+    sha256: descriptor.sha256,
+    size: descriptor.size ?? args.bytes.byteLength,
+    type: descriptor.type ?? args.contentType ?? 'application/octet-stream',
+    dim: descriptor.dim,
+    thumb: descriptor.thumb,
+  }
+}
+
+/**
+ * An uploaded blob as the `imeta` that references it.
+ *
+ * Shared because the mapping has one trap in it: `m` and `x` must be the
+ * **relay's** answers, not the client's. `validate_imeta_tags` compares them
+ * against what it stored, and a browser that re-encoded a file on the way in —
+ * or simply guessed a MIME from an extension — publishes a message the relay
+ * refuses, with nothing to say which field was wrong.
+ */
+export function imetaFor(blob: UploadedBlob, extra?: { alt?: string; filename?: string }): Imeta {
+  return {
+    url: blob.url,
+    m: blob.type,
+    x: blob.sha256,
+    size: blob.size,
+    dim: blob.dim,
+    thumb: blob.thumb,
+    alt: extra?.alt,
+    filename: extra?.filename,
   }
 }

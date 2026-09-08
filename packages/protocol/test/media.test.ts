@@ -18,6 +18,11 @@ import {
   KIND,
   type BlossomVerb,
   type BlobFetchLike,
+  sha256Of,
+  uploadBlob,
+  imetaFor,
+  type BlobUploadFetchLike,
+  type UploadedBlob,
 } from '../dist/index.js'
 
 const PUBKEY = 'a'.repeat(64)
@@ -243,5 +248,140 @@ describe('fetching a blob', () => {
       /not a media url/,
     )
     assert.equal(signed, false)
+  })
+})
+
+describe('a blob\'s identity', () => {
+  it('is the sha256 of its bytes, lowercase hex', () => {
+    // The empty string's sha256 — a value with an answer outside this repo.
+    assert.equal(sha256Of(new Uint8Array()), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+  })
+
+  it('reads an ArrayBuffer and a Uint8Array the same way', () => {
+    const bytes = new TextEncoder().encode('abc')
+    assert.equal(sha256Of(bytes), sha256Of(bytes.buffer as ArrayBuffer))
+    assert.equal(sha256Of(bytes), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+  })
+})
+
+describe('uploading a blob', () => {
+  const sign = async (u: { kind: number; tags: string[][]; content: string; created_at: number }) => ({
+    ...u,
+    pubkey: PUBKEY,
+    id: 'd'.repeat(64),
+    sig: 'e'.repeat(128),
+  })
+  const bytes = new TextEncoder().encode('a picture').buffer as ArrayBuffer
+  const digest = sha256Of(bytes)
+  const descriptor = {
+    url: `https://buzz.estiva.app/media/${digest}.jpg`,
+    sha256: digest,
+    size: 9,
+    type: 'image/jpeg',
+    thumb: `https://buzz.estiva.app/media/${digest}.thumb.jpg`,
+    dim: '800x600',
+  }
+
+  const recording = (body = JSON.stringify(descriptor), status = 201) => {
+    const calls: { url: string; init: { method: string; headers: Record<string, string>; body: ArrayBuffer } }[] = []
+    const transport: BlobUploadFetchLike = async (url, init) => {
+      calls.push({ url, init })
+      return { status, text: async () => body }
+    }
+    return { calls, transport }
+  }
+
+  it('PUTs to /upload with the bytes', async () => {
+    const { calls, transport } = recording()
+    await uploadBlob({ relayUrl: 'https://buzz.estiva.app/', bytes, contentType: 'image/jpeg', sign, pubkey: PUBKEY, transport })
+    assert.equal(calls[0].url, 'https://buzz.estiva.app/upload', 'a trailing slash must not double')
+    assert.equal(calls[0].init.method, 'PUT')
+    assert.equal(calls[0].init.body, bytes)
+  })
+
+  /* BUD-11 makes `x-sha-256` mandatory on the PUT, and the `x` tag on the
+     authorization must be the same digest — so the client has to know the hash
+     before it may ask permission to send the bytes. */
+  it('names the same digest in the header and the authorization', async () => {
+    const { calls, transport } = recording()
+    await uploadBlob({ relayUrl: 'https://b', bytes, contentType: 'image/jpeg', sign, pubkey: PUBKEY, transport })
+    assert.equal(calls[0].init.headers['x-sha-256'], digest)
+    const event = JSON.parse(Buffer.from(calls[0].init.headers.authorization.slice('Nostr '.length), 'base64').toString())
+    assert.equal(event.kind, KIND.BLOSSOM_AUTH)
+    assert.deepEqual(event.tags.find((t: string[]) => t[0] === 't'), ['t', 'upload'])
+    assert.deepEqual(event.tags.find((t: string[]) => t[0] === 'x'), ['x', digest])
+  })
+
+  it('falls back to a generic content type rather than sending none', async () => {
+    const { calls, transport } = recording()
+    await uploadBlob({ relayUrl: 'https://b', bytes, sign, pubkey: PUBKEY, transport })
+    assert.equal(calls[0].init.headers['content-type'], 'application/octet-stream')
+  })
+
+  it('returns the relay\'s descriptor', async () => {
+    const { transport } = recording()
+    const blob = await uploadBlob({ relayUrl: 'https://b', bytes, contentType: 'image/jpeg', sign, pubkey: PUBKEY, transport })
+    assert.deepEqual(blob, descriptor as UploadedBlob)
+  })
+
+  it('throws the relay\'s own words on a refusal', async () => {
+    const { transport } = recording('blob already exists elsewhere', 403)
+    await assert.rejects(
+      () => uploadBlob({ relayUrl: 'https://b', bytes, sign, pubkey: PUBKEY, transport }),
+      /403.*blob already exists/,
+    )
+  })
+
+  /* A 200 with a body that is not a descriptor is the shape that would
+     otherwise produce an `imeta` with `url: undefined`, which the relay refuses
+     with nothing to say the upload was at fault. */
+  it('refuses a success that carried no descriptor', async () => {
+    for (const body of ['not json', '{}', JSON.stringify({ url: '/media/x.jpg' })]) {
+      const { transport } = recording(body, 200)
+      await assert.rejects(
+        () => uploadBlob({ relayUrl: 'https://b', bytes, sign, pubkey: PUBKEY, transport }),
+        /no blob descriptor/,
+      )
+    }
+  })
+})
+
+describe('an uploaded blob as an imeta', () => {
+  const blob: UploadedBlob = {
+    url: `https://buzz.estiva.app/media/${SHA}.jpg`,
+    sha256: SHA,
+    size: 4096,
+    type: 'image/jpeg',
+    dim: '800x600',
+    thumb: `https://buzz.estiva.app/media/${SHA}.thumb.jpg`,
+  }
+
+  /* `m` and `x` must be the RELAY's answers. `validate_imeta_tags` compares
+     them against what it stored, so a client that guessed a MIME from an
+     extension publishes a message the relay refuses with nothing to say which
+     field was wrong. */
+  it('takes the type and the hash from the relay, not from the caller', () => {
+    const meta = imetaFor(blob)
+    assert.equal(meta.m, blob.type)
+    assert.equal(meta.x, blob.sha256)
+    assert.equal(meta.url, blob.url)
+    assert.equal(meta.size, blob.size)
+  })
+
+  it('carries the relay\'s thumbnail and dimensions through', () => {
+    const meta = imetaFor(blob)
+    assert.equal(meta.thumb, blob.thumb)
+    assert.equal(meta.dim, blob.dim)
+  })
+
+  it('takes alt text and a filename from the caller, since the relay has neither', () => {
+    const meta = imetaFor(blob, { alt: 'the failing dialog', filename: 'shot.jpg' })
+    assert.equal(meta.alt, 'the failing dialog')
+    assert.equal(meta.filename, 'shot.jpg')
+  })
+
+  it('round-trips through the tag it becomes', () => {
+    const meta = imetaFor(blob, { filename: 'shot.jpg' })
+    assert.deepEqual(imetaOf({ tags: [imetaTag(meta)] })[0], meta)
   })
 })
