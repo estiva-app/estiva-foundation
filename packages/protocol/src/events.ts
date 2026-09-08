@@ -126,6 +126,14 @@ export const KIND = {
   RELAY_AUTH: 22242,
   HTTP_AUTH: 27235,
   /**
+   * Blossom authorization (BUD-01/BUD-11) — `HTTP_AUTH` for blobs.
+   *
+   * Never stored and never published: it is signed, carried in an
+   * `Authorization: Nostr <base64url(event)>` header, and read once. See
+   * `media.ts`, which builds it and the `imeta` tag that references the blob.
+   */
+  BLOSSOM_AUTH: 24242,
+  /**
    * Buzz's message edit (`KIND_STREAM_MESSAGE_EDIT`) — RFC 0.4 §7.2.1.
    *
    * A `kind:9` and a `kind:1111` are both non-replaceable, so an edit cannot
