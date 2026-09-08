@@ -75,8 +75,14 @@ export const { validToken, beginSignIn, completeSignIn, beginSignOut } = client
 // Peek: one round trip, a token read fresh each time
 const event = await signViaEstivaId(unsigned, { base, token, expectedPubkey: myPubkey })
 
-// Ship: a protocol Signer, built once, renewing itself
-const signer = estivaIdSigner({ base, pubkey, token, renew: client.refreshAccessToken })
+// Ship: a protocol Signer, built once. Pass a READER, not a string, if anything
+// else can replace the token — `scheduleRenewal` does.
+const signer = estivaIdSigner({
+  base,
+  pubkey,
+  token: () => client.validToken()?.accessToken,
+  renew: client.refreshAccessToken,
+})
 ```
 
 An app publishes as a person without ever seeing their secret. `@estiva-app/protocol`
