@@ -31,7 +31,13 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildActionEvent, folderOf, actionProblems, resolveForeignObject } from '../dist/index.js'
+import {
+  buildActionEvent,
+  folderOf,
+  actionProblems,
+  resolveForeignObject,
+  KIND_CHANNEL_METADATA,
+} from '../dist/index.js'
 
 const AUTHOR = 'a'.repeat(64)
 const COLONY = 39701
@@ -211,16 +217,116 @@ describe('finding the Folder to write into', () => {
       `records.folder: "identifier"`, for an object that *is* a container.
       0.14.0 withdrew it: RFC 0.5 §1 makes a topic a file inside a Folder
       rather than the Folder, so the one instance it served stops existing.
+      INT-9 brought the *channel record* back as protocol below, which is a
+      narrower statement and asks nothing of any manifest.
 
-      Null stays a real answer rather than a gap. An object with nowhere to
-      write is not one to guess a channel for — that publishes into somebody
-      else's.
+      Null stays a real answer rather than a gap for everything else. An object
+      with nowhere to write is not one to guess a channel for — that publishes
+      into somebody else's.
     */
-    assert.equal(folderOf(event({ kind: COLONY, tags: [['d', 'weir']] })), null)
+    assert.equal(folderOf(event({ kind: 31337, tags: [['d', 'note']] })), null)
   })
 
   test('`h` wins over `buzz-channel` when an object carries both', () => {
     const both = event({ kind: 30850, tags: [['d', 'p1'], ['h', FOLDER], ['buzz-channel', 'other']] })
     assert.equal(folderOf(both), FOLDER)
+  })
+
+  /*
+    INT-9 — the case 0.14.0 took out with the vocabulary, and the reason it is
+    back as protocol instead.
+
+    A channel record carries neither tag: measured on production 2026-09-08,
+    0 of 40 `kind:39000` events have `h` or `buzz-channel` and 40 of 40 have
+    `d`. So every write aimed at a topic was refused for having nowhere to go,
+    which is why Peek could declare no action on one. `d` on a `39000` is the
+    channel id by the relay's definition — buzz's NOSTR.md states it and
+    `h_grammar` is the same uuid — so nothing is declared and no producer can
+    opt out.
+  */
+    /*
+    INT-9, and found only against production — every fixture in this suite
+    declares a fold rule, so nothing here could see it.
+
+    `buildActionEvent` opened by refusing any app with no `records`, which
+    gated creations and comments on a rule only a *change* uses. PRO-12 settled
+    this on the read side and the write side never followed. Peek declares no
+    fold rule on purpose — a topic's name is a tag the relay wrote and a
+    message is immutable — so its first action was refused with a sentence that
+    was true, irrelevant and impossible to act on.
+  */
+  describe('a fold rule is needed to write a change, and only a change', () => {
+    const noRecords = { actions: [logSighting] }
+    const args = {
+      kind: COLONY,
+      address: ADDRESS,
+      objectAuthor: AUTHOR,
+      folder: FOLDER,
+      pubkey: AUTHOR,
+      createdAtMs: 1_764_000_000_000,
+    }
+
+    test('a creation builds for an app that declares no records', () => {
+      const built = buildActionEvent({
+        ...args,
+        manifest: noRecords,
+        actionId: 'log-sighting',
+        value: { species: 'Kingfisher', note: 'On the weir' },
+        newId: 'a1b2c3d4-0000-4000-8000-000000000002',
+      })
+      assert.equal(typeof built, 'object', typeof built === 'string' ? built : '')
+      assert.equal(built.kind, logSighting.emits.kind)
+    })
+
+    test('a change still refuses, naming the rule it is missing', () => {
+      const built = buildActionEvent({
+        ...args,
+        manifest: { actions: [{ ...logSighting, id: 'set-stage', input: { type: 'string' }, emits: { kind: 30852, field: 'stage' } }] },
+        actionId: 'set-stage',
+        value: 'fledged',
+      })
+      assert.equal(typeof built, 'string')
+      assert.match(built, /records are written/)
+    })
+  })
+
+  describe('a channel record names the Folder it is', () => {
+    const topic = event({ kind: KIND_CHANNEL_METADATA, tags: [['d', FOLDER], ['name', 'Weir sightings']] })
+
+    test('resolves to its own identifier, so an action on a topic has somewhere to go', () => {
+      assert.equal(folderOf(topic), FOLDER)
+    })
+
+    test('an addressable kind that is not the relay’s channel record still has no Folder', () => {
+      /*
+        The whole point of keying on 39000 rather than on "addressable". A rule
+        reading `d` off any 30000-39999 record would hand a consumer a Folder
+        for every one of them, and a write would land in a channel that may not
+        exist. COLONY is 39701 — addressable, container-shaped, and not the
+        relay's — and it stays null.
+      */
+      assert.equal(folderOf(event({ kind: COLONY, tags: [['d', 'weir']] })), null)
+    })
+
+    test('still resolves once FOL-3 gives a topic an `h`, and answers with the `h`', () => {
+      /*
+        The clause has to decay into dead code rather than into a wrong answer.
+        When a topic becomes a file inside a Folder it carries an `h` naming
+        that Folder, and its `d` is then its own file identifier — reading the
+        `d` in preference would put the write in the topic instead of in the
+        Folder holding it. `h` first is what makes the retirement a no-op.
+      */
+      const filed = event({
+        kind: KIND_CHANNEL_METADATA,
+        tags: [['d', 'a1b2c3d4-0000-4000-8000-000000000001'], ['h', FOLDER]],
+      })
+      assert.equal(folderOf(filed), FOLDER)
+    })
+
+    test('a channel record with no `d` at all is still null rather than a crash', () => {
+      // The relay always writes one. A malformed event is another app's
+      // problem to have, not this layer's to throw on.
+      assert.equal(folderOf(event({ kind: KIND_CHANNEL_METADATA, tags: [['name', 'nameless']] })), null)
+    })
   })
 })

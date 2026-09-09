@@ -32,6 +32,7 @@ export {
   resolveFolderContents,
   listFolders,
   KIND_FOLDER_STATE,
+  KIND_CHANNEL_METADATA,
   commentKindsOf,
   buildActionEvent,
   pickWidget,
