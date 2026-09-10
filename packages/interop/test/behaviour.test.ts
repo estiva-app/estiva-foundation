@@ -1910,3 +1910,95 @@ describe('counting a conversation without resolving each file', () => {
     }
   })
 })
+
+
+/*
+  The duplication a listing hits the moment it draws nesting.
+
+  A folder with no state event is read by containment — every record carrying
+  the folder's `h` — and Ship writes `h` on an issue as well as on its project.
+  So the project and its issues arrive as peers, and a consumer that then draws
+  the project's children under it shows every issue twice: once nested, once at
+  the top level. Observed on production's "Feedback on Peek" folder.
+
+  The tag that would say which files are children is named by the *parent
+  kind's* projection and never reached the consumer, so it could not tell.
+*/
+describe('the parent a file names', () => {
+  /*
+    Its own manifest, because the shared fixture declares no `list` slot — and
+    the relation lives *only* there. Nothing on the issue's own projection
+    mentions a project, which is the whole reason a consumer could not work this
+    out for itself.
+  */
+  const withList = event({
+    kind: 31990,
+    tags: [['d', 'app'], ['k', String(PROJECT_KIND)], ['k', String(ISSUE_KIND)]],
+    content: JSON.stringify({
+      name: 'Linear-lite',
+      projections: {
+        [PROJECT_KIND]: {
+          widget: 'card',
+          slots: {
+            title: { tag: 'title' },
+            list: { children: { kind: ISSUE_KIND, via: 'a' } },
+          },
+        },
+        [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' } } },
+      },
+    }),
+  })
+
+  const read = async (tags: string[][], kind = ISSUE_KIND) => {
+    const root = event({ kind, tags: [['d', 'i1'], ['title', 'Refunds'], ...tags] })
+    const found = await resolveForeignObject(`${kind}:${AUTHOR}:i1`, relay([withList, root]))
+    return found?.parentRef
+  }
+
+  it('resolves an issue to the project it names', async () => {
+    assert.equal(
+      await read([['a', `${PROJECT_KIND}:${AUTHOR}:p1`]]),
+      `${PROJECT_KIND}:${AUTHOR}:p1`,
+    )
+  })
+
+  it('is absent for an issue that names no project', async () => {
+    // `via: 'a'` is optional on Ship's writer — such an issue is in nobody's
+    // list, which is correct, and it stays a peer in a folder listing.
+    assert.equal(await read([]), undefined)
+  })
+
+  it('ignores an `a` tag that is not the parent kind', async () => {
+    /*
+      The folder's own address is an `a` tag too on some records, and an issue
+      may reference other objects. Matching positionally would make the first
+      unrelated reference look like a parent — the same trap
+      `conversationCountsOf` avoids by reading every tag.
+    */
+    assert.equal(
+      await read([
+        ['a', `39000:${AUTHOR}:some-channel`],
+        ['a', `${PROJECT_KIND}:${AUTHOR}:p1`],
+      ]),
+      `${PROJECT_KIND}:${AUTHOR}:p1`,
+    )
+  })
+
+  it('is absent for a kind nobody claims as a child', async () => {
+    // A project is not a child of anything, so it is always a peer.
+    assert.equal(await read([['a', `${PROJECT_KIND}:${AUTHOR}:p1`]], PROJECT_KIND), undefined)
+  })
+
+  it('is set whether or not the parent is in the same listing', async () => {
+    /*
+      Deliberately not filtered here. "Nest it", "hide it" and "label it in
+      <parent>" are different decisions and the consumer owns them; interop
+      answering only for parents it happens to have seen would make the field
+      depend on which read produced it.
+    */
+    assert.equal(
+      await read([['a', `${PROJECT_KIND}:${AUTHOR}:not-in-this-folder`]]),
+      `${PROJECT_KIND}:${AUTHOR}:not-in-this-folder`,
+    )
+  })
+})

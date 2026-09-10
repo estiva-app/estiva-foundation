@@ -1612,6 +1612,27 @@ export interface ForeignObject {
    * rather than a control that was wrong to offer.
    */
   listsChildren?: boolean
+  /**
+   * The file this one names as its parent, when its app declares the relation.
+   *
+   * **For a listing that draws nesting.** A folder read by containment lists an
+   * app's records by `h`, and Ship writes `h` on an issue as well as on its
+   * project — so the project and its issues arrive as peers. Drawing the
+   * project's children under it then shows every issue twice: once nested and
+   * once at the top level. A consumer cannot tell which files are children,
+   * because the tag that says so is named by the *parent kind's* projection and
+   * never reaches the consumer.
+   *
+   * So this is that tag, resolved: the address in the child's own `via` tag.
+   * It is set whether or not the parent is in the same listing — whether to
+   * nest, hide, or label "in <parent>" is the consumer's decision, and the two
+   * cases genuinely differ.
+   *
+   * Absent for a file whose app declares no such relation, and for a `match:
+   * 'identifier'` list, where the child names only the parent's `d` and an
+   * address cannot be built from it without inventing a pubkey.
+   */
+  parentRef?: string
   kind: number
   /**
    * The layout hint the owner declared — **a type or an ordered chain of them.**
@@ -1739,6 +1760,7 @@ function buildObject(args: {
     meta,
     comments: args.comments ?? [],
     listsChildren: listsChildrenOf(projection, manifest),
+    parentRef: parentRefOf(manifest, pointer.kind, root),
     folder: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -2037,6 +2059,37 @@ function drawsKind(manifest: Manifest, kind: number): boolean {
   return !!manifest.projections?.[String(kind)]
 }
 
+/**
+ * The parent this file names, per whichever projection claims it as a child.
+ *
+ * Read off the *parent kind's* declaration rather than the child's, because
+ * that is where the relation lives: Ship's project says
+ * `list: { children: { kind: 30851, via: 'a' } }`, and nothing on the issue's
+ * own projection mentions a project at all.
+ *
+ * An issue carries several `a` tags in general, so the value is matched on the
+ * parent kind's prefix rather than taken positionally — the same reason
+ * `conversationCountsOf` reads every `a` tag instead of the first.
+ */
+function parentRefOf(manifest: Manifest, kind: number, root: SignedEvent): string | undefined {
+  for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
+    const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
+    if (!children || children.kind !== kind) continue
+    /*
+      `match: 'identifier'` names the parent's `d` and not its address. Building
+      one would mean assuming the parent shares the child's pubkey, which is the
+      kind of guess this module refuses elsewhere — so it stays absent.
+    */
+    if (children.match === 'identifier') continue
+    const found = root.tags
+      .filter((t) => t[0] === children.via && t[1])
+      .map((t) => t[1])
+      .find((value) => value.startsWith(`${parentKind}:`))
+    if (found) return found
+  }
+  return undefined
+}
+
 /** Both halves of the question a disclosure control asks. */
 function listsChildrenOf(
   projection: { slots: Record<string, SlotSpec | SlotSpec[]> },
@@ -2165,6 +2218,11 @@ function buildChildObject(args: {
     meta,
     comments: [],
     listsChildren: listsChildrenOf(projection, manifest),
+    // Same field in both builders: a consumer must not get it on a file read one
+    // way and not the other. A child already knows its parent contextually, but
+    // an inconsistent shape is what makes a consumer defensive about a value it
+    // should be able to trust.
+    parentRef: parentRefOf(manifest, root.kind, root),
     folder: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
