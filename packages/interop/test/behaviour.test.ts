@@ -36,6 +36,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   commentKindsOf,
+  conversationCountsOf,
+  CONVERSATION_LIMIT,
   resolveFolderProject,
   resolveForeignObject,
   pickWidget,
@@ -1695,5 +1697,216 @@ describe('a body slot carries the content model it is written in', () => {
     )
     assert.equal(found?.slots.subtitle?.value.length, 41)
     assert.ok(found?.slots.subtitle?.value.endsWith('…'))
+  })
+})
+
+
+/*
+  Two questions a list asks about a file it is not going to resolve: can this be
+  expanded, and is it worth opening. Both used to be unanswerable from a folder
+  listing, which deliberately fetches neither children nor comments — so the
+  choices were a disclosure control on every row including ones that can never
+  have children, and no message count at all.
+*/
+describe('whether a file declares children a consumer could draw', () => {
+  const read = async (slots: unknown, projections?: Record<string, unknown>) => {
+    const manifestEvent = event({
+      kind: 31990,
+      tags: [['d', 'app'], ['k', String(PROJECT_KIND)]],
+      content: JSON.stringify({
+        name: 'Linear-lite',
+        projections: {
+          [PROJECT_KIND]: { widget: 'card', slots },
+          ...(projections ?? {}),
+        },
+      }),
+    })
+    const root = event({ kind: PROJECT_KIND, tags: [['d', 'r1'], ['title', 'Payment integration']] })
+    const found = await resolveForeignObject(
+      `${PROJECT_KIND}:${AUTHOR}:r1`,
+      relay([manifestEvent, root]),
+    )
+    return found?.listsChildren
+  }
+
+  it('says so when the app declares a list and how to draw its child kind', async () => {
+    assert.equal(
+      await read(
+        { title: { tag: 'title' }, list: { children: { kind: ISSUE_KIND, via: 'a' } } },
+        { [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' } } } },
+      ),
+      true,
+    )
+  })
+
+  it('says no when the child kind has no projection, because nothing could be drawn', async () => {
+    // Same declaration, no way to render what it points at. `childFilterFor`
+    // already returns `null` here rather than a filter; offering an expander
+    // would open onto a permanently empty list.
+    assert.equal(
+      await read({ title: { tag: 'title' }, list: { children: { kind: ISSUE_KIND, via: 'a' } } }),
+      false,
+    )
+  })
+
+  it('says no when there is no list at all — a topic, not a project', async () => {
+    assert.equal(await read({ title: { tag: 'title' } }), false)
+  })
+
+  it('is not a promise that children exist', async () => {
+    // The relay holds no issues here, yet the declaration stands. A project with
+    // no issues is an honest empty expansion, not a control offered in error.
+    const found = await read(
+      { title: { tag: 'title' }, list: { children: { kind: ISSUE_KIND, via: 'a' } } },
+      { [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' } } } },
+    )
+    assert.equal(found, true)
+  })
+})
+
+describe('counting a conversation without resolving each file', () => {
+  const ADDR_A = `${PROJECT_KIND}:${AUTHOR}:p1`
+  const ADDR_B = `${PROJECT_KIND}:${AUTHOR}:p2`
+  const file = (address: string) => ({ ref: address, address }) as never
+
+  const comment = (about: string, kind = 1111) =>
+    event({ kind, tags: [['a', about]], content: 'said something' })
+
+  it('attributes each comment to its own file', async () => {
+    const counts = await conversationCountsOf(
+      [file(ADDR_A), file(ADDR_B)],
+      relay([manifest(), comment(ADDR_A), comment(ADDR_A), comment(ADDR_B)]),
+    )
+
+    assert.equal(counts[ADDR_A], 2)
+    assert.equal(counts[ADDR_B], 1)
+  })
+
+  it('attributes by the `a` tag rather than the order results arrive in', async () => {
+    // The filters are per file but the response is merged, so position says
+    // nothing. Interleaved on purpose.
+    const counts = await conversationCountsOf(
+      [file(ADDR_A), file(ADDR_B)],
+      relay([manifest(), comment(ADDR_B), comment(ADDR_A), comment(ADDR_B), comment(ADDR_B)]),
+    )
+
+    assert.equal(counts[ADDR_A], 1)
+    assert.equal(counts[ADDR_B], 3)
+  })
+
+  it('reads a superseded comment kind too, so a thread does not begin in the middle', async () => {
+    /*
+      The shared fixture declares no `comment` action, so it falls back to
+      NIP-22 alone — which is why this needs a manifest of its own rather than
+      `manifest()`. Worth having as an integration: the counter must go through
+      `commentKindsOf` and not a kind of its own, because the panel does, and a
+      badge counting fewer kinds than the view shows would disagree with it.
+    */
+    const withAlsoRead = event({
+      kind: 31990,
+      tags: [['d', 'app'], ['k', String(PROJECT_KIND)]],
+      content: JSON.stringify({
+        name: 'Linear-lite',
+        projections: { [PROJECT_KIND]: { widget: 'card', slots: { title: { tag: 'title' } } } },
+        actions: [
+          {
+            id: 'comment',
+            label: 'Comment',
+            appliesTo: String(PROJECT_KIND),
+            emits: { kind: 1111, scope: 'address', alsoRead: [9] },
+          },
+        ],
+      }),
+    })
+    const counts = await conversationCountsOf(
+      [file(ADDR_A)],
+      relay([withAlsoRead, comment(ADDR_A, 1111), comment(ADDR_A, 9)]),
+    )
+
+    assert.equal(counts[ADDR_A], 2)
+  })
+
+  it('counts only the declared kinds, not every kind carrying an `a`', async () => {
+    // The fixture declares nothing, so NIP-22 alone applies and the `kind:9`
+    // beside it is somebody else's record rather than a comment.
+    const counts = await conversationCountsOf(
+      [file(ADDR_A)],
+      relay([manifest(), comment(ADDR_A, 1111), comment(ADDR_A, 9)]),
+    )
+
+    assert.equal(counts[ADDR_A], 1)
+  })
+
+  it('counts a comment whose matching `a` tag is not the first one', async () => {
+    /*
+      The relay matches a filter against any `a` tag, so an event can arrive for
+      an address its *first* tag does not name. `childrenFrom` learned this
+      already; reading `tags.find` here would credit the comment to nobody and
+      undercount in silence.
+    */
+    const twoTags = event({
+      kind: 1111,
+      tags: [['a', `${PROJECT_KIND}:${AUTHOR}:elsewhere`], ['a', ADDR_A]],
+      content: 'about two things',
+    })
+    const counts = await conversationCountsOf([file(ADDR_A)], relay([manifest(), twoTags]))
+
+    assert.equal(counts[ADDR_A], 1)
+  })
+
+  it('counts zero for a file nothing is addressed to', async () => {
+    const counts = await conversationCountsOf([file(ADDR_A)], relay([manifest()]))
+    assert.equal(counts[ADDR_A], 0)
+  })
+
+  it('leaves a file with no address absent rather than reporting zero', async () => {
+    // "Not askable" and "asked and got none" are different answers, and a
+    // consumer showing a badge needs to tell them apart.
+    const counts = await conversationCountsOf(
+      [{ ref: 'e1' } as never, file(ADDR_A)],
+      relay([manifest(), comment(ADDR_A)]),
+    )
+
+    assert.equal(counts['e1'], undefined)
+    assert.equal(counts[ADDR_A], 1)
+  })
+
+  it('omits a file whose app published no manifest instead of guessing NIP-22', async () => {
+    // With no manifest there is no declared comment kind. Defaulting to 1111
+    // and reporting the result would be a confident zero for an app that uses
+    // something else.
+    const counts = await conversationCountsOf([file(ADDR_A)], relay([comment(ADDR_A)]))
+    assert.deepEqual(counts, {})
+  })
+
+  it('asks for exactly what the panel will show', async () => {
+    // One constant, so a saturated badge and a saturated view saturate at the
+    // same number. Asserted on the filter the counter actually sends.
+    const sent: Record<string, unknown>[][] = []
+    const spy = async (filters: Record<string, unknown>[]) => {
+      sent.push(filters)
+      return relay([manifest(), comment(ADDR_A)])(filters)
+    }
+    await conversationCountsOf([file(ADDR_A)], spy)
+
+    const countFilter = sent.flat().find((f) => Array.isArray((f as { '#a'?: string[] })['#a']))
+    assert.equal((countFilter as { limit: number }).limit, CONVERSATION_LIMIT)
+  })
+
+  it('sends one filter per file, so a busy file cannot starve the others', async () => {
+    // The single-`#a`-for-everything shape shares one limit across every file;
+    // per file the relay clamps each independently.
+    const sent: Record<string, unknown>[][] = []
+    const spy = async (filters: Record<string, unknown>[]) => {
+      sent.push(filters)
+      return relay([manifest(), comment(ADDR_A), comment(ADDR_B)])(filters)
+    }
+    await conversationCountsOf([file(ADDR_A), file(ADDR_B)], spy)
+
+    const countFilters = sent.flat().filter((f) => Array.isArray((f as { '#a'?: string[] })['#a']))
+    assert.equal(countFilters.length, 2)
+    for (const f of countFilters) {
+      assert.equal(((f as { '#a': string[] })['#a']).length, 1)
+    }
   })
 })

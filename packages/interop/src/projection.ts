@@ -14,6 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
+import { MAX_FILTERS_PER_QUERY } from '@estiva-app/protocol'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -218,6 +219,132 @@ export function commentKindsOf(manifest: Manifest): number[] {
   const current = declared?.emits?.kind ?? KIND_COMMENT
   const superseded = declared?.emits?.alsoRead ?? []
   return [...new Set([current, ...superseded])]
+}
+
+/**
+ * How many comments one conversation read asks for.
+ *
+ * **One constant for the panel and the badge, deliberately.** A count that
+ * saturated at a different number than the view it labels would put "100" next
+ * to a hundred and fifty visible messages, and a reader would be right to trust
+ * neither. Both {@link resolveForeignObject} and {@link conversationCountsOf}
+ * use this, so a file at the cap reports the cap in both places and the badge
+ * means exactly "what opening this will show you".
+ */
+export const CONVERSATION_LIMIT = 200
+
+/**
+ * How many messages each file's conversation holds — one round trip for all of them.
+ *
+ * For the question a reader actually has in front of a list: *is this one worth
+ * opening*. Answering it per file through {@link resolveForeignObject} would be
+ * a resolve each, which is the cost {@link resolveFolderContents} exists to
+ * avoid — against a relay metering reads at 300 a minute, a folder of
+ * twenty-five would not load.
+ *
+ * ## One filter per file, not one filter for all of them
+ *
+ * The obvious shape — a single `#a` naming every address — shares one `limit`
+ * across every file, so one busy file starves the rest and the short results
+ * are indistinguishable from "there are no more". Per file, the relay clamps
+ * each filter's limit independently, so each gets its own budget. The results
+ * come back merged, which is fine: every comment names its object in its own
+ * `a` tag, so attribution never depends on the order they arrive in.
+ *
+ * Chunked at `MAX_FILTERS_PER_QUERY` because a folder may hold more files than
+ * one POST accepts, and silently counting only the first 128 is the kind of
+ * quiet wrong answer this module keeps removing.
+ *
+ * ## What a zero means
+ *
+ * Exactly "nothing is addressed to this file", which is **not** the same as
+ * "nobody has discussed it". A Peek topic's messages carry `h` and no `a` —
+ * its conversation belongs to the container rather than the object — so a topic
+ * counts zero however busy it is, until a topic becomes an addressable file
+ * (RFC 0.4 §11.1). Ship's issues carry `a` and count correctly. A consumer
+ * showing this must not render the zero as "no discussion".
+ *
+ * Files with no address are absent from the result rather than zero, so a
+ * consumer can tell "asked and got none" from "not askable".
+ */
+export async function conversationCountsOf(
+  files: ForeignObject[],
+  query: QueryFn,
+  /** Warm from the read that produced these files; see {@link ProjectionCache}. */
+  cache?: ProjectionCache,
+): Promise<Record<string, number>> {
+  const addressed = files.flatMap((file) => {
+    if (!file.address) return []
+    try {
+      return [{ file, pointer: referenceToPointer(file.address) }]
+    } catch {
+      return []
+    }
+  })
+  if (addressed.length === 0) return {}
+
+  // One manifest per app, never per file — the comment kinds are the owning
+  // app's declaration and every file it owns in this list shares them.
+  const byApp = new Map<string, AddressPointer>()
+  for (const { pointer } of addressed) byApp.set(`${pointer.kind}:${pointer.pubkey}`, pointer)
+  const manifests = new Map<string, ResolvedManifest>()
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+
+  const asked = addressed.flatMap(({ file, pointer }) => {
+    const resolved = manifests.get(`${pointer.kind}:${pointer.pubkey}`)
+    // No manifest, no declared comment kind: a guess of 1111 would report a
+    // confident zero for an app that uses something else.
+    if (!resolved) return []
+    return [
+      {
+        ref: file.ref,
+        address: file.address as string,
+        filter: {
+          kinds: commentKindsOf(resolved.manifest),
+          '#a': [file.address],
+          limit: CONVERSATION_LIMIT,
+        },
+      },
+    ]
+  })
+  if (asked.length === 0) return {}
+
+  const refOf = new Map(asked.map((a) => [a.address, a.ref]))
+  const counts: Record<string, number> = {}
+  for (const a of asked) counts[a.ref] = 0
+
+  const seen = new Set<string>()
+  for (let start = 0; start < asked.length; start += MAX_FILTERS_PER_QUERY) {
+    const events = await query(
+      asked.slice(start, start + MAX_FILTERS_PER_QUERY).map((a) => a.filter),
+    )
+    for (const event of events) {
+      // A relay may answer one event under two filters; counting it twice would
+      // inflate the badge above what the panel then shows.
+      if (seen.has(event.id)) continue
+      seen.add(event.id)
+      /*
+        Every `a` tag, not the first one.
+
+        The relay matches a filter against *any* of them, so an event can come
+        back for an address that is not the one its first tag names — the same
+        lesson `childrenFrom` already carries ("a second `a` tag still counts").
+        Reading `tags.find` would attribute such a comment to nobody and quietly
+        undercount.
+      */
+      const ref = event.tags
+        .filter((t) => t[0] === 'a' && t[1])
+        .map((t) => refOf.get(t[1]))
+        .find((found) => found !== undefined)
+      if (ref !== undefined) counts[ref] = (counts[ref] ?? 0) + 1
+    }
+  }
+  return counts
 }
 
 /** How the owning app says its records should be read. */
@@ -1470,6 +1597,21 @@ export interface ForeignObject {
    * a renderer can tell "this holds nothing" from "this holds no list".
    */
   children?: ForeignObject[]
+  /**
+   * Whether the owning app declares a child list **and** says how to draw it.
+   *
+   * For a consumer deciding whether to offer an expander. `children` answers a
+   * different question: it is absent until something has actually fetched them,
+   * so a folder listing — which deliberately does not, see
+   * {@link resolveFolderContents} — cannot use it to tell "has issues" from
+   * "nobody asked yet". Without this the only options were a disclosure on
+   * every row, including a Peek topic that can never have one, or none at all.
+   *
+   * Note what it is *not*: a promise that children exist. A project with no
+   * issues still declares the list, and expanding it is the honest empty answer
+   * rather than a control that was wrong to offer.
+   */
+  listsChildren?: boolean
   kind: number
   /**
    * The layout hint the owner declared — **a type or an ordered chain of them.**
@@ -1596,6 +1738,7 @@ function buildObject(args: {
     slots,
     meta,
     comments: args.comments ?? [],
+    listsChildren: listsChildrenOf(projection, manifest),
     folder: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -1757,7 +1900,7 @@ export async function resolveForeignObject(
     { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
     // Only when the app actually declares a change kind — see `foldRuleOf`.
     ...(manifest.records ? [{ kinds: [manifest.records.changeKind], '#a': [address], limit: 500 }] : []),
-    { kinds: commentKinds, '#a': [address], limit: 200 },
+    { kinds: commentKinds, '#a': [address], limit: CONVERSATION_LIMIT },
     ...(childFilter ? [childFilter.filter] : []),
   ])
 
@@ -1873,6 +2016,36 @@ export async function resolveForeignObject(
  * come back as `[]` from {@link childrenFrom}: a depth budget already spent,
  * and a child kind the manifest never says how to draw.
  */
+/**
+ * The child list a projection declares, shape only.
+ *
+ * Split out so {@link childFilterFor} and {@link ForeignObject.listsChildren}
+ * read the *same* declaration. They answer different questions — "what should I
+ * fetch" and "is a disclosure control honest" — and a consumer that offered an
+ * expander where nothing could ever be fetched would be the second kind of lie
+ * this module keeps eliminating.
+ */
+function declaredChildSpec(projection: {
+  slots: Record<string, SlotSpec | SlotSpec[]>
+}): { kind: number; via: string; limit?: number; match?: string } | undefined {
+  const spec = projection.slots.list
+  return !Array.isArray(spec) ? spec?.children : undefined
+}
+
+/** Whether the owning app also says how to *draw* that kind. */
+function drawsKind(manifest: Manifest, kind: number): boolean {
+  return !!manifest.projections?.[String(kind)]
+}
+
+/** Both halves of the question a disclosure control asks. */
+function listsChildrenOf(
+  projection: { slots: Record<string, SlotSpec | SlotSpec[]> },
+  manifest: Manifest,
+): boolean {
+  const children = declaredChildSpec(projection)
+  return !!children && drawsKind(manifest, children.kind)
+}
+
 function childFilterFor(args: {
   projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
   manifest: Manifest
@@ -1880,15 +2053,14 @@ function childFilterFor(args: {
   depth: number
 }): { filter: Record<string, unknown>; kind: number; via: string; parent: string } | null | undefined {
   const { projection, manifest, pointer, depth } = args
-  const spec = projection.slots.list
-  const children = !Array.isArray(spec) ? spec?.children : undefined
+  const children = declaredChildSpec(projection)
   if (!children) return undefined
   // The consumer's budget, not the manifest's — see MAX_LIST_DEPTH.
   if (depth >= MAX_LIST_DEPTH) return null
   // A declared list whose child kind has no projection is not renderable, and
   // an empty list is the honest answer: the objects exist, this app has not
   // said how to draw them.
-  if (!manifest.projections?.[String(children.kind)]) return null
+  if (!drawsKind(manifest, children.kind)) return null
 
   const parent =
     children.match === 'identifier'
@@ -1992,6 +2164,7 @@ function buildChildObject(args: {
     slots,
     meta,
     comments: [],
+    listsChildren: listsChildrenOf(projection, manifest),
     folder: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
