@@ -34,6 +34,8 @@ export {
   KIND_FOLDER_STATE,
   KIND_CHANNEL_METADATA,
   commentKindsOf,
+  conversationCountsOf,
+  CONVERSATION_LIMIT,
   buildActionEvent,
   pickWidget,
   widgetChainProblem,
