@@ -355,8 +355,42 @@ export async function uploadBlob(args: {
   sign: (unsigned: UnsignedEvent) => Promise<SignedEvent>
   pubkey: string
   transport?: BlobUploadFetchLike
+  /** Skip {@link canonicalizeImage}. Default `true`; see the note below. */
+  canonicalize?: boolean
 }): Promise<UploadedBlob> {
-  const digest = sha256Of(args.bytes)
+  /*
+    Canonicalized first, and the hash taken after — SHA-25.
+
+    The relay refuses media carrying metadata, so an unmodified screenshot 422s:
+    capture tools write a `pHYs` and a `tEXt` software tag, and neither is on
+    Buzz's rendering allowlist. Doing it here rather than asking each caller to
+    remember means there is one place the relay's rule is understood, which is
+    the same argument that put `uploadBlob` in this package at all.
+
+    The order is forced. `x` in the authorization, `x-sha-256` on the PUT and
+    `x` in the `imeta` must all be the digest of the bytes the relay actually
+    stores, so hashing before stripping would name a blob that never existed.
+
+    `canonicalize: false` is for a caller that has already done it, or is
+    sending something this does not understand and does not want touched. It is
+    not a way round a refusal: the relay's answer does not change.
+  */
+  const canonical =
+    args.canonicalize === false
+      ? args.bytes instanceof Uint8Array
+        ? args.bytes
+        : new Uint8Array(args.bytes)
+      : canonicalizeImage(args.bytes)
+  /*
+    A standalone `ArrayBuffer`, because the transport's `body` is one and a
+    `Uint8Array` may be a window onto a larger buffer — sending `.buffer` would
+    upload whatever else is in it. One copy, against a network PUT.
+  */
+  const payload = canonical.buffer.slice(
+    canonical.byteOffset,
+    canonical.byteOffset + canonical.byteLength,
+  ) as ArrayBuffer
+  const digest = sha256Of(payload)
   const auth = await args.sign(
     buildBlossomAuth(args.pubkey, Date.now(), {
       verb: 'upload',
@@ -374,7 +408,7 @@ export async function uploadBlob(args: {
       'x-sha-256': digest,
       'content-type': args.contentType || 'application/octet-stream',
     },
-    body: args.bytes,
+    body: payload,
   })
 
   const body = await response.text()
@@ -422,4 +456,202 @@ export function imetaFor(blob: UploadedBlob, extra?: { alt?: string; filename?: 
     alt: extra?.alt,
     filename: extra?.filename,
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Canonicalizing an image before it is uploaded — SHA-25
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * PNG ancillary chunks the relay treats as rendering rather than metadata.
+ *
+ * Exactly `known_rendering` in `buzz-media`'s `validate_png_metadata_free`.
+ * **`pHYs` is not on it**, deliberately: the relay's comment calls arbitrary
+ * values an identity channel, and nearly every screen-capture tool writes one.
+ * That single omission is why an ordinary screenshot is refused.
+ */
+const PNG_RENDERING_CHUNKS: ReadonlySet<string> = new Set([
+  'cHRM', 'gAMA', 'sBIT', 'sRGB', 'bKGD', 'hIST', 'tRNS', 'sPLT', 'acTL', 'fcTL', 'fdAT',
+])
+
+/**
+ * `tEXt` keywords the relay exempts — Buzz agent/team snapshot manifests.
+ *
+ * A deliberate product payload rather than metadata, so it is kept. Stripping
+ * it would leave a `.agent.png` that still looks like an image and silently no
+ * longer carries the thing it exists to carry, which is worse than a refusal.
+ */
+const PNG_SNAPSHOT_KEYWORDS = ['buzz_agent_snapshot', 'buzz_team_snapshot'] as const
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+
+/** A `tEXt` payload is `<keyword>\0<text>`. Only an allowlisted keyword survives. */
+function isSnapshotText(payload: Uint8Array): boolean {
+  return PNG_SNAPSHOT_KEYWORDS.some((keyword) => {
+    if (payload.length <= keyword.length || payload[keyword.length] !== 0) return false
+    for (let i = 0; i < keyword.length; i++) if (payload[i] !== keyword.charCodeAt(i)) return false
+    return true
+  })
+}
+
+function canonicalizePng(bytes: Uint8Array): Uint8Array {
+  const kept: Uint8Array[] = [new Uint8Array(PNG_SIGNATURE)]
+  let i = PNG_SIGNATURE.length
+  let sawSnapshot = false
+  let sawIend = false
+
+  while (i < bytes.length) {
+    if (i + 12 > bytes.length) throw new Error('malformed PNG: truncated chunk header')
+    const length = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3]
+    const type = String.fromCharCode(bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7])
+    const end = i + 12 + length
+    if (length < 0 || end > bytes.length) throw new Error(`malformed PNG: truncated ${type} chunk`)
+
+    // Bit 5 of the first byte: lowercase means ancillary, and ancillary means
+    // droppable. Critical chunks are the image and are never touched.
+    const ancillary = (bytes[i + 4] & 0x20) !== 0
+    let keep = !ancillary || PNG_RENDERING_CHUNKS.has(type)
+    if (type === 'tEXt') {
+      // One snapshot manifest survives; a second is a metadata channel again.
+      keep = !sawSnapshot && isSnapshotText(bytes.subarray(i + 8, end - 4))
+      if (keep) sawSnapshot = true
+    }
+    if (keep) kept.push(bytes.subarray(i, end))
+
+    i = end
+    if (type === 'IEND') {
+      sawIend = true
+      break // Anything after IEND is trailing data, which the relay refuses.
+    }
+  }
+  if (!sawIend) throw new Error('malformed PNG: no IEND')
+  return concatBytes(kept)
+}
+
+/**
+ * A JPEG segment the relay accepts.
+ *
+ * `APP0` and `APP14` are allowed only in their canonical colour-header forms —
+ * accepting an arbitrary payload under those markers would leave exactly the
+ * side channel the ban is for. `APP1`–`APP13`, `APP15` and `COM` are refused
+ * outright, and `APP1` is where EXIF lives.
+ */
+function keepJpegSegment(marker: number, payload: Uint8Array): boolean {
+  if (marker === 0xe0) {
+    const jfif = payload.length >= 14 && String.fromCharCode(...payload.subarray(0, 5)) === 'JFIF\0'
+    return jfif && payload.length === 14 + 3 * payload[12] * payload[13]
+  }
+  if (marker === 0xee) {
+    return payload.length === 12 && String.fromCharCode(...payload.subarray(0, 5)) === 'Adobe'
+  }
+  if ((marker >= 0xe1 && marker <= 0xed) || marker === 0xef || marker === 0xfe) return false
+  return true
+}
+
+function canonicalizeJpeg(bytes: Uint8Array): Uint8Array {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('malformed JPEG: no SOI')
+  const kept: Uint8Array[] = [new Uint8Array([0xff, 0xd8])]
+  let i = 2
+  let inScan = false
+
+  while (i < bytes.length) {
+    if (bytes[i] !== 0xff) {
+      // Entropy-coded data between SOS and the next marker. Copied verbatim —
+      // it is the image.
+      if (!inScan) throw new Error('malformed JPEG: expected a marker')
+      const start = i
+      while (i < bytes.length && bytes[i] !== 0xff) i++
+      kept.push(bytes.subarray(start, i))
+      continue
+    }
+    // Fill bytes: any run of 0xFF before a marker. One is emitted.
+    while (i < bytes.length && bytes[i] === 0xff) i++
+    if (i >= bytes.length) throw new Error('malformed JPEG: marker ran off the end')
+    const marker = bytes[i++]
+
+    // 0x00 is a stuffed byte inside the scan, not a marker; RSTn and TEM are
+    // standalone. All three are part of the image and carry no payload.
+    if ((inScan && marker === 0x00) || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      kept.push(new Uint8Array([0xff, marker]))
+      continue
+    }
+    if (marker === 0xd9) {
+      // EOI. Stop here rather than copying on: the relay refuses trailing
+      // bytes after EOI, and that is where a stripped-EXIF editor leaves them.
+      kept.push(new Uint8Array([0xff, 0xd9]))
+      return concatBytes(kept)
+    }
+    if (marker === 0xd8) throw new Error('malformed JPEG: a second SOI')
+
+    if (i + 2 > bytes.length) throw new Error('malformed JPEG: truncated segment length')
+    const length = (bytes[i] << 8) | bytes[i + 1]
+    if (length < 2) throw new Error('malformed JPEG: bad segment length')
+    const end = i + length
+    if (end > bytes.length) throw new Error('malformed JPEG: truncated segment')
+
+    if (keepJpegSegment(marker, bytes.subarray(i + 2, end))) {
+      kept.push(new Uint8Array([0xff, marker]), bytes.subarray(i, end))
+    }
+    i = end
+    inScan = marker === 0xda
+  }
+  throw new Error('malformed JPEG: no EOI')
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  let size = 0
+  for (const part of parts) size += part.length
+  const out = new Uint8Array(size)
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
+}
+
+/**
+ * Strip an image down to what the relay will store — SHA-25.
+ *
+ * Buzz refuses media carrying metadata, and refuses it *structurally* rather
+ * than by scrubbing it: `validate_image_metadata_free` returns
+ * `MetadataForbidden` and the whole upload 422s. Its video path names the piece
+ * that was missing — "only the canonical primary stream produced by the **client
+ * sanitizer** is permitted" — and until this there was no client sanitizer, in
+ * either app. An unmodified screenshot was refused, every time, because capture
+ * tools write `pHYs` and a `tEXt` software tag.
+ *
+ * ## Chunks are dropped, never re-encoded
+ *
+ * The obvious implementation is a canvas round trip, and it does not work: the
+ * browser's encoder **adds an ICC profile back**, which the relay refuses
+ * identically. Dropping chunks is also lossless — every chunk removed here is
+ * ancillary by the format's own definition — where a re-encode would quietly
+ * degrade a screenshot to make it acceptable.
+ *
+ * ## PNG and JPEG only
+ *
+ * GIF and WebP are accepted by the relay and are **passed through untouched**.
+ * Their metadata is not a droppable chunk: WebP records EXIF/ICC/XMP presence
+ * in `VP8X` flags that have to stay consistent with the chunks, and GIF hides
+ * it in extension blocks. Rewriting either wrongly produces a corrupt image,
+ * which is worse than the refusal it replaces — so they keep today's behaviour
+ * and the relay's own words. Screenshots are PNG or JPEG, which is the case
+ * that was actually costing anything.
+ *
+ * Throws on malformed input rather than returning the bytes unchanged: an image
+ * this cannot parse is one it cannot vouch for, and uploading it anyway would
+ * turn a clear failure here into an opaque 422 later.
+ */
+export function canonicalizeImage(bytes: ArrayBuffer | Uint8Array): Uint8Array {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  /*
+    Sniffed from the bytes, with no `contentType` argument at all. The MIME a
+    caller has is the browser's guess from a file extension — a `.png` that is
+    really a JPEG is ordinary — and this has the actual bytes in hand. Taking
+    the parameter would invite trusting it.
+  */
+  if (PNG_SIGNATURE.every((byte, at) => view[at] === byte)) return canonicalizePng(view)
+  if (view[0] === 0xff && view[1] === 0xd8) return canonicalizeJpeg(view)
+  return view
 }

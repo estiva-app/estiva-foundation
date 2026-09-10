@@ -4,6 +4,91 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.19.0 — 2026-09-10
+
+**Wire behaviour: the bytes an upload sends change.** `uploadBlob` now strips
+an image's metadata before hashing it, so the blob's sha256 — and therefore the
+`x` and `url` of the `imeta` that names it — differ from what the same file
+would have produced in 0.18.0. Nothing already published can disagree, because
+in 0.18.0 such an upload **failed**: the relay refused it. This turns a 422 into
+a blob.
+
+- **New: `canonicalizeImage`, and `uploadBlob` applies it by default.**
+
+  Buzz refuses media carrying metadata, structurally — `validate_image_metadata_free`
+  returns `MetadataForbidden` and the upload 422s with
+  `media contains metadata or a non-canonical metadata channel`. Its video path
+  names the piece that was missing: *"only the canonical primary stream produced
+  by the client sanitizer is permitted."* There was no client sanitizer, in
+  either app, so **an unmodified screenshot was refused every time** — capture
+  tools write a `pHYs` and a `tEXt` software tag, and neither is on Buzz's
+  rendering allowlist. `pHYs` is excluded deliberately; the relay's comment
+  calls arbitrary values an identity channel.
+
+  PNG: keeps the critical chunks and the eleven rendering ancillaries Buzz
+  allows, plus a single Buzz snapshot-manifest `tEXt` — stripping that would
+  leave a `.agent.png` that still looks like an image and silently no longer
+  carries its manifest. JPEG: keeps a canonical JFIF `APP0` and a 12-byte Adobe
+  `APP14`, drops `APP1`–`APP13` (EXIF lives in `APP1`), `APP15` and `COM`, and
+  truncates trailing bytes after `EOI`, which is where a metadata editor leaves
+  them.
+
+  **Chunks are dropped, never re-encoded.** A canvas round trip is the obvious
+  implementation and it does not work: the browser's encoder adds an ICC profile
+  back, which the relay refuses identically. Dropping is also lossless — every
+  chunk removed is ancillary by the format's own definition.
+
+  GIF and WebP pass through untouched. Their metadata is not a droppable chunk
+  (WebP records EXIF/ICC/XMP presence in `VP8X` flags that must stay consistent
+  with the chunks; GIF hides it in extension blocks) and a wrong rewrite makes a
+  corrupt image, which is worse than the refusal it replaces.
+
+  `canonicalize: false` opts out for a caller sending something it does not want
+  touched. It is not a way round a refusal — the relay's answer is the same.
+
+## Backfill — 0.16.0 through 0.18.0
+
+These three shipped without entries, which this file's own header forbids. The
+omissions were mine. Recorded now rather than left as three published versions
+whose wire question nobody answered. (`0.14.0` is still missing and is not mine
+to reconstruct.)
+
+## 0.18.0 — 2026-09-09
+
+**Wire behaviour: unchanged in shape.** It adds a request an app did not make
+before — `PUT /upload` — but nothing about a published event moves.
+
+- **New: `uploadBlob`, `imetaFor`, `sha256Of`.** CON-12's write half. The
+  upload must land before the message that names it: ingest runs
+  `verify_imeta_blobs` and refuses a message whose blob it does not already
+  hold, so a dangling attachment cannot be published at all. `imetaFor` exists
+  because `m` and `x` must be the **relay's** answers about what it stored, not
+  the client's guess from a file extension — `validate_imeta_tags` compares them
+  and refuses with nothing to say which field was wrong.
+
+## 0.17.0 — 2026-09-09
+
+**Wire behaviour: unchanged.** Read-only; nothing is published.
+
+- **New: `fetchBlob`, `sha256FromMediaUrl`.** Media GET is unconditionally
+  authenticated — `get_blob` calls `authenticate_media_read` before it touches
+  storage, and the `BUZZ_REQUIRE_MEDIA_GET_AUTH` flag that reads like an opt-in
+  is inert — so an `<img src>` answers 401 and every reader has to sign a `get`
+  authorization. Shared because both apps have the same problem with the same
+  relay, and one trap is genuinely surprising: **a thumbnail authorizes against
+  its parent hash**, since the relay splits `sha256_ext` on the first dot.
+
+## 0.16.0 — 2026-09-08
+
+**Wire behaviour: new.** Apps begin publishing an `imeta` tag on messages, and
+signing a `kind:24242` that never existed here before.
+
+- **New: `buildBlossomAuth`, `blossomAuthHeader`, `imetaTag`, `imetaOf`, `Imeta`.**
+  A `kind:24242` Blossom authorization (BUD-01/BUD-11) and the NIP-92 tag that
+  references a blob. Parsing lives here rather than in each app because the
+  relay refuses a malformed tag, and a second parser is a second set of refusals
+  to get wrong.
+
 ## 0.15.0 — 2026-09-07
 
 **Wire behaviour: unchanged.** Nothing about what an app publishes moves, and
