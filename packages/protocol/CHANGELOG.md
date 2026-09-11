@@ -4,6 +4,27 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.20.0 — 2026-09-11
+
+**Wire behaviour: the shape of `kind:30840` changes, and nothing already
+published can disagree** — production held zero of them when the shape changed
+(measured 2026-09-10), and no consumer called the old builder.
+
+- **New: `buildBareFile`, replacing `buildFile`.** `kind:30840` is now the
+  **bare file** — SPEC §6.7, decided in RFC 0.5 §10.7: a file no app owns,
+  which a Peek topic now is. Tag order is normative: `d`, `title`, `h`, then at
+  most one `a` naming the file it sits under, **of any kind**. `h` is required
+  by the builder even though the relay only says SHOULD, for the reason issues
+  already give: several apps write these and one forgetting it puts an
+  unreachable object in the shared space. Content is a §13.3 block document or
+  empty — not NIP-FC's component list, which blocks having ids (RIC-5) and
+  attachments being blocks (RFC 0.6 §3) made redundant.
+- **Deprecated: `buildComponent`.** Nothing publishes or reads a `30841`; kept
+  until COM-3 decides whether the number is retired or repurposed.
+- The `file` wire vector is re-recorded as `bare-file`, with the reason in its
+  note. This is the one case where re-recording is right: the guard exists to
+  catch an app's bytes *drifting*, and here no app had ever produced any.
+
 ## 0.19.0 — 2026-09-10
 
 **Wire behaviour: the bytes an upload sends change.** `uploadBlob` now strips

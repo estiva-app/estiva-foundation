@@ -6,6 +6,44 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.19.0 — 2026-09-11
+
+**One kind is now read without any manifest, and one declaration is now
+ignored.** Everything else published means what it meant.
+
+- **`kind:30840` — the bare file — resolves from a manifest built into this
+  package** (SPEC §6.7, RFC 0.5 §10.7). Title from the `title` tag with a
+  `title` fold over it, body from `content`, comments `kind:1111` at its
+  address, changes `kind:1851` under the same rule Ship declares, widget
+  `card`, and a `list` of bare files beneath it. `resolveManifest` answers
+  before the cache and before the network — zero round trips — and
+  `ResolvedManifest.address` is `spec:6.7` rather than an event address,
+  deliberately not shaped like one. `KIND_BARE_FILE` and
+  `BARE_FILE_MANIFEST_ADDRESS` are exported.
+- **A `kind:31990` that lists `30840` is ignored, recommendation or not.** No
+  app may own the bare file: NIP-89 ownership is keyed by kind, and an owner of
+  this kind would own every subject nobody has built an app for. A test pins
+  that a greedy manifest with a recommendation pointing at it changes nothing.
+- **`parentRef` for a bare file is its own `a` tag, whatever the parent's
+  kind**, with a `parent` change event winning over the root tag — the way an
+  issue's `project` field works. Every other kind's `parentRef` still comes
+  from the *parent's* declared `list` slot; both directions are needed, and
+  this one is FOL-4's generic parent link brought forward because a topic under
+  a project is the first thing FOL-3 does.
+- **A folder read by containment asks for `30840` by name.** The kind list
+  used to be derived from published manifests alone, which would have made a
+  team's topics the one thing its own folder view did not show.
+
+## Backfill — 0.17.0 and 0.18.0
+
+Shipped without entries here. **0.17.0 (2026-09-10)**: `listsChildren` on a
+`ForeignObject`, true only where the owning app both declares a child list and
+draws the child kind; `MAX_LIST_DEPTH` stays 1. **0.18.0 (2026-09-10)**:
+`parentRef` on a `ForeignObject`, the address in the child's `via` tag matched
+on the parent kind's prefix, set whether or not the parent is in the same
+listing (estiva-foundation#58, #59). No manifest already published was read
+differently by either.
+
 ## 0.16.0 — 2026-09-08
 
 **No manifest changes meaning, and nothing already published is read

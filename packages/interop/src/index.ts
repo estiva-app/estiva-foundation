@@ -33,6 +33,8 @@ export {
   listFolders,
   KIND_FOLDER_STATE,
   KIND_CHANNEL_METADATA,
+  KIND_BARE_FILE,
+  BARE_FILE_MANIFEST_ADDRESS,
   commentKindsOf,
   conversationCountsOf,
   CONVERSATION_LIMIT,

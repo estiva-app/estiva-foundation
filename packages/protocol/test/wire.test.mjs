@@ -55,7 +55,8 @@ const rebuild = {
     P.buildResolution(PUB, MS, { channelUuid: CH, targetEventId: EV1, action: 'resolved', supportingEventId: EV2, rationale: 'shipped' }),
   'resolution-reopened': () => P.buildResolution(PUB, MS, { channelUuid: CH, targetEventId: EV1, action: 'reopened' }),
   relayAuth: () => P.buildUnsignedRelayAuthEvent({ pubkey: '', relayUrl: 'wss://estiva.estiva.app/some/path', challenge: 'chal-123', nowMs: MS }),
-  file: () => P.buildFile(PUB, MS, { fileId: 'f1', title: 'Spec', componentDTags: ['c1', 'c2'], channelUuid: CH, metadata: { v: 1 } }),
+  'bare-file': () =>
+    P.buildBareFile(PUB, MS, { fileId: 'f1', title: 'Spec', channelUuid: CH, parent: `30850:${PUB}:p1`, document: { type: 'doc', content: [{ type: 'paragraph', id: 'b1', content: [{ type: 'text', text: 'Ship Friday.' }] }] } }),
   component: () =>
     P.buildComponent(PUB, MS, { componentId: 'c1', fileId: 'f1', type: 'nfb/todo', payload: { done: false }, channelUuid: CH, labels: [{ namespace: 'nfb.x', value: 'v' }] }),
   highlight: () =>
