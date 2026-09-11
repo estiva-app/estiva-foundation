@@ -88,7 +88,7 @@ export {
   buildEdit,
   buildMessage,
   buildResolution,
-  buildFile,
+  buildBareFile,
   buildComponent,
   buildHighlight,
   buildUnsignedRelayAuthEvent,

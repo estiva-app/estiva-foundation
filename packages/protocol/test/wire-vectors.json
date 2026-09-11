@@ -462,10 +462,10 @@
       "id": "344698f8156570f97c79102ca596f3165a9b41c5e1f488a21e400111e4c0854f"
     },
     {
-      "name": "file",
-      "note": "Ship only before SHA-3 (NIP-FC).",
+      "name": "bare-file",
+      "note": "Was `file`, NIP-FC-shaped (Ship only before SHA-3): d, title, h, then one `a` per Component and metadata JSON in content. Re-recorded 2026-09-11 for SPEC §6.7: d, title, h, at most one `a` naming the parent of any kind, and a §13.3 block document in content. Zero kind:30840 events existed on production when the shape changed (measured 2026-09-10), so nothing published can disagree with the new bytes.",
       "producedBy": [
-        "ship"
+        "spec"
       ],
       "event": {
         "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
@@ -486,16 +486,12 @@
           ],
           [
             "a",
-            "30841:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c1"
-          ],
-          [
-            "a",
-            "30841:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c2"
+            "30850:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:p1"
           ]
         ],
-        "content": "{\"v\":1}"
+        "content": "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"id\":\"b1\",\"content\":[{\"type\":\"text\",\"text\":\"Ship Friday.\"}]}]}"
       },
-      "id": "276cd8fb749387a3a9c9e5f24095902b4bf4a7a9a150502860c974ed39433c4b"
+      "id": "ad4d4ff95fe90e8ae169baf558fd37ca6f0bf7bb779bf01fe9582b727911d7d7"
     },
     {
       "name": "component",

@@ -849,6 +849,89 @@ export interface ResolvedManifest {
 }
 
 /**
+ * The bare file — `kind:30840`, SPEC §6.7, decided in RFC 0.5 §10.7.
+ *
+ * A file **no app owns**: a `d`, a `title`, the `h` of the team it lives in, at
+ * most one `a` naming the file it sits under, and a §13.3 block document (or
+ * nothing) for content. A Peek topic is one. Typed kinds — a project, an issue
+ * — add properties on top of this; the bare file adds none, which is exactly
+ * why no app may claim it: NIP-89 ownership is keyed by kind, and an app that
+ * owned the bare file would own every subject nobody has built an app for.
+ *
+ * So its projection lives **here, in the runtime, and not on the relay.** A
+ * consumer resolving a `30840` gets this manifest before NIP-89 is consulted
+ * at all — zero round trips, and no `kind:31990` anywhere can override it.
+ * That is the test the ticket names: remove every published manifest and a
+ * bare file still resolves, lists its comments, and names its parent.
+ *
+ * Its conversation is `kind:1111` anchored at its address, the shape a Ship
+ * issue's comments already have, so `commentKindsOf` needs no special case.
+ * Its changes are the ecosystem's `kind:1851` with the same fold rule Ship
+ * declares, so a rename or a re-parent by somebody other than the author
+ * folds the way an issue's `project` field does — a root tag seeds the value,
+ * a change event overrides it.
+ *
+ * `name` is what a consumer prints where it would print the owning app's
+ * name. "File" rather than "Bare file", because that word is for the
+ * specification and a person looking at a card next to a Ship issue is better
+ * served by the plain noun.
+ */
+export const KIND_BARE_FILE = 30840
+
+/**
+ * Where a `ResolvedManifest.address` would name the manifest event, this names
+ * the section of the specification the manifest is built from. Not an address,
+ * and deliberately not shaped like one — a consumer that tried to fetch it
+ * should fail loudly rather than find something.
+ */
+export const BARE_FILE_MANIFEST_ADDRESS = 'spec:6.7'
+
+const BARE_FILE_MANIFEST: Manifest = {
+  name: 'File',
+  about: 'A file no app owns. Its conversation is what every file has; its type adds nothing.',
+  records: {
+    changeKind: 1851,
+    targetTag: 'a',
+    fieldTag: 'field',
+    valueTag: 'value',
+    order: ['ts', 'created_at', 'id'],
+    rule: 'last-write-wins-per-field',
+    hiddenWhen: { field: 'archived', equals: 'true' },
+  },
+  projections: {
+    [String(KIND_BARE_FILE)]: {
+      widget: 'card',
+      slots: {
+        title: { tag: 'title', fold: 'title' },
+        body: { field: 'content' },
+        // A bare file may hold bare files — a sub-topic under a topic. Children
+        // of *other* kinds are found the other way round, by their own `a`
+        // (`parentRefOf` below), which is FOL-4's generic direction; this slot
+        // is the one the existing `list` machinery can draw today.
+        list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200 } },
+      },
+    },
+  },
+  actions: [
+    {
+      id: 'comment',
+      label: 'Comment',
+      description:
+        'Say something about this file. A bare file has no fields to change, so this is the only ' +
+        'thing another app can do to it, and the comment lands in the team Folder the file lives in.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: KIND_COMMENT, scope: 'address' },
+      input: { type: 'string' },
+    },
+  ],
+}
+
+function bareFileManifest(): ResolvedManifest {
+  return { manifest: BARE_FILE_MANIFEST, address: BARE_FILE_MANIFEST_ADDRESS, viaRecommendation: false }
+}
+
+/**
  * A memo for the half of a resolve that does not change between refreshes.
  *
  * Resolving one reference costs four round trips, and **two of them are NIP-89
@@ -920,6 +1003,10 @@ export async function resolveManifest(
   query: QueryFn,
   cache?: ProjectionCache,
 ): Promise<ResolvedManifest | null> {
+  // Before the cache, not only before the network: a bare file's manifest is
+  // a constant, and memoising it per author would be one entry per person who
+  // ever started a topic.
+  if (pointer.kind === KIND_BARE_FILE) return bareFileManifest()
   const key = `${pointer.kind}:${pointer.pubkey}`
   const now = Date.now()
   const memo = cache?.lookup(key, now)
@@ -1760,7 +1847,7 @@ function buildObject(args: {
     meta,
     comments: args.comments ?? [],
     listsChildren: listsChildrenOf(projection, manifest),
-    parentRef: parentRefOf(manifest, pointer.kind, root),
+    parentRef: parentRefOf(manifest, pointer.kind, root, folded),
     folder: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -2071,7 +2158,27 @@ function drawsKind(manifest: Manifest, kind: number): boolean {
  * parent kind's prefix rather than taken positionally — the same reason
  * `conversationCountsOf` reads every `a` tag instead of the first.
  */
-function parentRefOf(manifest: Manifest, kind: number, root: SignedEvent): string | undefined {
+function parentRefOf(
+  manifest: Manifest,
+  kind: number,
+  root: SignedEvent,
+  folded: Record<string, { value: string }> = {},
+): string | undefined {
+  /*
+    A bare file names its own parent — one `a` tag, any kind — and that is the
+    other direction from everything below, where the *parent's* projection
+    says which tag on a child points at it. Both are needed: the declared
+    direction lets Ship's project list its issues without an issue knowing what
+    a project is; this one lets a topic sit under a project, an issue, or a kind
+    nobody has met, without that kind's owner declaring bare files as children.
+    Re-parenting is a `parent` change event, seeded by the root tag, the way an
+    issue's `project` field works (SPEC §6.7).
+  */
+  if (kind === KIND_BARE_FILE) {
+    const moved = folded.parent?.value
+    if (moved) return moved
+    return root.tags.find((t) => t[0] === 'a' && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
+  }
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
     if (!children || children.kind !== kind) continue
@@ -3391,14 +3498,17 @@ async function addressesByContainment(folder: string, query: QueryFn): Promise<s
   // Which kinds could be files? Every kind any app declares a projection for.
   // The only non-app-specific source for a kind number is a published manifest.
   const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: 50 }])
+  // The bare file is listed by no manifest on the relay — its projection is
+  // built in — so it has to be asked for by name, or a folder with no state
+  // would show every project and issue and none of the topics.
   const kinds = [
-    ...new Set(
-      handlers.flatMap((event) =>
+    ...new Set([
+      KIND_BARE_FILE,
+      ...handlers.flatMap((event) =>
         Object.keys(parseManifest(event)?.projections ?? {}).map(Number).filter(Number.isFinite),
       ),
-    ),
+    ]),
   ]
-  if (kinds.length === 0) return []
 
   const held = await query([
     { '#h': [folder], kinds, limit: 500 },

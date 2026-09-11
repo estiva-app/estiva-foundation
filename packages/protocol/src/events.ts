@@ -34,6 +34,7 @@
  */
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils'
+import { type BlockDocument, serializeBlockDocument } from './blocks.js'
 
 /** A Nostr tag: an array of strings whose first element is the tag name. */
 export type NostrTag = string[]
@@ -726,40 +727,65 @@ export interface Label {
 }
 
 /**
- * kind:30840 File — NIP-FC.
+ * kind:30840 — the bare file. SPEC §6.7, decided in RFC 0.5 §10.7.
  *
- * `componentDTags` are listed **in document order**; order lives on the File so
- * reordering is a single edit in one place.
+ * A file **no app owns**. A Peek topic is one; so is any subject nobody has
+ * built a specialized app for. Typed kinds — a project, an issue — add
+ * properties on top of this shape; the bare file adds none, and that absence is
+ * the point: its projection is built into `@estiva-app/interop` rather than
+ * published, so no `kind:31990` can claim it.
+ *
+ * **Tag order is normative** (SPEC §6.1 — it is part of the id preimage):
+ * `d`, `title`, `h`, then `a` if the file sits under another. The `h` is
+ * REQUIRED by SPEC even though the relay only says SHOULD: several apps write
+ * bare files, and one forgetting it would put an unreachable object in the
+ * shared space, which is the argument the relay already makes for issues.
+ *
+ * The parent may be of **any kind** — a project, an issue, another bare file,
+ * or a kind this package has never heard of. Re-parenting later is a `parent`
+ * change event (`kind:1851`), not a republish; the root tag seeds the value.
+ *
+ * `content` is a §13.3 block document, or empty. A topic that is only a
+ * conversation has nothing here; the day somebody types a brief at the top,
+ * this is where it goes, and nothing about the file "converts".
+ *
+ * This replaces the NIP-FC `buildFile`, whose component list was made
+ * redundant by blocks having ids (RIC-5) and attachments being blocks
+ * (RFC 0.6 §3). Zero NIP-FC files existed on production when the shape
+ * changed (measured 2026-09-10), and no consumer called the old builder.
  */
-export function buildFile(
+export function buildBareFile(
   pubkey: string,
   createdAtMs: number,
   args: {
-    /** Stable File id. MUST NOT encode the relay or org — Files are portable. */
+    /** Stable id, an opaque uuid (RFC 0.4 §4.3). Never a slug. */
     fileId: string
     title: string
-    componentDTags: string[]
-    /** Channel scope. A File in a private channel inherits its access rules. */
-    channelUuid?: string
-    /** File-level metadata; shape is the app's business. */
-    metadata?: Record<string, unknown>
+    /** The team's channel. Required — see above. */
+    channelUuid: string
+    /** Address of the file this one sits under, of any kind. At most one. */
+    parent?: string
+    /** The body, when there is one. Serialized with `serializeBlockDocument`. */
+    document?: BlockDocument
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
+  if (!args.channelUuid) throw new Error('a bare file must name the team channel it lives in (h)')
+  if (args.parent !== undefined && !/^\d+:[0-9a-f]{64}:/.test(args.parent)) {
+    throw new Error(`parent must be an address "<kind>:<pubkey>:<d>", got "${args.parent}"`)
+  }
   const tags: NostrTag[] = [
     ['d', args.fileId],
     ['title', args.title],
+    ['h', args.channelUuid],
   ]
-  if (args.channelUuid) tags.push(['h', args.channelUuid])
-  for (const d of args.componentDTags) {
-    tags.push(['a', addr(KIND.COMPONENT, pubkey, d)])
-  }
+  if (args.parent) tags.push(['a', args.parent])
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
     kind: KIND.FILE,
     tags,
-    content: args.metadata ? JSON.stringify(args.metadata) : '',
+    content: args.document ? serializeBlockDocument(args.document) : '',
   }
 }
 
@@ -768,6 +794,11 @@ export function buildFile(
  *
  * `type` must be namespaced `<namespace>/<name>`. The protocol defines the
  * container; the payload shape belongs to the type.
+ *
+ * @deprecated Nothing publishes one and nothing reads one: blocks carry their
+ * own ids (SPEC §13.3), attachments are blocks (RFC 0.6 §3), and the bare file
+ * above needs no component list. Kept until COM-3 decides whether `30841` is
+ * retired or repurposed; do not build on it.
  */
 export function buildComponent(
   pubkey: string,
