@@ -328,6 +328,24 @@ Six things that will bite, each of them something we got wrong first:
   `folderOf()` is exported so you can check what a consumer will conclude about
   your records.
 
+### If you own no kinds, say which aspect you render
+
+The hiring tool above is a *specialized* app: it owns a kind and draws every
+part of it. A *generic* app owns nothing and renders **one aspect of every file
+in the workspace** — a chat app draws each file's conversation, a writing app
+each file's document (RFC 0.5 §10.7). Its manifest says so with one field:
+
+```jsonc
+{ "name": "Peek", "aspect": "conversation", "projections": {} }
+```
+
+What a consumer does with it today: a **bare file** (`kind:30840`, SPEC §6.7)
+has no owner and so no `web` template of its own, and the app that renders its
+conversation is where a link to it belongs. Publish `aspect` and a `web`
+template for `naddr` on the same `kind:31990`, and every consumer's card for a
+topic becomes a link into your app — with no change on their side. `ASPECTS`
+is exported and holds the two values.
+
 ---
 
 ## 5. Read a whole folder, across every app in it

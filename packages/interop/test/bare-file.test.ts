@@ -14,6 +14,7 @@ import {
   BARE_FILE_MANIFEST_ADDRESS,
   KIND_BARE_FILE,
   commentKindsOf,
+  createProjectionCache,
   resolveFolderContents,
   resolveForeignObject,
   resolveManifest,
@@ -127,8 +128,14 @@ describe('a bare file resolves with no manifest anywhere', () => {
     assert.equal(found?.parentRef, undefined)
   })
 
-  it('costs zero round trips to resolve the manifest', async () => {
-    const sent: unknown[] = []
+  it('consults NIP-89 for nothing but where to open it', async () => {
+    /*
+      The projection is a constant and no `#k` or `kind:31989` lookup is made
+      for it. The one request is the handler sweep that finds the app rendering
+      every file's conversation (FOL-17) — and with nothing on the relay it
+      answers nothing, and the file resolves regardless.
+    */
+    const sent: Record<string, unknown>[][] = []
     const spy = async (filters: Record<string, unknown>[]) => {
       sent.push(filters)
       return []
@@ -137,10 +144,122 @@ describe('a bare file resolves with no manifest anywhere', () => {
       { kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] },
       spy,
     )
-    assert.equal(sent.length, 0)
+    assert.equal(sent.length, 1)
+    assert.deepEqual(
+      sent[0].map((f) => f.kinds),
+      [[31990]],
+      'the only request is the sweep for every manifest — never a #k or a recommendation',
+    )
+    assert.ok(!sent[0].some((f) => '#k' in f || '#d' in f))
     assert.equal(resolved?.address, BARE_FILE_MANIFEST_ADDRESS)
     assert.equal(resolved?.viaRecommendation, false)
+    assert.equal(resolved?.webTemplate, undefined)
     assert.deepEqual(commentKindsOf(resolved!.manifest), [COMMENT_KIND])
+  })
+})
+
+/** A generic app — RFC 0.5 §10.7 — that says it renders every file's conversation. */
+function conversationApp(extra: { pubkey?: string; d?: string; web?: string; content?: object } = {}) {
+  const d = extra.d ?? 'estiva-peek'
+  return event({
+    kind: 31990,
+    pubkey: extra.pubkey ?? OTHER,
+    tags: [
+      ['d', d],
+      ['web', extra.web ?? 'https://peek.example/o/<bech32>', 'naddr'],
+    ],
+    content: JSON.stringify({ name: 'Peek', aspect: 'conversation', projections: {}, ...extra.content }),
+  })
+}
+
+describe('a bare file opens in the app that renders its conversation', () => {
+  it('derives openUrl from that app’s web template, with the file’s own naddr', async () => {
+    const found = await resolveForeignObject(TOPIC, relay([conversationApp(), topic()]))
+    assert.ok(found)
+    assert.ok(found.openUrl?.startsWith('https://peek.example/o/naddr1'), found.openUrl)
+    assert.equal(found.openUrl, `https://peek.example/o/${found.naddr}`)
+    // The projection is still the built-in one; only the link is Peek's.
+    assert.equal(found.appName, 'File')
+    assert.equal(found.widget, 'card')
+  })
+
+  it('links every bare file in a folder, from one sweep however many people started one', async () => {
+    const sent: Record<string, unknown>[][] = []
+    const events = [
+      conversationApp(),
+      topic(),
+      event({
+        kind: KIND_BARE_FILE,
+        pubkey: OTHER,
+        tags: [['d', 'retro'], ['title', 'Retro'], ['h', TEAM]],
+      }),
+    ]
+    const relayWithSpy = relay(events)
+    const contents = await resolveFolderContents(TEAM, async (filters) => {
+      sent.push(filters)
+      return relayWithSpy(filters)
+    })
+    assert.equal(contents.files.length, 2)
+    for (const file of contents.files) {
+      assert.equal(file.openUrl, `https://peek.example/o/${file.naddr}`)
+    }
+    const sweeps = sent.flat().filter((f) => Array.isArray(f.kinds) && (f.kinds as number[]).includes(31990))
+    // One from the containment read's own kind list, one to find the opener —
+    // not one per author.
+    assert.equal(sweeps.length, 2)
+  })
+
+  it('has nowhere to open when no manifest declares the aspect', async () => {
+    /*
+      A specialized app's manifest — Ship's — says nothing about aspects, and a
+      generic app that declares one but publishes no `web` template cannot be
+      linked to. Neither is an error; the card simply is not a link.
+    */
+    const ship = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [['d', 'ship'], ['k', String(PROJECT_KIND)], ['web', 'https://ship.example/o/<bech32>', 'naddr']],
+      content: JSON.stringify({
+        name: 'Ship',
+        projections: { [PROJECT_KIND]: { widget: 'card', slots: { title: { tag: 'title' } } } },
+      }),
+    })
+    const withoutTemplate = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [['d', 'quiet']],
+      content: JSON.stringify({ name: 'Quiet', aspect: 'conversation', projections: {} }),
+    })
+    const found = await resolveForeignObject(TOPIC, relay([ship, withoutTemplate, topic()]))
+    assert.ok(found)
+    assert.equal(found.openUrl, undefined)
+  })
+
+  it('offers the link even when the file itself cannot be read', async () => {
+    // The `unreachable` case: "you may not have access" is exactly when a
+    // person wants to open it in the app that can show it.
+    const found = await resolveForeignObject(TOPIC, relay([conversationApp()]))
+    assert.equal(found?.unreachable, true)
+    assert.equal(found?.openUrl, `https://peek.example/o/${found?.naddr}`)
+  })
+
+  it('remembers the opener once, not once per author', async () => {
+    const cache = createProjectionCache()
+    const sent: Record<string, unknown>[][] = []
+    const spied = relay([conversationApp()])
+    const query = async (filters: Record<string, unknown>[]) => {
+      sent.push(filters)
+      return spied(filters)
+    }
+    for (const pubkey of [AUTHOR, OTHER]) {
+      const resolved = await resolveManifest(
+        { kind: KIND_BARE_FILE, pubkey, identifier: 'x', relays: [] },
+        query,
+        cache,
+      )
+      assert.equal(resolved?.webTemplate, 'https://peek.example/o/<bech32>')
+    }
+    assert.equal(sent.length, 1)
   })
 })
 
