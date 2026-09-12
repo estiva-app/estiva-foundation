@@ -6,6 +6,34 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.20.0 — 2026-09-12
+
+**One field a manifest may now declare, and one kind whose link now comes
+from it.** Every manifest already published means what it meant: none declares
+the field, and the only reader of it is the bare file's opener.
+
+- **`aspect` — a generic app says which aspect of every file it renders**
+  (RFC 0.5 §10.7, the one protocol change that section asks for). `conversation`
+  or `document`; `ASPECTS` and `Aspect` are exported. A specialized app — one
+  that owns kinds — leaves it out, and nothing about how its objects resolve
+  has changed.
+- **A bare file's `openUrl` is the conversation app's `web` template with the
+  file's own `naddr`** (FOL-17). The bare file has no owner and so had no
+  template to take, which left a topic under a Ship project drawn as a card
+  that was not a link. `resolveManifest` for `kind:30840` now also finds the
+  manifest declaring `aspect: "conversation"` and carries its template as
+  `ResolvedManifest.webTemplate`; the projection is still the built-in one
+  and still cannot be overridden by any `kind:31990`. Newest wins among
+  several, as the `#k` fallback does; SPEC §6.7's author recommendation for
+  `30840` remains unread until a second conversation app exists.
+- **That costs one round trip where it cost none**: a sweep of every
+  `kind:31990`, the same one a folder read by containment already makes.
+  Memoised in `ProjectionCache` under one key for every bare file, and a batch
+  read (`resolveFolderContents`, `conversationCountsOf`) makes it once for all
+  the bare files it holds however many authors they have — cache or no cache.
+  The projection itself still consults nothing: with no manifest on the relay
+  a bare file resolves as before, and simply has nowhere to open.
+
 ## 0.19.0 — 2026-09-11
 
 **One kind is now read without any manifest, and one declaration is now

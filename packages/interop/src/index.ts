@@ -35,6 +35,8 @@ export {
   KIND_CHANNEL_METADATA,
   KIND_BARE_FILE,
   BARE_FILE_MANIFEST_ADDRESS,
+  ASPECTS,
+  type Aspect,
   commentKindsOf,
   conversationCountsOf,
   CONVERSATION_LIMIT,

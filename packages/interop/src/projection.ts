@@ -286,7 +286,7 @@ export async function conversationCountsOf(
   // One manifest per app, never per file — the comment kinds are the owning
   // app's declaration and every file it owns in this list shares them.
   const byApp = new Map<string, AddressPointer>()
-  for (const { pointer } of addressed) byApp.set(`${pointer.kind}:${pointer.pubkey}`, pointer)
+  for (const { pointer } of addressed) byApp.set(manifestKeyOf(pointer), pointer)
   const manifests = new Map<string, ResolvedManifest>()
   await Promise.all(
     [...byApp].map(async ([key, pointer]) => {
@@ -296,7 +296,7 @@ export async function conversationCountsOf(
   )
 
   const asked = addressed.flatMap(({ file, pointer }) => {
-    const resolved = manifests.get(`${pointer.kind}:${pointer.pubkey}`)
+    const resolved = manifests.get(manifestKeyOf(pointer))
     // No manifest, no declared comment kind: a guess of 1111 would report a
     // confident zero for an app that uses something else.
     if (!resolved) return []
@@ -599,7 +599,29 @@ interface Manifest {
   records?: RecordsRule
   projections?: Record<string, { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }>
   vocabularies?: Record<string, { value: string; label: string; colour: string; stage?: string }[]>
+  /**
+   * Which aspect of *every* file this app renders — RFC 0.5 §10.7's one
+   * protocol change, and the field that tells a generic app from a specialized
+   * one that happens to draw a card.
+   *
+   * A specialized app owns kinds and says nothing here. A generic app owns no
+   * kinds and declares the one aspect it renders for everyone else's files:
+   * `conversation` (Peek) or `document` (Leaf). See {@link ASPECTS}.
+   *
+   * What it is read for today: the bare file (§6.7) has no owner and so no
+   * `web` template of its own, and the app that renders its conversation is
+   * where a link to it should land. Nothing else consults it yet.
+   */
+  aspect?: string
 }
+
+/**
+ * The aspects a generic app may declare — RFC 0.5 §10.2's three parts of a
+ * file, minus `properties`, which is what a *type* adds and so what a
+ * specialized app owns rather than something a generic one renders.
+ */
+export const ASPECTS = ['conversation', 'document'] as const
+export type Aspect = (typeof ASPECTS)[number]
 
 /** Actions declared for this kind, resolved against the vocabularies. */
 function resolveActions(
@@ -844,7 +866,14 @@ export interface ResolvedManifest {
   manifest: Manifest
   address: string
   viaRecommendation: boolean
-  /** NIP-89 `web` template, `<bech32>` not yet substituted. */
+  /**
+   * NIP-89 `web` template, `<bech32>` not yet substituted.
+   *
+   * The owning app's, for every kind that has an owner. For the bare file it
+   * is the template of the app that renders its *conversation* — the one
+   * place a link to an ownerless file can honestly land (FOL-17). Absent when
+   * no app has declared that aspect.
+   */
   webTemplate?: string
 }
 
@@ -860,9 +889,15 @@ export interface ResolvedManifest {
  *
  * So its projection lives **here, in the runtime, and not on the relay.** A
  * consumer resolving a `30840` gets this manifest before NIP-89 is consulted
- * at all — zero round trips, and no `kind:31990` anywhere can override it.
- * That is the test the ticket names: remove every published manifest and a
- * bare file still resolves, lists its comments, and names its parent.
+ * at all — no `kind:31990` anywhere can override it. That is the test the
+ * ticket names: remove every published manifest and a bare file still
+ * resolves, lists its comments, and names its parent.
+ *
+ * The one thing the relay *is* asked is where to open it (FOL-17). An
+ * ownerless file has no `web` template of its own, so the link goes to the
+ * app that has declared it renders every file's conversation — Peek — read
+ * off its manifest's `aspect` field by {@link resolveAspectApp}. With no such
+ * manifest published the file still resolves; it just has nowhere to open.
  *
  * Its conversation is `kind:1111` anchored at its address, the shape a Ship
  * issue's comments already have, so `commentKindsOf` needs no special case.
@@ -932,6 +967,67 @@ function bareFileManifest(): ResolvedManifest {
 }
 
 /**
+ * How many handler events a sweep of the relay asks for.
+ *
+ * Every published manifest, in one filter: there are a handful per workspace,
+ * and the two readers that need all of them at once — a folder read by
+ * containment, and the bare file's opener below — are the two that cannot ask
+ * by kind.
+ */
+const HANDLER_SWEEP_LIMIT = 50
+
+/**
+ * The app that renders one aspect of every file, by its manifest's `aspect`.
+ *
+ * NIP-89 discovery is by kind, and a generic app owns none — so it cannot be
+ * found with `#k`, and there is no author to ask for a recommendation, because
+ * the question is not "who owns this" but "who draws its conversation". The
+ * only way to find it is to read every manifest and look, which is the same
+ * sweep a folder read by containment already does.
+ *
+ * Newest wins when several declare the same aspect, for the reason the `#k`
+ * fallback gives: there is no principled ranking without a recommendation.
+ * SPEC §6.7 reserves the file author's `kind:31989` for `30840` as that
+ * recommendation, and it is still not read; the day two conversation apps
+ * exist is the day it needs to be.
+ *
+ * Memoised under a key of its own rather than per pointer: the answer does
+ * not depend on whose file is being opened, so one entry serves every bare
+ * file the cache ever sees.
+ */
+async function resolveAspectApp(
+  aspect: Aspect,
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<ResolvedManifest | null> {
+  const key = `aspect:${aspect}`
+  const now = Date.now()
+  const memo = cache?.lookup(key, now)
+  if (memo) return memo.value
+
+  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+  let answer: ResolvedManifest | null = null
+  for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
+    const manifest = parseManifest(candidate)
+    if (manifest?.aspect !== aspect) continue
+    const template = webTemplate(candidate, 'naddr')
+    // Declaring the aspect and publishing nowhere to open a file is a manifest
+    // this consumer has no use for yet; keep looking rather than answer with
+    // an app that cannot be linked to.
+    if (!template) continue
+    answer = {
+      manifest,
+      address: `${candidate.kind}:${candidate.pubkey}:${tagValue(candidate, 'd') ?? ''}`,
+      viaRecommendation: false,
+      webTemplate: template,
+    }
+    break
+  }
+  cache?.remember(key, answer, now)
+  return answer
+}
+
+/**
  * A memo for the half of a resolve that does not change between refreshes.
  *
  * Resolving one reference costs four round trips, and **two of them are NIP-89
@@ -992,6 +1088,18 @@ export function createProjectionCache(ttlMs: number = MANIFEST_TTL_MS): Projecti
 }
 
 /**
+ * What a batch read groups its manifest lookups by.
+ *
+ * `kind:pubkey` for an owned kind — the author's recommendation is part of the
+ * answer, so two authors may resolve to two apps. The bare file has no owner
+ * and no recommendation to consult, so its key is the kind alone: one lookup
+ * for every topic in a folder, whoever started them.
+ */
+function manifestKeyOf(pointer: AddressPointer): string {
+  return pointer.kind === KIND_BARE_FILE ? String(KIND_BARE_FILE) : `${pointer.kind}:${pointer.pubkey}`
+}
+
+/**
  * A negative answer is cached too.
  *
  * "No app claims this kind" costs the same two round trips as a hit and is just
@@ -1005,8 +1113,16 @@ export async function resolveManifest(
 ): Promise<ResolvedManifest | null> {
   // Before the cache, not only before the network: a bare file's manifest is
   // a constant, and memoising it per author would be one entry per person who
-  // ever started a topic.
-  if (pointer.kind === KIND_BARE_FILE) return bareFileManifest()
+  // ever started a topic. The projection costs zero round trips; the one it
+  // pays is for *where to open the file*, which no built-in constant can
+  // answer — it is whichever app has declared it renders the conversation —
+  // and that answer is memoised once for every bare file (`resolveAspectApp`).
+  if (pointer.kind === KIND_BARE_FILE) {
+    const opener = await resolveAspectApp('conversation', query, cache)
+    return opener?.webTemplate
+      ? { ...bareFileManifest(), webTemplate: opener.webTemplate }
+      : bareFileManifest()
+  }
   const key = `${pointer.kind}:${pointer.pubkey}`
   const now = Date.now()
   const memo = cache?.lookup(key, now)
@@ -3400,9 +3516,14 @@ export async function resolveFolderContents(
     else groups.set(key, { pointer, addresses: [address] })
   }
 
+  // Keyed by app rather than by group: the bare file's manifest does not
+  // depend on who wrote the file, so a folder of topics from five people
+  // resolves it once, cache or no cache.
+  const byApp = new Map<string, AddressPointer>()
+  for (const { pointer } of groups.values()) byApp.set(manifestKeyOf(pointer), pointer)
   const manifests = new Map<string, ResolvedManifest>()
   await Promise.all(
-    [...groups].map(async ([key, { pointer }]) => {
+    [...byApp].map(async ([key, pointer]) => {
       const resolved = await resolveManifest(pointer, query, cache)
       if (resolved) manifests.set(key, resolved)
     }),
@@ -3432,7 +3553,7 @@ export async function resolveFolderContents(
   // 4. Build each file, in the order the folder listed them.
   const files: ForeignObject[] = []
   for (const { address, pointer } of pointers) {
-    const resolved = manifests.get(`${pointer.kind}:${pointer.pubkey}`)
+    const resolved = manifests.get(manifestKeyOf(pointer))
     // No app claims this kind, so there is no projection to draw it with.
     if (!resolved) continue
     const projection = resolved.manifest.projections?.[String(pointer.kind)]
@@ -3497,7 +3618,7 @@ export async function resolveFolderContents(
 async function addressesByContainment(folder: string, query: QueryFn): Promise<string[]> {
   // Which kinds could be files? Every kind any app declares a projection for.
   // The only non-app-specific source for a kind number is a published manifest.
-  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: 50 }])
+  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
   // The bare file is listed by no manifest on the relay — its projection is
   // built in — so it has to be asked for by name, or a folder with no state
   // would show every project and issue and none of the topics.
