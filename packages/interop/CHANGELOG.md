@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.21.0 — 2026-09-13
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+Every manifest already published means what it meant.
+
+- **`conversationsOf` — what each file's conversation holds, one round trip
+  for all of them** (FOL-16). The read `conversationCountsOf` was already
+  making, returned instead of reduced: per file, each message's `id`, `at`,
+  `by` and thread `root`, oldest first, as `ConversationMessage[]`. A list can
+  judge unread per file from exactly this — SPEC §11.1 keys a file's read state
+  on its address, and the messages' own `a` tag names it — with no second read.
+  Read state is not this package's business, so no marker is known here; the
+  consumer brings the rule. `conversationCountsOf` is now its length, so the
+  badge and the dot can never disagree.
+
 ## 0.20.0 — 2026-09-12
 
 **One field a manifest may now declare, and one kind whose link now comes

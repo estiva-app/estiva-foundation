@@ -39,6 +39,8 @@ export {
   type Aspect,
   commentKindsOf,
   conversationCountsOf,
+  conversationsOf,
+  type ConversationMessage,
   CONVERSATION_LIMIT,
   buildActionEvent,
   pickWidget,

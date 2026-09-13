@@ -273,6 +273,65 @@ export async function conversationCountsOf(
   /** Warm from the read that produced these files; see {@link ProjectionCache}. */
   cache?: ProjectionCache,
 ): Promise<Record<string, number>> {
+  const conversations = await conversationsOf(files, query, cache)
+  const counts: Record<string, number> = {}
+  for (const [ref, messages] of Object.entries(conversations)) counts[ref] = messages.length
+  return counts
+}
+
+/**
+ * One message of a file's conversation, as much of it as a list needs.
+ *
+ * Not the event: a list deciding whether a file is worth opening, or whether it
+ * is unread, needs when and by whom and which thread — never the body. `root`
+ * is the id of the thread's root message, which is the message's own id when
+ * it *is* the root; a reader applying SPEC §11.3 needs it to find the thread's
+ * marker.
+ */
+export interface ConversationMessage {
+  id: string
+  /** Unix seconds, as the event carries and as NIP-RS stores. */
+  at: number
+  /** Author pubkey. */
+  by: string
+  root: string
+}
+
+/**
+ * The root of a comment's thread — NIP-22's uppercase `E` when the comment
+ * carries one, else the `['e', <root>, '', 'reply']` shape §6.4's table gives
+ * for a reply, else the message itself.
+ */
+function rootOf(event: SignedEvent): string {
+  const upper = event.tags.find((t) => t[0] === 'E' && t[1])?.[1]
+  if (upper) return upper
+  const lower = event.tags.find((t) => t[0] === 'e' && t[1])?.[1]
+  return lower ?? event.id
+}
+
+/**
+ * What each file's conversation holds — one round trip for all of them.
+ *
+ * The read behind {@link conversationCountsOf}, returned rather than reduced
+ * to a number, for the second question a list has once it knows a file is
+ * worth opening: *is any of it new to me* (SPEC §11.1, FOL-16). A file's
+ * read-state context is its address and its messages' own `a` tag names it,
+ * so a list can judge unread per file from exactly this — each message's time,
+ * author and thread against the file's marker — with no second read. Read
+ * state itself is not this package's business, so nothing here knows a marker;
+ * the consumer brings its own rule.
+ *
+ * Everything the count's doc says holds here: one filter per file, chunked at
+ * `MAX_FILTERS_PER_QUERY`, attributed by every `a` tag, deduplicated across
+ * filters, and a file with no address is absent rather than empty. Messages are
+ * returned oldest first.
+ */
+export async function conversationsOf(
+  files: ForeignObject[],
+  query: QueryFn,
+  /** Warm from the read that produced these files; see {@link ProjectionCache}. */
+  cache?: ProjectionCache,
+): Promise<Record<string, ConversationMessage[]>> {
   const addressed = files.flatMap((file) => {
     if (!file.address) return []
     try {
@@ -315,8 +374,8 @@ export async function conversationCountsOf(
   if (asked.length === 0) return {}
 
   const refOf = new Map(asked.map((a) => [a.address, a.ref]))
-  const counts: Record<string, number> = {}
-  for (const a of asked) counts[a.ref] = 0
+  const conversations: Record<string, ConversationMessage[]> = {}
+  for (const a of asked) conversations[a.ref] = []
 
   const seen = new Set<string>()
   for (let start = 0; start < asked.length; start += MAX_FILTERS_PER_QUERY) {
@@ -341,10 +400,13 @@ export async function conversationCountsOf(
         .filter((t) => t[0] === 'a' && t[1])
         .map((t) => refOf.get(t[1]))
         .find((found) => found !== undefined)
-      if (ref !== undefined) counts[ref] = (counts[ref] ?? 0) + 1
+      if (ref !== undefined) {
+        conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root: rootOf(event) })
+      }
     }
   }
-  return counts
+  for (const messages of Object.values(conversations)) messages.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))
+  return conversations
 }
 
 /** How the owning app says its records should be read. */

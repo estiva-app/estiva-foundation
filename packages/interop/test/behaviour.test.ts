@@ -37,6 +37,7 @@ import assert from 'node:assert/strict'
 import {
   commentKindsOf,
   conversationCountsOf,
+  conversationsOf,
   CONVERSATION_LIMIT,
   resolveFolderProject,
   resolveForeignObject,
@@ -1908,6 +1909,43 @@ describe('counting a conversation without resolving each file', () => {
     for (const f of countFilters) {
       assert.equal(((f as { '#a': string[] })['#a']).length, 1)
     }
+  })
+
+  /*
+    `conversationsOf` is the read the count is made from, kept rather than
+    reduced — a list judging unread per file (SPEC §11.1, FOL-16) needs each
+    message's time, author and thread against the file's marker, and nothing
+    else. The count is its length, so the two can never disagree.
+  */
+  it('returns what each conversation holds — when, who, which thread — oldest first', async () => {
+    const OTHER = 'b'.repeat(64)
+    const root = event({ kind: 1111, pubkey: OTHER, created_at: 1_700_000_500, tags: [['a', ADDR_A]] })
+    const reply = event({
+      kind: 1111,
+      created_at: 1_700_000_900,
+      tags: [['a', ADDR_A], ['e', root.id, '', 'reply']],
+    })
+    const conversations = await conversationsOf(
+      [file(ADDR_A), file(ADDR_B)],
+      relay([manifest(), reply, root, comment(ADDR_B)]),
+    )
+
+    assert.deepEqual(conversations[ADDR_A], [
+      { id: root.id, at: 1_700_000_500, by: OTHER, root: root.id },
+      { id: reply.id, at: 1_700_000_900, by: AUTHOR, root: root.id },
+    ])
+    assert.equal(conversations[ADDR_B].length, 1)
+    const counts = await conversationCountsOf([file(ADDR_A), file(ADDR_B)], relay([manifest(), reply, root, comment(ADDR_B)]))
+    assert.deepEqual(counts, { [ADDR_A]: 2, [ADDR_B]: 1 })
+  })
+
+  it("takes NIP-22's uppercase E as the thread root when a comment carries one", async () => {
+    const withRoot = event({
+      kind: 1111,
+      tags: [['a', ADDR_A], ['E', 'f'.repeat(64)], ['e', 'e'.repeat(64)]],
+    })
+    const conversations = await conversationsOf([file(ADDR_A)], relay([manifest(), withRoot]))
+    assert.equal(conversations[ADDR_A][0].root, 'f'.repeat(64))
   })
 })
 
