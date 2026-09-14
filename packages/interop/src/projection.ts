@@ -3415,6 +3415,18 @@ export interface FolderSummary {
   name?: string
   /** True once the relay maintains state for it, rather than it being a bare channel. */
   hasState: boolean
+  /**
+   * The folders whose state lists this one as a file — present only when there
+   * are any.
+   *
+   * A channel is addressable (§5.2), so a folder can be placed inside another
+   * the way any file is, and Peek's topics are (FOL-22): each is a channel
+   * listed by its team's state. A sidebar that drew every channel as a top-level
+   * folder would show the team and, beside it, every topic in it. This is what
+   * lets a consumer tell the two apart without reading any folder's contents:
+   * `listFolders` already holds every state, so the answer is free.
+   */
+  listedIn?: string[]
 }
 
 /** A folder and everything in it, each file drawn through its owner's manifest. */
@@ -3476,6 +3488,30 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
       name: tagValue(event, 'name') ?? existing?.name,
       hasState: state || (existing?.hasState ?? false),
     })
+  }
+  /*
+    A folder listed in another folder's state is a file there. Read off the
+    states already in hand: an `a` naming a `kind:39000` is a channel, and its
+    `d` is the folder's id. Both `KIND_CHANNEL` and the state's own `d` are
+    uuids, so no address has to be built to compare them.
+  */
+  const listedIn = new Map<string, string[]>()
+  for (const event of events) {
+    if (event.kind !== KIND_FOLDER_STATE) continue
+    const container = tagValue(event, 'd')
+    if (!container) continue
+    for (const tag of event.tags) {
+      if (tag[0] !== 'a' || !tag[1]) continue
+      const [kind, , identifier] = tag[1].split(':')
+      if (Number(kind) !== KIND_CHANNEL || !identifier || identifier === container) continue
+      const containers: string[] = listedIn.get(identifier) ?? []
+      if (!containers.includes(container)) containers.push(container)
+      listedIn.set(identifier, containers)
+    }
+  }
+  for (const [id, containers] of listedIn) {
+    const folder = byId.get(id)
+    if (folder) folder.listedIn = containers
   }
   return [...byId.values()].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id))
 }

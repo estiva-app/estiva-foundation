@@ -283,4 +283,26 @@ describe('the README §5: read a whole folder', () => {
     const folders = await listFolders(relay([manifest, channel, issue]))
     assert.deepEqual(folders, [{ id: FOLDER, name: 'Billing', hasState: false }])
   })
+
+  it('listFolders says which folders another folder lists as files (FOL-22)', async () => {
+    // A team whose state lists the Billing channel as a file, the way a Peek
+    // topic sits inside its team — and lists itself, which counts for nothing.
+    const TEAM = '05bebd5b-b699-4bd4-af50-f5377df0fd67'
+    const teamState = event({
+      kind: 30890,
+      pubkey: RELAY_KEY,
+      tags: [
+        ['d', TEAM],
+        ['name', 'Finance'],
+        ['a', `${CHANNEL_KIND}:${RELAY_KEY}:${FOLDER}`],
+        ['a', `${CHANNEL_KIND}:${RELAY_KEY}:${TEAM}`],
+        ['a', `${ISSUE_KIND}:${AUTHOR}:not-a-folder`],
+      ],
+    })
+    const folders = await listFolders(relay([manifest, channel, issue, teamState]))
+    assert.deepEqual(folders, [
+      { id: FOLDER, name: 'Billing', hasState: false, listedIn: [TEAM] },
+      { id: TEAM, name: 'Finance', hasState: true },
+    ])
+  })
 })

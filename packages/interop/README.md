@@ -399,12 +399,18 @@ explaining a short list should read this field.
 ```ts
 import { listFolders } from '@estiva-app/interop'
 
-const folders = await listFolders(query)   // { id, name, hasState }[]
+const folders = await listFolders(query)   // { id, name, hasState, listedIn? }[]
+const topLevel = folders.filter((f) => !f.listedIn)
 ```
 
 Asks for folders by kind rather than walking anything else. Discovering things
 only through their parent loses them when the parent goes — the failure RFC 0.4
 §4.2 records, one level up from where it was first paid for.
+
+A channel is addressable, so a folder can be a file in another folder — Peek's
+topics are, each listed by its team's state. `listedIn` names those containers,
+read off the states the call already holds, so a sidebar draws the team and
+not, beside it, every topic in it.
 
 ---
 
