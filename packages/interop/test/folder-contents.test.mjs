@@ -197,6 +197,75 @@ describe('the folder that has no state yet', () => {
   })
 })
 
+/**
+ * The union rule — FOL-20. A folder lists the files whose `h` it is *and* the
+ * files placed in it. A placement is a change carried in the folder, naming
+ * a target, whose value is the folder itself: what Ship announces into a
+ * Folder when a project is linked to it, and the only thing an append-only
+ * record can say once its `h` is fixed.
+ */
+describe('a folder lists the files placed in it, not only the files whose h it is', () => {
+  const TEAM = '1d0f2a4e-9c7b-4e1a-8f3c-5b6d7e8f9a0b'
+  const team = event({ kind: 39000, pubkey: RELAY, tags: [['d', TEAM], ['name', 'Ringers']] })
+  /** The colony's record lives in the estuary; this statement links its work to the team. */
+  const placement = (value = TEAM, at = {}) =>
+    event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'folder'], ['v', value], ['h', TEAM]], ...at })
+
+  test('a record whose h is elsewhere lists under the folder it was placed in', async () => {
+    const query = relay([ringingManifest, channel, team, colony, placement()])
+    const contents = await resolveFolderContents(TEAM, query, async () => ({}))
+    assert.equal(contents.name, 'Ringers')
+    assert.deepEqual(contents.files.map((f) => f.slots.title?.value), ['Weir colony'])
+  })
+
+  test('and still lists under the folder its h is — nothing moved', async () => {
+    const query = relay([ringingManifest, channel, team, colony, placement()])
+    const { files } = await resolveFolderContents(FOLDER, query, async () => ({}))
+    assert.deepEqual(files.map((f) => f.slots.title?.value), ['Weir colony'])
+  })
+
+  test('a placement the record has since moved on from is not current, and the file is absent', async () => {
+    // Linked to the team, then linked again to a third Folder from the record's
+    // own Folder. The team keeps the first statement for ever; the fold does not.
+    const ELSEWHERE = '9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b'
+    const first = placement()
+    const moved = event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'folder'], ['v', ELSEWHERE], ['h', FOLDER]] })
+    const query = relay([ringingManifest, channel, team, colony, first, moved])
+    const { files } = await resolveFolderContents(TEAM, query, async () => ({}))
+    assert.deepEqual(files, [])
+  })
+
+  test('an ordinary change that strayed into the folder places nothing', async () => {
+    // The relay accepts a change published into the wrong Folder. Its value is
+    // not the folder, so it is an edit that landed here, not a placement.
+    const stray = event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'title'], ['v', 'Renamed'], ['h', TEAM]] })
+    const query = relay([ringingManifest, channel, team, colony, stray])
+    const { files } = await resolveFolderContents(TEAM, query, async () => ({}))
+    assert.deepEqual(files, [])
+  })
+
+  test('a placed record its app has archived is hidden like any other', async () => {
+    const archived = event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'archived'], ['v', 'true'], ['h', FOLDER]] })
+    const query = relay([ringingManifest, channel, team, colony, placement(), archived])
+    const { files } = await resolveFolderContents(TEAM, query, async () => ({}))
+    assert.deepEqual(files, [])
+  })
+
+  test('the placement rides in the containment request — no extra round trip', async () => {
+    let posts = 0
+    const inner = relay([ringingManifest, channel, team, colony, placement()])
+    const counting = async (filters) => {
+      posts++
+      return inner(filters)
+    }
+    await resolveFolderContents(TEAM, counting, async () => ({}))
+    const before = posts
+    posts = 0
+    await resolveFolderContents(FOLDER, counting, async () => ({}))
+    assert.equal(before, posts, 'listing a folder by placement cost more requests than listing one by h')
+  })
+})
+
 describe('listFolders', () => {
   test('state and bare channels in one list, state naming the folder', async () => {
     const other = event({ kind: 39000, pubkey: RELAY, tags: [['d', 'aaa'], ['name', 'Another channel']] })

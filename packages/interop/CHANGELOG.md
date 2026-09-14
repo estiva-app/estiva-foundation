@@ -6,6 +6,34 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.22.0 — 2026-09-14
+
+**Nothing a manifest may declare changes. How a `records` declaration is read
+does**, in one place: a change event of the declared `changeKind` now also
+says where a file is listed. Every manifest already published means what it
+meant; a consumer upgrading sees more files in some folders, never fewer.
+
+- **A folder lists the files placed in it, as well as the files whose `h` it
+  is** (FOL-20). `resolveFolderContents`, for a folder with no state: a change
+  carried in the folder (`h`), naming a target through the app's `targetTag`,
+  **whose value is the folder's own id**, places the target here. That is the
+  statement Ship announces into a Folder when a project is linked to it — the
+  only thing an append-only record can say once its `h` is fixed — and it is
+  what lets five team Folders list fourteen projects none of which was
+  re-created. `resolveFolderProject` has read the same statement since PEEK-24;
+  this is the listing's half.
+- **Current, or absent.** A placement holds only while the target's own fold
+  still agrees with it: the field the statement set, folded from every change
+  against the address, must still equal this folder. A project linked to a
+  second team drops out of the first, whose statement an append-only stream
+  cannot retract. An ordinary edit that strayed into a Folder — the relay
+  accepts those — places nothing, because its value is not the folder.
+- **No extra round trip.** The change filter rides in the containment
+  request, and the change kinds come off the handler sweep it already made.
+  Ordering is newest-first by whichever event put the file here, so a
+  placement sorts by when it was made.
+- A folder *with* state is unchanged: its `a` list is the model.
+
 ## 0.21.0 — 2026-09-13
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**
