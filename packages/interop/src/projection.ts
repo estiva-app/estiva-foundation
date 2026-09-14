@@ -3549,10 +3549,13 @@ export async function resolveFolderContents(
       : {}),
   }
 
-  const addresses = state
+  const { addresses, placed } = state
     ? // §5.2: one tag type lists every file, topics included, with no special
       //  case. The order is the folder's, so it is preserved rather than sorted.
-      [...new Set(state.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]))]
+      {
+        addresses: [...new Set(state.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]))],
+        placed: new Map<string, SignedEvent[]>(),
+      }
     : await addressesByContainment(folder, query)
 
   if (addresses.length === 0) {
@@ -3636,6 +3639,30 @@ export async function resolveFolderContents(
     if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) {
       continue
     }
+    /*
+      A placed file stays listed only while the placement is current.
+
+      The statement that placed it says "field f of this object is this
+      folder". The object's own fold — every change against its address,
+      wherever each was published — knows what f is *now*. If the two agree,
+      the file is here; if the fold has moved on, somebody has since placed it
+      somewhere else and this folder is holding a statement that has been
+      superseded, which an append-only stream cannot retract. Ship linking a
+      project to a second team is the case: the first team's Folder keeps the
+      old statement for ever, and without this check would list the project
+      for ever.
+
+      Compared through the app's own field and value tags, so nothing here
+      knows the field is called `folder`.
+    */
+    const placements = placed.get(address)
+    if (placements) {
+      const current = placements.some((statement) => {
+        const field = tagValue(statement, records.fieldTag)
+        return field !== undefined && folded[field]?.value === folder
+      })
+      if (!current) continue
+    }
     files.push(
       buildObject({
         root,
@@ -3676,56 +3703,121 @@ export async function resolveFolderContents(
  * Two filters rather than one: an `#h` query does not return a record placed
  * globally, and reading only `h` was what made five of Ship's fifteen projects
  * unactionable before `folderOf` existed.
+ *
+ * ## And the files placed here — the union rule (FOL-20)
+ *
+ * A folder lists the files whose `h` it is **and** the files placed in it.
+ * An event cannot change its own `h`, so a project filed in one Folder and
+ * later linked to a team keeps the `h` it was born with, and the only thing
+ * that can say "it belongs over there now" is a change event. Ship publishes
+ * that change twice — into the record's own Folder, and *into the Folder
+ * being linked*: a `kind:1851` carried by the team's `h`, targeting the
+ * project, whose value is the team Folder itself. The second copy is the
+ * placement, and it is what this reads.
+ *
+ * {@link resolveFolderProject} has read the same statement since PEEK-24 to
+ * answer "which project is this topic paired with". This is the listing's
+ * half of it, and it is the rule the tidy-up rests on: five team Folders,
+ * fourteen projects linked into them and none re-created, so a team Folder
+ * whose `h` is on nothing lists its projects anyway.
+ *
+ * App-neutral by the same discipline as everything else here. The change
+ * kinds and target tags come off the published `records` rules, and a
+ * placement is recognised by shape rather than by vocabulary: a change
+ * carried in this folder, naming a target, **whose value is this folder's
+ * id**. That last clause is what separates a placement from an ordinary edit
+ * somebody published into the wrong Folder — the relay accepts those — which
+ * would otherwise list a file wherever a stray change about it had landed.
+ * Whether the placement is still *current* is decided in
+ * {@link resolveFolderContents}, once the target's fold is known.
+ *
+ * One request either way: the change filter rides in the same `/query` as
+ * the two containment filters, and the change kinds come off the handler
+ * sweep this already made.
  */
-async function addressesByContainment(folder: string, query: QueryFn): Promise<string[]> {
+async function addressesByContainment(
+  folder: string,
+  query: QueryFn,
+): Promise<{ addresses: string[]; placed: Map<string, SignedEvent[]> }> {
   // Which kinds could be files? Every kind any app declares a projection for.
   // The only non-app-specific source for a kind number is a published manifest.
   const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+  const manifests = handlers.flatMap((event) => parseManifest(event) ?? [])
   // The bare file is listed by no manifest on the relay — its projection is
   // built in — so it has to be asked for by name, or a folder with no state
   // would show every project and issue and none of the topics.
   const kinds = [
     ...new Set([
       KIND_BARE_FILE,
-      ...handlers.flatMap((event) =>
-        Object.keys(parseManifest(event)?.projections ?? {}).map(Number).filter(Number.isFinite),
+      ...manifests.flatMap((manifest) =>
+        Object.keys(manifest.projections ?? {}).map(Number).filter(Number.isFinite),
       ),
     ]),
   ]
+  // Every app's change kind, each with the tags that make one a placement. A
+  // kind is a u16 and the relay refuses an out-of-range one, so an app with no
+  // `records` contributes nothing rather than an empty rule.
+  const rules = new Map<number, RecordsRule>()
+  for (const manifest of manifests) {
+    if (manifest.records) rules.set(manifest.records.changeKind, manifest.records)
+  }
 
-  const held = await query([
+  const found = await query([
     { '#h': [folder], kinds, limit: 500 },
     { '#buzz-channel': [folder], kinds, limit: 500 },
+    ...(rules.size ? [{ '#h': [folder], kinds: [...rules.keys()], limit: 500 }] : []),
   ])
-  return [
-    ...new Set(
-      held
-        .filter((event) => {
-          const d = tagValue(event, 'd')
-          /*
-            Two exclusions, and both are about what a file *is*.
+  const held = found.filter((event) => kinds.includes(event.kind))
 
-            **A file is addressable** — RFC 0.4 §5, "anything with an address
-            that a folder can list". A `kind:9` message carries no `d`, so it
-            has no address, so it is conversation rather than contents. That is
-            the whole discriminator and it needs no kind numbers.
+  const addressOf = (event: SignedEvent) =>
+    pointerToAddress({
+      kind: event.kind,
+      pubkey: event.pubkey,
+      identifier: tagValue(event, 'd') ?? '',
+      relays: [],
+    })
+  // Newest first, whichever event put the file here. A placement's time is
+  // the statement's, so a project linked in yesterday sorts above one whose
+  // record has sat here for a month — the order a person expects of "recently
+  // added".
+  const newest = new Map<string, number>()
+  const seen = (address: string, at: number) => newest.set(address, Math.max(newest.get(address) ?? 0, at))
 
-            **A folder is not a file inside itself.** A channel's own `39000`
-            comes back from an `#h` query for that channel — the relay scopes a
-            discovery event to the channel it describes, so it arrives with the
-            contents. What marks it out is that its `d` *is* the folder uuid.
-          */
-          return d !== undefined && d !== folder
-        })
-        .sort((a, b) => b.created_at - a.created_at)
-        .map((event) =>
-          pointerToAddress({
-            kind: event.kind,
-            pubkey: event.pubkey,
-            identifier: tagValue(event, 'd') ?? '',
-            relays: [],
-          }),
-        ),
-    ),
-  ]
+  for (const event of held) {
+    const d = tagValue(event, 'd')
+    /*
+      Two exclusions, and both are about what a file *is*.
+
+      **A file is addressable** — RFC 0.4 §5, "anything with an address
+      that a folder can list". A `kind:9` message carries no `d`, so it
+      has no address, so it is conversation rather than contents. That is
+      the whole discriminator and it needs no kind numbers.
+
+      **A folder is not a file inside itself.** A channel's own `39000`
+      comes back from an `#h` query for that channel — the relay scopes a
+      discovery event to the channel it describes, so it arrives with the
+      contents. What marks it out is that its `d` *is* the folder uuid.
+    */
+    if (d === undefined || d === folder) continue
+    seen(addressOf(event), event.created_at)
+  }
+  const contained = new Set(newest.keys())
+
+  const placed = new Map<string, SignedEvent[]>()
+  for (const event of found) {
+    const rule = rules.get(event.kind)
+    if (!rule) continue
+    const target = tagValue(event, rule.targetTag)
+    // A file already here by `h` needs no placement, and reading one for it
+    // would subject it to the currency check that placements alone deserve.
+    if (!target || contained.has(target)) continue
+    if (tagValue(event, rule.valueTag) !== folder) continue
+    placed.set(target, [...(placed.get(target) ?? []), event])
+    seen(target, event.created_at)
+  }
+
+  return {
+    addresses: [...newest].sort((a, b) => b[1] - a[1]).map(([address]) => address),
+    placed,
+  }
 }
