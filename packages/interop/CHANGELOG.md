@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.23.0 — 2026-09-14
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+One field is added to a return type; every manifest already published means
+what it meant.
+
+- **`listFolders` says which folders another folder lists as files** (FOL-22).
+  `FolderSummary.listedIn`, present only when non-empty: the ids of the folders
+  whose `kind:30890` state carries an `a` naming this folder's `kind:39000`.
+  Read off the states the call already fetches, so it costs no query. A
+  channel is addressable (RFC 0.4 §5.2), and Peek's topics are placed in their
+  teams exactly this way; a sidebar filters on it to draw the five teams and
+  not, beside them, the twenty-five topics inside them.
+
 ## 0.22.0 — 2026-09-14
 
 **Nothing a manifest may declare changes. How a `records` declaration is read
