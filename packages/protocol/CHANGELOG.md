@@ -4,6 +4,43 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.21.0 — 2026-09-17
+
+**Wire behaviour: unchanged for every kind that was already published.** The
+one new builder, `buildDmOpen`, emits a kind nothing in the suite had ever
+sent; its bytes were checked against the relay before this was written, not
+after (see below).
+
+- **New: `buildDmOpen` (`kind:41010`) and `KIND.DM_OPEN`.** One `p` per *other*
+  participant, no `h`, empty content — mirroring `build_dm_open`
+  (`buzz-sdk/src/builders.rs:1544`). A DM channel's uuid is **derived by the
+  relay** from `compute_participant_hash` over self + the `p` tags, so unlike a
+  topic the client cannot mint it, cannot pass one, and only learns it from the
+  answer. `MAX_DM_OTHERS` (8) is enforced here so a tenth participant fails
+  where a caller can say something about it.
+
+- **`PublishResult.message`, and `commandPayload` to read it.** The relay's
+  `message` was kept only on the `accepted:false` branch, where it becomes
+  `reason`; on the accepted branch it was dropped. For an ordinary event that
+  costs nothing, but a **command kind answers there** — `41010` replies
+  `response:{"channel_id":…,"created":…}`, and that uuid exists nowhere else.
+  Until now a caller could open a DM through `Relay.publish` and not learn what
+  it had opened (found by DMS-2, `estiva-agent#47`).
+
+- **`duplicate` is now set on the accepted branch too**, when the message says
+  so. Measured against production on 2026-09-17: a *byte-identical* replay of a
+  command event is answered `accepted:true`, `"duplicate: already processed"`,
+  **and no payload** — `persist_command_event` keys on the event id, so the
+  relay never re-runs the handler and has nothing to report. That is not a
+  corner case: two clients opening the same DM in the same wall-clock second
+  sign identical bytes. A caller that could not see `duplicate` there would read
+  the missing payload as a command that simply answered nothing.
+
+  Both duplicate shapes now report the same two fields, which is the point:
+  `accepted:false` `"duplicate: channel already exists"` (a `9007` losing a
+  race) and `accepted:true` `"duplicate: already processed"` (a command event
+  replayed) mean the same thing to a caller.
+
 ## 0.20.0 — 2026-09-11
 
 **Wire behaviour: the shape of `kind:30840` changes, and nothing already

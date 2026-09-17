@@ -147,6 +147,22 @@ export const KIND = {
    * the first.
    */
   MESSAGE_EDIT: 40003,
+  /**
+   * Open a DM — `KIND_DM_OPEN` (`buzz-core/src/kind.rs:423`).
+   *
+   * A **command**, not a record, and the difference decides how a client uses
+   * it. There is no `h`, because the channel does not exist yet and the client
+   * does not choose its id: the relay derives it from `compute_participant_hash`
+   * over self + the `p` tags, deduplicated, and answers with the uuid. A topic
+   * mints its own uuid client-side and creates it with a `9007`; a DM cannot,
+   * and {@link buildDmOpen} is the whole of the client's side of that.
+   *
+   * Because the id is derived, re-opening is idempotent: the same participants
+   * always name the same channel, so "message this person" never has to ask
+   * whether a DM already exists. Publish and use what comes back — see
+   * `commandPayload`, including the one case where nothing comes back.
+   */
+  DM_OPEN: 41010,
 } as const
 
 /** `build_reaction` (builders.rs:463) caps the emoji at 64 chars. */
@@ -410,6 +426,41 @@ export function buildAddMember(
     created_at: toNostrSeconds(createdAtMs),
     kind: KIND.NIP29_PUT_USER,
     tags,
+    content: '',
+  }
+}
+
+/** `handle_dm_open` (command_executor.rs:328) rejects more than this many `p` tags. */
+export const MAX_DM_OTHERS = 8
+
+/**
+ * kind:41010 open a DM — mirrors `build_dm_open` (builders.rs:1544).
+ *
+ * One `p` per **other** participant, in the order given; no `h`, no content.
+ *
+ * **Do not include your own pubkey.** The relay adds the signer to the set
+ * itself, so passing it once is harmless — `handle_dm_open` deduplicates before
+ * hashing — but it spends one of the eight slots the relay counts, because the
+ * cap is checked on the `p` tags as sent, before deduplication.
+ *
+ * The cap is rejected here rather than by the relay so nine participants fail
+ * where the caller can say something useful about it, instead of arriving as
+ * `invalid: pubkeys may contain at most 8 other participants` after a round
+ * trip. `p_tags.is_empty()` is refused the same way.
+ */
+export function buildDmOpen(pubkey: string, createdAtMs: number, args: { otherPubkeys: string[] }): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  const others = args.otherPubkeys.map((p) => p.toLowerCase())
+  if (others.length === 0) throw new Error('a DM needs at least one other participant')
+  if (others.length > MAX_DM_OTHERS) {
+    throw new Error(`a DM takes at most ${MAX_DM_OTHERS} other participants (${others.length} given)`)
+  }
+  for (const other of others) assertHex64(other, 'otherPubkey')
+  return {
+    pubkey,
+    created_at: toNostrSeconds(createdAtMs),
+    kind: KIND.DM_OPEN,
+    tags: others.map((other): NostrTag => ['p', other]),
     content: '',
   }
 }

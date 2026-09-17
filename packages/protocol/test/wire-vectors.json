@@ -125,6 +125,24 @@
       "id": "20aad8a035d659e70daec7d5d9571212d07bd8a42b80cb32e798595d2ff60720"
     },
     {
+      "name": "dmOpen",
+      "producedBy": [],
+      "note": "New in 0.21.0, so no app had produced these bytes before — `producedBy` is empty and this vector is not evidence of agreement between two implementations the way the others are. What stands in for that is the production event of the same shape in `production.events` below, whose id the relay computed.",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 41010,
+        "tags": [
+          [
+            "p",
+            "a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "1fa8fce4faef71a63446cdcbe2ac264fbb30b415b5384b8728998c39fb663549"
+    },
+    {
       "name": "reaction",
       "producedBy": [
         "peek",
@@ -663,8 +681,22 @@
     "untouched": "  no pointer   here  "
   },
   "production": {
-    "note": "Real events read back off https://estiva.estiva.app. Their ids and sigs are the RELAY's, so computeEventId reproducing them is a check against the authority rather than against ourselves. Sampled from the 96 RECORDED events in estiva-ship/conformance/fold-fixture.json — the 7 adversarial ones in that file are hand-built (h is the literal string \"fixture-folder\", authored 1970s-era timestamps) and were never published anywhere, so they cannot be checked against the relay. One is kept below as  because it is still a good id vector.",
+    "note": "Real events read back off https://estiva.estiva.app. Their ids and sigs are the RELAY's, so computeEventId reproducing them is a check against the authority rather than against ourselves. Sampled from the 96 RECORDED events in estiva-ship/conformance/fold-fixture.json — the 7 adversarial ones in that file are hand-built (h is the literal string \"fixture-folder\", authored 1970s-era timestamps) and were never published anywhere, so they cannot be checked against the relay. One is kept below as  because it is still a good id vector. The kind:41010 was added later and came by a different route (0.21.0): it was not read back — a command event is not in the event stream — it was *accepted*, and the id below is the one the relay echoed on `POST /events`, which is equally its answer and not ours.",
     "events": [
+      {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1789660131,
+        "kind": 41010,
+        "tags": [
+          [
+            "p",
+            "f3a38fa646debd4162125e0aed87b6d2393fb1ed9702b6875dcbc0c6529d64d1"
+          ]
+        ],
+        "content": "",
+        "id": "3f1cd3169cd6e212805cab0df888fee0ec46937d2841dcf1777cd27d262f78a1",
+        "sig": "2fafee0b29c37e4a72cdf36d3ec6e7f3f0ec74e548291a5dd2e1abd9f6434aba8c013029c2c442bb670a7927aa67e29912a3ee867c0dff781662f3b701602d52"
+      },
       {
         "content": "It's good idea to turn it into React before adding extra functionality, I'll ask Claude tomorrow how much work that would be",
         "created_at": 1787244500,
