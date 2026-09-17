@@ -36,6 +36,48 @@ export interface PublishResult {
   duplicate?: boolean
   /** The HTTP status, for a caller that wants to distinguish 403 from 500. */
   httpStatus?: number
+  /**
+   * The relay's own `message`, on the branch where the publish succeeded.
+   *
+   * For an ordinary event this is absent or uninteresting. For a **command
+   * kind** it is the answer: `handle_dm_open` (`41010`) replies
+   * `response:{"channel_id":…,"created":…}`, and that uuid is the only place
+   * the created channel is named — the client cannot derive it, and no query
+   * returns it. Until DMS-3 this branch dropped `message`, so a caller opening
+   * a DM through {@link Relay.publish} could not learn what it had opened.
+   *
+   * Kept raw. {@link commandPayload} parses the `response:` form; a message
+   * that is not one (`"duplicate: already processed"`) is still readable here.
+   */
+  message?: string
+}
+
+/**
+ * The JSON a command kind answered with, or `undefined` if it did not answer.
+ *
+ * Buzz command kinds put their result in `IngestResult.message` as the string
+ * `response:<json>`. Two ways there is nothing to parse, and a caller must
+ * handle both because neither is an error:
+ *
+ *  - **A replay.** `persist_command_event` keys on the *event id*, not on what
+ *    the command means, so re-publishing byte-identical bytes short-circuits to
+ *    `accepted:true`, `"duplicate: already processed"`, **no payload**. Measured
+ *    on production 2026-09-17; the relay does not re-run the handler, so it has
+ *    nothing to say. Two clients opening the same DM in the same wall-clock
+ *    second sign identical events, so this is a race, not a corner case — and
+ *    the way through is a *distinct* event (bump `created_at`), which re-runs
+ *    the handler and answers with the payload again.
+ *  - **A plain-language message**, which some kinds answer with instead.
+ */
+export function commandPayload(result: Pick<PublishResult, 'message'>): Record<string, unknown> | undefined {
+  const message = result.message
+  if (!message?.startsWith('response:')) return undefined
+  try {
+    const parsed: unknown = JSON.parse(message.slice('response:'.length))
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -147,7 +189,20 @@ export function parsePublishResponse(status: number, text: string): PublishResul
     const duplicate = (parsed.message ?? '').startsWith('duplicate:')
     return { ok: duplicate, duplicate, eventId: parsed.event_id, reason: parsed.message, httpStatus: status }
   }
-  return { ok: true, eventId: parsed.event_id, httpStatus: status }
+  /*
+    `duplicate:` arrives on *both* branches and means the same thing on each —
+    the relay already had this state. A channel create that loses the race says
+    it with `accepted:false`; a command event replayed byte-for-byte says it
+    with `accepted:true` (measured). A caller that reads `duplicate` to decide
+    whether to expect a payload must see it either way, or the accepted replay
+    looks like a command that simply answered nothing.
+  */
+  const result: PublishResult = { ok: true, eventId: parsed.event_id, httpStatus: status }
+  if (parsed.message !== undefined) {
+    result.message = parsed.message
+    if (parsed.message.startsWith('duplicate:')) result.duplicate = true
+  }
+  return result
 }
 
 export interface QueryResult {

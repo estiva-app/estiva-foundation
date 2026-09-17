@@ -40,6 +40,7 @@ const rebuild = {
   'createChannel-full': () =>
     P.buildCreateChannel(PUB, MS, { channelUuid: CH, name: 'Ops', visibility: 'private', channelType: 'forum', about: 'the ops room', ttlSeconds: 86400 }),
   addMember: () => P.buildAddMember(PUB, MS, { channelUuid: CH, targetPubkey: PUB2.toUpperCase(), role: 'admin' }),
+  dmOpen: () => P.buildDmOpen(PUB, MS, { otherPubkeys: [PUB2.toUpperCase()] }),
   reaction: () => P.buildReaction(PUB, MS, { targetEventId: EV1, emoji: '\u{1F389}' }),
   deletion: () => P.buildDeletion(PUB, MS, { targetEventId: EV1 }),
   'message-awkward-content': () => P.buildMessage(PUB, MS, { channelUuid: CH, content: AWKWARD }),
@@ -71,7 +72,10 @@ test('every recorded builder is covered — a vector nobody rebuilds is not a ch
 })
 
 for (const vector of vectors.events) {
-  test(`${vector.name} — bytes unchanged (was: ${vector.producedBy.join(' + ')})`, () => {
+  // An empty `producedBy` is a vector this package invented rather than
+  // inherited, so the label must not imply two implementations agreed.
+  const provenance = vector.producedBy.length ? `was: ${vector.producedBy.join(' + ')}` : 'new here, no prior copy'
+  test(`${vector.name} — bytes unchanged (${provenance})`, () => {
     const built = rebuild[vector.name]()
     // The whole event, not just the id: two events can hash the same only by
     // collision, but a diff on the tags is what a person can actually read.

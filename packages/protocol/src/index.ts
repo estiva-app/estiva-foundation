@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.20.0'
+export const PROTOCOL_VERSION = '0.21.0'
 
 export {
   // types
@@ -66,6 +66,7 @@ export {
   MAX_EMOJI_CHARS,
   MAX_MESSAGE_BYTES,
   MAX_MENTIONS,
+  MAX_DM_OTHERS,
   MAX_RATIONALE_BYTES,
   RELAY_AUTH_TOLERANCE_SECS,
   ASSERTION_SUBTYPE,
@@ -83,6 +84,7 @@ export {
   buildDeleteChannel,
   buildEditChannelMetadata,
   buildAddMember,
+  buildDmOpen,
   buildReaction,
   buildDeletion,
   buildEdit,
@@ -145,6 +147,7 @@ export {
   type QueryAllOptions,
   parsePublishResponse,
   parseQueryResponse,
+  commandPayload,
   RELAY_PAGE_CEILING,
   DEFAULT_QUERY_CONCURRENCY,
   MAX_FILTERS_PER_QUERY,

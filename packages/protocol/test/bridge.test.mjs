@@ -15,7 +15,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parsePublishResponse, parseQueryResponse, Relay, secretKeySigner, buildMessage } from '../dist/index.js'
+import {
+  parsePublishResponse,
+  parseQueryResponse,
+  commandPayload,
+  Relay,
+  secretKeySigner,
+  buildMessage,
+} from '../dist/index.js'
 
 const CH = '24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1'
 
@@ -38,6 +45,48 @@ test('a duplicate is the desired end state, so it reports ok', () => {
 test('accepted:true is ok, and the event id comes back', () => {
   const r = parsePublishResponse(200, JSON.stringify({ accepted: true, event_id: 'abc' }))
   assert.deepEqual(r, { ok: true, eventId: 'abc', httpStatus: 200 })
+})
+
+// ── a command kind's answer ────────────────────────────────────────────────
+//
+// Both bodies below are the relay's, copied from a production run on
+// 2026-09-17: one 41010 opening a DM, then the same signed event replayed.
+
+test('a command kind answers in `message`, and the accepted branch keeps it', () => {
+  const r = parsePublishResponse(
+    200,
+    JSON.stringify({
+      accepted: true,
+      event_id: '66ae946e6242cf970258b1e9017eba1ba94a106a079fcd700825bbd788029d09',
+      message: 'response:{"channel_id":"6a8d299d-f86c-4b42-a2de-8954f4ed1d91","created":false}',
+    }),
+  )
+  assert.equal(r.ok, true)
+  assert.deepEqual(commandPayload(r), {
+    channel_id: '6a8d299d-f86c-4b42-a2de-8954f4ed1d91',
+    created: false,
+  })
+})
+
+test('a byte-identical replay is accepted, duplicate, and answers nothing', () => {
+  const r = parsePublishResponse(
+    200,
+    JSON.stringify({
+      accepted: true,
+      event_id: '66ae946e6242cf970258b1e9017eba1ba94a106a079fcd700825bbd788029d09',
+      message: 'duplicate: already processed',
+    }),
+  )
+  assert.equal(r.ok, true)
+  assert.equal(r.duplicate, true, 'a caller must be able to tell a replay from a command that said nothing')
+  assert.equal(r.message, 'duplicate: already processed')
+  assert.equal(commandPayload(r), undefined)
+})
+
+test('a message that is not a `response:` payload parses to nothing, not a throw', () => {
+  assert.equal(commandPayload({ message: undefined }), undefined)
+  assert.equal(commandPayload({ message: 'response:{not json' }), undefined)
+  assert.equal(commandPayload({ message: 'response:"a string"' }), undefined)
 })
 
 test('a non-2xx keeps the status, so 403 is distinguishable from 500', () => {
