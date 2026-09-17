@@ -152,15 +152,22 @@ export const KIND = {
    *
    * A **command**, not a record, and the difference decides how a client uses
    * it. There is no `h`, because the channel does not exist yet and the client
-   * does not choose its id: the relay derives it from `compute_participant_hash`
-   * over self + the `p` tags, deduplicated, and answers with the uuid. A topic
+   * does not choose its id: the relay mints it and answers with it. A topic
    * mints its own uuid client-side and creates it with a `9007`; a DM cannot,
    * and {@link buildDmOpen} is the whole of the client's side of that.
    *
-   * Because the id is derived, re-opening is idempotent: the same participants
-   * always name the same channel, so "message this person" never has to ask
-   * whether a DM already exists. Publish and use what comes back — see
-   * `commandPayload`, including the one case where nothing comes back.
+   * **The uuid is random, and only the lookup is by participants.**
+   * `create_dm` takes `Uuid::new_v4()` (`buzz-db/src/dm.rs`); what
+   * `compute_participant_hash` — sha256 over the sorted, deduplicated pubkey
+   * bytes of self + the `p` tags — produces is the *key* `find_dm_by_participants`
+   * resolves, not the id itself. So re-opening is idempotent, because the same
+   * participants always hash to the same row and therefore name the same
+   * channel; but the uuid cannot be computed offline from the participants,
+   * and a client that tried would be inventing a channel nobody else has.
+   *
+   * Idempotence is what the caller gets to rely on: "message this person" never
+   * has to ask whether a DM already exists. Publish and use what comes back —
+   * see `commandPayload`, including the one case where nothing comes back.
    */
   DM_OPEN: 41010,
 } as const
