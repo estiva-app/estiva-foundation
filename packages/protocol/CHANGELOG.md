@@ -6,6 +6,15 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 
 ## 0.21.0 — 2026-09-17
 
+> **Corrected after publication (2026-09-17).** The entry below said a DM
+> channel's uuid was *derived* from `compute_participant_hash`. It is not:
+> `create_dm` mints `Uuid::new_v4()` and the hash is only the key the lookup
+> resolves. Nothing in the package behaved on the wrong reading — it never
+> tries to compute a uuid, it reads the one the relay answers with — so no
+> code changed and 0.21.0 is not republished. Corrected because the wrong
+> reading invites a client to compute a channel id offline, and the npm copy
+> of this file still carries the old sentence until the next release.
+
 **Wire behaviour: unchanged for every kind that was already published.** The
 one new builder, `buildDmOpen`, emits a kind nothing in the suite had ever
 sent; its bytes were checked against the relay before this was written, not
@@ -13,11 +22,11 @@ after (see below).
 
 - **New: `buildDmOpen` (`kind:41010`) and `KIND.DM_OPEN`.** One `p` per *other*
   participant, no `h`, empty content — mirroring `build_dm_open`
-  (`buzz-sdk/src/builders.rs:1544`). A DM channel's uuid is **derived by the
-  relay** from `compute_participant_hash` over self + the `p` tags, so unlike a
-  topic the client cannot mint it, cannot pass one, and only learns it from the
-  answer. `MAX_DM_OTHERS` (8) is enforced here so a tenth participant fails
-  where a caller can say something about it.
+  (`buzz-sdk/src/builders.rs:1544`). A DM channel's uuid is **minted by the
+  relay** — randomly, and keyed by the participant set rather than computed
+  from it — so unlike a topic the client cannot mint it, cannot pass one, and
+  only learns it from the answer. `MAX_DM_OTHERS` (8) is enforced here so a
+  tenth participant fails where a caller can say something about it.
 
 - **`PublishResult.message`, and `commandPayload` to read it.** The relay's
   `message` was kept only on the `accepted:false` branch, where it becomes
