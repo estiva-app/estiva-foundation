@@ -6,6 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.24.0 — 2026-09-18
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+One function and its types are added; every manifest already published means
+what it meant, and `resolveForeignObject` costs exactly what it did.
+
+- **A comment's edits, reactions and resolutions** (SHA-27, for FOL-31).
+  `commentDecorationsOf(targets, query)` reads, by `#e` and in one request,
+  what has been done to a set of comment ids: the newest `kind:40003` as
+  `edit` (CON-8), every `kind:7` as `reactions` for the newest
+  `REACTION_HORIZON` (100) targets with `reactionTargetsOmitted` reported
+  (SPEC §6.6, CON-1), and every `kind:9101` `t=resolution` as `resolutions`
+  oldest first (PEEK-128). A second round trip by construction — an edit
+  names the comment, not the file — so it is a function a conversation view
+  calls with the ids it has, and a widget that draws no comments never pays
+  for it.
+
 ## 0.23.0 — 2026-09-14
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**
