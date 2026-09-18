@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { MAX_FILTERS_PER_QUERY } from '@estiva-app/protocol'
+import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -407,6 +407,180 @@ export async function conversationsOf(
   }
   for (const messages of Object.values(conversations)) messages.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))
   return conversations
+}
+
+/**
+ * How many targets a reaction read asks about — SPEC §6.6, decided by CON-1.
+ *
+ * A `kind:7` carries no `h` and no `a`, so reactions are found only by asking
+ * for the ids on screen, and the number asked for is a horizon every reader
+ * shares: two apps with different N disagree about a count, legitimately and
+ * unfixably. The value is the specification's, not this package's.
+ */
+export const REACTION_HORIZON = 100
+
+/** A `kind:7` on a comment. */
+export interface CommentReaction {
+  id: string
+  emoji: string
+  by: string
+  at: number
+}
+
+/** A `kind:9101` resolution assertion on a comment (PEEK-128). */
+export interface CommentResolution {
+  id: string
+  action: 'resolved' | 'reopened'
+  by: string
+  at: number
+  /** The assertion's free text, when it carried one. */
+  message?: string
+  /** The reply that carried the resolution, when the writer named one. */
+  supportingEventId?: string
+}
+
+/** What has been done to one comment since it was written. */
+export interface CommentDecoration {
+  /**
+   * The newest `kind:40003` — the body to show, and when. RFC 0.4 §7.2.1: a
+   * reader MUST be told the body changed, so this is kept beside the original
+   * rather than folded over it; the consumer draws the marker.
+   */
+  edit?: { body: string; at: number; by: string }
+  /** Every reaction found, in the order the relay holds them. Empty inside the horizon means none. */
+  reactions: CommentReaction[]
+  /** Oldest first; the last one is the current state. Empty means never resolved. */
+  resolutions: CommentResolution[]
+}
+
+/** The answer of {@link commentDecorationsOf}. */
+export interface CommentDecorations {
+  /** Keyed by comment id. A target nothing happened to is present, with nothing in it. */
+  byId: Record<string, CommentDecoration>
+  /**
+   * How many of the targets were **not** asked about reactions, because they
+   * fell outside the horizon. SPEC §6.6 makes reporting this a MUST: a cap
+   * nobody can see is indistinguishable from "nobody reacted".
+   */
+  reactionTargetsOmitted: number
+}
+
+/** The three kinds a comment's decorations come in. Numbers, and here for the same reason `KIND_BARE_FILE` is. */
+const KIND_REACTION = 7
+const KIND_ASSERTION = 9101
+const KIND_MESSAGE_EDIT = 40003
+
+/** Ids per `#e` filter. A comfortable fraction of the relay's page, so one filter's answer is never cut. */
+const DECORATION_TARGETS_PER_FILTER = 100
+
+/**
+ * What has been done to a set of comments — edits, reactions, resolutions — in
+ * one request, read by `#e`.
+ *
+ * **A second round trip, and that is why this is a function rather than part of
+ * {@link resolveForeignObject}.** Everything that read returns is addressed by
+ * `#a`, so it arrives with the root. An edit (`kind:40003`), a reaction
+ * (`kind:7`) and a resolution (`kind:9101`) name the *comment* by `e` and not
+ * the file, so they cannot be asked for until the comment ids are known. A
+ * widget that never draws comments should not pay for that, so a consumer
+ * that draws a conversation asks here with the ids it has — the roots off the
+ * object, the replies off its thread read — and pays once for both.
+ *
+ * Three rules, each from the ticket that established it:
+ *
+ * - **Edits fold newest-wins** (CON-8). The original stays on the relay and so
+ *   does every edit; the fold is the reader's, and this is it.
+ * - **Reactions have a horizon of {@link REACTION_HORIZON} targets** (SPEC
+ *   §6.6, CON-1) — the *newest* targets by `at`, one budget across whatever
+ *   id spaces the caller mixes, and the number left out is reported. Edits
+ *   and resolutions have no horizon: they are one event per change, not one
+ *   per reader.
+ * - **A resolution is a `kind:9101` carrying `t=resolution`** (PEEK-128); its
+ *   `action` tag is the state, its content the rationale, and a second `e`
+ *   marked `support` names the reply that carried it.
+ *
+ * Nothing here checks who wrote an edit against who wrote the comment. The
+ * relay adjudicates writes; a `40003` it stored is one it accepted.
+ */
+export async function commentDecorationsOf(
+  targets: readonly { id: string; at: number }[],
+  query: QueryFn,
+): Promise<CommentDecorations> {
+  const byId: Record<string, CommentDecoration> = {}
+  const unique = new Map<string, number>()
+  for (const t of targets) if (!unique.has(t.id)) unique.set(t.id, t.at)
+  for (const id of unique.keys()) byId[id] = { reactions: [], resolutions: [] }
+  if (unique.size === 0) return { byId, reactionTargetsOmitted: 0 }
+
+  const ids = [...unique.keys()]
+  // Newest first, ties on the higher id so the cut is stable between reads.
+  const forReactions = [...unique]
+    .sort((a, b) => b[1] - a[1] || (a[0] > b[0] ? -1 : 1))
+    .slice(0, REACTION_HORIZON)
+    .map(([id]) => id)
+
+  const filters: Record<string, unknown>[] = []
+  const chunked = (list: string[]) => {
+    const out: string[][] = []
+    for (let i = 0; i < list.length; i += DECORATION_TARGETS_PER_FILTER) {
+      out.push(list.slice(i, i + DECORATION_TARGETS_PER_FILTER))
+    }
+    return out
+  }
+  for (const chunk of chunked(ids)) {
+    filters.push({ kinds: [KIND_MESSAGE_EDIT, KIND_ASSERTION], '#e': chunk, limit: RELAY_PAGE_CEILING })
+  }
+  for (const chunk of chunked(forReactions)) {
+    filters.push({ kinds: [KIND_REACTION], '#e': chunk, limit: RELAY_PAGE_CEILING })
+  }
+
+  const seen = new Set<string>()
+  const edits = new Map<string, SignedEvent>()
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    const events = await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
+    for (const event of events) {
+      if (seen.has(event.id)) continue
+      seen.add(event.id)
+      /*
+        The `e` that names one of *our* targets. A resolution carries a second
+        `e` for its supporting reply, and an edit written by another app may
+        carry more; the first `e` is not necessarily the target.
+      */
+      const target = event.tags.find((t) => t[0] === 'e' && t[1] in byId && !t[3])?.[1]
+      if (!target) continue
+      const into = byId[target]
+      if (event.kind === KIND_MESSAGE_EDIT) {
+        const current = edits.get(target)
+        if (!current || byOrder(current, event) < 0) edits.set(target, event)
+      } else if (event.kind === KIND_REACTION) {
+        if (!forReactions.includes(target)) continue
+        into.reactions.push({ id: event.id, emoji: event.content, by: event.pubkey, at: event.created_at })
+      } else if (event.kind === KIND_ASSERTION) {
+        if (tagValue(event, 't') !== 'resolution') continue
+        const action = tagValue(event, 'action')
+        if (action !== 'resolved' && action !== 'reopened') continue
+        const support = event.tags.find((t) => t[0] === 'e' && t[3] === 'support')?.[1]
+        into.resolutions.push({
+          id: event.id,
+          action,
+          by: event.pubkey,
+          at: event.created_at,
+          ...(event.content ? { message: event.content } : {}),
+          ...(support ? { supportingEventId: support } : {}),
+        })
+      }
+    }
+  }
+  for (const [target, event] of edits) {
+    byId[target].edit = { body: event.content, at: event.created_at, by: event.pubkey }
+  }
+  const oldestFirst = (a: { at: number; id: string }, b: { at: number; id: string }) =>
+    a.at - b.at || (a.id < b.id ? -1 : 1)
+  for (const decoration of Object.values(byId)) {
+    decoration.reactions.sort(oldestFirst)
+    decoration.resolutions.sort(oldestFirst)
+  }
+  return { byId, reactionTargetsOmitted: ids.length - forReactions.length }
 }
 
 /** How the owning app says its records should be read. */
