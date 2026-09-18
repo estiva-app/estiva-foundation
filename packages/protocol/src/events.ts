@@ -170,6 +170,43 @@ export const KIND = {
    * see `commandPayload`, including the one case where nothing comes back.
    */
   DM_OPEN: 41010,
+  /**
+   * Hide a DM from the signer's own sidebar — `KIND_DM_HIDE`
+   * (`buzz-core/src/kind.rs`). A command like {@link KIND.DM_OPEN}: one `h`
+   * naming the DM channel, no content, and the caller must be a member of it.
+   *
+   * **Hiding is neither leaving nor deleting.** `handle_dm_hide` sets the
+   * caller's own `hidden_at` on their membership row and nothing else: the
+   * channel, every participant and every message survive, and the other
+   * participants are not told. What changes is the signer's
+   * {@link KIND.DM_VISIBILITY} snapshot, which the relay republishes after the
+   * hide.
+   *
+   * **There is no unhide command.** `open_dm` clears the caller's `hidden_at`
+   * when the DM already exists (`buzz-db/src/dm.rs`), so re-publishing the
+   * same {@link buildDmOpen} is how a hidden DM comes back — the relay
+   * republishes the snapshot on that path too. A message arriving in a hidden
+   * DM does *not* resurface it: nothing on the `kind:9` path touches
+   * `hidden_at`.
+   */
+  DM_HIDE: 41012,
+  /**
+   * The relay's per-viewer hidden-DM set — `KIND_DM_VISIBILITY`
+   * (`buzz-core/src/kind.rs`). **Relay-signed, and only ever read.** There is
+   * no builder for it here on purpose: `ingest.rs` refuses a client-authored
+   * one, and an app that signed one would be forging the relay's answer.
+   *
+   * Parameterized replaceable with `d` = the viewer's pubkey, carrying one `h`
+   * per hidden DM channel and a `p` = the viewer. It is result-gated on that
+   * `p` (`RESULT_GATED_KINDS`, `filter.rs:reader_authorized_for_event`): the
+   * read that works is `{ kinds: [30622], '#p': [me], limit: 1 }`, and a
+   * `#p` naming anybody else is refused rather than answered empty.
+   *
+   * The newest event is the whole set. The relay writes it again after every
+   * hide and every re-open, so a client applies the latest one wholesale and
+   * never merges successive snapshots.
+   */
+  DM_VISIBILITY: 30622,
 } as const
 
 /** `build_reaction` (builders.rs:463) caps the emoji at 64 chars. */
@@ -468,6 +505,28 @@ export function buildDmOpen(pubkey: string, createdAtMs: number, args: { otherPu
     created_at: toNostrSeconds(createdAtMs),
     kind: KIND.DM_OPEN,
     tags: others.map((other): NostrTag => ['p', other]),
+    content: '',
+  }
+}
+
+/**
+ * kind:41012 hide a DM — mirrors `build_dm_hide` (`desktop/src-tauri/src/events.rs`).
+ *
+ * One `h` naming the DM channel, no content. The channel uuid is the one the
+ * relay answered a {@link buildDmOpen} with — there is no other way to hold
+ * one — and the relay rejects the hide unless the signer is a member of it.
+ *
+ * Undone by publishing the same `buildDmOpen` again, not by any event of this
+ * kind: see {@link KIND.DM_HIDE}.
+ */
+export function buildDmHide(pubkey: string, createdAtMs: number, args: { channelUuid: string }): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  if (!args.channelUuid) throw new Error('a DM hide names the channel to hide')
+  return {
+    pubkey,
+    created_at: toNostrSeconds(createdAtMs),
+    kind: KIND.DM_HIDE,
+    tags: [['h', args.channelUuid]],
     content: '',
   }
 }

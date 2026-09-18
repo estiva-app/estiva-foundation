@@ -143,6 +143,24 @@
       "id": "1fa8fce4faef71a63446cdcbe2ac264fbb30b415b5384b8728998c39fb663549"
     },
     {
+      "name": "dmHide",
+      "producedBy": [],
+      "note": "New in 0.22.0. Mirrors buzz's own `build_dm_hide` (desktop/src-tauri/src/events.rs): one `h`, empty content. Like dmOpen, `producedBy` is empty — no app had sent these bytes — and the id here is this package's own computation, not the relay's echo: the agent that wrote this has no 41012 grant, so the accepted-id check happens in Peek's DMS-6 live run as a signed-in person.",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 41012,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "ba34ec782286f3f86a218eb33b993107db52cbfca71aa3655262ed417373c751"
+    },
+    {
       "name": "reaction",
       "producedBy": [
         "peek",

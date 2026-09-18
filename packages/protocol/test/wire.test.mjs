@@ -41,6 +41,7 @@ const rebuild = {
     P.buildCreateChannel(PUB, MS, { channelUuid: CH, name: 'Ops', visibility: 'private', channelType: 'forum', about: 'the ops room', ttlSeconds: 86400 }),
   addMember: () => P.buildAddMember(PUB, MS, { channelUuid: CH, targetPubkey: PUB2.toUpperCase(), role: 'admin' }),
   dmOpen: () => P.buildDmOpen(PUB, MS, { otherPubkeys: [PUB2.toUpperCase()] }),
+  dmHide: () => P.buildDmHide(PUB, MS, { channelUuid: CH }),
   reaction: () => P.buildReaction(PUB, MS, { targetEventId: EV1, emoji: '\u{1F389}' }),
   deletion: () => P.buildDeletion(PUB, MS, { targetEventId: EV1 }),
   'message-awkward-content': () => P.buildMessage(PUB, MS, { channelUuid: CH, content: AWKWARD }),
