@@ -4,6 +4,33 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.22.0 — 2026-09-18
+
+**Wire behaviour: unchanged for every kind that was already published.** One
+new builder for a kind nothing in the suite had sent, and one constant for a
+kind nothing in the suite may ever sign.
+
+- **New: `buildDmHide` (`kind:41012`) and `KIND.DM_HIDE`.** One `h` naming the
+  DM channel, empty content — mirroring `build_dm_hide`
+  (`desktop/src-tauri/src/events.rs`), buzz's only builder for it. The relay
+  sets the signer's own `hidden_at` on their membership row and nothing else:
+  the DM, its participants and its history survive, and nobody else is told.
+  The wire vector is this package's own computation, since the agent that
+  wrote it holds no `41012` grant; Peek's DMS-6 live check publishes it as a
+  signed-in person and reads the relay's echoed id.
+
+- **New: `KIND.DM_VISIBILITY = 30622`, deliberately without a builder.** The
+  relay's per-viewer hidden-DM snapshot: parameterized replaceable on
+  `d` = viewer, one `h` per hidden channel, relay-signed and result-gated on
+  its `p`. It is read with `{ kinds: [30622], '#p': [me], limit: 1 }` and
+  never merged — the newest event is the whole set. An app that built one
+  would be forging the relay's answer, and `ingest.rs` refuses it anyway.
+
+- **Recorded on the constants, because it decides a client's design:** there
+  is no unhide kind. `open_dm` clears the caller's `hidden_at` when the DM
+  already exists, so a second `buildDmOpen` is the unhide; and a message
+  arriving in a hidden DM does not resurface it.
+
 ## 0.21.0 — 2026-09-17
 
 > **Corrected after publication (2026-09-17).** The entry below said a DM
