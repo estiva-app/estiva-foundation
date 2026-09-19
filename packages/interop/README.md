@@ -229,6 +229,29 @@ shared record. And **an object with no `naddr` offers no actions**: a change
 names its target with an `a` tag, and a regular event cannot be named that way.
 That is the model being honest, not a gap.
 
+### Actions that delete
+
+An action whose `emits.kind` is `5` is a deletion, and it arrives as
+`control: 'confirm'` — one button, no value, ask first (its `effect` is
+`destructive`). `buildActionEvent` builds NIP-09's request naming the object's
+address, and the relay decides who may: the author, or the owner of an agent
+that wrote it. **Offer it to everyone and report the answer.** A consumer that
+hid the control behind an author check of its own would hide it from the one
+person the relay would have let through, and could never evaluate the second
+half anyway (SPEC §6.5).
+
+```ts
+const action = object.actions.find((a) => a.control === 'confirm')
+// after the person has confirmed:
+const built = buildActionEvent({ /* …as above… */ actionId: action.id, value: '' })
+```
+
+The bare file's built-in manifest declares one, beside `rename` (a `title`
+change) and `comment`. A consumer that draws every field-setting action as an
+input will now draw a "Rename" box under a bare file's card; whether that is
+what its card is for is the consumer's call, and the field it sets is the one
+`slots.title.field` names, so the two are one fact either way (PEEK-18).
+
 ## 3. Widgets: draw what you know, degrade honestly
 
 `widget` is a *layout hint*, and it may be a single type or an ordered chain:
