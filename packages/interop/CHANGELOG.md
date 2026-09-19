@@ -6,6 +6,31 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.25.0 — 2026-09-19
+
+**What a manifest may declare changes, in one place: an action whose
+`emits.kind` is `5` is a deletion.** Every manifest already published means
+what it meant — none declares one — and every declaration is read as before,
+except that such an action, which 0.24.0 skipped as neither change nor comment
+nor creation, now resolves.
+
+- **A deletion is a fourth action shape** (FOL-33). It resolves with
+  `control: 'confirm'` — a new member of `ResolvedAction.control`, so a
+  consumer that switches on it and falls through to a text input must not draw
+  one for it — and `buildActionEvent` builds NIP-09's `kind:5` naming the
+  object's address (`a`, plus `k`), which is the branch on which the relay
+  checks the actor against the address's author. Offer it to everyone and
+  report the relay's answer; a client cannot evaluate the agent-owner half of
+  the rule (SPEC §6.5).
+- **The bare file's built-in manifest declares `rename` and `delete`** beside
+  `comment`. `rename` is a `kind:1851` change to `title`, which the title slot
+  already folded — so anyone in the team may, and every reader sees it — rather
+  than a re-publish of the `30840`, which only its author could sign and which
+  from anyone else is a different address, not a refusal. A consumer that draws
+  every field-setting action as an input now gets a "Rename" box under a bare
+  file's card; its `field` is the one `slots.title.field` names, so a consumer
+  that treats the title as a heading rather than a property row can tell.
+
 ## 0.24.0 — 2026-09-18
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**

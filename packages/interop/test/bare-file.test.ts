@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import {
   BARE_FILE_MANIFEST_ADDRESS,
   KIND_BARE_FILE,
+  buildActionEvent,
   commentKindsOf,
   createProjectionCache,
   resolveFolderContents,
@@ -290,6 +291,91 @@ describe('no app may claim the bare file', () => {
     assert.equal(found?.appName, 'File')
     assert.equal(found?.widget, 'card')
     assert.equal(found?.slots.title.value, 'Launch naming')
+  })
+})
+
+describe('a bare file can be renamed and deleted, because its manifest says so', () => {
+  /*
+    FOL-33. A consumer offering Rename and Delete on a bare file and nothing on
+    a Ship issue does so because this manifest declares `rename` and `delete`
+    and Ship's does not — the same rule FOL-31 set for `comment`. Nothing here
+    asks what kind the object is.
+  */
+  const build = (actionId: string, value = '', manifest = BARE_MANIFEST) =>
+    buildActionEvent({
+      manifest,
+      kind: KIND_BARE_FILE,
+      address: TOPIC,
+      objectAuthor: AUTHOR,
+      folder: TEAM,
+      actionId,
+      value,
+      pubkey: OTHER,
+      createdAtMs: 1_700_000_000_000,
+    })
+  let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
+
+  it('declares comment, rename and delete, each as the control a consumer draws', async () => {
+    const found = await resolveForeignObject(TOPIC, relay([topic()]))
+    assert.deepEqual(
+      found?.actions.map((a) => [a.id, a.control, a.effect]),
+      [
+        ['comment', 'text', 'writes'],
+        ['rename', 'text', 'writes'],
+        ['delete', 'confirm', 'destructive'],
+      ],
+    )
+    // `rename` sets the field the title slot reads — one fact, two views (PEEK-18).
+    assert.equal(found?.actions.find((a) => a.id === 'rename')?.field, found?.slots.title.field)
+    const resolved = await resolveManifest({ kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] }, relay([]))
+    BARE_MANIFEST = resolved!.manifest
+  })
+
+  it('renames with a title change anyone in the team may publish, and the title folds it', async () => {
+    const built = build('rename', 'Launch naming, second pass')
+    assert.notEqual(typeof built, 'string', String(built))
+    const change = built as Exclude<typeof built, string>
+    assert.equal(change.kind, CHANGE_KIND)
+    assert.equal(change.pubkey, OTHER, 'a non-author renames: it is a change, not a re-publish')
+    assert.deepEqual(
+      change.tags.filter((t) => t[0] !== 'ts'),
+      [['a', TOPIC], ['field', 'title'], ['value', 'Launch naming, second pass'], ['h', TEAM]],
+    )
+    const renamed = event({ ...change, id: 'f'.repeat(64), sig: '' } as SignedEvent)
+    const found = await resolveForeignObject(TOPIC, relay([topic(), renamed]))
+    assert.equal(found?.slots.title.value, 'Launch naming, second pass')
+  })
+
+  it('deletes with a NIP-09 request naming the address, for the relay to adjudicate', () => {
+    const built = build('delete')
+    assert.notEqual(typeof built, 'string', String(built))
+    const request = built as Exclude<typeof built, string>
+    assert.equal(request.kind, 5)
+    assert.deepEqual(request.tags, [['a', TOPIC], ['k', String(KIND_BARE_FILE)]])
+    assert.equal(request.content, '')
+    assert.ok(!request.tags.some((t) => t[0] === 'e'), 'an `e` tag would route the relay to the wrong branch')
+  })
+
+  it('offers no deletion on a kind whose manifest declares none', async () => {
+    // Ship's shape: a change action and a comment, and nothing emitting kind:5.
+    const ship = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [['d', 'ship'], ['k', String(PROJECT_KIND)]],
+      content: JSON.stringify({
+        name: 'Ship',
+        records: { changeKind: CHANGE_KIND, targetTag: 'a', fieldTag: 'field', valueTag: 'value' },
+        projections: { [PROJECT_KIND]: { widget: 'card', slots: { title: { tag: 'title' } } } },
+        actions: [
+          { id: 'set-status', label: 'Set status', appliesTo: String(PROJECT_KIND), emits: { kind: CHANGE_KIND, field: 'status' }, input: { type: 'string' } },
+          { id: 'comment', label: 'Comment', appliesTo: String(PROJECT_KIND), emits: { kind: COMMENT_KIND, scope: 'address' }, input: { type: 'string' } },
+        ],
+      }),
+    })
+    const project = event({ kind: PROJECT_KIND, pubkey: OTHER, tags: [['d', 'launch'], ['title', 'Launch'], ['h', TEAM]] })
+    const found = await resolveForeignObject(PROJECT, relay([ship, project]))
+    assert.deepEqual(found?.actions.map((a) => a.id), ['set-status', 'comment'])
+    assert.ok(!found?.actions.some((a) => a.control === 'confirm'))
   })
 })
 

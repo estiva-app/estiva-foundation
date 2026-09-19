@@ -193,6 +193,14 @@ const KIND_HANDLER_INFORMATION = 31990
  * finding comments the moment an app said something different.
  */
 const KIND_COMMENT = 1111
+/**
+ * NIP-09's deletion request. Protocol, like the two above, and the one kind an
+ * action may emit that is neither a change nor a comment nor a creation: an
+ * action emitting it is a *deletion* (`control: 'confirm'`), and the event it
+ * builds names the object's address, which is the NIP's shape for an
+ * addressable target and what the relay adjudicates by author.
+ */
+const KIND_DELETION = 5
 
 /**
  * Every kind an app's comments might be under — what it publishes **now**, plus
@@ -806,7 +814,14 @@ export interface ResolvedAction {
    * something this version does not recognise — both meaning *unknown*.
    */
   effect?: ActionEffect
-  control: 'select' | 'pubkey' | 'text' | 'form'
+  /**
+   * The control a consumer draws. `confirm` is a deletion (FOL-33): one button
+   * that asks first and takes no value, because the action emits NIP-09's
+   * `kind:5` and there is nothing to type. Added in 0.25.0 — a consumer that
+   * switches on this and falls through to a text input must not draw one for
+   * it.
+   */
+  control: 'select' | 'pubkey' | 'text' | 'form' | 'confirm'
   /** For `select`: the declared vocabulary, already looked up. */
   options?: { value: string; label: string; colour?: string }[]
   /**
@@ -883,7 +898,22 @@ function resolveActions(
     const isChange = !!action.emits.field
     const isComment = action.emits.scope === 'address'
     const isCreation = action.input?.type === 'object' && !!action.input.properties
-    if (!isChange && !isComment && !isCreation) continue
+    // Four, since 0.25.0. Decided by the kind before the other three, so a
+    // manifest that put `scope: 'address'` on its deletion — the target *is*
+    // an address — is not mistaken for a comment.
+    const isDeletion = action.emits.kind === KIND_DELETION
+    if (!isDeletion && !isChange && !isComment && !isCreation) continue
+
+    if (isDeletion) {
+      out.push({
+        id: action.id,
+        label: action.label,
+        ...(action.description ? { description: action.description } : {}),
+        ...(action.effect ? { effect: action.effect } : {}),
+        control: 'confirm',
+      })
+      continue
+    }
 
     if (isCreation) {
       const properties = action.input!.properties!
@@ -1183,17 +1213,54 @@ const BARE_FILE_MANIFEST: Manifest = {
       },
     },
   },
+  /*
+    Three actions, and the manifest is the only place a consumer learns of any
+    of them (FOL-33). A Peek page offering Rename and Delete on a bare file and
+    nothing on a Ship issue does so because *this* list says `rename` and
+    `delete` and Ship's does not — never because the kind is 30840. The rule is
+    the one FOL-31 set for `comment`: a control is drawn from a declaration.
+
+    `rename` is a `kind:1851` change to the `title` field, not a re-publish of
+    the `30840`. The title slot already folds `title`, so a rename by anyone in
+    the team lands for every reader the way a re-parent does; a re-publish
+    could only ever be the author's, because a `30840` from another pubkey is a
+    different address and not a refusal. `delete` is NIP-09's `kind:5` naming
+    the address — the relay decides who may (the author, or the owner of an
+    authoring agent; SPEC §6.5), so a consumer offers it and reports the answer
+    rather than judging first.
+  */
   actions: [
     {
       id: 'comment',
       label: 'Comment',
       description:
-        'Say something about this file. A bare file has no fields to change, so this is the only ' +
-        'thing another app can do to it, and the comment lands in the team Folder the file lives in.',
+        'Say something about this file. The comment lands in the team Folder the file lives in, ' +
+        'and is what every reader of the file sees under it.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: KIND_COMMENT, scope: 'address' },
       input: { type: 'string' },
+    },
+    {
+      id: 'rename',
+      label: 'Rename',
+      description:
+        'Give this file a new title. A change event, so anyone in the team may, and every app ' +
+        'reading the file folds it into the title.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: 1851, field: 'title' },
+      input: { type: 'string' },
+    },
+    {
+      id: 'delete',
+      label: 'Delete',
+      description:
+        'Ask the relay to delete this file. The relay decides — only its author, or the owner of ' +
+        'an agent that wrote it, may — and its comments stay as separate events.',
+      effect: 'destructive',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: KIND_DELETION },
     },
   ],
 }
@@ -3461,6 +3528,32 @@ export function buildActionEvent(args: {
 
   if (typeof value !== 'string') {
     return `"${declared.label}" takes a single value, not a form.`
+  }
+
+  /*
+    A deletion is NIP-09, built from the NIP rather than from the manifest for
+    the same reason a comment is: no app owns `kind:5`. The `a` tag names the
+    object — the shape for an addressable target, and the branch on which the
+    relay checks the actor against the *address's* author rather than one
+    event's — and `k` says what kind it was, as the NIP asks. No `h`: the
+    request is about the object, not about a channel, and the relay does not
+    read one here. Before the fold-rule check because, like a creation, a
+    deletion folds nothing.
+
+    The value is ignored rather than refused. A consumer's confirm dialog has
+    nothing to pass, and `''` is what it will pass.
+  */
+  if (declared.emits.kind === KIND_DELETION) {
+    return {
+      pubkey: args.pubkey,
+      created_at: Math.floor(args.createdAtMs / 1000),
+      kind: KIND_DELETION,
+      tags: [
+        ['a', address],
+        ['k', String(kind)],
+      ],
+      content: '',
+    }
   }
 
   /*
