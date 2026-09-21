@@ -1,8 +1,10 @@
 /**
  * Object URLs — RFC 0.5 §7, accepted 2026-09-03.
  *
- *     https://<app>.estiva.app/<type>s              a directory of that kind
- *     https://<app>.estiva.app/<type>/<slug>-<d>    one object
+ *     https://<app>.estiva.app/<type>s                        a directory of that kind
+ *     https://<app>.estiva.app/<type>/<slug>-<d>              one object
+ *     https://<app>.estiva.app/<type>/<slug>-<id>             one event, which has no `d`
+ *     https://<app>.estiva.app/<type>/<slug>-<d>?thread=<id>  one event, inside an object
  *
  * **Here rather than in each app** because it is wire-visible: §7.1's whole
  * argument is that the URL one app puts in the address bar has to be resolvable
@@ -163,6 +165,13 @@ export interface MatchedObjectUrl {
   by: 'd' | 'id'
   /** Present only when the matched pattern named one. */
   kind?: number
+  /**
+   * The object the path names, when the identity came from the query — the
+   * topic a `?thread=<id>` link opens, read off `/topic/<slug>-<d>`. Absent
+   * when the path *is* the identity. A consumer resolving the thread needs
+   * only `identifier`; this is for one that wants to say where it is.
+   */
+  within?: { identifier: string; by: 'd' | 'id' }
 }
 
 /**
@@ -173,6 +182,18 @@ export interface MatchedObjectUrl {
  * consumer that matched on the trailing uuid alone would resolve any URL from
  * anywhere as that app's object.
  *
+ * **A query parameter may carry the identity too** (FOL-38). Peek opens a
+ * thread as `/topic/<slug>-<d>?thread=<id>`: the path names the topic, the
+ * query names the root comment, and the link is *about the comment*. So a
+ * pattern may write a placeholder in its query, and when it does, that
+ * placeholder is the identity and the path's is the container (`within`).
+ * A pattern with no query placeholder still ignores the query entirely — a
+ * link that has been through a tracker's `?utm_…` resolves as before — and
+ * when two patterns claim one URL, the one whose query placeholders the URL
+ * satisfies wins over the one that ignored them, whatever order the manifest
+ * declared them in. That is what lets an app declare the topic shape and the
+ * thread shape as two `urls` tags rather than one grammar.
+ *
  * Returns null for a URL no pattern claims, which is the honest outcome — §7.5
  * says such a URL renders as a plain link, because it is one.
  */
@@ -180,6 +201,7 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
   const target = splitUrl(url)
   if (!target) return null
 
+  let best: { specificity: number; match: MatchedObjectUrl } | null = null
   for (const { pattern, kind } of patterns) {
     const shape = splitUrl(pattern)
     if (!shape) continue
@@ -205,12 +227,39 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
       relied on that would be inferring an app's addressing model from a
       character class.
     */
-    const wantsEventId = shape.segments[shape.segments.length - 1]?.includes('<id>') ?? false
-    const identifier = wantsEventId ? eventIdFromRef(tail) : identifierFromRef(tail)
-    if (!identifier) continue
-    return { identifier, by: wantsEventId ? 'id' : 'd', ...(kind === undefined ? {} : { kind }) }
+    const path = readPlaceholder(shape.segments[shape.segments.length - 1] ?? '', tail)
+    if (!path) continue
+
+    // Every placeholder the pattern's query declares must be present and must
+    // parse; a `?thread=` that carries no event id names nothing, and the
+    // topic shape — if declared — is what such a link falls back to.
+    const declared = Object.entries(shape.query).filter(([, value]) => /<(?:d|id)>/.test(value))
+    let query: { identifier: string; by: 'd' | 'id' } | null = null
+    let satisfied = true
+    for (const [key, placeholder] of declared) {
+      const value = target.query[key]
+      const read = value === undefined ? null : readPlaceholder(placeholder, value)
+      if (!read) {
+        satisfied = false
+        break
+      }
+      query = read
+    }
+    if (!satisfied) continue
+
+    const match: MatchedObjectUrl = query
+      ? { ...query, ...(kind === undefined ? {} : { kind }), within: path }
+      : { ...path, ...(kind === undefined ? {} : { kind }) }
+    if (!best || declared.length > best.specificity) best = { specificity: declared.length, match }
   }
-  return null
+  return best?.match ?? null
+}
+
+/** The identity a placeholder declares, read off the value in that position. */
+function readPlaceholder(placeholder: string, value: string): { identifier: string; by: 'd' | 'id' } | null {
+  const wantsEventId = placeholder.includes('<id>')
+  const identifier = wantsEventId ? eventIdFromRef(value) : identifierFromRef(value)
+  return identifier ? { identifier, by: wantsEventId ? 'id' : 'd' } : null
 }
 
 /**
@@ -231,10 +280,16 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
  * refusal local to the parser rather than a consequence of what apps happen to
  * declare.
  */
-function splitUrl(raw: string): { scheme: string; host: string; segments: string[]; fragmented: boolean } | null {
-  const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#(.*))?$/i.exec(raw.trim())
+function splitUrl(raw: string): {
+  scheme: string
+  host: string
+  segments: string[]
+  fragmented: boolean
+  query: Record<string, string>
+} | null {
+  const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i.exec(raw.trim())
   if (!match) return null
-  const [, scheme, host, path, fragment] = match
+  const [, scheme, host, path, search, fragment] = match
 
   /*
     A fragment route counts as path.
@@ -260,5 +315,33 @@ function splitUrl(raw: string): { scheme: string; host: string; segments: string
     host: host.toLowerCase(),
     segments: [...(path ?? '').split('/'), ...fragmentPath.split('/')].filter(Boolean),
     fragmented: fragmentPath !== '',
+    query: parseQuery(search ?? ''),
   }
+}
+
+/**
+ * `?a=b&c=d` as a record, hand-parsed for the same reason `splitUrl` is:
+ * `URLSearchParams` is the DOM's. The first spelling of a repeated key wins,
+ * and a value that will not decode is kept as written rather than dropped —
+ * a placeholder reader then refuses it, which is the honest answer for a
+ * link something mangled.
+ */
+function parseQuery(search: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const pair of search.split('&')) {
+    if (!pair) continue
+    const eq = pair.indexOf('=')
+    const rawKey = eq === -1 ? pair : pair.slice(0, eq)
+    const rawValue = eq === -1 ? '' : pair.slice(eq + 1)
+    let key = rawKey
+    let value = rawValue
+    try {
+      key = decodeURIComponent(rawKey)
+      value = decodeURIComponent(rawValue)
+    } catch {
+      // Kept as written; see above.
+    }
+    if (!Object.hasOwn(out, key)) out[key] = value
+  }
+  return out
 }

@@ -369,6 +369,28 @@ template for `naddr` on the same `kind:31990`, and every consumer's card for a
 topic becomes a link into your app — with no change on their side. `ASPECTS`
 is exported and holds the two values.
 
+The same is true of a **comment** (`kind:1111`): every app writes one and none
+owns it, so the built-in manifest draws it — the author as its title, the text
+as its body, with the `message` widget — and it opens by your `nevent`
+template. Publish one, or one `web` string for both entity types.
+
+### Say what your links look like
+
+A URL somebody pastes is a reference too (RFC 0.5 §7.5). Declare each shape you
+serve as a `urls` tag on the manifest event, with the kind it names:
+
+```
+["urls", "https://peek.estiva.app/topic/<slug>-<d>", "30840"]
+["urls", "https://peek.estiva.app/topic/<slug>-<d>?thread=<id>", "1111"]
+["urls", "https://peek.estiva.app/message/<id>", "9"]
+```
+
+`<d>` resolves with `#d`, `<id>` with `ids`; the slug is decoration. A
+placeholder in the query is the identity, and the path's is then the container
+(`within`). A consumer calls `matchObjectUrl(url, urlPatternsOf(manifest))` and
+gets `{ identifier, by, kind }` or null — a URL nothing claims is a link and
+stays one.
+
 ---
 
 ## 5. Read a whole folder, across every app in it

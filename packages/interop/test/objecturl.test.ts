@@ -236,3 +236,58 @@ describe('an event id as the identity', () => {
     assert.equal(matchObjectUrl(`https://peek.estiva.app/message/${EVENT}ab`, PEEK), null)
   })
 })
+
+describe('an event id in the query string', () => {
+  // Peek opens a thread as `/topic/<slug>-<d>?thread=<id>`: the path names the
+  // topic, the query names the root comment, and the link is about the
+  // comment (FOL-38). Declared as its own `urls` tag beside the topic shape.
+  const EVENT = 'b7c2'.repeat(16)
+  const TOPIC = { pattern: 'https://peek.estiva.app/topic/<slug>-<d>', kind: 30840 }
+  const THREAD = { pattern: 'https://peek.estiva.app/topic/<slug>-<d>?thread=<id>', kind: 1111 }
+
+  it('reads the identity off the query and the container off the path', () => {
+    assert.deepEqual(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}?thread=${EVENT}`, [THREAD]), {
+      identifier: EVENT,
+      by: 'id',
+      kind: 1111,
+      within: { identifier: UUID, by: 'd' },
+    })
+  })
+
+  it('prefers the shape whose query it satisfies, in either declaration order', () => {
+    const url = `https://peek.estiva.app/topic/design-${UUID}?thread=${EVENT}`
+    assert.equal(matchObjectUrl(url, [TOPIC, THREAD])?.kind, 1111)
+    assert.equal(matchObjectUrl(url, [THREAD, TOPIC])?.kind, 1111)
+  })
+
+  it('falls back to the topic shape when the query names no thread', () => {
+    const plain = matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}`, [THREAD, TOPIC])
+    assert.deepEqual(plain, { identifier: UUID, by: 'd', kind: 30840 })
+    // A tracker's parameter is not a thread, and neither is a truncated id.
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}?utm_source=x`, [THREAD, TOPIC])?.kind, 30840)
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}?thread=${EVENT.slice(0, 63)}`, [THREAD, TOPIC])?.kind, 30840)
+  })
+
+  it('names nothing when only the thread shape is declared and the query is missing', () => {
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}`, [THREAD]), null)
+  })
+
+  it('still requires the path to parse as its own placeholder', () => {
+    // `?thread=` alone must not turn any path under /topic/ into a match.
+    assert.equal(matchObjectUrl(`https://peek.estiva.app/topic/not-a-uuid?thread=${EVENT}`, [THREAD]), null)
+  })
+
+  it('reads a percent-encoded value and ignores other parameters', () => {
+    const url = `https://peek.estiva.app/topic/design-${UUID}?from=desk&thread=${encodeURIComponent(EVENT.toUpperCase())}`
+    assert.equal(matchObjectUrl(url, [THREAD])?.identifier, EVENT)
+  })
+
+  it('leaves a path-only shape unchanged', () => {
+    // No `within`, no query read: the existing grammar is exactly as it was.
+    assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/issue/x-${UUID}?thread=${EVENT}`, SHIP), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30851,
+    })
+  })
+})

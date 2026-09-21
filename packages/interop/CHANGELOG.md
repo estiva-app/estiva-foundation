@@ -6,6 +6,32 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.27.0 — 2026-09-21
+
+**What a manifest may declare changes, in one place: a `urls` pattern may carry
+its placeholder in the query string.** Every manifest already published means
+what it meant — every declared shape has its placeholder in the path, and a
+path-only shape is read exactly as before, query ignored. And one thing is
+read differently: a `kind:1111` event now resolves.
+
+- **`?thread=<id>` is a shape** (FOL-38). Peek opens a thread as
+  `/topic/<slug>-<d>?thread=<id>`, and the link is about the comment, not the
+  topic. `matchObjectUrl` reads a placeholder out of a pattern's query, and
+  when it does, that is the identity and the path's is the container, returned
+  as `within`. A pattern with no query placeholder still ignores the query — a
+  tracker's `?utm_…` never broke a link and still does not — and when two
+  patterns claim one URL, the one whose query the URL satisfies wins whatever
+  order the manifest declared them in, so the topic shape and the thread shape
+  are two `urls` tags.
+- **A comment resolves through the built-in manifest** — the one that draws
+  the bare file, and for the same reason: every app writes `kind:1111` and
+  none claims it with a `k` tag, so `resolveForeignEvent` on a comment found
+  no manifest and answered null. It now draws as a `message` — the author as
+  the title, the text as the body — named `File`, and opens in the app that
+  declares the `conversation` aspect, by that app's `nevent` template.
+  `resolveAspectApp`'s memo is keyed by entity as well as aspect, so a file
+  and a comment in it never share the wrong link.
+
 ## 0.26.0 — 2026-09-21
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**

@@ -17,6 +17,7 @@ import {
   commentKindsOf,
   createProjectionCache,
   resolveFolderContents,
+  resolveForeignEvent,
   resolveForeignObject,
   resolveManifest,
 } from '../dist/index.js'
@@ -63,10 +64,11 @@ function comment(body: string, author = OTHER) {
   })
 }
 
-type Filter = { kinds?: number[]; authors?: string[] } & Record<string, unknown>
+type Filter = { ids?: string[]; kinds?: number[]; authors?: string[] } & Record<string, unknown>
 
 function relay(events: SignedEvent[]) {
   const matches = (e: SignedEvent, filter: Filter) => {
+    if (filter.ids && !filter.ids.includes(e.id)) return false
     if (filter.kinds && !filter.kinds.includes(e.kind)) return false
     if (filter.authors && !filter.authors.includes(e.pubkey)) return false
     for (const [key, values] of Object.entries(filter)) {
@@ -261,6 +263,68 @@ describe('a bare file opens in the app that renders its conversation', () => {
       assert.equal(resolved?.webTemplate, 'https://peek.example/o/<bech32>')
     }
     assert.equal(sent.length, 1)
+  })
+})
+
+describe('a comment resolves through the built-in manifest, because no app owns kind:1111', () => {
+  // A pasted thread link names its root comment by event id (FOL-38). Every
+  // app writes `kind:1111` and none claims it with a `k` tag, so before this
+  // `resolveForeignEvent` on one answered null and the link stayed a link.
+  it('draws the comment as a message: the author as its title, the text as its body', async () => {
+    const root = comment('we should call it Launch')
+    const found = await resolveForeignEvent(root.id, relay([conversationApp(), topic(), root]))
+    assert.ok(found)
+    assert.equal(found.kind, COMMENT_KIND)
+    assert.equal(found.eventId, root.id)
+    assert.equal(found.address, undefined)
+    assert.deepEqual(found.widget, ['message', 'card'])
+    assert.equal(found.slots.title?.value, OTHER)
+    assert.equal(found.slots.title?.isPubkey, true)
+    assert.equal(found.slots.body?.value, 'we should call it Launch')
+    assert.equal(found.appName, 'File')
+  })
+
+  it('opens in the conversation app, by the nevent template when it publishes one', async () => {
+    const root = comment('hello')
+    const opener = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [
+        ['d', 'estiva-peek'],
+        ['web', 'https://peek.example/o/<bech32>', 'naddr'],
+        ['web', 'https://peek.example/e/<bech32>', 'nevent'],
+      ],
+      content: JSON.stringify({ name: 'Peek', aspect: 'conversation', projections: {} }),
+    })
+    const found = await resolveForeignEvent(root.id, relay([opener, topic(), root]))
+    assert.ok(found?.openUrl?.startsWith('https://peek.example/e/nevent1'), found?.openUrl)
+  })
+
+  it('still resolves, with nowhere to open, when no app declares the aspect', async () => {
+    const root = comment('hello')
+    const found = await resolveForeignEvent(root.id, relay([topic(), root]))
+    assert.ok(found)
+    assert.equal(found.openUrl, undefined)
+  })
+
+  it('caches the opener per template, so a file and a comment in it never share a wrong link', async () => {
+    const cache = createProjectionCache()
+    const root = comment('hello')
+    const opener = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [
+        ['d', 'estiva-peek'],
+        ['web', 'https://peek.example/o/<bech32>', 'naddr'],
+        ['web', 'https://peek.example/e/<bech32>', 'nevent'],
+      ],
+      content: JSON.stringify({ name: 'Peek', aspect: 'conversation', projections: {} }),
+    })
+    const events = relay([opener, topic(), root])
+    const file = await resolveForeignObject(TOPIC, events, undefined, 0, cache)
+    const thread = await resolveForeignEvent(root.id, events, undefined, cache)
+    assert.ok(file?.openUrl?.startsWith('https://peek.example/o/'), file?.openUrl)
+    assert.ok(thread?.openUrl?.startsWith('https://peek.example/e/'), thread?.openUrl)
   })
 })
 
