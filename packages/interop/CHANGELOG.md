@@ -6,6 +6,31 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.26.0 — 2026-09-21
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+What the comment kinds a manifest declares are *read for* changes: every
+manifest already published means what it meant, and `resolveForeignObject`
+costs exactly what it did, but two results are narrower.
+
+- **A mention is not a comment** (CON-15). `resolveForeignObject`'s
+  `comments`, `conversationsOf` and `conversationCountsOf` used to hand the
+  raw `#a` union, and the `a` tag is the index of every reference — so a
+  widget said "3" beside an issue with one comment and two mentions, the
+  merged list SPEC §6.4 says an app MUST NOT present. They now keep only
+  what §6.4 calls a comment, per kind: a `kind:1111` whose uppercase `A` is
+  the address (one with no `A` reads its `a` as the root), and any other
+  comment kind — a `kind:9` — whose `a` is the address and whose body does
+  not name it by `naddr`. Excluded: a `1111` rooted on another file that
+  names this one, and a topic message whose `a` indexes a `[`-menu
+  reference. Kept: a pre-REW-10 `kind:9` comment, which is not replaceable.
+  Peek's `isCommentOn` (CON-14) and Ship's `anchorIndex` (CON-13) already
+  applied this to the events they read themselves; the widget count and the
+  read-only `comments` list now agree with them. `commentDecorationsOf` is
+  untouched — a reaction on a comment is about the comment. Not done here:
+  returning the mentions beside the comments so a read-only viewer could
+  draw *Mentioned in* without a second read.
+
 ## 0.25.0 — 2026-09-19
 
 **What a manifest may declare changes, in one place: an action whose

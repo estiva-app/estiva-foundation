@@ -12,7 +12,7 @@
  * anything: it becomes an integration written against one app, which is the
  * thing the whole exercise argues against.
  */
-import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
+import { decodeNaddr, decodeNevent, encodeNaddr, encodeNevent, findNaddrs, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 
@@ -333,6 +333,13 @@ function rootOf(event: SignedEvent): string {
  * `MAX_FILTERS_PER_QUERY`, attributed by every `a` tag, deduplicated across
  * filters, and a file with no address is absent rather than empty. Messages are
  * returned oldest first.
+ *
+ * Only what SPEC §6.4 calls a **comment** is here (CON-15). The `#a` read also
+ * returns every message that merely *mentions* the file — a `kind:1111` rooted
+ * on another file, a `kind:9` whose body names this one — and those are
+ * *Mentioned in*, which §6.4 says MUST NOT be presented as the file's own
+ * discussion. A badge counting them said "3" beside an issue with one comment.
+ * See `isCommentOn` for the per-kind rule.
  */
 export async function conversationsOf(
   files: ForeignObject[],
@@ -403,9 +410,14 @@ export async function conversationsOf(
         lesson `childrenFrom` already carries ("a second `a` tag still counts").
         Reading `tags.find` would attribute such a comment to nobody and quietly
         undercount.
+
+        And only the address it is a *comment* on (CON-15). The `a` tag is the
+        index of every reference, so a message that names two files in this list
+        came back for both; it belongs to the one whose discussion it is, and to
+        neither when it merely mentions them. `isCommentOn` is §6.4's rule.
       */
       const ref = event.tags
-        .filter((t) => t[0] === 'a' && t[1])
+        .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1]))
         .map((t) => refOf.get(t[1]))
         .find((found) => found !== undefined)
       if (ref !== undefined) {
@@ -1051,6 +1063,53 @@ export function folderOf(root: SignedEvent): string | null {
  */
 const hasTagValue = (e: SignedEvent, name: string, value: string) =>
   e.tags.some((t) => t[0] === name && t[1] === value)
+
+/** The addresses a body names by `nostr:naddr…`; a pointer that will not decode is prose. */
+function namedInBody(body: string): Set<string> {
+  const addresses = new Set<string>()
+  for (const naddr of findNaddrs(body)) {
+    try {
+      addresses.add(pointerToAddress(decodeNaddr(naddr)))
+    } catch {
+      // A malformed pointer is prose.
+    }
+  }
+  return addresses
+}
+
+/**
+ * Is this event a *comment* on the address, rather than a message elsewhere
+ * that merely names it?
+ *
+ * Both arrive by the object's `#a` read — the `a` tag is the index of every
+ * reference, whichever strength — and SPEC §6.4 says an app MUST NOT present
+ * the two as one list: a comment is the object's own discussion, a mention is
+ * *Mentioned in*. Until CON-15 this package handed the raw `#a` union to
+ * {@link resolveForeignObject}'s `comments` and {@link conversationsOf}, and
+ * a widget said "3" beside an issue with one comment and two mentions. The
+ * rule is §6.4's per-tag one, applied per kind (CON-13, CON-14):
+ *
+ * - A `kind:1111`'s uppercase `A` is the comment — NIP-22's thread root. One
+ *   whose `A` is another file is that file's conversation; its `a` for this
+ *   one is the index of a reference. One with no `A` at all is read by its
+ *   `a`, the way §6.4 says to read it rather than drop the thread.
+ * - Any other comment kind has no `A`, so its `a` is read against its body.
+ *   A `kind:9` whose body names the address is the index of that reference —
+ *   what Peek writes for every `[`-menu reference in a topic message — and a
+ *   mention. One whose body does not is the anchor of a comment written
+ *   before REW-10 moved comments to `1111`, which is not replaceable and so
+ *   reads as a comment for good.
+ *
+ * `commentDecorationsOf` is deliberately not behind this: a reaction or a
+ * status on a comment is about the *comment*, whatever that comment is about.
+ */
+function isCommentOn(event: SignedEvent, address: string): boolean {
+  if (event.kind === KIND_COMMENT) {
+    const roots = event.tags.filter((t) => t[0] === 'A' && t[1])
+    return roots.length > 0 ? roots.some((t) => t[1] === address) : hasTagValue(event, 'a', address)
+  }
+  return hasTagValue(event, 'a', address) && !namedInBody(event.content).has(address)
+}
 
 /**
  * A manifest event's `content`, or null when it is not parseable JSON.
@@ -2477,9 +2536,13 @@ export async function resolveForeignObject(
     Topic declares `kind:9` messages as children and `kind:9` as its comment
     kind, so every message in the Folder would have become a comment on the
     Topic — a widget silently showing a conversation twice.
+
+    Then narrowed to §6.4's *comment* strength (CON-15): the `a` tag is also the
+    index of a mention, and a mention is not this object's discussion. See
+    `isCommentOn` for the per-kind rule.
   */
   const comments = events
-    .filter((e) => commentKinds.includes(e.kind) && hasTagValue(e, 'a', address))
+    .filter((e) => commentKinds.includes(e.kind) && isCommentOn(e, address))
     .sort(byOrder)
     .map((e) => ({ id: e.id, author: e.pubkey, body: e.content, createdAt: e.created_at }))
 
