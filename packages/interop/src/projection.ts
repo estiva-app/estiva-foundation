@@ -1271,6 +1271,22 @@ const BARE_FILE_MANIFEST: Manifest = {
         list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200 } },
       },
     },
+    /*
+      A comment is drawn from here for the same reason a bare file is: no app
+      owns `kind:1111` (NIP-22, and SPEC §6.4 — every app writes it and none
+      claims it with a `k` tag), so a link to one resolves through no manifest
+      on the relay. Before FOL-38 `resolveForeignEvent` on a comment answered
+      null, and a pasted thread link stayed a plain link. Drawn the way Peek
+      draws a `kind:9` — the author as the title, the text as the body — so a
+      consumer that already has a `message` widget draws a comment with it.
+    */
+    [String(KIND_COMMENT)]: {
+      widget: ['message', 'card'],
+      slots: {
+        title: { field: 'pubkey', as: 'pubkey' },
+        body: { field: 'content' },
+      },
+    },
   },
   /*
     Three actions, and the manifest is the only place a consumer learns of any
@@ -1361,8 +1377,12 @@ async function resolveAspectApp(
   aspect: Aspect,
   query: QueryFn,
   cache?: ProjectionCache,
+  // Which `web` template to read off the opener: a file opens by its `naddr`,
+  // a comment in it by its `nevent`. An app may publish one string for both,
+  // as Peek does, or two.
+  entity: 'naddr' | 'nevent' = 'naddr',
 ): Promise<ResolvedManifest | null> {
-  const key = `aspect:${aspect}`
+  const key = `aspect:${aspect}:${entity}`
   const now = Date.now()
   const memo = cache?.lookup(key, now)
   if (memo) return memo.value
@@ -1372,7 +1392,7 @@ async function resolveAspectApp(
   for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
     const manifest = parseManifest(candidate)
     if (manifest?.aspect !== aspect) continue
-    const template = webTemplate(candidate, 'naddr')
+    const template = webTemplate(candidate, entity)
     // Declaring the aspect and publishing nowhere to open a file is a manifest
     // this consumer has no use for yet; keep looking rather than answer with
     // an app that cannot be linked to.
@@ -1479,8 +1499,11 @@ export async function resolveManifest(
   // pays is for *where to open the file*, which no built-in constant can
   // answer — it is whichever app has declared it renders the conversation —
   // and that answer is memoised once for every bare file (`resolveAspectApp`).
-  if (pointer.kind === KIND_BARE_FILE) {
-    const opener = await resolveAspectApp('conversation', query, cache)
+  // A comment resolves through the built-in manifest as a bare file does, and
+  // opens in the same app — the one that renders every file's conversation
+  // is the one that can show a thread in it (FOL-38).
+  if (pointer.kind === KIND_BARE_FILE || pointer.kind === KIND_COMMENT) {
+    const opener = await resolveAspectApp('conversation', query, cache, pointer.kind === KIND_COMMENT ? 'nevent' : 'naddr')
     return opener?.webTemplate
       ? { ...bareFileManifest(), webTemplate: opener.webTemplate }
       : bareFileManifest()
