@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.28.1 — 2026-09-22
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+`listFolders` fails where 0.28.0 did not.
+
+- **A refused record read throws** (FOL-42). 0.28.0 caught a refusal of its
+  second request and returned the listing without the channels it places.
+  Measured on production the same day: a page load that hit it left a
+  project's channel unplaced for the whole session and the team's dot dark,
+  and a listing missing placements is indistinguishable from a correct one, so
+  nothing could retry. It now rejects exactly as a refusal of the Folder read
+  always has; keeping the last good listing and retrying is the caller's.
+
 ## 0.28.0 — 2026-09-22
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**
