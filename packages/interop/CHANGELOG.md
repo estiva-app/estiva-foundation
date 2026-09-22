@@ -6,6 +6,27 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.28.0 — 2026-09-22
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+One result is wider: `listFolders` places more channels, and costs one more
+request when any state lists a record.
+
+- **A record's own channel is listed wherever the record is** (FOL-42). A
+  state lists a Ship project by address, and the project's conversation lives
+  in the channel its `buzz-channel` — or, on about half of production's
+  projects, its `h` — names. No state lists that channel, so `listFolders`
+  reported it placed nowhere, and Peek's team dot, which folds a channel's
+  unread verdict into its `listedIn`, had nowhere to fold a comment on a
+  project. `listFolders` now reads the records the states list — one request,
+  grouped by kind and author — and places each one's `folderOf` channel in
+  every container that lists the record. Not placed: the container itself (a
+  file published into its Folder carries that Folder's `h`), and a channel
+  with state of its own, which is a Folder that states place — so no section
+  leaves anybody's sidebar. If the record read is refused the listing is what
+  0.27.0 returned rather than an error. Measured on production: 21 channels
+  placed, the six top-level Folders unchanged.
+
 ## 0.27.0 — 2026-09-21
 
 **What a manifest may declare changes, in one place: a `urls` pattern may carry
