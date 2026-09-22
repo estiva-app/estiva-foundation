@@ -277,3 +277,107 @@ describe('listFolders', () => {
     ])
   })
 })
+
+describe('listFolders: a record’s own channel is listed wherever the record is (FOL-42)', () => {
+  // The survey the colony's conversation happens in, and the reading's.
+  const COLONY_TALK = '11111111-0000-4000-8000-000000000001'
+  const READING_TALK = '11111111-0000-4000-8000-000000000002'
+  const OTHER = '11111111-0000-4000-8000-000000000003'
+  const talk = (id, name) => event({ kind: 39000, pubkey: RELAY, tags: [['d', id], ['name', name]] })
+  // Both spellings production has: a record published globally names its
+  // channel by `buzz-channel`, and one published into it by `h`.
+  const colonyGlobal = event({
+    kind: COLONY,
+    pubkey: RINGER,
+    tags: [['d', 'dunlin'], ['title', 'Dunlin colony'], ['buzz-channel', COLONY_TALK]],
+  })
+  const readingInOwn = event({
+    kind: READING,
+    pubkey: TIDES,
+    tags: [['d', 'neap'], ['title', 'Neap tides'], ['h', READING_TALK]],
+  })
+  const find = (folders, id) => folders.find((f) => f.id === id)
+
+  test('both spellings place the record’s channel in the folder that lists the record', async () => {
+    const query = relay([
+      channel,
+      talk(COLONY_TALK, 'Dunlin talk'),
+      talk(READING_TALK, 'Neap talk'),
+      colonyGlobal,
+      readingInOwn,
+      state([addressOf(colonyGlobal), addressOf(readingInOwn)]),
+    ])
+    const folders = await listFolders(query)
+    assert.deepEqual(find(folders, COLONY_TALK).listedIn, [FOLDER])
+    assert.deepEqual(find(folders, READING_TALK).listedIn, [FOLDER])
+    assert.equal(find(folders, FOLDER).listedIn, undefined, 'the container was placed inside something')
+  })
+
+  test('a record listed in two folders places its channel in both', async () => {
+    const second = event({
+      kind: KIND_FOLDER_STATE,
+      pubkey: RELAY,
+      tags: [['d', OTHER], ['name', 'Second survey'], ['a', addressOf(colonyGlobal)]],
+    })
+    const query = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), colonyGlobal, state([addressOf(colonyGlobal)]), second])
+    const folders = await listFolders(query)
+    assert.deepEqual(find(folders, COLONY_TALK).listedIn.sort(), [FOLDER, OTHER].sort())
+  })
+
+  test('a file published into its folder does not place the folder inside itself', async () => {
+    // Every Peek file carries its Folder's `h`, and its Folder lists it.
+    const query = relay([channel, colony, state([addressOf(colony)])])
+    const folders = await listFolders(query)
+    assert.equal(find(folders, FOLDER).listedIn, undefined)
+  })
+
+  test('a channel with state of its own is a Folder, and a record’s tag does not move it', async () => {
+    // Measured on production: one project's `buzz-channel` is a Folder with
+    // state. A sidebar draws it as a section exactly when nothing lists it.
+    const ownState = event({ kind: KIND_FOLDER_STATE, pubkey: RELAY, tags: [['d', COLONY_TALK], ['name', 'A Folder']] })
+    const query = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), ownState, colonyGlobal, state([addressOf(colonyGlobal)])])
+    const folders = await listFolders(query)
+    assert.equal(find(folders, COLONY_TALK).listedIn, undefined)
+  })
+
+  test('a listed record the reader cannot see places nothing', async () => {
+    const query = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), state([addressOf(colonyGlobal)])])
+    const folders = await listFolders(query)
+    assert.equal(find(folders, COLONY_TALK).listedIn, undefined)
+  })
+
+  test('the record read is one request, grouped by kind and author', async () => {
+    const posts = []
+    const inner = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), talk(READING_TALK, 'Neap talk'), colonyGlobal, readingInOwn, state([addressOf(colonyGlobal), addressOf(readingInOwn)])])
+    await listFolders(async (filters) => {
+      posts.push(filters)
+      return inner(filters)
+    })
+    assert.equal(posts.length, 2, 'the folder read, then one read for the records')
+    assert.deepEqual(
+      posts[1].map((f) => [f.kinds, f.authors, f['#d']]),
+      [[[COLONY], [RINGER], ['dunlin']], [[READING], [TIDES], ['neap']]],
+    )
+  })
+
+  test('no listed record, no extra request', async () => {
+    let posts = 0
+    const inner = relay([channel, state([])])
+    await listFolders(async (filters) => {
+      posts++
+      return inner(filters)
+    })
+    assert.equal(posts, 1)
+  })
+
+  test('a refused record read leaves the listing as it was, rather than no listing', async () => {
+    const inner = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), colonyGlobal, state([addressOf(colonyGlobal)])])
+    let posts = 0
+    const folders = await listFolders(async (filters) => {
+      if (++posts > 1) throw new Error('429 rate-limited')
+      return inner(filters)
+    })
+    assert.equal(find(folders, COLONY_TALK).listedIn, undefined)
+    assert.equal(find(folders, FOLDER).hasState, true)
+  })
+})

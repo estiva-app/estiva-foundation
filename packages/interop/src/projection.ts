@@ -3862,11 +3862,119 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
       listedIn.set(identifier, containers)
     }
   }
+  await placeRecordChannels(events, byId, listedIn, query)
   for (const [id, containers] of listedIn) {
     const folder = byId.get(id)
     if (folder) folder.listedIn = containers
   }
   return [...byId.values()].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id))
+}
+
+/**
+ * A record's own channel is listed wherever the record is (FOL-42).
+ *
+ * A state lists a record — a Ship project, say — by its address, and the record
+ * names the channel its conversation lives in with {@link folderOf}'s tags. No
+ * state lists that channel, so without this `listFolders` reports it placed
+ * nowhere, and a consumer folding an unread verdict into the containers of a
+ * channel (Peek's team dot) has nowhere to fold it: correct, and drawn
+ * nowhere. Measured on production 2026-09-22: of the 43 records the six
+ * states list, 23 name a channel other than the state's own and no state lists
+ * any of them. This places 21 channels and moves no top-level Folder.
+ *
+ * Derived rather than published, so it cannot drift: a `kind:1852` adding each
+ * channel to its team would have to be repeated by every app that places a
+ * record, and would stay wrong the first time one did not.
+ *
+ * Both of `folderOf`'s spellings, because production has both — about half of
+ * Ship's project records carry `buzz-channel` and half an `h` naming their own
+ * channel. Nothing here knows either app: the tags are the relay's.
+ *
+ * Two channels are never placed this way:
+ *
+ * - **The container itself.** A file published *into* its Folder carries that
+ *   Folder's `h` — every Peek file does — and a Folder is not inside itself.
+ * - **A channel with state of its own.** That is a Folder in its own right, and
+ *   a sidebar draws it as a section exactly when nothing lists it; states place
+ *   it, by `kind:1852`, and a tag on some record must not take a section out of
+ *   somebody's sidebar. Measured: one project's `buzz-channel` is such a Folder.
+ *
+ * **One extra request, and a failed one costs only this.** The roots are read
+ * in one POST, grouped by `(kind, author)` like `resolveFolderContents` does.
+ * If it is refused — a rate limit, or a kind this reader may not see, which
+ * refuses the whole filter — the listing is what it was before this rule
+ * existed rather than no listing at all: every placement it reports is still
+ * true, and one sidebar read is not worth every Folder.
+ */
+async function placeRecordChannels(
+  events: SignedEvent[],
+  byId: Map<string, FolderSummary>,
+  listedIn: Map<string, string[]>,
+  query: QueryFn,
+): Promise<void> {
+  const containersOf = new Map<string, { pointer: AddressPointer; containers: string[] }>()
+  for (const event of events) {
+    if (event.kind !== KIND_FOLDER_STATE) continue
+    const container = tagValue(event, 'd')
+    if (!container) continue
+    for (const tag of event.tags) {
+      if (tag[0] !== 'a' || !tag[1]) continue
+      let pointer: AddressPointer
+      try {
+        pointer = referenceToPointer(tag[1])
+      } catch {
+        continue
+      }
+      if (pointer.kind === KIND_CHANNEL) continue
+      const key = `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}`
+      const entry = containersOf.get(key) ?? { pointer, containers: [] }
+      if (!entry.containers.includes(container)) entry.containers.push(container)
+      containersOf.set(key, entry)
+    }
+  }
+  if (containersOf.size === 0) return
+
+  const groups = new Map<string, { kind: number; pubkey: string; identifiers: string[] }>()
+  for (const { pointer } of containersOf.values()) {
+    const key = `${pointer.kind}:${pointer.pubkey}`
+    const group = groups.get(key) ?? { kind: pointer.kind, pubkey: pointer.pubkey, identifiers: [] }
+    group.identifiers.push(pointer.identifier)
+    groups.set(key, group)
+  }
+  const filters: Record<string, unknown>[] = []
+  for (const { kind, pubkey, identifiers } of groups.values()) {
+    for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
+      const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
+      filters.push({ kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length })
+    }
+  }
+  const roots: SignedEvent[] = []
+  try {
+    for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+      roots.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
+    }
+  } catch {
+    return
+  }
+
+  // Newest wins, as it does for any addressable event a relay has not yet replaced.
+  const newest = new Map<string, SignedEvent>()
+  for (const root of roots) {
+    const key = `${root.kind}:${root.pubkey}:${tagValue(root, 'd') ?? ''}`
+    const held = newest.get(key)
+    if (!held || root.created_at > held.created_at) newest.set(key, root)
+  }
+  for (const [key, { containers }] of containersOf) {
+    const root = newest.get(key)
+    const channel = root && folderOf(root)
+    if (!channel || byId.get(channel)?.hasState) continue
+    for (const container of containers) {
+      if (container === channel) continue
+      const placed = listedIn.get(channel) ?? []
+      if (!placed.includes(container)) placed.push(container)
+      listedIn.set(channel, placed)
+    }
+  }
 }
 
 /**

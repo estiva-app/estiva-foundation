@@ -457,6 +457,12 @@ topics are, each listed by its team's state. `listedIn` names those containers,
 read off the states the call already holds, so a sidebar draws the team and
 not, beside it, every topic in it.
 
+A record a state lists places its own channel there too: a project's
+conversation lives in the channel its `buzz-channel` (or `h`) names, and that
+channel's `listedIn` is every Folder that lists the project, so an unread
+verdict on it has a team to reach. It costs one more request, for the records.
+A channel with state of its own is a Folder, and only states place it.
+
 ---
 
 ## What is not in here, deliberately
