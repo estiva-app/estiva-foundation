@@ -6,6 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.30.0 — 2026-09-23
+
+**Nothing a manifest may declare changes, and nothing about how one is read.**
+`commentDecorationsOf` reports more, and a caller that passes a body gets a
+narrower `edit`.
+
+- **An edit's attachments fold** (CON-5, RFC 0.4 §7.2.1 as amended
+  2026-09-23). A `kind:40003` may carry `imeta`. `CommentDecoration.attachments`
+  is the `imeta` set of the newest edit that carries at least one, in the body
+  fold's order; a set replaces the target's own, and it is absent when no edit
+  carries one, so the target's own attachments stand.
+- **A target may carry its `body`.** When it does, `edit` is about the body:
+  its `at` and `by` are the last edit whose content differs from the body it
+  replaced, and it is absent when every edit only attached files. `edit.body`
+  is still the newest edit's content. A target without `body` gets exactly
+  0.29.0's answer.
+
 ## 0.29.0 — 2026-09-23
 
 **The bare file's built-in manifest declares one more action, `move`.** No

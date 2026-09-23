@@ -13,7 +13,7 @@
  * thing the whole exercise argues against.
  */
 import { decodeNaddr, decodeNevent, encodeNaddr, encodeNevent, findNaddrs, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
-import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
+import { imetaOf, parseProfile, type Imeta, type Profile, type SignedEvent } from '@estiva-app/protocol'
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
@@ -465,8 +465,21 @@ export interface CommentDecoration {
    * The newest `kind:40003` — the body to show, and when. RFC 0.4 §7.2.1: a
    * reader MUST be told the body changed, so this is kept beside the original
    * rather than folded over it; the consumer draws the marker.
+   *
+   * When the caller passes the target's `body`, `at` and `by` are those of the
+   * last edit that **changed** the body — content not byte-identical to the
+   * body it replaced — and `edit` is absent when none did (§7.2.1, amended
+   * 2026-09-23, CON-5: the mark is about the body). `body` is always the newest
+   * edit's content. Without `body` it is the newest edit, as before.
    */
   edit?: { body: string; at: number; by: string }
+  /**
+   * The `imeta` set of the newest edit that carries at least one — RFC 0.4
+   * §7.2.1 as amended 2026-09-23 (CON-5). A set replaces the target's own; it
+   * does not append. Absent when no edit carries one, in which case the
+   * target's own attachments stand: an edit with no `imeta` means "unchanged".
+   */
+  attachments?: Imeta[]
   /** Every reaction found, in the order the relay holds them. Empty inside the horizon means none. */
   reactions: CommentReaction[]
   /** Oldest first; the last one is the current state. Empty means never resolved. */
@@ -509,7 +522,8 @@ const DECORATION_TARGETS_PER_FILTER = 100
  * Three rules, each from the ticket that established it:
  *
  * - **Edits fold newest-wins** (CON-8). The original stays on the relay and so
- *   does every edit; the fold is the reader's, and this is it.
+ *   does every edit; the fold is the reader's, and this is it. Attachments
+ *   fold separately (CON-5): the newest edit carrying `imeta` sets them.
  * - **Reactions have a horizon of {@link REACTION_HORIZON} targets** (SPEC
  *   §6.6, CON-1) — the *newest* targets by `at`, one budget across whatever
  *   id spaces the caller mixes, and the number left out is reported. Edits
@@ -523,7 +537,7 @@ const DECORATION_TARGETS_PER_FILTER = 100
  * relay adjudicates writes; a `40003` it stored is one it accepted.
  */
 export async function commentDecorationsOf(
-  targets: readonly { id: string; at: number }[],
+  targets: readonly { id: string; at: number; body?: string }[],
   query: QueryFn,
 ): Promise<CommentDecorations> {
   const byId: Record<string, CommentDecoration> = {}
@@ -555,7 +569,9 @@ export async function commentDecorationsOf(
   }
 
   const seen = new Set<string>()
-  const edits = new Map<string, SignedEvent>()
+  const edits = new Map<string, SignedEvent[]>()
+  const bodies = new Map<string, string>()
+  for (const t of targets) if (t.body !== undefined && !bodies.has(t.id)) bodies.set(t.id, t.body)
   for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
     const events = await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
     for (const event of events) {
@@ -570,8 +586,7 @@ export async function commentDecorationsOf(
       if (!target) continue
       const into = byId[target]
       if (event.kind === KIND_MESSAGE_EDIT) {
-        const current = edits.get(target)
-        if (!current || byOrder(current, event) < 0) edits.set(target, event)
+        edits.set(target, [...(edits.get(target) ?? []), event])
       } else if (event.kind === KIND_REACTION) {
         if (!forReactions.includes(target)) continue
         into.reactions.push({ id: event.id, emoji: event.content, by: event.pubkey, at: event.created_at })
@@ -591,8 +606,30 @@ export async function commentDecorationsOf(
       }
     }
   }
-  for (const [target, event] of edits) {
-    byId[target].edit = { body: event.content, at: event.created_at, by: event.pubkey }
+  for (const [target, list] of edits) {
+    const ordered = [...list].sort(byOrder)
+    const into = byId[target]
+    const newest = ordered[ordered.length - 1]
+    let body = bodies.get(target)
+    if (body === undefined) {
+      into.edit = { body: newest.content, at: newest.created_at, by: newest.pubkey }
+    } else {
+      // Replayed from the target's own body, so "byte-identical to the body it
+      // replaces" is judged against the body as it then stood.
+      let changed: SignedEvent | undefined
+      for (const edit of ordered) {
+        if (edit.content !== body) changed = edit
+        body = edit.content
+      }
+      if (changed) into.edit = { body: newest.content, at: changed.created_at, by: changed.pubkey }
+    }
+    for (let i = ordered.length - 1; i >= 0; i--) {
+      const set = imetaOf(ordered[i])
+      if (set.length > 0) {
+        into.attachments = set
+        break
+      }
+    }
   }
   const oldestFirst = (a: { at: number; id: string }, b: { at: number; id: string }) =>
     a.at - b.at || (a.id < b.id ? -1 : 1)
