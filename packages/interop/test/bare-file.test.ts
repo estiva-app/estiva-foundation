@@ -122,6 +122,18 @@ describe('a bare file resolves with no manifest anywhere', () => {
     assert.equal(found?.parentRef, `${PROJECT_KIND}:${OTHER}:pricing`)
   })
 
+  it('reads an empty re-parent as a move to the top, not as no change', async () => {
+    // FOL-4. `topic()` names PROJECT in its root tag; falling back to it would
+    // put the file straight back under the parent it was moved out of.
+    const toTop = event({
+      kind: CHANGE_KIND,
+      pubkey: OTHER,
+      tags: [['a', TOPIC], ['field', 'parent'], ['value', ''], ['h', TEAM]],
+    })
+    const found = await resolveForeignObject(TOPIC, relay([topic(), toTop]))
+    assert.equal(found?.parentRef, undefined)
+  })
+
   it('is absent when the file names no parent', async () => {
     const root = event({
       kind: KIND_BARE_FILE,
@@ -379,13 +391,14 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     })
   let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
 
-  it('declares comment, rename and delete, each as the control a consumer draws', async () => {
+  it('declares comment, rename, move and delete, each as the control a consumer draws', async () => {
     const found = await resolveForeignObject(TOPIC, relay([topic()]))
     assert.deepEqual(
       found?.actions.map((a) => [a.id, a.control, a.effect]),
       [
         ['comment', 'text', 'writes'],
         ['rename', 'text', 'writes'],
+        ['move', 'text', 'writes'],
         ['delete', 'confirm', 'destructive'],
       ],
     )
@@ -408,6 +421,24 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     const renamed = event({ ...change, id: 'f'.repeat(64), sig: '' } as SignedEvent)
     const found = await resolveForeignObject(TOPIC, relay([topic(), renamed]))
     assert.equal(found?.slots.title.value, 'Launch naming, second pass')
+  })
+
+  it('moves with a parent change that keeps the file in its team, and parentRef folds it', async () => {
+    // FOL-4. The `h` is the file's team, unchanged: a move never grants access.
+    const target = `${KIND_BARE_FILE}:${OTHER}:brief`
+    const built = build('move', target)
+    assert.notEqual(typeof built, 'string', String(built))
+    const change = built as Exclude<typeof built, string>
+    assert.equal(change.kind, CHANGE_KIND)
+    assert.deepEqual(
+      change.tags.filter((t) => t[0] !== 'ts'),
+      [['a', TOPIC], ['field', 'parent'], ['value', target], ['h', TEAM]],
+    )
+    const moved = event({ ...change, id: 'e'.repeat(64), sig: '' } as SignedEvent)
+    const found = await resolveForeignObject(TOPIC, relay([topic(), moved]))
+    assert.equal(found?.parentRef, target)
+    // The field a consumer keeps out of its property rows: the move is the tree's.
+    assert.equal(found?.parentField, found?.actions.find((a) => a.id === 'move')?.field)
   })
 
   it('deletes with a NIP-09 request naming the address, for the relay to adjudicate', () => {

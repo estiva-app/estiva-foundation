@@ -87,6 +87,12 @@ export {
 } from './projection.js'
 
 /**
+ * SPEC §6.7's nesting, drawn from one team listing: roots, children,
+ * breadcrumbs and move targets, with cycles cut. No requests.
+ */
+export { nestingOf, type Nestable, type Nesting } from './nesting.js'
+
+/**
  * RFC 0.5 §7's URL grammar — how an object is named in an address bar, and how
  * a pasted link is matched back to one.
  *

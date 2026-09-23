@@ -1246,6 +1246,9 @@ export const KIND_BARE_FILE = 30840
  */
 export const BARE_FILE_MANIFEST_ADDRESS = 'spec:6.7'
 
+/** The field a bare file's `kind:1851` re-parent sets (SPEC §6.7). */
+const BARE_FILE_PARENT_FIELD = 'parent'
+
 const BARE_FILE_MANIFEST: Manifest = {
   name: 'File',
   about: 'A file no app owns. Its conversation is what every file has; its type adds nothing.',
@@ -1289,8 +1292,8 @@ const BARE_FILE_MANIFEST: Manifest = {
     },
   },
   /*
-    Three actions, and the manifest is the only place a consumer learns of any
-    of them (FOL-33). A Peek page offering Rename and Delete on a bare file and
+    Four actions, and the manifest is the only place a consumer learns of any
+    of them (FOL-33; `move` from FOL-4). A Peek page offering Rename and Delete on a bare file and
     nothing on a Ship issue does so because *this* list says `rename` and
     `delete` and Ship's does not — never because the kind is 30840. The rule is
     the one FOL-31 set for `comment`: a control is drawn from a declaration.
@@ -1325,6 +1328,24 @@ const BARE_FILE_MANIFEST: Manifest = {
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: 'title' },
+      input: { type: 'string' },
+    },
+    /*
+      `move` is the `parent` field SPEC §6.7 already defines, declared so a
+      consumer draws the control from here as it draws Rename (FOL-4). The value
+      is the new parent's address, or empty for the top of the team. A move
+      never changes `h`: nesting organises and never grants access, so a file
+      moved under another stays readable by exactly the team it was.
+    */
+    {
+      id: 'move',
+      label: 'Move',
+      description:
+        "Put this file under another file in the same team, or back at the top. A change event, so anyone in " +
+        'the team may; who can read the file does not change.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: 1851, field: BARE_FILE_PARENT_FIELD },
       input: { type: 'string' },
     },
     {
@@ -2221,6 +2242,17 @@ export interface ForeignObject {
    * address cannot be built from it without inventing a pubkey.
    */
   parentRef?: string
+  /**
+   * The folded field that re-parents this object, when there is one — `parent`
+   * on a bare file (SPEC §6.7), absent for every other kind today (FOL-4).
+   *
+   * **For a consumer that draws field-setting actions as property rows.** The
+   * action setting this field is a move, and its value is an address: drawn as
+   * a text box under a card it asks a person to type `30840:<hex>:<uuid>`. It
+   * is the tree's control, offered where the tree is — the same step aside the
+   * title's rename takes, matched on the field for the same reason.
+   */
+  parentField?: string
   kind: number
   /**
    * The layout hint the owner declared — **a type or an ordered chain of them.**
@@ -2349,6 +2381,7 @@ function buildObject(args: {
     comments: args.comments ?? [],
     listsChildren: listsChildrenOf(projection, manifest),
     parentRef: parentRefOf(manifest, pointer.kind, root, folded),
+    ...(pointer.kind === KIND_BARE_FILE ? { parentField: BARE_FILE_PARENT_FIELD } : {}),
     folder: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -2680,8 +2713,11 @@ function parentRefOf(
     issue's `project` field works (SPEC §6.7).
   */
   if (kind === KIND_BARE_FILE) {
-    const moved = folded.parent?.value
-    if (moved) return moved
+    // A folded empty value is a move to the top, not an absence: falling back
+    // to the root tag would put the file straight back under the parent it
+    // was moved out of (FOL-4).
+    const moved = folded[BARE_FILE_PARENT_FIELD]
+    if (moved) return moved.value || undefined
     return root.tags.find((t) => t[0] === 'a' && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
   }
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
@@ -2835,6 +2871,7 @@ function buildChildObject(args: {
     // an inconsistent shape is what makes a consumer defensive about a value it
     // should be able to trust.
     parentRef: parentRefOf(manifest, root.kind, root),
+    ...(root.kind === KIND_BARE_FILE ? { parentField: BARE_FILE_PARENT_FIELD } : {}),
     folder: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
