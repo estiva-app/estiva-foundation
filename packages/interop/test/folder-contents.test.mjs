@@ -370,14 +370,17 @@ describe('listFolders: a record’s own channel is listed wherever the record is
     assert.equal(posts, 1)
   })
 
-  test('a refused record read leaves the listing as it was, rather than no listing', async () => {
+  test('a refused record read throws, rather than returning a listing missing its placements', async () => {
+    // 0.28.0 swallowed this, and a listing without the placements looks
+    // exactly like a correct one — so the caller never knew to read again.
     const inner = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), colonyGlobal, state([addressOf(colonyGlobal)])])
     let posts = 0
-    const folders = await listFolders(async (filters) => {
-      if (++posts > 1) throw new Error('429 rate-limited')
-      return inner(filters)
-    })
-    assert.equal(find(folders, COLONY_TALK).listedIn, undefined)
-    assert.equal(find(folders, FOLDER).hasState, true)
+    await assert.rejects(
+      listFolders(async (filters) => {
+        if (++posts > 1) throw new Error('429 rate-limited')
+        return inner(filters)
+      }),
+      /429 rate-limited/,
+    )
   })
 })

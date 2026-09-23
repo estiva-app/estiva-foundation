@@ -3899,12 +3899,19 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
  *   it, by `kind:1852`, and a tag on some record must not take a section out of
  *   somebody's sidebar. Measured: one project's `buzz-channel` is such a Folder.
  *
- * **One extra request, and a failed one costs only this.** The roots are read
- * in one POST, grouped by `(kind, author)` like `resolveFolderContents` does.
- * If it is refused — a rate limit, or a kind this reader may not see, which
- * refuses the whole filter — the listing is what it was before this rule
- * existed rather than no listing at all: every placement it reports is still
- * true, and one sidebar read is not worth every Folder.
+ * **One extra request, and a refused one throws** like the Folder read before
+ * it. The roots are read in one POST, grouped by `(kind, author)` like
+ * `resolveFolderContents` does.
+ *
+ * 0.28.0 swallowed a refusal and returned the listing without these
+ * placements, reasoning that every placement it still reported was true. On
+ * production that was the bug it was meant to prevent: Peek reads the listing
+ * once per page load, the load is when the relay's budget is most contested,
+ * and one refused read on 2026-09-22 left a project's channel unplaced for the
+ * whole session — the team's dot dark, and nothing anywhere saying why. A
+ * listing missing placements looks exactly like a correct one, so only the
+ * caller can recover, and only if it is told. Keeping the last good listing
+ * and retrying is the caller's to do.
  */
 async function placeRecordChannels(
   events: SignedEvent[],
@@ -3949,12 +3956,8 @@ async function placeRecordChannels(
     }
   }
   const roots: SignedEvent[] = []
-  try {
-    for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-      roots.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
-    }
-  } catch {
-    return
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    roots.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
   }
 
   // Newest wins, as it does for any addressable event a relay has not yet replaced.
