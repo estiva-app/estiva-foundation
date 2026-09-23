@@ -23,12 +23,28 @@
  * reader watching its own Folders is in the same position mechanically and the
  * word stops fitting, so the shared name is about the Folder rather than about
  * whose records are in it.
+ *
+ * ## …unless it has one to give (PER-8)
+ *
+ * "Re-read now" was the right signal while nobody held what they had read. Once
+ * a reader keeps the events it already has — Peek's sidebar re-read 90 days of
+ * every Folder to learn about the one message the socket had just delivered, and
+ * spent the relay's per-request HTTP quota doing it — the event is the whole
+ * point. So a notification *may* carry the event that caused it. A listener
+ * that ignores the argument is exactly the listener it was before, and a
+ * notification with nothing to carry (another app's record moved) still sends
+ * none, so a reader must treat a missing event as "re-read", not as "nothing".
  */
-export type FolderListener = () => void
+import type { SignedEvent } from '@estiva-app/protocol'
+
+export type FolderListener = (event?: SignedEvent) => void
 
 export interface FolderActivity {
-  /** Say that something changed in `folder`. Safe for a folder nobody watches. */
-  notify(folder: string): void
+  /**
+   * Say that something changed in `folder`, and hand over the event when there
+   * is one. Safe for a folder nobody watches.
+   */
+  notify(folder: string, event?: SignedEvent): void
   /** Watch one folder. Returns an unsubscribe; calling it twice is harmless. */
   watch(folder: string, listener: FolderListener): () => void
   /** Folders with at least one listener. Test and diagnostic seam. */
@@ -38,12 +54,12 @@ export interface FolderActivity {
 export function createFolderActivity(): FolderActivity {
   const listeners = new Map<string, Set<FolderListener>>()
   return {
-    notify(folder) {
+    notify(folder, event) {
       for (const listener of listeners.get(folder) ?? []) {
         // One bad listener must not stop the others, and must not surface
         // somewhere unrelated as a relay error.
         try {
-          listener()
+          listener(event)
         } catch {
           /* a listener's own problem */
         }

@@ -235,6 +235,34 @@ test('tells the listener which Folder changed, not what changed', async () => {
   await waitFor(() => assert.deepEqual(changed, [OTHER]))
 })
 
+test('hands the listener the event, so a reader that keeps events need not re-read', async () => {
+  const h = harness()
+  const socket = await reachLive(h)
+  const got: { folder: string; id?: string }[] = []
+  h.client.watchFolders([FOLDER, OTHER], (folder, event) => got.push({ folder, id: event?.id }), { kinds: [9] })
+  await waitFor(() => assert.equal(socket.reqs().length, 1))
+
+  socket.deliver([
+    'EVENT',
+    socket.subIdOf(0),
+    { id: 'e3', kind: 9, pubkey: PUBKEY, created_at: 1, tags: [['h', FOLDER]], content: 'x', sig: '' },
+  ])
+  await waitFor(() => assert.deepEqual(got, [{ folder: FOLDER, id: 'e3' }]))
+})
+
+test('bounds the replay with since when asked, and sends none when not', async () => {
+  const h = harness()
+  const socket = await reachLive(h)
+  h.client.watchFolders([FOLDER], () => {}, { kinds: [9], since: 1_700_000_000 })
+  h.client.watchFolders([OTHER], () => {}, { kinds: [9] })
+
+  await waitFor(() => assert.equal(socket.reqs().length, 2))
+  const [bounded] = socket.reqs()[0] as [Record<string, unknown>]
+  const [open] = socket.reqs()[1] as [Record<string, unknown>]
+  assert.equal(bounded.since, 1_700_000_000)
+  assert.equal('since' in open, false)
+})
+
 test('ignores an event carrying no Folder', async () => {
   const h = harness()
   const socket = await reachLive(h)
