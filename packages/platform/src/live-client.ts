@@ -141,11 +141,19 @@ export interface LiveClient {
    * `kinds` is strongly recommended rather than optional-by-taste: a kindless
    * wide filter was refused outright on that other build with `restricted:
    * p-gated events require #p matching your pubkey`.
+   *
+   * **The listener is handed the event** (PER-8). A reader that keeps what it
+   * has read applies it instead of re-reading the Folder; one that only wants
+   * the signal ignores the second argument. Stored events arrive as well as
+   * live ones — the REQ's replay on subscribe and on every reconnect — so a
+   * reader must be idempotent by event id. `since` bounds that replay: without
+   * it the relay replays whatever its default limit allows, shared across every
+   * Folder in the filter, which a keeping reader then has to dedupe.
    */
   watchFolders(
     folders: string[],
-    listener: (folder: string) => void,
-    options?: { kinds?: number[] },
+    listener: (folder: string, event?: SignedEvent) => void,
+    options?: { kinds?: number[]; since?: number },
   ): FolderWatch
   /** Watch one Folder by name. The refcounted half of {@link watchFolders}. */
   onFolderActivity(folder: string, listener: FolderListener): () => void
@@ -247,13 +255,19 @@ export function createLiveClient(options: LiveClientOptions): LiveClient {
     },
     onFolderActivity: (folder, listener) => activity.watch(folder, listener),
     watchFolders(folders, listener, watchOptions) {
-      const unwatch = folders.map((folder) => activity.watch(folder, () => listener(folder)))
+      const unwatch = folders.map((folder) => activity.watch(folder, (event) => listener(folder, event)))
       const subs = chunk([...new Set(folders)], MAX_FOLDERS_PER_SUBSCRIPTION).map((group) =>
         relay.subscribe(
-          [{ ...(watchOptions?.kinds ? { kinds: watchOptions.kinds } : {}), '#h': group }],
+          [
+            {
+              ...(watchOptions?.kinds ? { kinds: watchOptions.kinds } : {}),
+              '#h': group,
+              ...(watchOptions?.since !== undefined ? { since: watchOptions.since } : {}),
+            },
+          ],
           (event) => {
             const folder = folderOf(event)
-            if (folder) activity.notify(folder)
+            if (folder) activity.notify(folder, event)
           },
           {
             onClosed: (reason) => options.log?.('folder subscription closed', { reason }),

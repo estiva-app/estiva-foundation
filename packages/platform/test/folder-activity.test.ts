@@ -24,6 +24,15 @@ test('notifies the folder that changed, and only that one', () => {
   assert.equal(theirs, 0)
 })
 
+test('carries the event when there is one, and none when there is not', () => {
+  const activity = createFolderActivity()
+  const got: (string | undefined)[] = []
+  activity.watch(FOLDER, (event) => got.push(event?.id))
+  activity.notify(FOLDER, { id: 'e1', kind: 9, pubkey: 'p', created_at: 1, tags: [['h', FOLDER]], content: '', sig: '' })
+  activity.notify(FOLDER)
+  assert.deepEqual(got, ['e1', undefined])
+})
+
 test('notifying a folder nobody watches is not an error', () => {
   const activity = createFolderActivity()
   assert.doesNotThrow(() => activity.notify(FOLDER))
