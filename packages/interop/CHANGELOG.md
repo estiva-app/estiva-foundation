@@ -6,6 +6,24 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.29.0 — 2026-09-23
+
+**The bare file's built-in manifest declares one more action, `move`.** No
+manifest on the relay means anything different, and nothing is read
+differently except one value that used to be ignored. One export is new.
+
+- **`move`** (FOL-4) — a `kind:1851` change to the `parent` field SPEC §6.7
+  already defined; the value is the new parent's address, or `''` for the top.
+  `h` is the file's team and does not change. A consumer that draws every
+  field-setting action as a property row will now meet it; keep it out with
+  the new `ForeignObject.parentField`, as the title's rename is kept out.
+- **A `parent` change with an empty value moves the file to the top.** 0.28
+  read it as "no change" and fell back to the root `a` tag, so a file could be
+  moved under another but never out again.
+- **`nestingOf(files)`** — roots, children, breadcrumb, move targets, drawn
+  from one team listing with no requests. A file on a cycle is drawn at the
+  top; a parent outside the listing is not drawn.
+
 ## 0.28.1 — 2026-09-22
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**

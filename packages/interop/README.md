@@ -252,6 +252,23 @@ input will now draw a "Rename" box under a bare file's card; whether that is
 what its card is for is the consumer's call, and the field it sets is the one
 `slots.title.field` names, so the two are one fact either way (PEEK-18).
 
+It also declares `move` (a `parent` change; SPEC §6.7). Its value is an
+address, so a text box under a card is the wrong control for it: the object
+names the field in `parentField`, and a consumer drawing property rows keeps
+that one out, as it keeps the title's out, and offers the move where it draws
+the tree.
+
+### Nesting
+
+`nestingOf(files)` draws a listing's nesting — `roots`, `childrenOf`,
+`ancestorsOf` (a breadcrumb), `parentOf`, `moveTargetsOf` — in memory, from the
+`parentRef` each file already carries. Hand it the whole team listing from
+`resolveFolderContents`, never the answer to a `#a` query: a move is a change
+event whose value no relay indexes, so "what is under X?" asked by tag misses
+every file moved in. A parent outside the listing is not drawn, and a file on a
+cycle is drawn at the top, so every listed file stays reachable and no walk
+loops.
+
 ## 3. Widgets: draw what you know, degrade honestly
 
 `widget` is a *layout hint*, and it may be a single type or an ordered chain:
