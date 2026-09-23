@@ -2595,19 +2595,166 @@ export async function resolveForeignObject(
    */
   cache?: ProjectionCache,
 ): Promise<ForeignObject | null> {
-  let pointer: AddressPointer
+  const pointer = addressPointerOf(naddr)
+  if (!pointer) return null
+  const resolved = await resolveManifest(pointer, query, cache)
+  if (!resolved) return null
+  const plan = planObject(naddr, pointer, resolved, depth)
+  if (!plan) return null
+
+  const assembled = assembleObject(plan, await query(plan.filters))
+  if (assembled.object.unreachable) return assembled.object
+  return withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled)))
+}
+
+/**
+ * Many addressed objects in one round trip — PER-10.
+ *
+ * {@link resolveForeignObject} costs one request per object once the manifest
+ * is cached, and a consumer holding a set re-reads the whole set on every
+ * refresh: Peek's Screener asked once per followed file, every minute, and an
+ * idle Desk spent 144 of 194 requests in five minutes on exactly that, against
+ * a relay that meters 300 a minute per person across every tab. This reads the
+ * same objects with the same filters, **all of them in one POST** — chunked at
+ * `MAX_FILTERS_PER_QUERY` the way {@link conversationsOf} is, since each object
+ * asks up to four filters — then one people lookup for the whole set.
+ *
+ * So a refresh is `ceil(filters / 128)` requests and a people lookup, where it
+ * was one request per object and a lookup each: two for any set of up to 32
+ * objects, whatever their number.
+ *
+ * ## Same filters, same objects
+ *
+ * Each object's filters are exactly the ones {@link resolveForeignObject}
+ * sends, so each keeps its own `limit` — one busy file cannot starve another's
+ * comments, which is why this is not one filter naming every address. The
+ * answers come back pooled, and every object is picked back out of the pool on
+ * its filters' own criteria, the rule `childrenFrom` already follows for the
+ * children that share a request with their parent. The result is keyed by the
+ * reference as given, and each object is what `resolveForeignObject` returns
+ * for it.
+ *
+ * A reference that is not an address, or whose app has no manifest or no
+ * projection for its kind, is `null` — as it is from the single form. An event
+ * reference (`nevent`, a bare id) is not an address and is `null` here; that
+ * is {@link resolveForeignEvent}'s.
+ *
+ * **A failed read rejects the whole call**, as the single form throws. There is
+ * no partial answer to give: the objects arrive pooled, so a chunk that failed
+ * could have held any of them.
+ */
+export async function resolveForeignObjects(
+  references: readonly string[],
+  query: QueryFn,
+  /** Defaults to asking the relay. The browser passes a cached lookup. */
+  lookupPeople?: PeopleFn,
+  /** See {@link ProjectionCache}. Omitting it still reads each app's manifest once per call. */
+  cache?: ProjectionCache,
+): Promise<Record<string, ForeignObject | null>> {
+  const results: Record<string, ForeignObject | null> = {}
+  const asked: { reference: string; pointer: AddressPointer }[] = []
+  for (const reference of new Set(references)) {
+    const pointer = addressPointerOf(reference)
+    results[reference] = null
+    if (pointer) asked.push({ reference, pointer })
+  }
+  if (asked.length === 0) return results
+
+  // One manifest per app, never per object — the reason `conversationsOf`
+  // groups the same way. A cache would share these too, but a caller without
+  // one should not pay per object for what every object of an app shares.
+  const byApp = new Map<string, AddressPointer>()
+  for (const { pointer } of asked) byApp.set(manifestKeyOf(pointer), pointer)
+  const manifests = new Map<string, ResolvedManifest>()
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+
+  const plans = asked.flatMap(({ reference, pointer }) => {
+    const resolved = manifests.get(manifestKeyOf(pointer))
+    const plan = resolved && planObject(reference, pointer, resolved, 0)
+    return plan ? [{ reference, plan }] : []
+  })
+  if (plans.length === 0) return results
+
+  // Two spellings of one object — its `naddr` and its plain address — are two
+  // answers (each keeps its own `openUrl`) and one set of filters.
+  const filters: Record<string, unknown>[] = []
+  const planned = new Set<string>()
+  for (const { plan } of plans) {
+    if (planned.has(plan.address)) continue
+    planned.add(plan.address)
+    filters.push(...plan.filters)
+  }
+  const chunks: Record<string, unknown>[][] = []
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    chunks.push(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
+  }
+  const events = (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
+
+  const assembled = plans.map(({ reference, plan }) => ({ reference, built: assembleObject(plan, events) }))
+  const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
+  const reachable = assembled.some(({ built }) => !built.object.unreachable)
+  const people = reachable ? await (lookupPeople ?? peopleViaRelay(query))(wanted) : {}
+  for (const { reference, built } of assembled) {
+    if (built.object.unreachable) {
+      results[reference] = built.object
+      continue
+    }
+    // Each object carries the people it names, as the single form's does —
+    // not the whole set's, which would make an object's shape depend on what
+    // it happened to be resolved beside.
+    const own: People = {}
+    for (const key of peopleOf(built)) if (key in people) own[key] = people[key]
+    results[reference] = withPeople(built, own)
+  }
+  return results
+}
+
+/** An `naddr` or a `<kind>:<pubkey>:<d>`, or null for anything else. */
+function addressPointerOf(reference: string): AddressPointer | null {
   try {
     // Either form: a body carries `naddr1…`, an `a` tag carries the plain
     // address, and both name the same object (FEE-2).
-    pointer = referenceToPointer(naddr)
+    return referenceToPointer(reference)
   } catch {
     return null
   }
-  const address = pointerToAddress(pointer)
+}
 
-  const resolved = await resolveManifest(pointer, query, cache)
-  if (!resolved) return null
-  const { manifest, viaRecommendation } = resolved
+/**
+ * What one addressed object is read with, and what assembling it needs after.
+ *
+ * Split from the read so {@link resolveForeignObjects} can send many objects'
+ * filters in one request and assemble each from the pooled answer, while
+ * {@link resolveForeignObject} sends one object's and assembles it from its
+ * own. Both go through here, so the two cannot drift apart.
+ */
+interface ObjectPlan {
+  naddr: string
+  pointer: AddressPointer
+  address: string
+  resolved: ResolvedManifest
+  projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
+  records: RecordsRule
+  commentKinds: number[]
+  childFilter: ReturnType<typeof childFilterFor>
+  filters: Record<string, unknown>[]
+  openUrl?: string
+}
+
+/** Null when the owning app has no projection for the kind. */
+function planObject(
+  naddr: string,
+  pointer: AddressPointer,
+  resolved: ResolvedManifest,
+  depth: number,
+): ObjectPlan | null {
+  const { manifest } = resolved
+  const address = pointerToAddress(pointer)
   // Substituted here rather than in the component: `<bech32>` is a NIP-89
   // detail, and the widget's job is to draw a link, not to know the spec.
   const openUrl = resolved.webTemplate?.replace('<bech32>', naddr.replace(/^nostr:/, ''))
@@ -2634,46 +2781,79 @@ export async function resolveForeignObject(
     one, and with the manifest memoised it is the whole cost of a tick.
   */
   const childFilter = childFilterFor({ projection, manifest, pointer, depth })
-  const events = await query([
+  const filters = [
     { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
     // Only when the app actually declares a change kind — see `foldRuleOf`.
     ...(manifest.records ? [{ kinds: [manifest.records.changeKind], '#a': [address], limit: 500 }] : []),
     { kinds: commentKinds, '#a': [address], limit: CONVERSATION_LIMIT },
     ...(childFilter ? [childFilter.filter] : []),
-  ])
+  ]
+  return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, openUrl }
+}
+
+/** An object and its children, before the people lookup that needs both. */
+interface AssembledObject {
+  object: ForeignObject
+  children?: ForeignObject[]
+}
+
+/**
+ * Build a planned object out of whatever the relay answered.
+ *
+ * **Every event is matched on the criteria of the filter that asked for it**,
+ * because the answer may hold more than this object's own events: the root
+ * shares its request with its children (SHI-13), and in
+ * {@link resolveForeignObjects} with every other object in the set. So the root
+ * is matched on its author as well as its kind and `d` — two apps' objects may
+ * share both — and a fold runs only when the manifest declares change events,
+ * since the substitute rule's `changeKind` is a placeholder that was never
+ * asked for (`foldRuleOf`).
+ *
+ * Deduplicated by id first. The relay concatenates what each filter matched
+ * rather than merging it (measured, see `conversationsOf`), so an event two
+ * filters match — a comment naming two files in the set, a `kind:9` that is a
+ * Topic's child and its comment — would otherwise be drawn twice.
+ */
+function assembleObject(plan: ObjectPlan, answered: SignedEvent[]): AssembledObject {
+  const { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, openUrl } = plan
+  const { manifest, viaRecommendation } = resolved
+  const seen = new Set<string>()
+  const events = answered.filter((e) => !seen.has(e.id) && !!seen.add(e.id))
 
   const root = events.find(
-    (e) => e.kind === pointer.kind && tagValue(e, 'd') === pointer.identifier,
+    (e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier,
   )
   if (!root) {
     // We know which app owns this and how it would be drawn; we just cannot see
     // the object. Say so rather than returning null and looking like a typo.
     return {
-      ref: address,
-      address,
-      naddr: naddr.replace(/^nostr:/, ''),
-      // Nothing was read, so there is no event to name. The reference is the
-      // address; that is all this case ever knows.
-      eventId: '',
-      kind: pointer.kind,
-      widget: projection.widget,
-      appName: manifest.name,
-      slots: {},
-      meta: [],
-      comments: [],
-      actions: [],
-      viaRecommendation,
-      // Offered even here. "You cannot see this object" is exactly when
-      // somebody wants to open it in the app that can.
-      openUrl,
-      unreachable: true,
+      object: {
+        ref: address,
+        address,
+        naddr: naddr.replace(/^nostr:/, ''),
+        // Nothing was read, so there is no event to name. The reference is the
+        // address; that is all this case ever knows.
+        eventId: '',
+        kind: pointer.kind,
+        widget: projection.widget,
+        appName: manifest.name,
+        slots: {},
+        meta: [],
+        comments: [],
+        actions: [],
+        viaRecommendation,
+        // Offered even here. "You cannot see this object" is exactly when
+        // somebody wants to open it in the app that can.
+        openUrl,
+        unreachable: true,
+      },
     }
   }
 
   const folded = foldChanges(
-    events.filter(
-      (e) => e.kind === records.changeKind && tagValue(e, records.targetTag) === address,
-    ),
+    manifest.records
+      ? events.filter((e) => e.kind === records.changeKind && tagValue(e, records.targetTag) === address)
+      : [],
     records,
   )
 
@@ -2730,16 +2910,24 @@ export async function resolveForeignObject(
     viaRecommendation,
   })
 
-  // After the object, because who to ask about is not known until it is built.
-  // Folded into the same resolve rather than left to the renderer so the
-  // widget's skeleton covers the wait and a key is never briefly on screen.
-  // Children are included so one lookup covers the whole tree — a message list
-  // is mostly other people, and a second trip per child would show a column of
-  // keys while it ran.
-  const forPeople = [object, ...(children ?? [])]
-  const people = await (lookupPeople ?? peopleViaRelay(query))([
-    ...new Set(forPeople.flatMap(pubkeysIn)),
-  ])
+  return { object, ...(children ? { children } : {}) }
+}
+
+/**
+ * Who an assembled object names — asked after the object, because who to ask
+ * about is not known until it is built.
+ *
+ * Folded into the same resolve rather than left to the renderer so the
+ * widget's skeleton covers the wait and a key is never briefly on screen.
+ * Children are included so one lookup covers the whole tree — a message list
+ * is mostly other people, and a second trip per child would show a column of
+ * keys while it ran.
+ */
+function peopleOf({ object, children }: AssembledObject): string[] {
+  return [...new Set([object, ...(children ?? [])].flatMap(pubkeysIn))]
+}
+
+function withPeople({ object, children }: AssembledObject, people: People): ForeignObject {
   return { ...object, people, ...(children ? { children: children.map((c) => ({ ...c, people })) } : {}) }
 }
 

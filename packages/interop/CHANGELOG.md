@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.31.0 — 2026-09-23
+
+**Manifests: nothing.** No declaration is read differently. What is new is a
+way to read many objects at once.
+
+- **`resolveForeignObjects(references, query, lookupPeople?, cache?)`** (PER-10).
+  The objects `resolveForeignObject` returns, keyed by reference, for one POST
+  (chunked at `MAX_FILTERS_PER_QUERY`) and one people lookup instead of a
+  request and a lookup each. Each object's filters are exactly the single
+  form's, so each keeps its own limits. Peek's Screener resolved every followed
+  file on its own each minute: 144 of an idle Desk's 194 requests in five
+  minutes. A reference that is not an address is `null`; a failed read rejects
+  the whole call.
+- **An object's events are deduplicated before it is assembled**, in both forms.
+  The relay concatenates what each filter matched, so an event two of one
+  object's filters matched — a `kind:9` carrying both a Topic's `h` and its `a`
+  — came back twice and would be listed twice. Not seen on production; in a
+  pooled answer it is the ordinary case (a comment that names two files).
+- **A root is matched on its author as well as its kind and `d`.** The filter
+  already asked for that author, so a single resolve is unchanged; in a pooled
+  answer two apps' objects may share a kind and a `d`.
+
 ## 0.30.1 — 2026-09-23
 
 **Manifests: nothing.** No declaration is read differently. What changed is
