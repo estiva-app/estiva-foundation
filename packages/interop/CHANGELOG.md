@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.30.1 — 2026-09-23
+
+**Manifests: nothing.** No declaration is read differently. What changed is
+how many times the same one is fetched.
+
+- **`createProjectionCache` shares a manifest read that is still running**
+  (PER-8). The memo only helped a resolve that started after another had
+  finished, so a consumer resolving a set at once — Peek's Screener,
+  `Promise.all` over every followed file, every minute — sent the
+  recommendation and manifest lookups once *per file* each time the entry was
+  cold. Production: 133 of an idle tab's 385 requests in five minutes, against
+  a meter that refused 74. A 20-resolve burst now costs 2 discovery requests
+  instead of 40.
+- A failed read is shared by the burst that caused it and **not** remembered:
+  the next resolve asks afresh. `clear()` during a read keeps that read from
+  writing its answer back.
+- `ProjectionCache` gains an optional `@internal` `share`. A hand-written cache
+  without it behaves exactly as before.
+
 ## 0.30.0 — 2026-09-23
 
 **Nothing a manifest may declare changes, and nothing about how one is read.**

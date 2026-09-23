@@ -1440,30 +1440,44 @@ async function resolveAspectApp(
   // as Peek does, or two.
   entity: 'naddr' | 'nevent' = 'naddr',
 ): Promise<ResolvedManifest | null> {
-  const key = `aspect:${aspect}:${entity}`
+  return throughCache(cache, `aspect:${aspect}:${entity}`, async () => {
+    const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+    for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
+      const manifest = parseManifest(candidate)
+      if (manifest?.aspect !== aspect) continue
+      const template = webTemplate(candidate, entity)
+      // Declaring the aspect and publishing nowhere to open a file is a manifest
+      // this consumer has no use for yet; keep looking rather than answer with
+      // an app that cannot be linked to.
+      if (!template) continue
+      return {
+        manifest,
+        address: `${candidate.kind}:${candidate.pubkey}:${tagValue(candidate, 'd') ?? ''}`,
+        viaRecommendation: false,
+        webTemplate: template,
+      }
+    }
+    return null
+  })
+}
+
+/**
+ * The memo, then a shared read, then the network — in that order. A cache
+ * without `share` (hand-written, or older) keeps the old behaviour exactly:
+ * look up, read, remember.
+ */
+async function throughCache(
+  cache: ProjectionCache | undefined,
+  key: string,
+  read: () => Promise<ResolvedManifest | null>,
+): Promise<ResolvedManifest | null> {
   const now = Date.now()
   const memo = cache?.lookup(key, now)
   if (memo) return memo.value
-
-  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
-  let answer: ResolvedManifest | null = null
-  for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
-    const manifest = parseManifest(candidate)
-    if (manifest?.aspect !== aspect) continue
-    const template = webTemplate(candidate, entity)
-    // Declaring the aspect and publishing nowhere to open a file is a manifest
-    // this consumer has no use for yet; keep looking rather than answer with
-    // an app that cannot be linked to.
-    if (!template) continue
-    answer = {
-      manifest,
-      address: `${candidate.kind}:${candidate.pubkey}:${tagValue(candidate, 'd') ?? ''}`,
-      viaRecommendation: false,
-      webTemplate: template,
-    }
-    break
-  }
-  cache?.remember(key, answer, now)
+  if (!cache) return read()
+  if (cache.share) return cache.share(key, now, read)
+  const answer = await read()
+  cache.remember(key, answer, now)
   return answer
 }
 
@@ -1494,6 +1508,13 @@ export interface ProjectionCache {
   lookup(key: string, now: number): { value: ResolvedManifest | null } | undefined
   /** @internal */
   remember(key: string, value: ResolvedManifest | null, now: number): void
+  /**
+   * @internal Run `read` for `key` unless a read for it is already running, in
+   * which case join that one; remember the answer as `remember` would. Optional
+   * so a hand-written cache still satisfies the interface — without it, a burst
+   * of cold resolves asks once each, which is the old behaviour.
+   */
+  share?(key: string, now: number, read: () => Promise<ResolvedManifest | null>): Promise<ResolvedManifest | null>
 }
 
 /**
@@ -1506,10 +1527,53 @@ export interface ProjectionCache {
  */
 export const MANIFEST_TTL_MS = 5 * 60_000
 
+/**
+ * ## One read per manifest, however many resolves ask at once (PER-8)
+ *
+ * The memo only helps a resolve that starts after another has *finished*. A
+ * consumer that resolves a set together — Peek's Screener does
+ * `Promise.all(files.map(resolveObject))` every minute — starts every one of
+ * them against the same cold entry, so each fetched the recommendation and the
+ * manifest itself, and did it again every time the entry expired. Measured on
+ * production: 133 of an idle tab's 385 requests in five minutes were manifest
+ * lookups, against a meter that refused 74 of them.
+ *
+ * So a read in flight is shared: the second asker for a key joins the first
+ * one's promise. A failure is shared the same way and **not** remembered — the
+ * burst that caused it costs one request instead of one each, and the next
+ * resolve asks afresh. Remembering it would blank every reference to that app
+ * for the whole window over what may have been one refused request.
+ */
 export function createProjectionCache(ttlMs: number = MANIFEST_TTL_MS): ProjectionCache {
   const entries = new Map<string, { at: number; value: ResolvedManifest | null }>()
+  const flights = new Map<string, Promise<ResolvedManifest | null>>()
+  // Bumped by `clear`, so a read that was in flight when a manifest was
+  // republished does not write its stale answer back afterwards.
+  let generation = 0
   return {
-    clear: () => entries.clear(),
+    clear: () => {
+      generation += 1
+      entries.clear()
+      flights.clear()
+    },
+    share(key, now, read) {
+      const running = flights.get(key)
+      if (running) return running
+      const began = generation
+      const flight = read().then(
+        (value) => {
+          if (flights.get(key) === flight) flights.delete(key)
+          if (began === generation) entries.set(key, { at: now, value })
+          return value
+        },
+        (error: unknown) => {
+          if (flights.get(key) === flight) flights.delete(key)
+          throw error
+        },
+      )
+      flights.set(key, flight)
+      return flight
+    },
     lookup(key, now) {
       const found = entries.get(key)
       if (!found) return undefined
@@ -1566,13 +1630,7 @@ export async function resolveManifest(
       ? { ...bareFileManifest(), webTemplate: opener.webTemplate }
       : bareFileManifest()
   }
-  const key = `${pointer.kind}:${pointer.pubkey}`
-  const now = Date.now()
-  const memo = cache?.lookup(key, now)
-  if (memo) return memo.value
-  const answer = await resolveManifestUncached(pointer, query)
-  cache?.remember(key, answer, now)
-  return answer
+  return throughCache(cache, `${pointer.kind}:${pointer.pubkey}`, () => resolveManifestUncached(pointer, query))
 }
 
 async function resolveManifestUncached(

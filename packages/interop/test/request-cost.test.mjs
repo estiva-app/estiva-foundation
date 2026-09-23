@@ -224,3 +224,78 @@ test('a second `a` tag still counts — the relay matches any of them, so this m
   assert.equal(found.comments.length, 1, 'the comment must not be lost to tag order')
   assert.equal(found.comments[0].body, 'mentions another object first')
 })
+
+/*
+  PER-8 — a burst. Peek's Screener resolves every followed file at once
+  (`Promise.all`), every minute, so all of them meet the same cold entry
+  together. The memo above only helps a resolve that starts after another has
+  finished; these count what a burst costs.
+*/
+const discovery = (calls) =>
+  calls.filter((filters) => filters.some((f) => f.kinds?.includes(31989) || f.kinds?.includes(31990))).length
+
+test('a burst of cold resolves shares one discovery instead of paying it once each', async () => {
+  const relay = world()
+  const cache = createProjectionCache()
+  await Promise.all(Array.from({ length: 20 }, () => resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)))
+
+  assert.equal(discovery(relay.calls), 2, `discovery must run once for the burst, ran ${discovery(relay.calls) / 2} times`)
+  assert.equal(relay.count, 22, 'two for discovery, one per object')
+})
+
+test('a failed discovery is shared by the burst and not remembered', async () => {
+  const relay = world()
+  let refuse = true
+  const query = async (filters) => {
+    if (refuse && filters.some((f) => f.kinds?.includes(31989) || f.kinds?.includes(31990))) {
+      relay.calls.push(filters)
+      throw new Error('rate-limited: quota exceeded; retry in 8s')
+    }
+    return relay.query(filters)
+  }
+  const cache = createProjectionCache()
+  const burst = await Promise.allSettled(
+    Array.from({ length: 10 }, () => resolveForeignObject(ADDRESS, query, undefined, 0, cache)),
+  )
+  assert.ok(burst.every((outcome) => outcome.status === 'rejected'), 'every asker sees the failure')
+  assert.equal(discovery(relay.calls), 1, 'one refused request for the whole burst, not ten')
+
+  refuse = false
+  const found = await resolveForeignObject(ADDRESS, query, undefined, 0, cache)
+  assert.equal(found.slots.title.value, 'Payment integration', 'the next resolve asks afresh')
+})
+
+test('clear() during a read keeps that read from writing its answer back', async () => {
+  const relay = world()
+  let release
+  const gate = new Promise((resolve) => (release = resolve))
+  const query = async (filters) => {
+    if (filters.some((f) => f.kinds?.includes(31989))) await gate
+    return relay.query(filters)
+  }
+  const cache = createProjectionCache()
+  const first = resolveForeignObject(ADDRESS, query, undefined, 0, cache)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  cache.clear() // a manifest was republished while the read was out
+  release()
+  await first
+
+  const before = relay.count
+  await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
+  assert.equal(relay.count - before, 3, 'what was read before clear() must not be believed after it')
+})
+
+test('a cache without share keeps the old behaviour: look up, read, remember', async () => {
+  const relay = world()
+  const entries = new Map()
+  const handWritten = {
+    clear: () => entries.clear(),
+    lookup: (key) => (entries.has(key) ? { value: entries.get(key) } : undefined),
+    remember: (key, value) => void entries.set(key, value),
+  }
+  await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
+  const cold = relay.count
+  await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
+  assert.equal(cold, 3)
+  assert.equal(relay.count - cold, 1)
+})
