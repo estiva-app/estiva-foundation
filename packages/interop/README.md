@@ -70,6 +70,26 @@ politeness, it is required: the slot set is closed but it *grows*, and producers
 upgrade before consumers do. `title` is always present, so an object you only
 half understand still renders as a named, resolvable thing.
 
+### Holding a set? Resolve it as one
+
+A list you keep live — followed files, open work — should not resolve its
+entries one at a time. Each resolve is a request, and a relay that meters reads
+per request (the Estiva relay allows 300 a minute, shared by a person's tabs)
+runs out on a refresh of a few dozen.
+
+```ts
+import { resolveForeignObjects, createProjectionCache } from '@estiva-app/interop'
+
+const cache = createProjectionCache() // keep it for the session
+const objects = await resolveForeignObjects(addresses, query, undefined, cache)
+// { [address]: ForeignObject | null } — each exactly what resolveForeignObject returns
+```
+
+Every object keeps its own filters and limits, so a busy one never crowds out
+another's comments; they share the POST. A warm refresh of up to 32 objects is
+one request and a people lookup. Event references (`nevent`) are not addresses
+and come back `null`; resolve those with `resolveForeignEvent`.
+
 ### A `body` says which content model it is in — read it, do not guess
 
 `body` is the one slot that carries structure, and it arrives in one of two
