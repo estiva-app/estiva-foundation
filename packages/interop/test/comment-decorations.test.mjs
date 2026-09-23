@@ -75,6 +75,61 @@ test('two edits in the same second are ordered by their ts tag', async () => {
   assert.equal(found.byId[c.id].edit.body, 'later')
 })
 
+/*
+  CON-5 — RFC 0.4 §7.2.1 as amended 2026-09-23. An edit may carry `imeta`, and
+  attachments fold separately from the body.
+*/
+const imeta = (x) => ['imeta', `url /media/${x}.png`, 'm image/png', `x ${x}`, 'size 10']
+const editOf = (c, content, extra = []) => event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id], ...extra], content })
+const shas = (d) => d.attachments?.map((f) => f.x)
+
+test('a later edit carrying imeta replaces the set — it does not append', async () => {
+  const c = comment()
+  const first = editOf(c, 'first', [imeta('aaa'), imeta('bbb')])
+  const second = editOf(c, 'first', [imeta('ccc')])
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([second, first]))
+  assert.deepEqual(shas(found.byId[c.id]), ['ccc'])
+})
+
+test('an edit without imeta leaves the attachments as they were', async () => {
+  const c = comment()
+  const attach = editOf(c, 'first', [imeta('aaa')])
+  const reword = editOf(c, 'reworded')
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([reword, attach]))
+  assert.equal(found.byId[c.id].edit.body, 'reworded')
+  assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
+  // No edit carrying any: no set, so the comment's own stands.
+  const d = comment()
+  const only = await commentDecorationsOf([{ id: d.id, at: d.created_at }], relay([editOf(d, 'changed')]))
+  assert.equal(only.byId[d.id].attachments, undefined)
+})
+
+test('the newest edit carrying imeta wins, ordered like the body', async () => {
+  const c = comment()
+  const at = 1_700_019_000
+  const a = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 900)], imeta('aaa')], content: 'first' })
+  const b = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 100)], imeta('bbb')], content: 'first' })
+  const later = event({ kind: 40003, created_at: at + 60, tags: [['h', FOLDER], ['e', c.id]], content: 'changed' })
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([b, later, a]))
+  assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
+})
+
+test('given the body, an edit identical to the body it replaces is not an edit of it', async () => {
+  const c = comment()
+  const attachOnly = editOf(c, 'first', [imeta('aaa')])
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([attachOnly]))
+  assert.equal(found.byId[c.id].edit, undefined)
+  assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
+  // The mark stays with the last edit that changed the body.
+  const reword = editOf(c, 'reworded')
+  const reattach = editOf(c, 'reworded', [imeta('bbb')])
+  const again = await commentDecorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([reattach, reword, attachOnly]))
+  assert.deepEqual(again.byId[c.id].edit, { body: 'reworded', at: reword.created_at, by: AUTHOR })
+  // Without the body, the newest edit is reported, as before.
+  const blind = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([attachOnly]))
+  assert.equal(blind.byId[c.id].edit.at, attachOnly.created_at)
+})
+
 test('reactions are attributed to their target, oldest first', async () => {
   const c = comment()
   const d = comment()
