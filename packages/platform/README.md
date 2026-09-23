@@ -109,6 +109,37 @@ Pass `kinds` while you are at it: a kindless wide filter was refused outright on
 that other build with `restricted: p-gated events require #p matching your
 pubkey`.
 
+### Refreshing, and waiting when the relay says so
+
+Buzz meters `POST /query` at 300 a minute **per pubkey**, so every tab and app
+signed in as one person shares one allowance. Build one budget and one
+scheduler per tab:
+
+```ts
+import { createRefreshScheduler, createRelayBudget } from '@estiva-app/platform'
+
+// The transport writes it; the cadence reads it.
+export const relayBudget = createRelayBudget({
+  // Optional: the app's other tabs learn a pause from this one.
+  channel: new BroadcastChannel('my-app-relay-budget'),
+})
+export const refreshScheduler = createRefreshScheduler({ document, window, budget: relayBudget })
+
+// In the transport, on every answer:
+if (status === 429 || isRateLimited(body)) relayBudget.noteRateLimited(body)
+
+// In a hook: focus, becoming visible, and every 30 s while visible. A tab
+// switch raises two events and costs one read; nothing runs while paused.
+useEffect(() => refreshScheduler.subscribe(reload, { interval: !live }), [live])
+
+// Before retrying a refused read: every waiter goes after the longest pause
+// anybody learned, not its own shorter one.
+await relayBudget.whenClear()
+```
+
+Nothing here gates a read. A read somebody asked for by clicking still goes out
+at once; only the cadence backs off.
+
 ## What this deliberately does not know
 
 Where anything is stored. Peek's version took a `LiveProjectionApi`, and

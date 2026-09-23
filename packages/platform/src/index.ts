@@ -5,7 +5,8 @@
  * and the two relay clients, and deliberately contains no fold. This package
  * sits above it and holds the things that are about *running in a tab* — the
  * one socket a tab should have, the credential read per connect, the network
- * coming back, and (SHA-2) the PWA's manifest, service worker and update flow.
+ * coming back, when a tab re-reads and when the relay has asked it to wait
+ * (PER-13), and (SHA-2) the PWA's manifest, service worker and update flow.
  *
  * ## The rule this package is here to keep
  *
@@ -34,3 +35,21 @@ export {
   type FolderListener,
 } from './folder-activity.js'
 export { assumeOnline, browserOnlineSource, type OnlineSource, type OnlineTarget } from './online.js'
+export {
+  DEFAULT_BACKOFF_MS,
+  DEFAULT_MERGE_MS,
+  MIN_BACKOFF_MS,
+  createRefreshScheduler,
+  createRelayBudget,
+  isRateLimited,
+  retryHintMs,
+  type BudgetChannel,
+  type FocusTarget,
+  type RefreshScheduler,
+  type RefreshSchedulerOptions,
+  type RefreshSubscription,
+  type RelayBudget,
+  type RelayBudgetOptions,
+  type SchedulerClock,
+  type VisibilityTarget,
+} from './refresh.js'

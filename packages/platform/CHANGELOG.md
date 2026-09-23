@@ -1,5 +1,25 @@
 # @estiva-app/platform
 
+## 0.3.0
+
+When a tab re-reads, and when the relay has asked it to wait (PER-13). Additive.
+
+Ship's `useRefresh` + `relayBudget` taken out of the app, so Peek can stop
+firing every read twice per tab switch and stop retrying refused reads in a
+herd. On 2026-09-23 one person's key reached 306 requests in a minute across
+two Peek tabs and a Ship tab, against buzz's 300-per-pubkey window.
+
+- `createRefreshScheduler({ document, window, budget })` — one `focus` and one
+  `visibilitychange` listener per tab, fanned out to every subscriber. Two
+  triggers inside `mergeMs` (default 1 s) are one read, per subscriber. The
+  interval never runs in a hidden tab. Nothing runs while the budget is paused,
+  and nothing is queued for when it ends.
+- `createRelayBudget({ channel? })` — the pause the relay's `retry in N s`
+  names. Extends, never shortens. `whenClear()` resolves once it has passed.
+  Given a `BroadcastChannel`, a pause one tab learns holds in the app's others.
+- `isRateLimited`, `retryHintMs`, `DEFAULT_BACKOFF_MS`, `MIN_BACKOFF_MS`,
+  `DEFAULT_MERGE_MS`.
+
 ## 0.2.0
 
 A Folder notification may carry the event that caused it (PER-8). Additive:
