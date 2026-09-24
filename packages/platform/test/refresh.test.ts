@@ -162,6 +162,57 @@ test('interval: false keeps focus and visibility, drops the timer', () => {
   assert.equal(a.calls(), 1)
 })
 
+/**
+ * PER-6 — Ship's project page read "every couple of seconds" on a 10 s
+ * interval. Each of its three pollers subscribed as its section mounted, each
+ * got its own timer, and the three phases never met.
+ */
+test('subscribers on one interval share one timer and wake together, whenever they joined', () => {
+  const tab = fakeTab()
+  const scheduler = createRefreshScheduler({ document: tab.document, window: tab.window, clock: tab.clock })
+  const wakes = new Set<number>()
+  const reader = () => () => void wakes.add(tab.clock.now())
+  scheduler.subscribe(reader(), { intervalMs: 10_000 })
+  tab.advance(3_100)
+  scheduler.subscribe(reader(), { intervalMs: 10_000 })
+  tab.advance(4_300)
+  scheduler.subscribe(reader(), { intervalMs: 10_000 })
+  assert.equal(tab.timers(), 1)
+  wakes.clear()
+  tab.advance(60_000)
+  const at = [...wakes].sort((a, b) => a - b)
+  assert.equal(at.length, 6, `one wake-up per interval, not three: ${at.join(', ')}`)
+  for (let i = 1; i < at.length; i++) assert.equal(at[i] - at[i - 1], 10_000)
+})
+
+test('a subscriber sits out a shared tick that lands just after its own first read', () => {
+  const tab = fakeTab()
+  const scheduler = createRefreshScheduler({ document: tab.document, window: tab.window, clock: tab.clock })
+  scheduler.subscribe(() => {}, { intervalMs: 10_000 })
+  tab.advance(9_000)
+  const late = counter()
+  scheduler.subscribe(late.refresh, { intervalMs: 10_000 })
+  tab.advance(1_000)
+  assert.equal(late.calls(), 0, 'one second after it mounted and read')
+  tab.advance(10_000)
+  assert.equal(late.calls(), 1, 'then on the shared beat')
+})
+
+test('each interval has its own timer, gone with its last subscriber', () => {
+  const tab = fakeTab()
+  const scheduler = createRefreshScheduler({ document: tab.document, window: tab.window, clock: tab.clock })
+  const a = scheduler.subscribe(() => {}, { intervalMs: 10_000 })
+  const b = scheduler.subscribe(() => {}, { intervalMs: 10_000 })
+  const c = scheduler.subscribe(() => {}, { intervalMs: 30_000 })
+  assert.equal(tab.timers(), 2)
+  a()
+  assert.equal(tab.timers(), 2, 'one subscriber still on 10 s')
+  b()
+  assert.equal(tab.timers(), 1)
+  c()
+  assert.equal(tab.timers(), 0)
+})
+
 test('one pair of listeners however many subscribe, gone with the last', () => {
   const tab = fakeTab()
   const scheduler = createRefreshScheduler({ document: tab.document, window: tab.window, clock: tab.clock })

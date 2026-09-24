@@ -1,5 +1,20 @@
 # @estiva-app/platform
 
+## 0.3.1
+
+Subscribers on one interval share one timer (PER-6). No API change.
+
+0.3.0 started a `setInterval` per subscriber, at the moment it subscribed, so
+three views on one page on the same 10 s woke at three unrelated phases — Ship's
+project page read every ~3 s, and never inside the 1 s merge. Now there is one
+timer per distinct `intervalMs`, and every subscriber on it wakes in the same
+tick.
+
+- A subscriber that joined less than half an interval ago sits out a tick: its
+  caller has just done its own first read. Its first scheduled refresh comes
+  between 0.5× and 1.5× the interval after subscribing, then on the shared beat.
+- Different intervals still have separate timers, and separate phases.
+
 ## 0.3.0
 
 When a tab re-reads, and when the relay has asked it to wait (PER-13). Additive.
