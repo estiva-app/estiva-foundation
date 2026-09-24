@@ -72,6 +72,12 @@ export const KIND = {
   NIP29_CREATE_GROUP: 9007,
   NIP29_DELETE_GROUP: 9008,
   /**
+   * Folder command — `KIND_FOLDER_COMMAND` (RFC 0.4 §4.1). A client never signs
+   * a Folder's state; it sends one of these and the relay emits the new
+   * relay-signed `kind:30890`. See {@link buildFolderCommand}.
+   */
+  FOLDER_COMMAND: 1852,
+  /**
    * Estiva assertion — a statement *about* something in the channel, rather
    * than a message in it (PEEK-128). `resolution` is the first and, for now,
    * only subtype; the `t` tag names it so later subtypes can join without a
@@ -441,6 +447,63 @@ export function buildEditChannelMetadata(
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
     kind: KIND.NIP29_EDIT_METADATA,
+    tags,
+    content: '',
+  }
+}
+
+/** A Folder command's `op`. `handle_folder_command` refuses anything else. */
+export type FolderOp = 'add' | 'remove' | 'set'
+const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set']
+
+/**
+ * kind:1852 Folder command — the tag shape `handle_folder_command` reads
+ * (`buzz-relay/src/handlers/side_effects.rs`, `nfb-demo-kinds`). Buzz has no
+ * builder for it: the kind is the relay's own and only clients send it.
+ *
+ * Tag order: h, op, a…, [name]. `a` tags keep the order given, because the
+ * relay appends them in that order and a Folder's order is the Folder's.
+ *
+ * - `add` and `remove` act on the addresses named and leave the rest alone;
+ *   `set` replaces the list wholesale. `add` with no addresses keeps the
+ *   contents and is how a name alone is changed — there is no `rename` op.
+ * - `name` is sticky: a command without one keeps the Folder's name.
+ * - The name goes through `canonicalChannelName`, as the channel's does. The
+ *   state's name shadows the channel's wherever a Folder is listed, so the two
+ *   homes must not disagree about a leading `#` or trailing space.
+ *
+ * **The relay computes the next state from the existing one, and a Folder with
+ * no `kind:30890` has none**, so any command against it emits state listing
+ * only what the command names — which hides everything filed in it by `h`.
+ * Whether that is safe is the caller's to know; the planners in
+ * `@estiva-app/interop` take it as an argument.
+ */
+export function buildFolderCommand(
+  pubkey: string,
+  createdAtMs: number,
+  args: { folder: string; op: FolderOp; addresses?: string[]; name?: string },
+): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  if (!args.folder) throw new Error('a folder command names the folder')
+  // The relay refuses an unknown op rather than defaulting it; so do we.
+  if (!FOLDER_OPS.includes(args.op)) throw new Error(`unknown folder op: ${String(args.op)}`)
+  const tags: NostrTag[] = [
+    ['h', args.folder],
+    ['op', args.op],
+  ]
+  for (const address of args.addresses ?? []) {
+    if (!address) throw new Error('a folder command address must not be empty')
+    tags.push(['a', address])
+  }
+  if (args.name !== undefined) {
+    const name = canonicalChannelName(args.name)
+    if (name.trim() === '') throw new Error('folder name is required')
+    tags.push(['name', name])
+  }
+  return {
+    pubkey,
+    created_at: toNostrSeconds(createdAtMs),
+    kind: KIND.FOLDER_COMMAND,
     tags,
     content: '',
   }

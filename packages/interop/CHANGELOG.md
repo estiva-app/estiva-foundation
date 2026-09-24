@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.32.0 — 2026-09-24
+
+**Manifests: nothing.** No declaration is read differently. What is new is
+the write side of Folders, which until now each app wrote for itself.
+
+- **Folder write planners** (FOL-4): `planCreateFolder`, `planRenameFolder`,
+  `planPlaceFile`, `planUnlistFile` and `planMoveFile`. Each returns unsigned
+  events in publish order and does no signing, no I/O and no clock or id
+  generation; each app keeps its own signing and publishing (ADR 0002 §10 —
+  Ship is the second app to write these).
+  - create = `[9007, 1852 add + name]`, so a Folder has state from birth;
+  - rename = `[9002, 1852 add + name]`, the command only when it has state;
+  - place / unlist = `[1852 add]` / `[1852 remove]` only when it has state;
+  - move = `[add to target, remove from source]`, add first.
+- **`hasState` is always the caller's**, from a read. A `kind:1852` against a
+  Folder with no `kind:30890` emits state listing only what the command named,
+  and everything filed in it by `h` stops being listed (peek#192). So **a move
+  into or out of a stateless Folder is refused** — `{ ok: false, reason:
+  'source-has-no-state' | 'target-has-no-state' }` — where Peek's own move
+  sent both commands regardless.
+- **Peer dependency: `@estiva-app/protocol >= 0.23.0`**, for
+  `buildFolderCommand`. Nothing else in this package needed it raised.
+
 ## 0.31.0 — 2026-09-23
 
 **Manifests: nothing.** No declaration is read differently. What is new is a

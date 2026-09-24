@@ -500,6 +500,32 @@ channel's `listedIn` is every Folder that lists the project, so an unread
 verdict on it has a team to reach. It costs one more request, for the records.
 A channel with state of its own is a Folder, and only states place it.
 
+### Changing a folder
+
+```ts
+import { planMoveFile } from '@estiva-app/interop'
+
+const plan = planMoveFile(me, Date.now(), {
+  address,
+  from: { id: here.id, hasState: here.hasState },  // from a read, never a guess
+  to: { id: there.id, hasState: there.hasState },
+})
+if (!plan.ok) return plan.reason          // 'source-has-no-state' | 'target-has-no-state'
+for (const event of plan.events) {        // publish in order; stop at the first refusal
+  if (!(await publish(await sign(event))).ok) break
+}
+```
+
+`planCreateFolder`, `planRenameFolder`, `planPlaceFile`, `planUnlistFile` and
+`planMoveFile` return **unsigned** events in publish order. Signing and
+publishing stay yours.
+
+Every one but create takes `hasState`, because the relay computes a folder's
+next state from its current one and a folder with no `kind:30890` has none: a
+`kind:1852` against it emits state listing only what the command named, and
+everything filed in it by `h` stops being listed. So rename, place and unlist
+send no command to such a folder, and a move into or out of one is refused.
+
 ---
 
 ## What is not in here, deliberately

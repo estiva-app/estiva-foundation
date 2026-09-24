@@ -94,6 +94,22 @@ export {
 export { nestingOf, type Nestable, type Nesting } from './nesting.js'
 
 /**
+ * Folder writes as unsigned events in publish order — create, rename, place,
+ * unlist, move. Each takes `hasState` from the caller, because a `kind:1852`
+ * against a Folder with no state empties it. No signing, no requests.
+ */
+export {
+  planCreateFolder,
+  planRenameFolder,
+  planPlaceFile,
+  planUnlistFile,
+  planMoveFile,
+  type FolderRef,
+  type MovePlan,
+  type MoveRefusal,
+} from './folders.js'
+
+/**
  * RFC 0.5 §7's URL grammar — how an object is named in an address bar, and how
  * a pasted link is matched back to one.
  *

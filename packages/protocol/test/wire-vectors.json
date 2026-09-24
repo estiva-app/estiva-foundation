@@ -404,6 +404,128 @@
       "id": "305e2ddb9d72d5237e336660e45445f60d00eb4615bb260787266a8cd3b6e3e4"
     },
     {
+      "name": "folderCommand-add",
+      "producedBy": [
+        "peek"
+      ],
+      "note": "New builder in 0.23.0; the bytes are Peek's. Rebuilt from Peek's private `folderCommand` (src/nostr/foreign.ts on origin/main, copied verbatim with pubkey and time fixed) — the only 1852 writer in the suite before this — and the ids matched. Tag order h, op, a…, [name], read off buzz's `handle_folder_command` (nfb-demo-kinds).",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 1852,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "op",
+            "add"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731"
+          ],
+          [
+            "a",
+            "30840:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:t1"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "147fa203febc9678ccf554eb293d912ef6e16495f3c8a5988570760832bdf459"
+    },
+    {
+      "name": "folderCommand-name",
+      "producedBy": [
+        "peek"
+      ],
+      "note": "Same provenance as folderCommand-add. `add` with no addresses and a name: how a Folder is named without touching its contents.",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 1852,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "op",
+            "add"
+          ],
+          [
+            "name",
+            "Design"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "0442cb8313767b99a2e61d6853b99ce7fee5286ff784c709157188056e839615"
+    },
+    {
+      "name": "folderCommand-remove",
+      "producedBy": [
+        "peek"
+      ],
+      "note": "Same provenance as folderCommand-add.",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 1852,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "op",
+            "remove"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "da9df7abf3172f784995bd55ecf4e93345a2095ded10c88e9c3d5b2fd2cb2642"
+    },
+    {
+      "name": "folderCommand-set-canonical-name",
+      "producedBy": [],
+      "note": "New in 0.23.0 and deliberately NOT Peek's bytes: the name goes through canonicalChannelName, which Peek's copy never applied, so a name with a leading '#' or trailing space now matches the channel's. Duplicate addresses are sent as given; the relay dedupes a `set`.",
+      "event": {
+        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
+        "created_at": 1787142018,
+        "kind": 1852,
+        "tags": [
+          [
+            "h",
+            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
+          ],
+          [
+            "op",
+            "set"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:36601d07-9adb-4040-a0e8-9676eac5e731"
+          ],
+          [
+            "name",
+            "Design"
+          ]
+        ],
+        "content": ""
+      },
+      "id": "a5eaae830d441c4063361c00034fef58734790af7697331847e07dc6337ff9fc"
+    },
+    {
       "name": "resolution-resolved",
       "note": "Peek only before SHA-3.",
       "producedBy": [

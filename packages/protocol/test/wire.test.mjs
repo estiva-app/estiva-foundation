@@ -53,6 +53,11 @@ const rebuild = {
     P.buildMessage(PUB, MS, { channelUuid: CH, content: 'about an issue', threadRef: { rootId: EV1, parentId: EV1 }, about: [ADDR, ADDR, `30850:${PUB}:p1`], mentions: [PUB2] }),
   deleteChannel: () => P.buildDeleteChannel(PUB, MS, { channelUuid: CH }),
   editChannelMetadata: () => P.buildEditChannelMetadata(PUB, MS, { channelUuid: CH, name: ' #Renamed ', about: 'why' }),
+  'folderCommand-add': () => P.buildFolderCommand(PUB, MS, { folder: CH, op: 'add', addresses: [ADDR, `30840:${PUB}:t1`] }),
+  'folderCommand-name': () => P.buildFolderCommand(PUB, MS, { folder: CH, op: 'add', name: 'Design' }),
+  'folderCommand-remove': () => P.buildFolderCommand(PUB, MS, { folder: CH, op: 'remove', addresses: [ADDR] }),
+  'folderCommand-set-canonical-name': () =>
+    P.buildFolderCommand(PUB, MS, { folder: CH, op: 'set', addresses: [ADDR, ADDR], name: '  # Design  ' }),
   'resolution-resolved': () =>
     P.buildResolution(PUB, MS, { channelUuid: CH, targetEventId: EV1, action: 'resolved', supportingEventId: EV2, rationale: 'shipped' }),
   'resolution-reopened': () => P.buildResolution(PUB, MS, { channelUuid: CH, targetEventId: EV1, action: 'reopened' }),
