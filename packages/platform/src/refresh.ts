@@ -238,6 +238,8 @@ export interface RefreshScheduler {
   /**
    * Re-run `refresh` on focus, on becoming visible, and every `intervalMs`
    * while visible. Never on subscribe — the caller owns its first read.
+   * Every subscriber on one `intervalMs` shares one timer and wakes in the same
+   * tick; the first scheduled refresh comes 0.5–1.5 intervals after subscribing.
    * Returns an unsubscribe; calling it twice is harmless.
    */
   subscribe(refresh: () => void | Promise<void>, options?: RefreshSubscription): () => void
@@ -249,6 +251,15 @@ interface Subscriber {
   refresh: () => void | Promise<void>
   /** When this subscriber last ran. Merge and pause are judged per subscriber. */
   lastAt: number
+  /** When it subscribed — its caller's own first read, which this never sees. */
+  joinedAt: number
+  /** The interval it ticks on, or `undefined` for focus and visibility only. */
+  intervalMs: number | undefined
+}
+
+/** Every subscriber on one interval, and the one timer they share (PER-6). */
+interface IntervalGroup {
+  members: Set<Subscriber>
   timer: unknown
 }
 
@@ -263,6 +274,7 @@ export function createRefreshScheduler(options: RefreshSchedulerOptions): Refres
     clearInterval: (handle) => host.clearInterval(handle),
   }
   const subscribers = new Set<Subscriber>()
+  const groups = new Map<number, IntervalGroup>()
   let attached = false
 
   const visible = () => document.visibilityState === 'visible'
@@ -291,17 +303,63 @@ export function createRefreshScheduler(options: RefreshSchedulerOptions): Refres
     if (visible()) fanOut()
   }
 
+  /*
+    One timer per interval, not per subscriber (PER-6).
+
+    0.3.0 gave each subscriber its own `setInterval`, started when it
+    subscribed. Three views on one page, each on the same 10 s, therefore woke
+    at three unrelated phases — a read every three seconds or so, none of them
+    close enough to merge — and a page with a widget per section read "every
+    couple of seconds" at an interval nobody had chosen. Sharing the timer
+    puts every subscriber on an interval into the same wake-up.
+
+    A subscriber that joined less than half an interval ago sits the tick out:
+    its caller has just done its own first read, and a shared phase would
+    otherwise re-read it moments later. So the first scheduled refresh comes
+    between a half and one and a half intervals after subscribing, and every
+    one after that on the shared beat.
+  */
+  const intervalTick = (group: IntervalGroup, intervalMs: number) => {
+    // Checked at fire time rather than started and stopped on every
+    // visibility change: a hidden tab has nothing on screen to be stale.
+    if (!visible()) return
+    const now = clock.now()
+    for (const subscriber of [...group.members]) {
+      if (now - subscriber.joinedAt < intervalMs / 2) continue
+      tick(subscriber)
+    }
+  }
+  const join = (subscriber: Subscriber, intervalMs: number) => {
+    let group = groups.get(intervalMs)
+    if (!group) {
+      const created: IntervalGroup = { members: new Set(), timer: undefined }
+      created.timer = clock.setInterval(() => intervalTick(created, intervalMs), intervalMs)
+      groups.set(intervalMs, created)
+      group = created
+    }
+    group.members.add(subscriber)
+  }
+  const leave = (subscriber: Subscriber) => {
+    if (subscriber.intervalMs === undefined) return
+    const group = groups.get(subscriber.intervalMs)
+    if (!group) return
+    group.members.delete(subscriber)
+    if (group.members.size === 0) {
+      clock.clearInterval(group.timer)
+      groups.delete(subscriber.intervalMs)
+    }
+  }
+
   return {
     subscribe(refresh, { interval = true, intervalMs = defaultIntervalMs } = {}) {
-      const subscriber: Subscriber = { refresh, lastAt: 0, timer: undefined }
-      subscribers.add(subscriber)
-      if (interval) {
-        // Checked at fire time rather than started and stopped on every
-        // visibility change: a hidden tab has nothing on screen to be stale.
-        subscriber.timer = clock.setInterval(() => {
-          if (visible()) tick(subscriber)
-        }, intervalMs)
+      const subscriber: Subscriber = {
+        refresh,
+        lastAt: 0,
+        joinedAt: clock.now(),
+        intervalMs: interval ? intervalMs : undefined,
       }
+      subscribers.add(subscriber)
+      if (interval) join(subscriber, intervalMs)
       if (!attached) {
         // On first use and never at module scope, so importing registers
         // nothing — and one pair of listeners however many subscribe.
@@ -311,7 +369,7 @@ export function createRefreshScheduler(options: RefreshSchedulerOptions): Refres
       }
       return () => {
         if (!subscribers.delete(subscriber)) return
-        if (subscriber.timer !== undefined) clock.clearInterval(subscriber.timer)
+        leave(subscriber)
         if (subscribers.size === 0 && attached) {
           document.removeEventListener('visibilitychange', onVisibility)
           window.removeEventListener('focus', fanOut)
