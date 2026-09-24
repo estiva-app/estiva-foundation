@@ -4,6 +4,29 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.23.0 — 2026-09-24
+
+**Wire behaviour: unchanged for every existing builder.** One new builder for
+a kind Peek was already sending from its own hand-rolled copy.
+
+- **New: `buildFolderCommand` (`kind:1852`), `KIND.FOLDER_COMMAND` and
+  `type FolderOp`** (FOL-4). Tags `h`, `op`, one `a` per address in the order
+  given, then an optional `name` — the shape buzz's `handle_folder_command`
+  reads (`nfb-demo-kinds`; buzz `main` has no handler). Three of the four new
+  wire vectors are **Peek's bytes**: rebuilt from its private `folderCommand`
+  in `src/nostr/foreign.ts`, the only 1852 writer in the suite, with matching
+  ids.
+- **One deliberate difference from Peek's copy: the name is canonicalised**
+  (`canonicalChannelName`), as `buildCreateChannel` and
+  `buildEditChannelMetadata` already do. A Folder's state name shadows its
+  channel's, so a name with a leading `#` or trailing space used to show one
+  spelling in the listing and another on the channel. Plain names produce
+  identical bytes; the `folderCommand-set-canonical-name` vector pins the
+  difference.
+- **Refused before a round trip:** an unknown `op` (the relay refuses rather
+  than defaulting), an empty folder, an empty address, and a name that
+  canonicalises to nothing.
+
 ## 0.22.0 — 2026-09-18
 
 **Wire behaviour: unchanged for every kind that was already published.** One
