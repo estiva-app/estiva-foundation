@@ -76,6 +76,23 @@ first version. A trusted publisher can only be configured on a package that
 already exists, so creating one is a once-ever manual act — see §7 of the ADR and
 the recipe below.
 
+### The shared install action
+
+`.github/actions/install` is not a package. The apps' CI uses it straight from
+this repository (PER-16):
+
+```yaml
+- uses: estiva-app/estiva-foundation/.github/actions/install@ci-v1
+```
+
+Its tags are `ci-v<n>` and never move: a change to the action is a new tag, and
+each app adopts it in a PR of its own. They carry no `@`, so `release.yml`
+ignores them.
+
+```bash
+git tag ci-v2 && git push origin ci-v2
+```
+
 Semver per package. Packages start at `0.x` and stay there until two apps consume
 them in production; within `0.x`, MINOR carries the break.
 

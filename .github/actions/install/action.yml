@@ -1,0 +1,114 @@
+name: Install
+description: Node and node_modules, restored whole from the cache when the lockfiles have not changed. Shared by the apps' CI (PER-16).
+
+# The apps use this from their own workflows, pinned to a tag of this repository:
+#
+#   - uses: actions/checkout@v4
+#   - uses: estiva-app/estiva-foundation/.github/actions/install@ci-v1
+#     with:
+#       directories: |
+#         .
+#         web
+#
+# A composite action and not a package, because `uses:` is resolved before any
+# `npm ci` runs: the step that installs npm packages cannot itself come from one.
+# The tags are `ci-v<n>` and never move — a change is a new tag, adopted by a PR
+# in each app. They carry no `@`, so `release.yml` (tags `*@*`) ignores them.
+#
+# Born in Peek as PER-15 (peek#340). `npm ci` cost 9–26 s in each of a workflow's
+# jobs, even with setup-node's npm cache, and it is on every job's critical path.
+# This restores the finished node_modules instead, and runs `npm ci` only when
+# there is none.
+#
+# The key is exact on purpose, and there are no restore-keys: a node_modules
+# restored from a *different* lockfile is a stale tree that passes or fails for
+# reasons that are not in the commit. Node's version is in it because native
+# modules are built for one ABI. package.json is in it as well as the lockfile:
+# on a hit `npm ci` does not run, and `npm ci` is what refuses a package.json
+# that has drifted from its lockfile, so that change has to miss.
+#
+# Several directories are one entry, not one each: they are installed together
+# or not at all, so a job never runs against half a restored tree. Ship needs
+# two — web/ compiles ../lib/nostr, whose imports resolve out of the root's
+# node_modules — and a job that needs only web/ names only web/, which is a
+# different entry.
+#
+# Saved straight after the install, not in a post step at the end of the job,
+# so what the tests, the build or the linters write under node_modules/.cache
+# or .vite never goes into it. On a miss every parallel job installs, and the
+# first to finish saves; the others' saves are refused with a warning.
+
+inputs:
+  directories:
+    description: The directories to install, one per line, relative to the workspace. Each must hold a package.json and a package-lock.json.
+    default: .
+  node-version:
+    description: Passed to actions/setup-node.
+    default: '24'
+
+outputs:
+  cache-hit:
+    description: "'true' when node_modules came from the cache and `npm ci` did not run."
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      id: node
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    # The cache paths and a hash of every manifest, in the order given. The
+    # file names go into the hash as well as their contents, so the same
+    # lockfile under a different directory is a different entry.
+    - id: plan
+      shell: bash
+      env:
+        DIRECTORIES: ${{ inputs.directories }}
+      run: |
+        set -euo pipefail
+        paths=()
+        files=()
+        for d in $DIRECTORIES; do
+          d="${d%/}"
+          for f in "$d/package.json" "$d/package-lock.json"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f not found — each directory needs a package.json and a package-lock.json"
+              exit 1
+            fi
+            files+=("$f")
+          done
+          if [ "$d" = . ]; then paths+=(node_modules); else paths+=("$d/node_modules"); fi
+        done
+        hash=$(for f in "${files[@]}"; do printf '%s\0' "$f"; cat "$f"; done | sha256sum | cut -d' ' -f1)
+        {
+          echo 'paths<<PATHS_END'
+          printf '%s\n' "${paths[@]}"
+          echo 'PATHS_END'
+          echo "hash=$hash"
+        } >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache/restore@v4
+      id: cache
+      with:
+        path: ${{ steps.plan.outputs.paths }}
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ steps.plan.outputs.hash }}
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        DIRECTORIES: ${{ inputs.directories }}
+      run: |
+        set -euo pipefail
+        for d in $DIRECTORIES; do
+          echo "::group::npm ci in $d"
+          (cd "$d" && npm ci)
+          echo "::endgroup::"
+        done
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.plan.outputs.paths }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}

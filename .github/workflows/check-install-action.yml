@@ -1,0 +1,60 @@
+name: check install action
+
+# The action in .github/actions/install is what Peek's and Ship's CI install
+# through (PER-16). Nothing in this repository used it, so a broken change would
+# first fail in an app's pull request, after it had been tagged. This runs it on
+# the repository's own workspace, twice: once as the jobs that miss the cache
+# see it, and once as the jobs that hit it.
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/actions/install/**', '.github/workflows/check-install-action.yml']
+  pull_request:
+    paths: ['.github/actions/install/**', '.github/workflows/check-install-action.yml']
+
+concurrency:
+  group: check-install-action-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install
+      # Something the root lockfile installs, so an empty or wrong tree fails.
+      - run: test -x node_modules/.bin/tsc
+
+  # After `install`, so the entry it saved is there to restore — unless this
+  # lockfile's entry already existed, in which case both hit and this proves the
+  # same thing.
+  restore:
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install
+        id: install
+      - run: test -x node_modules/.bin/tsc
+      - if: steps.install.outputs.cache-hit != 'true'
+        run: |
+          echo "::error::the second job installed again instead of restoring what the first saved"
+          exit 1
+
+  # A directory without a lockfile is refused by name, not installed around.
+  missing-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install
+        id: install
+        continue-on-error: true
+        with:
+          directories: |
+            .
+            packages/does-not-exist
+      - if: steps.install.outcome != 'failure'
+        run: |
+          echo "::error::the action accepted a directory with no package-lock.json"
+          exit 1
