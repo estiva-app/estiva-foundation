@@ -43,6 +43,8 @@ export {
   conversationCountsOf,
   conversationsOf,
   type ConversationMessage,
+  threadsOf,
+  type Threads,
   CONVERSATION_LIMIT,
   commentDecorationsOf,
   REACTION_HORIZON,

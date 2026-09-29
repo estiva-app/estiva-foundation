@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.34.0 — 2026-09-29
+
+**Manifests: nothing.** No declaration is read differently. Additive: a reply
+is built from NIP-22, as a top-level comment already was, and the manifest
+still decides the kind, whether a comment exists, and what kinds are read.
+
+- **`buildActionEvent({ replyTo: { id, kind, author } })`** (PRO-20) — a
+  comment that answers another: `A`/`K`/`P` still name the file, `e`/`k`/`p`
+  name the parent, and there is no lowercase `a` (SPEC §6.4). Refused on any
+  action that is not a comment. Peek and the agent each amended the built
+  event's tags to do this; now there is one.
+- **`threadsOf(reference, rootIds, query, cache?)`** — `conversationsOf`'s
+  counterpart by `#e`: the roots by id and their direct replies, every thread
+  in one request, kinds off the owner's manifest. Returns the events, as
+  `{ roots, replies }`. Peek's thread pane and the agent's `peek topic` read.
+
 ## 0.33.0 — 2026-09-29
 
 **Manifests: nothing.** No declaration is read differently. Additive.

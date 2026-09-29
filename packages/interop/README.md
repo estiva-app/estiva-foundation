@@ -278,6 +278,28 @@ names the field in `parentField`, and a consumer drawing property rows keeps
 that one out, as it keeps the title's out, and offers the move where it draws
 the tree.
 
+### Replies
+
+A reply is the `comment` action with a parent. Pass `replyTo` and the uppercase
+`A`/`K`/`P` still name the file while the lowercase trio names the comment
+answered — SPEC §6.4's table:
+
+```ts
+const built = buildActionEvent({ /* …as above… */ actionId: 'comment', value: 'Agreed.',
+  replyTo: { id: comment.id, kind: comment.kind, author: comment.pubkey } })
+```
+
+`kind` is the parent's own, which for one of Ship's replies is `9`. A reply
+carries no lowercase `a`, so the file's `#a` read (`conversationsOf`) never
+returns it. `threadsOf` is the read that does: the roots by id and their direct
+replies by `#e`, in one request for every thread.
+
+```ts
+const roots = (await conversationsOf([file], query))[file.ref].map((m) => m.id)
+const { roots: byId, replies } = await threadsOf(file.address, roots, query)
+// byId[id] is the root event; replies[id] its direct replies, oldest first
+```
+
 ### Nesting
 
 `nestingOf(files)` draws a listing's nesting — `roots`, `childrenOf`,

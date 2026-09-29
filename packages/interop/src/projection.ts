@@ -429,6 +429,88 @@ export async function conversationsOf(
   return conversations
 }
 
+/** Every thread of one file's conversation, keyed by the comment it hangs from. */
+export interface Threads {
+  /** The root comments themselves, by id — the only read that reports their `kind` and tags. */
+  roots: Record<string, SignedEvent>
+  /** Direct replies to each root, oldest first. A root with none is absent, not `[]`. */
+  replies: Record<string, SignedEvent[]>
+}
+
+/**
+ * The replies under a file's comments — {@link conversationsOf}'s counterpart,
+ * read by `#e` (PRO-20, from Peek's FOL-19 thread pane).
+ *
+ * **Asked by `#e`, not by `#a`, and that is the whole reason this exists.** A
+ * reply's lowercase tags name its parent comment, not the file (SPEC §6.4), so
+ * the `#a` read that brings the roots never brings a reply — whichever app
+ * wrote it. `rootIds` are those roots, typically `conversationsOf`'s ids.
+ *
+ * **Every thread in one request.** The roots by `ids` and their replies by
+ * `#e` go in one POST, because a `#e` filter takes a list: a whole pane's
+ * replies cost the round trip of one thread's, which is what lets a comment
+ * carry an honest reply count. The roots come back beside them because NIP-22's
+ * lowercase `k` on a reply names the *parent's* kind, and no projection reports
+ * it.
+ *
+ * The kinds are the owning app's, from its manifest (`commentKindsOf`), so a
+ * NIP-22 `kind:1111` reply and Ship's `kind:9` ones both arrive. No manifest,
+ * or a reference that does not decode, answers empty rather than guessing 1111.
+ *
+ * Only *direct* replies: a reply's lowercase `e` names its immediate parent, so
+ * a reply to a reply hangs off that reply and is not here. The replies share
+ * one `CONVERSATION_LIMIT`, the same budget as one file's comment read.
+ *
+ * A refused read is whatever `query` does with one — this adds no catch, so an
+ * unreadable thread and an unanswered one stay distinguishable.
+ */
+export async function threadsOf(
+  /** The file's address, or any reference `referenceToPointer` reads. */
+  reference: string,
+  rootIds: readonly string[],
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<Threads> {
+  const empty: Threads = { roots: {}, replies: {} }
+  if (rootIds.length === 0) return empty
+  let pointer: AddressPointer
+  try {
+    pointer = referenceToPointer(reference)
+  } catch {
+    return empty
+  }
+  const resolved = await resolveManifest(pointer, query, cache)
+  if (!resolved) return empty
+  const kinds = commentKindsOf(resolved.manifest)
+
+  const ids = [...new Set(rootIds)]
+  const events = await query([
+    { ids, limit: ids.length },
+    { kinds, '#e': ids, limit: CONVERSATION_LIMIT },
+  ])
+  const wanted = new Set(ids)
+  const roots: Record<string, SignedEvent> = {}
+  const replies: Record<string, SignedEvent[]> = {}
+  const seen = new Set<string>()
+  for (const event of events) {
+    if (seen.has(event.id)) continue
+    seen.add(event.id)
+    if (wanted.has(event.id)) {
+      roots[event.id] = event
+      continue
+    }
+    // The `e` that names a root of *this* conversation. A reply carries others
+    // — a quote, a mention — and picking the first would file it under one.
+    const parent = event.tags.find((tag) => tag[0] === 'e' && wanted.has(tag[1]))?.[1]
+    if (parent) (replies[parent] ??= []).push(event)
+  }
+  // Oldest first, ties by id so two replies in one second never swap places.
+  for (const thread of Object.values(replies)) {
+    thread.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))
+  }
+  return { roots, replies }
+}
+
 /**
  * How many targets a reaction read asks about — SPEC §6.6, decided by CON-1.
  *
@@ -3913,10 +3995,22 @@ export function buildActionEvent(args: {
    * a pure function of its inputs, which is what lets a test assert on one.
    */
   newId?: string
+  /**
+   * The comment being answered, when this comment is a reply (PRO-20).
+   *
+   * SPEC §6.4's table: the uppercase `A`/`K`/`P` still name the file, and the
+   * lowercase trio names this comment — its id, its kind and its author —
+   * instead of repeating the file. So a reply carries no lowercase `a` and is
+   * absent from the file's `#a` read; {@link threadsOf} is the read that finds
+   * it. `kind` is the parent's own, which for one of Ship's replies is `9`.
+   *
+   * Refused on any action that is not a comment: nothing else has a parent.
+   */
+  replyTo?: { id: string; kind: number; author: string }
   pubkey: string
   createdAtMs: number
 }): UnsignedActionEvent | string {
-  const { manifest, kind, address, folder, actionId, value } = args
+  const { manifest, kind, address, folder, actionId, value, replyTo } = args
   const records = manifest.records
   const declared = manifest.actions?.find((a) => a.id === actionId)
   if (!declared) return `This app does not offer "${actionId}".`
@@ -3928,6 +4022,12 @@ export function buildActionEvent(args: {
 
   // An object-creating action is a different event entirely — a new object
   // rather than a change to one — so it branches before the scalar path.
+  // A reply is a comment with a parent. Checked here, before any branch that
+  // would build something else and quietly drop the parent it was handed.
+  const isComment = !(declared.input?.type === 'object' && declared.input.properties) &&
+    declared.emits.kind !== KIND_DELETION && !declared.emits.field
+  if (replyTo && !isComment) return `"${declared.label}" is not a comment, so it cannot reply to one.`
+
   if (declared.input?.type === 'object' && declared.input.properties) {
     return buildCreationEvent({ ...args, declared, vocabularies: manifest.vocabularies })
   }
@@ -4002,14 +4102,23 @@ export function buildActionEvent(args: {
     : // NIP-22 comment. Built from the ratified NIP rather than from the
       // manifest, which is legitimate precisely because no app owns kind:1111 —
       // the same reason the owning app uses it. Uppercase tags name the thread
-      // root, lowercase the immediate parent.
+      // root, lowercase the immediate parent: the file again for a top-level
+      // comment, the comment answered for a reply (SPEC §6.4).
       [
         ['A', address],
         ['K', String(kind)],
         ['P', args.objectAuthor],
-        ['a', address],
-        ['k', String(kind)],
-        ['p', args.objectAuthor],
+        ...(replyTo
+          ? [
+              ['e', replyTo.id],
+              ['k', String(replyTo.kind)],
+              ['p', replyTo.author],
+            ]
+          : [
+              ['a', address],
+              ['k', String(kind)],
+              ['p', args.objectAuthor],
+            ]),
         ['h', folder],
       ]
 
