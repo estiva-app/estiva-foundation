@@ -112,6 +112,16 @@ test('an e that is not 64 hex is skipped, as the relay skips it; case does not m
   assert.equal(found.byId[lettered.id].edit.body, 'upper')
 })
 
+test('an e naming a property of Object.prototype is nobody\'s target', async () => {
+  const c = comment()
+  const hostile = ['constructor', '__proto__', 'toString'].map((key) =>
+    event({ kind: 9101, pubkey: OTHER, tags: [['h', FOLDER], ['e', key], ['e', c.id], ['t', 'resolution'], ['action', 'resolved']] }),
+  )
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay(hostile))
+  // Past the hostile `e`, the next one names the comment: that is the resolution's target.
+  assert.equal(found.byId[c.id].resolutions.length, 3)
+})
+
 /*
   CON-5 — RFC 0.4 §7.2.1 as amended 2026-09-23. An edit may carry `imeta`, and
   attachments fold separately from the body.

@@ -20,6 +20,10 @@ how a `kind:40003` is read.
   targets. Both now apply nowhere, or to the writer's own message when it is.
 - **`editTargetOf(event)`** — that rule, exported, so an app folding edits
   itself reads the same `e`.
+- **An `e` of `constructor` or `__proto__` no longer throws.** The target
+  lookup used `in` on a plain object, so a resolution carrying one found
+  `Object.prototype` and `commentDecorationsOf` rejected for every reader of
+  that conversation. It is now `Object.hasOwn`.
 
 ## 0.33.0 — 2026-09-29
 

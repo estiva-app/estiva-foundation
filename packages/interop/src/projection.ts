@@ -600,12 +600,15 @@ export async function commentDecorationsOf(
         other (SPEC §6.8, PEE-38): see {@link editTargetOf}. For the rest, the
         `e` that names one of *our* targets — a resolution carries a second `e`
         for its supporting reply, so its first `e` is not necessarily the target.
+        `hasOwn`, not `in`: an `e` of `constructor` is anybody's to write, and
+        `in` finds it on the prototype.
       */
+      const ours = (id: string | undefined): id is string => id !== undefined && Object.hasOwn(byId, id)
       const target =
         event.kind === KIND_MESSAGE_EDIT
           ? editTargetOf(event)
-          : event.tags.find((t) => t[0] === 'e' && t[1] in byId && !t[3])?.[1]
-      if (!target || !(target in byId)) continue
+          : event.tags.find((t) => t[0] === 'e' && ours(t[1]) && !t[3])?.[1]
+      if (!ours(target)) continue
       const into = byId[target]
       if (event.kind === KIND_MESSAGE_EDIT) {
         edits.set(target, [...(edits.get(target) ?? []), event])
