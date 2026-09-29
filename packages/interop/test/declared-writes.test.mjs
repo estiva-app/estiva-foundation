@@ -20,6 +20,7 @@ import {
   buildActionEvent,
   buildActionEvents,
   nestingOf,
+  resolveFolderContents,
   resolveForeignObject,
 } from '../dist/index.js'
 
@@ -209,6 +210,27 @@ describe('movedBy — the field that moves a child (SPEC §7.2)', () => {
     assert.equal(found?.parentField, undefined)
   })
 
+  test('a move value that is not a project address is a move to nowhere, not a ref', async () => {
+    for (const junk of ['Launch', `${ISSUE}:${AUTHOR}:i2`]) {
+      const found = await resolveForeignObject(I1, relay([manifestEvent(content()), issueRoot(), change('project', junk)]))
+      assert.equal(found?.parentRef, undefined, junk)
+    }
+  })
+
+  test('the Folder listing — what nesting reads — draws a moved issue under its new project', async () => {
+    const project = (d) => event({ kind: PROJECT, tags: [['d', d], ['name', d], ['buzz-channel', TEAM]] })
+    const contents = await resolveFolderContents(
+      TEAM,
+      relay([manifestEvent(content()), project('p1'), project('p2'), issueRoot(), change('project', P2, { tags: [['a', I1], ['field', 'project'], ['value', P2], ['h', TEAM]] })]),
+      async () => ({}),
+    )
+    const issue = contents.files.find((f) => f.address === I1)
+    assert.equal(issue?.parentRef, P2)
+    const nesting = nestingOf(contents.files)
+    assert.deepEqual(nesting.childrenOf(contents.files.find((f) => f.address === P2)).map((f) => f.address), [I1])
+    assert.deepEqual(nesting.childrenOf(contents.files.find((f) => f.address === P1)), [])
+  })
+
   test('the move itself is the declared change, built from the declaration', () => {
     const built = buildActionEvent(args('move-issue', { value: P2 }))
     assert.deepEqual(built.tags, [['a', I1], ['field', 'project'], ['value', P2], ['h', TEAM], ['ts', String(NOW)]])
@@ -266,6 +288,8 @@ describe('placement and listed — where a new object lives, and the command tha
         listedIn: [
           { id: TEAM, hasState: true },
           { id: OTHER_TEAM, hasState: false },
+          // The same Folder from a second read: one remove, not two.
+          { id: TEAM, hasState: true },
         ],
       }),
     )

@@ -14,8 +14,9 @@ moves for the bare file only, and it is the same answer: its `parent` is now
 read from its declaration instead of a constant. Needs protocol 0.24.0.
 
 - **`children.movedBy`** — the field whose change moves a child. The folded
-  field wins over the `via` tag, an empty value is a move to no parent, and
-  it is ignored with `match: 'identifier'`. `ForeignObject.parentField` is the
+  field wins over the `via` tag, an empty value — or one that is not an
+  address of the declared parent kind — is a move to no parent, and it is
+  ignored with `match: 'identifier'`. `ForeignObject.parentField` is the
   declared field (was: `parent` on a bare file, nothing else), and the new
   **`ForeignObject.parentKind`** is the kind a move may name — absent on a
   bare file, which may sit under any kind. `Nestable` gains `kind` and

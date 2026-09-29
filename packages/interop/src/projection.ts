@@ -1145,7 +1145,7 @@ function resolveActions(
     */
     const isChange = !!action.emits.field
     const isComment = action.emits.scope === 'address'
-    const isCreation = action.input?.type === 'object' && !!action.input.properties
+    const isCreation = isCreationAction(action)
     // Four, since 0.25.0. Decided by the kind before the other three, so a
     // manifest that put `scope: 'address'` on its deletion — the target *is*
     // an address — is not mistaken for a comment.
@@ -3261,8 +3261,14 @@ function parentRefOf(
     // A folded empty value is a move to the top, not an absence: falling back
     // to the root tag would put the file straight back under the parent it
     // was moved out of (FOL-4).
+    // A value that is not an address of the declared parent kind names nothing
+    // this object can sit under, so it is a move to nowhere rather than a ref a
+    // consumer might try to fetch.
     const moved = folded[movedBy.field]
-    if (moved) return moved.value || undefined
+    if (moved) {
+      const prefix = movedBy.parentKind === undefined ? /^\d+:[0-9a-f]{64}:/ : new RegExp(`^${movedBy.parentKind}:[0-9a-f]{64}:`)
+      return prefix.test(moved.value) ? moved.value : undefined
+    }
   }
   if (kind === KIND_BARE_FILE) {
     return root.tags.find((t) => t[0] === 'a' && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
@@ -4307,8 +4313,10 @@ export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | s
   return buildOneActionEvent(args)
 }
 
-const isCreationAction = (declared: ManifestAction) =>
-  declared.input?.type === 'object' && !!declared.input.properties
+/** An action that makes a new object rather than changing one — a form. */
+function isCreationAction(declared: ManifestAction): boolean {
+  return declared.input?.type === 'object' && !!declared.input.properties
+}
 
 /**
  * Every event an action publishes, **in publish order** — SPEC §7.3, MAN-1.
@@ -4341,9 +4349,11 @@ export function buildActionEvents(
 
   if (declared.emits.kind === KIND_DELETION) {
     if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the Folders that list it.`
+    // One remove per Folder, however many reads it came back from.
+    const folders = [...new Map(args.listedIn.map((listing) => [listing.id, listing])).values()]
     return [
       first,
-      ...args.listedIn.flatMap((listing) =>
+      ...folders.flatMap((listing) =>
         planUnlistFile(args.pubkey, args.createdAtMs, { folder: listing.id, address: args.address, hasState: listing.hasState }),
       ),
     ]
@@ -4357,7 +4367,7 @@ export function buildActionEvents(
     if (identifier === undefined) {
       return `"${declared.label}" lists what it creates, and a kind ${first.kind} has no address to list.`
     }
-    const created = `${first.kind}:${first.pubkey}:${identifier}`
+    const created = pointerToAddress({ kind: first.kind, pubkey: first.pubkey, identifier, relays: [] })
     return [first, ...planPlaceFile(args.pubkey, args.createdAtMs, { folder: args.folder, address: created, hasState: args.folderHasState })]
   }
   // A change or a comment adds nothing to a Folder and removes nothing from it.
