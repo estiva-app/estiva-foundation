@@ -503,6 +503,22 @@ const KIND_REACTION = 7
 const KIND_ASSERTION = 9101
 const KIND_MESSAGE_EDIT = 40003
 
+/**
+ * The message a `kind:40003` edits: **the first `e` whose value is 64 hex,
+ * marker ignored**, lowercased (SPEC §6.8, PEE-38). That is exactly the event
+ * whose ownership the relay checked (`validate_edit_ownership`), and a reader
+ * MUST NOT apply an edit to any other `e` — nothing refuses an edit carrying a
+ * second one, so `['e', <own>, '', 'mention'], ['e', <victim>]` is accepted on
+ * the writer's own message and must not be drawn on the victim's.
+ *
+ * Undefined when there is none, which the relay refuses; a reader holding one
+ * anyway applies it nowhere.
+ */
+export function editTargetOf(event: { tags: readonly (readonly string[])[] }): string | undefined {
+  const tag = event.tags.find((t) => t[0] === 'e' && typeof t[1] === 'string' && /^[0-9a-fA-F]{64}$/.test(t[1]))
+  return tag?.[1].toLowerCase()
+}
+
 /** Ids per `#e` filter. A comfortable fraction of the relay's page, so one filter's answer is never cut. */
 const DECORATION_TARGETS_PER_FILTER = 100
 
@@ -534,7 +550,9 @@ const DECORATION_TARGETS_PER_FILTER = 100
  *   marked `support` names the reply that carried it.
  *
  * Nothing here checks who wrote an edit against who wrote the comment. The
- * relay adjudicates writes; a `40003` it stored is one it accepted.
+ * relay adjudicates writes; a `40003` it stored is one it accepted — **for
+ * the `e` it checked**, which is why an edit lands only on
+ * {@link editTargetOf} and never on another `e` it carries.
  */
 export async function commentDecorationsOf(
   targets: readonly { id: string; at: number; body?: string }[],
@@ -578,12 +596,19 @@ export async function commentDecorationsOf(
       if (seen.has(event.id)) continue
       seen.add(event.id)
       /*
-        The `e` that names one of *our* targets. A resolution carries a second
-        `e` for its supporting reply, and an edit written by another app may
-        carry more; the first `e` is not necessarily the target.
+        An edit's target is the one the relay checked ownership of, and no
+        other (SPEC §6.8, PEE-38): see {@link editTargetOf}. For the rest, the
+        `e` that names one of *our* targets — a resolution carries a second `e`
+        for its supporting reply, so its first `e` is not necessarily the target.
+        `hasOwn`, not `in`: an `e` of `constructor` is anybody's to write, and
+        `in` finds it on the prototype.
       */
-      const target = event.tags.find((t) => t[0] === 'e' && t[1] in byId && !t[3])?.[1]
-      if (!target) continue
+      const ours = (id: string | undefined): id is string => id !== undefined && Object.hasOwn(byId, id)
+      const target =
+        event.kind === KIND_MESSAGE_EDIT
+          ? editTargetOf(event)
+          : event.tags.find((t) => t[0] === 'e' && ours(t[1]) && !t[3])?.[1]
+      if (!ours(target)) continue
       const into = byId[target]
       if (event.kind === KIND_MESSAGE_EDIT) {
         edits.set(target, [...(edits.get(target) ?? []), event])
