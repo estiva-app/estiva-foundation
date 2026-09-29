@@ -6,7 +6,7 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.34.0 — 2026-09-29
+## 0.35.0 — 2026-09-29
 
 **Manifests: nothing.** No declaration is read differently. Additive: a reply
 is built from NIP-22, as a top-level comment already was, and the manifest
@@ -22,6 +22,25 @@ still decides the kind, whether a comment exists, and what kinds are read.
   in one request, kinds off the owner's manifest. `limit` caps the replies
   across all threads, `CONVERSATION_LIMIT` by default. Returns the events, as
   `{ roots, replies }`. Peek's thread pane and the agent's `peek topic` read.
+
+## 0.34.0 — 2026-09-29
+
+**Manifests: nothing.** No declaration is read differently. A security fix to
+how a `kind:40003` is read.
+
+- **An edit lands only on the first `e` whose value is 64 hex** (PEE-38, SPEC
+  §6.8), marker ignored — the event whose ownership the relay checked.
+  `commentDecorationsOf` used to take the first *unmarked* `e` naming a target,
+  so `['e', <own message>, '', 'mention'], ['e', <victim>]`, which the relay
+  accepts on the writer's own message, was drawn as an edit of the victim's.
+  Same with the marker left off when the writer's message was not among the
+  targets. Both now apply nowhere, or to the writer's own message when it is.
+- **`editTargetOf(event)`** — that rule, exported, so an app folding edits
+  itself reads the same `e`.
+- **An `e` of `constructor` or `__proto__` no longer throws.** The target
+  lookup used `in` on a plain object, so a resolution carrying one found
+  `Object.prototype` and `commentDecorationsOf` rejected for every reader of
+  that conversation. It is now `Object.hasOwn`.
 
 ## 0.33.0 — 2026-09-29
 

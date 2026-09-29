@@ -76,6 +76,53 @@ test('two edits in the same second are ordered by their ts tag', async () => {
 })
 
 /*
+  PEE-38 — SPEC §6.8. An edit's target is the first 64-hex `e`, marker ignored:
+  the one the relay checked ownership of. The relay refuses nothing for a
+  second `e`, so a reader that picks another applies an edit authorised for one
+  message to a different one.
+*/
+test('an edit lands only on its first 64-hex e — never on a second e the relay did not check', async () => {
+  const victim = comment()
+  const mine = event({ kind: 1111, pubkey: OTHER, tags: [['h', FOLDER]], content: 'mine' })
+  const marked = event({ kind: 40003, pubkey: OTHER, tags: [['h', FOLDER], ['e', mine.id, '', 'mention'], ['e', victim.id]], content: 'FORGED' })
+  const unmarked = event({ kind: 40003, pubkey: OTHER, tags: [['h', FOLDER], ['e', mine.id], ['e', victim.id]], content: 'FORGED' })
+
+  // The attacker's own message off screen: both shapes used to land on the victim.
+  const offScreen = await commentDecorationsOf([{ id: victim.id, at: victim.created_at }], relay([marked, unmarked]))
+  assert.equal(offScreen.byId[victim.id].edit, undefined)
+
+  // On screen: the edit is the attacker's message's, which is what the relay accepted.
+  const both = await commentDecorationsOf(
+    [{ id: victim.id, at: victim.created_at }, { id: mine.id, at: mine.created_at }],
+    relay([marked]),
+  )
+  assert.equal(both.byId[victim.id].edit, undefined)
+  assert.equal(both.byId[mine.id].edit.body, 'FORGED')
+})
+
+test('an e that is not 64 hex is skipped, as the relay skips it; case does not matter', async () => {
+  const c = comment()
+  const nonHex = event({ kind: 40003, tags: [['h', FOLDER], ['e', 'not-an-id'], ['e', c.id]], content: 'past a non-hex e' })
+  assert.equal((await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([nonHex]))).byId[c.id].edit.body, 'past a non-hex e')
+
+  const lettered = event({ id: 'ab'.repeat(32), kind: 1111, tags: [['h', FOLDER]], content: 'first' })
+  const upper = event({ kind: 40003, tags: [['h', FOLDER], ['e', lettered.id.toUpperCase()]], content: 'upper' })
+  // The fake relay matches `#e` exactly, so the uppercase edit is handed over directly.
+  const found = await commentDecorationsOf([{ id: lettered.id, at: lettered.created_at }], async () => [upper])
+  assert.equal(found.byId[lettered.id].edit.body, 'upper')
+})
+
+test('an e naming a property of Object.prototype is nobody\'s target', async () => {
+  const c = comment()
+  const hostile = ['constructor', '__proto__', 'toString'].map((key) =>
+    event({ kind: 9101, pubkey: OTHER, tags: [['h', FOLDER], ['e', key], ['e', c.id], ['t', 'resolution'], ['action', 'resolved']] }),
+  )
+  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay(hostile))
+  // Past the hostile `e`, the next one names the comment: that is the resolution's target.
+  assert.equal(found.byId[c.id].resolutions.length, 3)
+})
+
+/*
   CON-5 — RFC 0.4 §7.2.1 as amended 2026-09-23. An edit may carry `imeta`, and
   attachments fold separately from the body.
 */

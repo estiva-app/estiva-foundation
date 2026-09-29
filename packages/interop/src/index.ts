@@ -47,6 +47,7 @@ export {
   type Threads,
   CONVERSATION_LIMIT,
   commentDecorationsOf,
+  editTargetOf,
   REACTION_HORIZON,
   type CommentDecoration,
   type CommentDecorations,
