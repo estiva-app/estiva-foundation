@@ -12,8 +12,10 @@ once and turned one failure into an empty list for the session, which dropped
 every project out of its team until a reload.
 
 - `createRetryingRead<T>({ retryable?, firstRetryMs?, maxRetryMs?, freshMs?, now?, timers? })`
-  → `{ snapshot, subscribe, ensure(load), reload(load), dispose }`. Wrap it
-  with `useSyncExternalStore(read.subscribe, read.snapshot)`.
+  → `{ snapshot, subscribe, ensure(load), reload(load), dispose, clear }`.
+  Wrap it with `useSyncExternalStore(read.subscribe, read.snapshot)`. Retries
+  run only while something is subscribed; `clear()` forgets the answer, and a
+  read in flight across it writes nothing.
 - `retryDelayMs(failures, error)`, `RETRY_FIRST_MS`, `RETRY_MAX_MS`.
 
 ## 0.3.1
