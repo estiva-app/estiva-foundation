@@ -15,6 +15,7 @@
 import type { NostrTag, SignedEvent, UnsignedEvent } from './events.js'
 import { KIND, toNostrSeconds } from './events.js'
 import { authorizationHeaderFor } from './nip98.js'
+import { BLOCK_DOCUMENT_FORMAT } from './render.js'
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex } from '@noble/hashes/utils'
 
@@ -175,6 +176,74 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
       filename: fields.filename,
     })
   }
+  return out
+}
+
+/**
+ * An `attachment` block's `attrs` as an `Imeta`, or `undefined` when one of the
+ * four fields the relay requires is missing — SPEC §13.3.
+ *
+ * The renderer needs the identical rule: a block this declines to name in a
+ * tag is a block it must not draw as a file either. Moved here from Ship
+ * (MAN-1), because a second app now writes block documents.
+ */
+export function imetaFromAttrs(attrs: Record<string, unknown> | undefined): Imeta | undefined {
+  if (!attrs) return undefined
+  const { url, m, x, size, dim, thumb, alt, filename } = attrs
+  if (typeof url !== 'string' || !url) return undefined
+  if (typeof m !== 'string' || !m) return undefined
+  if (typeof x !== 'string' || !x) return undefined
+  if (typeof size !== 'number' || !Number.isFinite(size)) return undefined
+  return {
+    url,
+    m,
+    x,
+    size,
+    ...(typeof dim === 'string' && dim ? { dim } : {}),
+    ...(typeof thumb === 'string' && thumb ? { thumb } : {}),
+    ...(typeof alt === 'string' && alt ? { alt } : {}),
+    ...(typeof filename === 'string' && filename ? { filename } : {}),
+  }
+}
+
+/**
+ * Every file a block document places inline, as the `imeta` set the event
+ * carrying it must also hold — SPEC §13.3.
+ *
+ * **Read back out of the document rather than taken from the caller.** Ingest
+ * verifies `imeta` *tags* and never parses `content`, so a caller that forgot
+ * them would publish a document naming a blob the relay does not hold, and
+ * nothing would refuse it. Deriving them makes a document whose files and tags
+ * disagree inexpressible.
+ *
+ * Empty unless `contentFormat` is `estiva-blocks-1` — a body's model is its
+ * event's tag (§13.4), never a guess from its shape — and empty for a value
+ * that is not JSON. Depth-first, since an attachment may sit inside a list or a
+ * quote; a malformed block is skipped, as {@link imetaOf} skips a malformed
+ * tag.
+ */
+export function attachmentsInDocument(value: string, contentFormat?: string): Imeta[] {
+  if (contentFormat !== BLOCK_DOCUMENT_FORMAT || !value) return []
+  let document: unknown
+  try {
+    document = JSON.parse(value)
+  } catch {
+    return []
+  }
+  const out: Imeta[] = []
+  const walk = (nodes: unknown): void => {
+    if (!Array.isArray(nodes)) return
+    for (const node of nodes) {
+      const block = node as { type?: string; attrs?: Record<string, unknown>; content?: unknown } | null
+      if (!block || typeof block !== 'object') continue
+      if (block.type === 'attachment') {
+        const file = imetaFromAttrs(block.attrs)
+        if (file) out.push(file)
+      }
+      walk(block.content)
+    }
+  }
+  walk((document as { content?: unknown } | null)?.content)
   return out
 }
 

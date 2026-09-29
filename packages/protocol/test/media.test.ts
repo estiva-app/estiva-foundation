@@ -14,6 +14,8 @@ import {
   blossomAuthHeader,
   imetaTag,
   imetaOf,
+  imetaFromAttrs,
+  attachmentsInDocument,
   sha256FromMediaUrl,
   fetchBlob,
   KIND,
@@ -604,5 +606,37 @@ describe('canonicalizing anything else', () => {
   it('leaves bytes that are not an image at all', () => {
     const text = new TextEncoder().encode('not a picture')
     assert.deepEqual(canonicalizeImage(text), text)
+  })
+})
+
+describe('the files a block document places (SPEC §13.3)', () => {
+  const file = { url: `/media/${SHA}.png`, m: 'image/png', x: SHA, size: 42, alt: 'a chart' }
+  const document = JSON.stringify({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', id: 'p1', content: [{ type: 'text', text: 'see' }] },
+      // Nested, and a malformed one beside it that must be skipped rather than half-read.
+      { type: 'bulletList', id: 'l1', content: [{ type: 'listItem', id: 'i1', content: [{ type: 'attachment', id: 'a1', attrs: file }] }] },
+      { type: 'attachment', id: 'a2', attrs: { url: '/media/x.png', m: 'image/png' } },
+    ],
+  })
+
+  it('names every well-formed attachment, depth-first', () => {
+    assert.deepEqual(attachmentsInDocument(document, 'estiva-blocks-1'), [file])
+    assert.deepEqual(imetaTag(attachmentsInDocument(document, 'estiva-blocks-1')[0]), [
+      'imeta', `url /media/${SHA}.png`, 'm image/png', `x ${SHA}`, 'size 42', 'alt a chart',
+    ])
+  })
+
+  it('reads nothing from a body whose tag does not say it is a document', () => {
+    assert.deepEqual(attachmentsInDocument(document), [])
+    assert.deepEqual(attachmentsInDocument(document, 'markdown'), [])
+    assert.deepEqual(attachmentsInDocument('{not json', 'estiva-blocks-1'), [])
+  })
+
+  it('declines an attrs missing a field the relay requires', () => {
+    assert.equal(imetaFromAttrs({ url: '/media/x.png', m: 'image/png', x: SHA }), undefined)
+    assert.equal(imetaFromAttrs({ ...file, size: '42' }), undefined)
+    assert.equal(imetaFromAttrs(undefined), undefined)
   })
 })

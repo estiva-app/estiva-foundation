@@ -278,6 +278,46 @@ names the field in `parentField`, and a consumer drawing property rows keeps
 that one out, as it keeps the title's out, and offers the move where it draws
 the tree.
 
+### Moves, placement and prose (0.36.0)
+
+Three things an owner declares so a consumer can do what the owner does
+(SPEC §7.2–7.3, MAN-1).
+
+**A move** is a change to the field the parent's list names as `movedBy`:
+
+```jsonc
+"list": { "children": { "kind": 30851, "via": "a", "movedBy": "project" } }
+```
+
+The folded field wins over the child's `a` tag, and an empty value is a move to
+no parent. The object carries `parentField` (the bare file's is `parent`, now
+declared rather than hard-coded) and `parentKind`, the kind a move may name —
+`nestingOf(...).moveTargetsOf` offers only that kind.
+
+**Placement and listing.** A creation may name its Folder with `buzz-channel`
+instead of `h`, and an action declaring `listed: true` is followed by the
+`kind:1852` that keeps the Folder's listing true. Those are built by
+`buildActionEvents`, which needs what only your read of `kind:30890` knows —
+`buildActionEvent` refuses them rather than publish half:
+
+```ts
+const events = buildActionEvents({ /* …as above… */ actionId: 'add-project',
+  value: { name: 'Launch' }, newId: crypto.randomUUID(), folderHasState: folder.hasState })
+// [kind:30850 with buzz-channel, kind:1852 add] — publish in order, stop at the first refusal
+
+buildActionEvents({ /* … */ actionId: 'delete-project', value: '', listedIn: folders })
+// [kind:5, a kind:1852 remove per Folder with state]
+```
+
+A resolved action carrying `listed: true` is one that needs them.
+
+**Prose.** A field declared with `"format": "estiva-blocks-1"` — on a
+creation's `content` property, or a change's input — arrives with `format` on
+the resolved field or action, so you can draw a block editor. Pass
+`contentFormat: 'estiva-blocks-1'` with a block document and the event carries
+`content-format` and an `imeta` per attached file; pass plain text without it
+and the value is written as marker text, which is always correct.
+
 ### Replies
 
 A reply is the `comment` action with a parent. Pass `replyTo` and the uppercase

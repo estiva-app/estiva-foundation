@@ -29,11 +29,19 @@
  * keeps its parent.
  */
 
-/** The three fields nesting reads. `ForeignObject` has all of them. */
+/** The fields nesting reads. `ForeignObject` has all of them. */
 export interface Nestable {
   ref: string
   address?: string
   parentRef?: string
+  kind?: number
+  /**
+   * The only kind this file may be moved under, when its owner says
+   * (`ForeignObject.parentKind`, MAN-1). An issue's `project` holds a project,
+   * so offering it another issue or a topic is offering a move the owning app
+   * cannot read. Absent means any kind, which is a bare file's rule (§6.7).
+   */
+  parentKind?: number
 }
 
 export interface Nesting<T extends Nestable> {
@@ -123,8 +131,11 @@ export function nestingOf<T extends Nestable>(files: readonly T[]): Nesting<T> {
         stack.push(child)
       }
     }
-    // A target needs an address to be named by a `parent` change.
-    const targets: (T | undefined)[] = files.filter((f) => f.address && !below.has(f.ref))
+    // A target needs an address to be named by a move, and must be of the
+    // kind the move names when the owner declared one.
+    const targets: (T | undefined)[] = files.filter(
+      (f) => f.address && !below.has(f.ref) && (file.parentKind === undefined || f.kind === file.parentKind),
+    )
     return file.parentRef ? [undefined, ...targets.filter((t) => t?.address !== file.parentRef)] : targets
   }
 
