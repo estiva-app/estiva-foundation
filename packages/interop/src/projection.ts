@@ -4100,6 +4100,37 @@ export interface FolderSummary {
    * `listFolders` already holds every state, so the answer is free.
    */
   listedIn?: string[]
+  /**
+   * The addresses this folder's state lists, in the state's order — present
+   * only when there are any.
+   *
+   * `listedIn` in the other direction, and free for the same reason: the
+   * states are already in hand. It is the unresolved list — a row that names
+   * an archived or unreachable record is still here — so a consumer that
+   * draws one app's own records under a folder (Ship's projects under a team,
+   * FOL-5) intersects it with the records it holds, and a consumer that draws
+   * another app's files resolves them with {@link resolveFolderContents}.
+   */
+  addresses?: string[]
+}
+
+/**
+ * The folders a person navigates by: the ones with state that no other folder
+ * lists (FOL-5).
+ *
+ * Most channels a relay answers with are nobody's folder — an app's record
+ * channels, the channel a record's conversation lives in, a test topic — and
+ * each is reached through the object it belongs to. Two facts the summary
+ * already carries decide it, with no further read: a `kind:30890` exists once
+ * somebody has sent a folder command at the channel, which a record channel
+ * never gets; and a folder another one lists (`listedIn`) is a row inside
+ * that one, not a section beside it.
+ *
+ * Not a list of ids: a new team is a folder somebody creates, not a code
+ * change. Moved here from Peek and Ship, which each held the same line.
+ */
+export function topLevelFolders<T extends Pick<FolderSummary, 'hasState' | 'listedIn'>>(folders: T[]): T[] {
+  return folders.filter((folder) => folder.hasState && !folder.listedIn?.length)
 }
 
 /** A folder and everything in it, each file drawn through its owner's manifest. */
@@ -4156,10 +4187,12 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
     const existing = byId.get(id)
     // State wins over the channel for the name, whichever order they arrived.
     if (existing && !state) continue
+    const addresses = state ? event.tags.filter((tag) => tag[0] === 'a' && tag[1]).map((tag) => tag[1]) : []
     byId.set(id, {
       id,
       name: tagValue(event, 'name') ?? existing?.name,
       hasState: state || (existing?.hasState ?? false),
+      ...(addresses.length ? { addresses } : {}),
     })
   }
   /*

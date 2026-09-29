@@ -13,7 +13,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveFolderContents, listFolders, KIND_FOLDER_STATE } from '../dist/index.js'
+import { resolveFolderContents, listFolders, topLevelFolders, KIND_FOLDER_STATE } from '../dist/index.js'
 
 const RINGER = 'a'.repeat(64)
 const TIDES = 'b'.repeat(64)
@@ -275,6 +275,25 @@ describe('listFolders', () => {
       { id: 'aaa', name: 'Another channel', hasState: false },
       { id: FOLDER, name: 'Estuary survey', hasState: true },
     ])
+  })
+
+  test('a folder with state carries the addresses its state lists, in its order (FOL-5)', async () => {
+    const query = relay([channel, colony, reading, state([addressOf(reading), addressOf(colony)])])
+    const folders = await listFolders(query)
+    const held = folders.find((f) => f.id === FOLDER)
+    assert.deepEqual(held.addresses, [addressOf(reading), addressOf(colony)])
+  })
+})
+
+describe('topLevelFolders (FOL-5)', () => {
+  test('state and nothing listing it; a bare channel and a listed folder are not', () => {
+    const folders = [
+      { id: 'team', hasState: true },
+      { id: 'bare', hasState: false },
+      { id: 'topic', hasState: true, listedIn: ['team'] },
+      { id: 'empty-listing', hasState: true, listedIn: [] },
+    ]
+    assert.deepEqual(topLevelFolders(folders).map((f) => f.id), ['team', 'empty-listing'])
   })
 })
 

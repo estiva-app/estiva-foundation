@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.33.0 — 2026-09-29
+
+**Manifests: nothing.** No declaration is read differently. Additive.
+
+- **`topLevelFolders(folders)`** (FOL-5) — the folders a sidebar draws as
+  sections: state, and no other folder lists it. Peek and Ship each held this
+  line word for word; now there is one.
+- **`FolderSummary.addresses`** — what a folder's state lists, unresolved and
+  in the state's order, present only when there is anything. `listedIn` in the
+  other direction, read off the states `listFolders` already holds, so it
+  costs no request. Ship draws a team's projects from it: its own records the
+  team's state lists, rather than each project's own `contentFolder`.
+
 ## 0.32.0 — 2026-09-24
 
 **Manifests: nothing.** No declaration is read differently. What is new is

@@ -479,10 +479,10 @@ explaining a short list should read this field.
 ### A sidebar
 
 ```ts
-import { listFolders } from '@estiva-app/interop'
+import { listFolders, topLevelFolders } from '@estiva-app/interop'
 
-const folders = await listFolders(query)   // { id, name, hasState, listedIn? }[]
-const topLevel = folders.filter((f) => !f.listedIn)
+const folders = await listFolders(query)   // { id, name, hasState, listedIn?, addresses? }[]
+const teams = topLevelFolders(folders)     // state, and nothing lists it
 ```
 
 Asks for folders by kind rather than walking anything else. Discovering things
@@ -492,7 +492,12 @@ only through their parent loses them when the parent goes — the failure RFC 0.
 A channel is addressable, so a folder can be a file in another folder — Peek's
 topics are, each listed by its team's state. `listedIn` names those containers,
 read off the states the call already holds, so a sidebar draws the team and
-not, beside it, every topic in it.
+not, beside it, every topic in it. `topLevelFolders` is that choice — a folder
+with state that nothing lists — so two apps draw the same sections.
+
+`addresses` is the other direction: what a folder's state lists, unresolved
+and in order. An app drawing its own records under a team intersects it with
+the records it holds; one drawing another app's files resolves the folder.
 
 A record a state lists places its own channel there too: a project's
 conversation lives in the channel its `buzz-channel` (or `h`) names, and that

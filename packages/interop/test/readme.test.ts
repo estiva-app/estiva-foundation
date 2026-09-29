@@ -32,6 +32,7 @@ import {
   resolveForeignObject,
   resolveFolderContents,
   listFolders,
+  topLevelFolders,
   CLOSED_WIDGETS,
 } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
@@ -302,7 +303,17 @@ describe('the README §5: read a whole folder', () => {
     const folders = await listFolders(relay([manifest, channel, issue, teamState]))
     assert.deepEqual(folders, [
       { id: FOLDER, name: 'Billing', hasState: false, listedIn: [TEAM] },
-      { id: TEAM, name: 'Finance', hasState: true },
+      {
+        id: TEAM,
+        name: 'Finance',
+        hasState: true,
+        addresses: [
+          `${CHANNEL_KIND}:${RELAY_KEY}:${FOLDER}`,
+          `${CHANNEL_KIND}:${RELAY_KEY}:${TEAM}`,
+          `${ISSUE_KIND}:${AUTHOR}:not-a-folder`,
+        ],
+      },
     ])
+    assert.deepEqual(topLevelFolders(folders).map((f) => f.id), [TEAM])
   })
 })
