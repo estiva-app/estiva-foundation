@@ -282,7 +282,9 @@ describe('the README §5: read a whole folder', () => {
 
   it('listFolders names a folder for a sidebar', async () => {
     const folders = await listFolders(relay([manifest, channel, issue]))
-    assert.deepEqual(folders, [{ id: FOLDER, name: 'Billing', hasState: false }])
+    assert.deepEqual(folders, [
+      { id: FOLDER, name: 'Billing', hasState: false, channel: `${CHANNEL_KIND}:${RELAY_KEY}:${FOLDER}` },
+    ])
   })
 
   it('listFolders says which folders another folder lists as files (FOL-22)', async () => {
@@ -302,7 +304,13 @@ describe('the README §5: read a whole folder', () => {
     })
     const folders = await listFolders(relay([manifest, channel, issue, teamState]))
     assert.deepEqual(folders, [
-      { id: FOLDER, name: 'Billing', hasState: false, listedIn: [TEAM] },
+      {
+        id: FOLDER,
+        name: 'Billing',
+        hasState: false,
+        channel: `${CHANNEL_KIND}:${RELAY_KEY}:${FOLDER}`,
+        listedIn: [TEAM],
+      },
       {
         id: TEAM,
         name: 'Finance',

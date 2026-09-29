@@ -272,8 +272,8 @@ describe('listFolders', () => {
     const query = relay([channel, other, state([])])
     const folders = await listFolders(query)
     assert.deepEqual(folders, [
-      { id: 'aaa', name: 'Another channel', hasState: false },
-      { id: FOLDER, name: 'Estuary survey', hasState: true },
+      { id: 'aaa', name: 'Another channel', hasState: false, channel: `39000:${RELAY}:aaa` },
+      { id: FOLDER, name: 'Estuary survey', hasState: true, channel: addressOf(channel) },
     ])
   })
 
@@ -372,21 +372,26 @@ describe('listFolders: a record’s own channel is listed wherever the record is
       posts.push(filters)
       return inner(filters)
     })
-    assert.equal(posts.length, 2, 'the folder read, then one read for the records')
+    assert.equal(posts.length, 2, 'the folder read, then one read for the records and every archive')
     assert.deepEqual(
-      posts[1].map((f) => [f.kinds, f.authors, f['#d']]),
+      posts[1].filter((f) => !f.kinds.includes(1851)).map((f) => [f.kinds, f.authors, f['#d']]),
       [[[COLONY], [RINGER], ['dunlin']], [[READING], [TIDES], ['neap']]],
     )
+    // FOL-46: the archives ride with the roots rather than costing a request.
+    const archives = posts[1].filter((f) => f.kinds.includes(1851)).flatMap((f) => f['#a'])
+    assert.ok(archives.includes(addressOf(colonyGlobal)), 'a record’s archive is read with its root')
+    assert.ok(archives.includes(addressOf(channel)), 'a Folder’s archive is read with the roots')
   })
 
-  test('no listed record, no extra request', async () => {
-    let posts = 0
+  test('no listed record: one more request, for the Folders’ archives alone (FOL-46)', async () => {
+    const posts = []
     const inner = relay([channel, state([])])
     await listFolders(async (filters) => {
-      posts++
+      posts.push(filters)
       return inner(filters)
     })
-    assert.equal(posts, 1)
+    assert.equal(posts.length, 2)
+    assert.deepEqual(posts[1].map((f) => [f.kinds, f['#a']]), [[[1851], [addressOf(channel)]]])
   })
 
   test('a refused record read throws, rather than returning a listing missing its placements', async () => {

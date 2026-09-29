@@ -543,8 +543,8 @@ explaining a short list should read this field.
 ```ts
 import { listFolders, topLevelFolders } from '@estiva-app/interop'
 
-const folders = await listFolders(query)   // { id, name, hasState, listedIn?, addresses? }[]
-const teams = topLevelFolders(folders)     // state, and nothing lists it
+const folders = await listFolders(query)   // { id, name, hasState, listedIn?, addresses?, channel?, archived? }[]
+const teams = topLevelFolders(folders)     // state, nothing lists it, not archived
 ```
 
 Asks for folders by kind rather than walking anything else. Discovering things
@@ -592,6 +592,34 @@ next state from its current one and a folder with no `kind:30890` has none: a
 `kind:1852` against it emits state listing only what the command named, and
 everything filed in it by `h` stops being listed. So rename, place and unlist
 send no command to such a folder, and a move into or out of one is refused.
+
+### Archiving anything (0.37.0)
+
+```ts
+import { archiveImpact, isArchived, planArchiveFolder } from '@estiva-app/interop'
+
+const impact = await archiveImpact(file.address, query)  // { hides: [{ kind, count }], staysVisible }
+// …say what it hides, take a resolution, then publish the declared `archive`
+// action with `value: 'true'` and `note: resolution` — or, for a Folder:
+const [change] = planArchiveFolder(me, Date.now(), { folder: f.id, channel: f.channel!, archived: true, resolution })
+
+const opened = await resolveForeignObject(link, query, people, 0, cache, { archivedWith: true })
+if (isArchived(opened)) showBanner(opened.archived)       // { by, at, resolution?, with? }
+```
+
+One field for every file, whatever its kind: a change setting `archived` to
+`'true'` on the file's address archives it and an empty value restores it. It
+is a change, so anyone who may write in the Folder may, and the change's
+`content` is the resolution a person gave.
+
+**The cascade is read, never written.** A Folder's contents leave out an
+archived file and everything under it — an issue with its project, a sub-topic
+with its topic — and `topLevelFolders` leaves out an archived Folder, so its
+subtree goes too. Nothing is written to the children, so unarchiving restores
+exactly what was there, and a file another Folder also lists stays visible in
+that one. A link still opens an archived file, with `archived` set — `with`
+naming the parent when it is archived only with it — so the page can draw the
+resolution first and an Unarchive control.
 
 ---
 

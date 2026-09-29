@@ -149,6 +149,45 @@ export type MovePlan = { ok: true; events: UnsignedEvent[] } | { ok: false; reas
  *
  * A move to the same Folder plans nothing.
  */
+/**
+ * Archive a Folder, or restore it: `[kind:1851 archived]` — FOL-46.
+ *
+ * **Not a Folder command.** A Folder is archived the way any file is: a change
+ * setting `archived` on its address — its channel's, `FolderSummary.channel` —
+ * to `'true'`, or to an empty value to restore it. Its state, its contents and
+ * its channel are untouched, which is what makes it reversible: a `kind:9008`
+ * hides everything under the Folder's `h` for good (FOL-9), and a `kind:1852`
+ * would unlist the Folder from somewhere a person would have to remember.
+ *
+ * Published into the Folder itself, so anyone who may write there — a member,
+ * not only an admin — may archive it. `resolution` is what the person archiving
+ * said about it, carried as the change's `content`; readers show it first when
+ * the archived Folder is opened. Restoring takes none.
+ */
+export function planArchiveFolder(
+  pubkey: string,
+  createdAtMs: number,
+  args: { folder: string; channel: string; archived: boolean; resolution?: string },
+): UnsignedEvent[] {
+  return [
+    {
+      pubkey,
+      created_at: Math.floor(createdAtMs / 1000),
+      kind: 1851,
+      // `buildActionEvent`'s order for a change, so the two writers of the one
+      // shape produce the same tags.
+      tags: [
+        ['a', args.channel],
+        ['field', 'archived'],
+        ['value', args.archived ? 'true' : ''],
+        ['h', args.folder],
+        ['ts', String(createdAtMs)],
+      ],
+      content: args.archived ? (args.resolution ?? '') : '',
+    },
+  ]
+}
+
 export function planMoveFile(
   pubkey: string,
   createdAtMs: number,
