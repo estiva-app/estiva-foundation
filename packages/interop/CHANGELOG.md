@@ -6,6 +6,43 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.36.0 — 2026-09-29
+
+**Manifests: three new declarations, and every manifest already published
+reads as it did** — none declares them (SPEC §7.2–7.3, MAN-1). One behaviour
+moves for the bare file only, and it is the same answer: its `parent` is now
+read from its declaration instead of a constant. Needs protocol 0.24.0.
+
+- **`children.movedBy`** — the field whose change moves a child. The folded
+  field wins over the `via` tag, an empty value is a move to no parent, and
+  it is ignored with `match: 'identifier'`. `ForeignObject.parentField` is the
+  declared field (was: `parent` on a bare file, nothing else), and the new
+  **`ForeignObject.parentKind`** is the kind a move may name — absent on a
+  bare file, which may sit under any kind. `Nestable` gains `kind` and
+  `parentKind`, and `moveTargetsOf` offers only that kind when it is set.
+  The bare file declares `movedBy: 'parent'`; `BARE_FILE_PARENT_FIELD` is gone
+  (it was never exported).
+- **`emits.placement`** — on a creation, the tag the root names its Folder
+  with: `h` (default) or `buzz-channel`. Anything else is refused.
+- **`emits.listed`** — a creation is followed by `kind:1852 add` when the
+  Folder has state, a deletion by a `remove` from each Folder with state that
+  lists it. **New: `buildActionEvents(args & { folderHasState?, listedIn? })`**
+  returns the events in publish order and refuses without the fact it needs;
+  **`buildActionEvent` refuses a `listed` creation or deletion** rather than
+  build the root alone. `ResolvedAction.listed` marks the actions that need
+  it. `ActionEventArgs` is the args type, now named.
+- **`format`** — on a creation's `content` property or a change's input,
+  `estiva-blocks-1` says the value may be a block document.
+  `ActionFormField.format` and `ResolvedAction.format` carry it when it is a
+  format this version writes (`type ProseFormat`). **`buildActionEvent({
+  contentFormat })`** tags the root or change with `content-format`, after
+  parsing the value, and adds an `imeta` per attached file; without it the
+  value is written untagged as marker text, as before. Refused on a comment, a
+  deletion, or an action not declaring that format.
+- **`actionProblems`** flags an unknown placement, a `listed` on an action
+  that neither creates nor deletes, a format with nowhere to go and an
+  unknown format.
+
 ## 0.35.0 — 2026-09-29
 
 **Manifests: nothing.** No declaration is read differently. Additive: a reply

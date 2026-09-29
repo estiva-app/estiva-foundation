@@ -15,6 +15,14 @@
 import { decodeNaddr, decodeNevent, encodeNaddr, encodeNevent, findNaddrs, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { imetaOf, parseProfile, type Imeta, type Profile, type SignedEvent } from '@estiva-app/protocol'
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
+import {
+  attachmentsInDocument,
+  BLOCK_DOCUMENT_FORMAT,
+  CONTENT_FORMAT_TAG,
+  imetaTag,
+  parseBlockDocument,
+} from '@estiva-app/protocol'
+import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -833,6 +841,17 @@ interface SlotSpec {
      * written before this reading exactly as it did.
      */
     match?: 'address' | 'identifier'
+    /**
+     * The field on the child whose change moves it to another parent — SPEC
+     * §7.2, MAN-1. `project` on Ship's issues, `parent` on a bare file.
+     *
+     * The `via` tag is written once, by the child's author, on a root only
+     * they may replace; a move is therefore a change event, and this names the
+     * field it sets. The folded value wins over the tag, and an empty one is a
+     * move to no parent. Ignored with `match: 'identifier'`, because a move's
+     * value is an address.
+     */
+    movedBy?: string
   }
 }
 
@@ -911,11 +930,38 @@ export interface ManifestAction {
      * published, this is what also gets fetched. See `commentKindsOf`.
      */
     alsoRead?: number[]
+    /**
+     * On a creation: the tag the new root names its Folder with — `h`, the
+     * default, or `buzz-channel` (SPEC §7.3, MAN-1).
+     *
+     * `buzz-channel` is how a Ship project is written: the relay stores the
+     * record globally, so anybody can discover the project, while its changes
+     * and comments keep `h`. Any other value is refused when building, because
+     * a Folder named in a tag nothing reads is no Folder.
+     */
+    placement?: string
+    /**
+     * That objects this action writes are named in their Folder's state, so a
+     * creation is followed by a `kind:1852` add and a deletion by a remove from
+     * each Folder listing it (SPEC §7.3, MAN-1; FOL-48).
+     *
+     * Only {@link buildActionEvents} builds one, because only its caller can
+     * say whether a Folder has state — a read, never a guess.
+     */
+    listed?: boolean
   }
   input?: {
     type: string
     /** For a scalar input: the vocabulary its value must come from. */
     enum?: string
+    /**
+     * For a scalar change: the richest content model the owner accepts for the
+     * value — SPEC §7.3's `format`, MAN-1. `estiva-blocks-1` is a block
+     * document (§13.3). A format on the declaration, not a new type, because
+     * the wire value is a string either way; a plain value is still accepted,
+     * written untagged as marker text (§13.4).
+     */
+    format?: string
     /**
      * For `type: 'object'`: the fields a consumer draws, and which are required.
      *
@@ -935,8 +981,12 @@ export interface ManifestAction {
      * At most one property may do it. Two would be two writers of one field,
      * and the second silently winning is exactly the shape of bug this
      * vocabulary exists to make impossible.
+     *
+     * **A property targeting `content` may declare a `format`** — MAN-1, the
+     * same field a scalar input declares. Meaningless on a property written to
+     * a tag, which is a scalar, and ignored there.
      */
-    properties?: Record<string, { type?: string; enum?: string; target?: 'content' }>
+    properties?: Record<string, { type?: string; enum?: string; target?: 'content'; format?: string }>
     required?: string[]
   }
 }
@@ -965,8 +1015,29 @@ export interface ActionFormField {
    * have to, and one that ignores it still publishes the right event.
    */
   target?: 'content'
+  /**
+   * That the field is prose the owner accepts as a block document — MAN-1.
+   *
+   * Set only for a content field declaring a format this version writes, so a
+   * consumer that sees it may draw a block editor and pass
+   * `contentFormat: 'estiva-blocks-1'` to {@link buildActionEvent}. A consumer
+   * that draws a text box instead still publishes a correct event (§7.3).
+   */
+  format?: ProseFormat
   /** When the property names a vocabulary, its entries, already looked up. */
   options?: { value: string; label: string; colour?: string }[]
+}
+
+/**
+ * The content formats a declaration may name and this version writes — only
+ * SPEC §13.3's block document. An unknown format is not surfaced, so no
+ * consumer draws an editor for a model nothing here can tag correctly.
+ */
+export type ProseFormat = typeof BLOCK_DOCUMENT_FORMAT
+
+/** The declared format, when it is one this version writes. */
+function proseFormatOf(declared: unknown): ProseFormat | undefined {
+  return declared === BLOCK_DOCUMENT_FORMAT ? BLOCK_DOCUMENT_FORMAT : undefined
 }
 
 export interface ResolvedAction {
@@ -1003,6 +1074,18 @@ export interface ResolvedAction {
    * properties would publish an orphan.
    */
   createsUnder?: string
+  /**
+   * For a `text` change: that the value is prose the owner accepts as a block
+   * document (MAN-1). See {@link ActionFormField.format} — the same rule for a
+   * field of a form.
+   */
+  format?: ProseFormat
+  /**
+   * That building this action needs to know the Folder's state: whether it has
+   * any, for a creation, or which Folders name the object, for a deletion
+   * (`emits.listed`, MAN-1). Pass it to {@link buildActionEvents}.
+   */
+  listed?: true
   /** The value this field holds right now, so a control can show it. */
   current?: string
   field?: string
@@ -1076,6 +1159,7 @@ function resolveActions(
         ...(action.description ? { description: action.description } : {}),
         ...(action.effect ? { effect: action.effect } : {}),
         control: 'confirm',
+        ...(action.emits.listed === true ? { listed: true as const } : {}),
       })
       continue
     }
@@ -1103,6 +1187,8 @@ function resolveActions(
             a one-line input and drawing prose.
           */
           ...(spec.target ? { target: spec.target } : {}),
+          // Prose only where the value is `content` — a tag is a scalar (§7.3).
+          ...(spec.target === 'content' && proseFormatOf(spec.format) ? { format: proseFormatOf(spec.format) } : {}),
           ...(spec.enum && manifest.vocabularies?.[spec.enum]
             ? {
                 options: manifest.vocabularies[spec.enum].map((v) => ({
@@ -1117,17 +1203,23 @@ function resolveActions(
         // comes from `emits`, and a form that omitted it would publish an
         // orphan the owning app cannot show anywhere.
         ...(action.emits.toAddressOf ? { createsUnder: action.emits.toAddressOf } : {}),
+        ...(action.emits.listed === true ? { listed: true as const } : {}),
       })
       continue
     }
 
     const vocab = action.input?.enum ? manifest.vocabularies?.[action.input.enum] : undefined
+    const control = vocab ? 'select' : action.input?.type === 'pubkey' ? 'pubkey' : 'text'
+    // A change only: a comment's body is §13.2 marker text, and a format on
+    // one is nothing this version writes (`buildActionEvent` refuses it).
+    const format = control === 'text' && isChange ? proseFormatOf(action.input?.format) : undefined
     out.push({
       id: action.id,
       label: action.label,
       ...(action.description ? { description: action.description } : {}),
       ...(action.effect ? { effect: action.effect } : {}),
-      control: vocab ? 'select' : action.input?.type === 'pubkey' ? 'pubkey' : 'text',
+      control,
+      ...(format ? { format } : {}),
       options: vocab?.map((v) => ({ value: v.value, label: v.label, colour: v.colour })),
       current: action.emits.field ? folded[action.emits.field]?.value : undefined,
       field: action.emits.field,
@@ -1399,9 +1491,6 @@ export const KIND_BARE_FILE = 30840
  */
 export const BARE_FILE_MANIFEST_ADDRESS = 'spec:6.7'
 
-/** The field a bare file's `kind:1851` re-parent sets (SPEC §6.7). */
-const BARE_FILE_PARENT_FIELD = 'parent'
-
 const BARE_FILE_MANIFEST: Manifest = {
   name: 'File',
   about: 'A file no app owns. Its conversation is what every file has; its type adds nothing.',
@@ -1424,7 +1513,11 @@ const BARE_FILE_MANIFEST: Manifest = {
         // of *other* kinds are found the other way round, by their own `a`
         // (`parentRefOf` below), which is FOL-4's generic direction; this slot
         // is the one the existing `list` machinery can draw today.
-        list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200 } },
+        //
+        // `movedBy` is SPEC §6.7's `parent` field, declared rather than
+        // hard-coded since MAN-1, so a bare file moves by the rule every other
+        // kind does — the move action below sets the same field.
+        list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200, movedBy: 'parent' } },
       },
     },
     /*
@@ -1498,7 +1591,7 @@ const BARE_FILE_MANIFEST: Manifest = {
         'the team may; who can read the file does not change.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
-      emits: { kind: 1851, field: BARE_FILE_PARENT_FIELD },
+      emits: { kind: 1851, field: 'parent' },
       input: { type: 'string' },
     },
     {
@@ -2116,6 +2209,48 @@ export function actionProblems(declared: unknown): string[] {
     }
   }
 
+  /*
+    MAN-1's three declarations, each of which fails quietly on the consumer's
+    side: an unknown placement or format is refused or ignored at the button,
+    and a `listed` on a change is simply never acted on.
+  */
+  const emits = (action as { emits?: { kind?: unknown; field?: unknown; placement?: unknown; listed?: unknown } }).emits
+  const input = (action as { input?: { type?: unknown; format?: unknown } }).input
+  const creates = input?.type === 'object' && !!properties
+  if (emits?.placement !== undefined && !(creates && PLACEMENTS.includes(emits.placement as string))) {
+    problems.push(
+      creates
+        ? `${name} places its object with ${JSON.stringify(emits.placement)}, and a Folder is named by ${PLACEMENTS.join(' or ')} — a consumer refuses the action.`
+        : `${name} declares a placement and creates nothing; only a new root names its Folder, so it is ignored.`,
+    )
+  }
+  if (emits?.listed !== undefined && emits.listed !== true) {
+    problems.push(`${name} declares listed ${JSON.stringify(emits.listed)}; the only value is true.`)
+  } else if (emits?.listed === true && !creates && emits.kind !== KIND_DELETION) {
+    problems.push(`${name} declares listed on an action that neither creates nor deletes, so no Folder command follows it.`)
+  }
+  const formats: [string, unknown, boolean][] = [
+    // A scalar format means something on a change only: a comment's body is
+    // marker text, and a deletion takes no value.
+    ...(input?.format !== undefined
+      ? [['its input', input.format, !creates && !!emits?.field && emits.kind !== KIND_DELETION] as [string, unknown, boolean]]
+      : []),
+    ...Object.entries(properties && typeof properties === 'object' ? properties : {})
+      .filter(([, spec]) => (spec as { format?: unknown } | null)?.format !== undefined)
+      .map(([property, spec]): [string, unknown, boolean] => [
+        `"${property}"`,
+        (spec as { format?: unknown }).format,
+        (spec as { target?: unknown }).target === 'content',
+      ]),
+  ]
+  for (const [where, format, applies] of formats) {
+    if (!applies) {
+      problems.push(`${name} declares a format on ${where}, which is neither a creation's content nor a change's value, so it is ignored.`)
+    } else if (!proseFormatOf(format)) {
+      problems.push(`${name} declares format ${JSON.stringify(format)} on ${where}, and the only format is ${BLOCK_DOCUMENT_FORMAT}. A consumer draws it as plain text.`)
+    }
+  }
+
   return problems
 }
 
@@ -2454,8 +2589,10 @@ export interface ForeignObject {
    */
   parentRef?: string
   /**
-   * The folded field that re-parents this object, when there is one — `parent`
-   * on a bare file (SPEC §6.7), absent for every other kind today (FOL-4).
+   * The folded field that re-parents this object, when its owner declares one
+   * — SPEC §7.2's `movedBy`: `parent` on a bare file (§6.7), `project` on an
+   * issue whose app declares it (MAN-1). Hard-coded to the bare file before
+   * 0.36.0.
    *
    * **For a consumer that draws field-setting actions as property rows.** The
    * action setting this field is a move, and its value is an address: drawn as
@@ -2464,6 +2601,14 @@ export interface ForeignObject {
    * title's rename takes, matched on the field for the same reason.
    */
   parentField?: string
+  /**
+   * The kind a move may name — the kind whose projection declares the
+   * `movedBy` (MAN-1): `30850` for a Ship issue, so a move control offers
+   * projects and not other issues. Absent with `parentField` on a bare file,
+   * which may sit under any kind (§6.7). {@link nestingOf}'s `moveTargetsOf`
+   * reads it.
+   */
+  parentKind?: number
   kind: number
   /**
    * The layout hint the owner declared — **a type or an ordered chain of them.**
@@ -2592,7 +2737,7 @@ function buildObject(args: {
     comments: args.comments ?? [],
     listsChildren: listsChildrenOf(projection, manifest),
     parentRef: parentRefOf(manifest, pointer.kind, root, folded),
-    ...(pointer.kind === KIND_BARE_FILE ? { parentField: BARE_FILE_PARENT_FIELD } : {}),
+    ...parentFieldsOf(manifest, pointer.kind),
     folder: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -3073,7 +3218,7 @@ function withPeople({ object, children }: AssembledObject, people: People): Fore
  */
 function declaredChildSpec(projection: {
   slots: Record<string, SlotSpec | SlotSpec[]>
-}): { kind: number; via: string; limit?: number; match?: string } | undefined {
+}): { kind: number; via: string; limit?: number; match?: string; movedBy?: string } | undefined {
   const spec = projection.slots.list
   return !Array.isArray(spec) ? spec?.children : undefined
 }
@@ -3108,15 +3253,18 @@ function parentRefOf(
     direction lets Ship's project list its issues without an issue knowing what
     a project is; this one lets a topic sit under a project, an issue, or a kind
     nobody has met, without that kind's owner declaring bare files as children.
-    Re-parenting is a `parent` change event, seeded by the root tag, the way an
-    issue's `project` field works (SPEC §6.7).
+    Re-parenting is a change to the declared `movedBy` field, seeded by the
+    root tag — `parent` on a bare file, `project` on a Ship issue (SPEC §7.2).
   */
-  if (kind === KIND_BARE_FILE) {
+  const movedBy = movedByOf(manifest, kind)
+  if (movedBy) {
     // A folded empty value is a move to the top, not an absence: falling back
     // to the root tag would put the file straight back under the parent it
     // was moved out of (FOL-4).
-    const moved = folded[BARE_FILE_PARENT_FIELD]
+    const moved = folded[movedBy.field]
     if (moved) return moved.value || undefined
+  }
+  if (kind === KIND_BARE_FILE) {
     return root.tags.find((t) => t[0] === 'a' && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
   }
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
@@ -3135,6 +3283,34 @@ function parentRefOf(
     if (found) return found
   }
   return undefined
+}
+
+/**
+ * The field that moves a `kind` object to another parent, and the kind of
+ * parent it names — SPEC §7.2's `movedBy`, read off whichever projection lists
+ * `kind` as its children (MAN-1).
+ *
+ * `parentKind` is absent for a bare file: §6.7 lets one sit under a file of any
+ * kind, so its own list naming bare files is not a limit on where it may go.
+ * Absent too for `match: 'identifier'`, where `movedBy` is ignored because a
+ * move's value is an address and that list compares identifiers.
+ */
+function movedByOf(manifest: Manifest, kind: number): { field: string; parentKind?: number } | undefined {
+  for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
+    const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
+    if (!children || children.kind !== kind || !children.movedBy || children.match === 'identifier') continue
+    return kind === KIND_BARE_FILE ? { field: children.movedBy } : { field: children.movedBy, parentKind: Number(parentKind) }
+  }
+  return undefined
+}
+
+/** {@link movedByOf} as the two `ForeignObject` fields, both builders' shape. */
+function parentFieldsOf(manifest: Manifest, kind: number): { parentField?: string; parentKind?: number } {
+  const moved = movedByOf(manifest, kind)
+  if (!moved) return {}
+  return moved.parentKind === undefined
+    ? { parentField: moved.field }
+    : { parentField: moved.field, parentKind: moved.parentKind }
 }
 
 /** Both halves of the question a disclosure control asks. */
@@ -3270,7 +3446,7 @@ function buildChildObject(args: {
     // an inconsistent shape is what makes a consumer defensive about a value it
     // should be able to trust.
     parentRef: parentRefOf(manifest, root.kind, root),
-    ...(root.kind === KIND_BARE_FILE ? { parentField: BARE_FILE_PARENT_FIELD } : {}),
+    ...parentFieldsOf(manifest, root.kind),
     folder: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
@@ -3911,6 +4087,51 @@ export async function resolveFolderProject(
 const isAddressableKind = (kind: number) => kind >= 30000 && kind < 40000
 
 /**
+ * The tags a new root may name its Folder with — SPEC §7.3's `placement`.
+ *
+ * The two a relay indexes for a Folder's containment read and {@link folderOf}
+ * reads. Closed, because a root placed in any other tag belongs to no Folder
+ * and nothing would say so.
+ */
+const PLACEMENTS: readonly string[] = ['h', 'buzz-channel']
+
+/**
+ * The tags a prose value carries — SPEC §7.3's `format`, MAN-1.
+ *
+ * **Tagged only when the caller says the value is in the declared format**, and
+ * then checked, because a reader decides the model by the tag alone (§13.4): a
+ * `content-format` on marker text renders nothing, and one on a document the
+ * relay cannot parse renders JSON at a person. Without `contentFormat` the value
+ * is marker text and carries nothing, which every reader must accept — so a
+ * consumer that draws a text box for a prose field still publishes correctly.
+ *
+ * A document's attachments are named again as `imeta`, which §13.3 requires of
+ * every event holding one and which ingest verifies against stored blobs.
+ */
+function proseTags(args: {
+  label: string
+  declared: string | undefined
+  contentFormat: string | undefined
+  value: string
+}): string[][] | string {
+  const { label, declared, contentFormat, value } = args
+  if (contentFormat === undefined) return []
+  if (proseFormatOf(declared) !== contentFormat) {
+    return proseFormatOf(declared)
+      ? `"${label}" takes ${proseFormatOf(declared)}, not ${contentFormat}.`
+      : `"${label}" declares no ${contentFormat} value, so it is written as plain text.`
+  }
+  // Clearing a field is not a document; an empty value says nothing to tag.
+  if (value === '') return []
+  try {
+    parseBlockDocument(value)
+  } catch (e) {
+    return `"${label}" was handed ${contentFormat} that is ${(e as Error).message}.`
+  }
+  return [[CONTENT_FORMAT_TAG, contentFormat], ...attachmentsInDocument(value, contentFormat).map(imetaTag)]
+}
+
+/**
  * The event an object-creating action publishes.
  *
  * Split out because it shares almost nothing with a change: the tags come from
@@ -3929,6 +4150,7 @@ function buildCreationEvent(args: {
   folder: string
   value: string | Record<string, string>
   newId?: string
+  contentFormat?: string
   pubkey: string
   createdAtMs: number
 }): UnsignedActionEvent | string {
@@ -3982,6 +4204,20 @@ function buildCreationEvent(args: {
   }
   const bodyField = bodyFields[0]
 
+  const placement = declared.emits.placement ?? 'h'
+  if (!PLACEMENTS.includes(placement)) {
+    return `"${declared.label}" places its object with "${placement}", and a Folder is named by ${PLACEMENTS.join(' or ')}.`
+  }
+
+  // Only the content field can be prose, so only its value is ever tagged.
+  const prose = proseTags({
+    label: declared.label,
+    declared: bodyField ? properties[bodyField]?.format : undefined,
+    contentFormat: args.contentFormat,
+    value: bodyField ? (value[bodyField] ?? '') : '',
+  })
+  if (typeof prose === 'string') return prose
+
   const tags: string[][] = []
   if (isAddressableKind(declared.emits.kind)) tags.push(['d', newId!])
   // A property's name is the tag it writes, unless it declared `content`. See
@@ -3995,7 +4231,7 @@ function buildCreationEvent(args: {
   if (declared.emits.setTag && declared.emits.toAddressOf === 'self') {
     tags.push([declared.emits.setTag, address])
   }
-  tags.push(['h', folder])
+  tags.push([placement, folder], ...prose)
 
   return {
     pubkey: args.pubkey,
@@ -4006,7 +4242,8 @@ function buildCreationEvent(args: {
   }
 }
 
-export function buildActionEvent(args: {
+/** What {@link buildActionEvent} and {@link buildActionEvents} are handed. */
+export interface ActionEventArgs {
   manifest: { records?: RecordsRule; actions?: ManifestAction[]; vocabularies?: Manifest['vocabularies'] }
   kind: number
   /** Address of the object being acted on. */
@@ -4041,9 +4278,93 @@ export function buildActionEvent(args: {
    * Refused on any action that is not a comment: nothing else has a parent.
    */
   replyTo?: { id: string; kind: number; author: string }
+  /**
+   * The format the action's prose value is in, when it is not marker text —
+   * `'estiva-blocks-1'` for a block document (SPEC §7.3's `format`, MAN-1).
+   *
+   * The value of a scalar change, or of a creation's `content` field. Only a
+   * format the action declares for that value is accepted, and the value is
+   * parsed before it is tagged. Omitted, the value is written untagged as
+   * marker text, which is always correct.
+   */
+  contentFormat?: string
   pubkey: string
   createdAtMs: number
-}): UnsignedActionEvent | string {
+}
+
+/**
+ * Build the event that performs a manifest-declared action — one event.
+ *
+ * **Refuses an action declaring `emits.listed`**, which is more than one event
+ * (SPEC §7.3): building the root alone would publish an object its Folder does
+ * not show, and report success. {@link buildActionEvents} builds those.
+ */
+export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | string {
+  const declared = args.manifest.actions?.find((a) => a.id === args.actionId)
+  if (declared?.emits.listed === true && (declared.emits.kind === KIND_DELETION || isCreationAction(declared))) {
+    return `"${declared.label}" is followed by a Folder command, so it is built with buildActionEvents.`
+  }
+  return buildOneActionEvent(args)
+}
+
+const isCreationAction = (declared: ManifestAction) =>
+  declared.input?.type === 'object' && !!declared.input.properties
+
+/**
+ * Every event an action publishes, **in publish order** — SPEC §7.3, MAN-1.
+ *
+ * The first is what {@link buildActionEvent} builds. An action declaring
+ * `emits.listed` is followed by the Folder commands that keep its Folder's
+ * listing true, planned by `planPlaceFile` / `planUnlistFile`:
+ *
+ * - a creation: `kind:1852 add` naming the new address in the Folder it was
+ *   placed in, when `folderHasState` — none when the Folder has no state, where
+ *   a command would hide everything else filed there;
+ * - a deletion: `kind:1852 remove` from each of `listedIn` that has state.
+ *
+ * Both facts come from the caller's read of `kind:30890` and are required
+ * rather than defaulted, because a guess here is silent loss. Publish in order
+ * and stop at the first refusal: each event assumes the ones before it landed.
+ */
+export function buildActionEvents(
+  args: ActionEventArgs & {
+    /** For a `listed` creation: whether the Folder has state — from a read. */
+    folderHasState?: boolean
+    /** For a `listed` deletion: every Folder that lists the object, with `hasState` — from a read. */
+    listedIn?: readonly FolderRef[]
+  },
+): UnsignedActionEvent[] | string {
+  const first = buildOneActionEvent(args)
+  if (typeof first === 'string') return first
+  const declared = args.manifest.actions!.find((a) => a.id === args.actionId)!
+  if (declared.emits.listed !== true) return [first]
+
+  if (declared.emits.kind === KIND_DELETION) {
+    if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the Folders that list it.`
+    return [
+      first,
+      ...args.listedIn.flatMap((listing) =>
+        planUnlistFile(args.pubkey, args.createdAtMs, { folder: listing.id, address: args.address, hasState: listing.hasState }),
+      ),
+    ]
+  }
+  if (isCreationAction(declared)) {
+    if (args.folderHasState === undefined) {
+      return `"${declared.label}" lists what it creates, and needs to know whether the Folder has state.`
+    }
+    // A listing names addresses, and an object with no `d` has none.
+    const identifier = first.tags.find((t) => t[0] === 'd')?.[1]
+    if (identifier === undefined) {
+      return `"${declared.label}" lists what it creates, and a kind ${first.kind} has no address to list.`
+    }
+    const created = `${first.kind}:${first.pubkey}:${identifier}`
+    return [first, ...planPlaceFile(args.pubkey, args.createdAtMs, { folder: args.folder, address: created, hasState: args.folderHasState })]
+  }
+  // A change or a comment adds nothing to a Folder and removes nothing from it.
+  return [first]
+}
+
+function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | string {
   const { manifest, kind, address, folder, actionId, value, replyTo } = args
   const records = manifest.records
   const declared = manifest.actions?.find((a) => a.id === actionId)
@@ -4054,13 +4375,18 @@ export function buildActionEvent(args: {
     return `"${declared.label}" does not apply to a kind ${kind}.`
   }
 
-  const isCreation = declared.input?.type === 'object' && !!declared.input.properties
+  const isCreation = isCreationAction(declared)
 
   // A reply is a comment with a parent — what the scalar path below builds for
   // an action that is neither a deletion nor a change. Refused here, before any
   // branch that would build something else and quietly drop the parent.
   if (replyTo && (isCreation || declared.emits.kind === KIND_DELETION || declared.emits.field)) {
     return `"${declared.label}" is not a comment, so it cannot reply to one.`
+  }
+  // Prose is a creation's content or a change's value (§7.3). A deletion has
+  // no value, and a comment's body is §13.2 marker text.
+  if (args.contentFormat !== undefined && !isCreation && (!declared.emits.field || declared.emits.kind === KIND_DELETION)) {
+    return `"${declared.label}" takes no prose value, so it takes no content format.`
   }
 
   // An object-creating action is a different event entirely — a new object
@@ -4129,12 +4455,21 @@ export function buildActionEvent(args: {
     }
   }
 
+  // A prose value's `content-format` and `imeta` — a change only, per the
+  // refusal above. Ship's order: the tag before `ts`, the files after it.
+  const prose = declared.emits.field
+    ? proseTags({ label: declared.label, declared: declared.input?.format, contentFormat: args.contentFormat, value })
+    : []
+  if (typeof prose === 'string') return prose
+  const [formatTag, ...files] = prose
+
   const tags: string[][] = declared.emits.field
     ? [
         [records.targetTag, address],
         [records.fieldTag, declared.emits.field],
         [records.valueTag, value],
         ['h', folder],
+        ...(formatTag ? [formatTag] : []),
       ]
     : // NIP-22 comment. Built from the ratified NIP rather than from the
       // manifest, which is legitimate precisely because no app owns kind:1111 —
@@ -4164,6 +4499,7 @@ export function buildActionEvent(args: {
   // second would be separated by event id — arbitrarily, and differently
   // depending on which app you asked (FRICTION.md A6).
   if (records.order?.includes('ts')) tags.push(['ts', String(args.createdAtMs)])
+  tags.push(...files)
 
   return {
     pubkey: args.pubkey,

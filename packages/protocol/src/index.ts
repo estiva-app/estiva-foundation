@@ -241,6 +241,8 @@ export {
   blossomAuthHeader,
   imetaTag,
   imetaOf,
+  imetaFromAttrs,
+  attachmentsInDocument,
   type BlobFetchLike,
   type BlobResponseLike,
   type FetchedBlob,

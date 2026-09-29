@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.24.0 — 2026-09-29
+
+**Wire behaviour: unchanged for every existing builder.** Two readers of a
+block document, moved down from Ship so a second writer of one gets them.
+
+- **New: `attachmentsInDocument(value, contentFormat?)`** (MAN-1) — every
+  `attachment` block in a block document, depth-first, as the `imeta` set
+  SPEC §13.3 requires the carrying event to hold. Empty unless
+  `contentFormat` is `estiva-blocks-1`, and for a value that is not JSON.
+  Ship's `src/nostr/attachments.ts` had the only copy; interop 0.36.0's prose
+  writes need the same rule.
+- **New: `imetaFromAttrs(attrs)`** — one block's `attrs` as an `Imeta`, or
+  `undefined` when `url`, `m`, `x` or `size` is missing. The renderer's rule
+  too: a block this declines to name is one not to draw as a file.
+
 ## 0.23.0 — 2026-09-24
 
 **Wire behaviour: unchanged for every existing builder.** One new builder for
