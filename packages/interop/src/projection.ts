@@ -499,10 +499,16 @@ export async function threadsOf(
       roots[event.id] = event
       continue
     }
-    // The `e` that names a root of *this* conversation. A reply carries others
-    // — a quote, a mention — and picking the first would file it under one.
-    const parent = event.tags.find((tag) => tag[0] === 'e' && wanted.has(tag[1]))?.[1]
-    if (parent) (replies[parent] ??= []).push(event)
+    /*
+      The parent. A NIP-10 `reply` marker says it outright, and then only that
+      one counts: a reply to a reply also carries the thread's `root`-marked
+      `e`, which names a wanted id and is not its parent. Unmarked (NIP-22's
+      single lowercase `e`, or a bare mention beside it), the `e` naming a root
+      of *this* conversation — picking the first would file it under a quote.
+    */
+    const es = event.tags.filter((tag) => tag[0] === 'e' && tag[1])
+    const parent = (es.find((tag) => tag[3] === 'reply') ?? es.find((tag) => wanted.has(tag[1])))?.[1]
+    if (parent && wanted.has(parent)) (replies[parent] ??= []).push(event)
   }
   // Oldest first, ties by id so two replies in one second never swap places.
   for (const thread of Object.values(replies)) {
@@ -4020,15 +4026,18 @@ export function buildActionEvent(args: {
     return `"${declared.label}" does not apply to a kind ${kind}.`
   }
 
+  const isCreation = declared.input?.type === 'object' && !!declared.input.properties
+
+  // A reply is a comment with a parent — what the scalar path below builds for
+  // an action that is neither a deletion nor a change. Refused here, before any
+  // branch that would build something else and quietly drop the parent.
+  if (replyTo && (isCreation || declared.emits.kind === KIND_DELETION || declared.emits.field)) {
+    return `"${declared.label}" is not a comment, so it cannot reply to one.`
+  }
+
   // An object-creating action is a different event entirely — a new object
   // rather than a change to one — so it branches before the scalar path.
-  // A reply is a comment with a parent. Checked here, before any branch that
-  // would build something else and quietly drop the parent it was handed.
-  const isComment = !(declared.input?.type === 'object' && declared.input.properties) &&
-    declared.emits.kind !== KIND_DELETION && !declared.emits.field
-  if (replyTo && !isComment) return `"${declared.label}" is not a comment, so it cannot reply to one.`
-
-  if (declared.input?.type === 'object' && declared.input.properties) {
+  if (isCreation) {
     return buildCreationEvent({ ...args, declared, vocabularies: manifest.vocabularies })
   }
 

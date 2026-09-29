@@ -77,6 +77,12 @@ const nipReply = event({
 })
 /** A reply to the reply: hangs off the reply's id, not the root's. */
 const nested = event({ kind: COMMENT, content: 'Deeper', tags: [['A', ADDRESS], ['e', nipReply.id], ['k', String(COMMENT)], ['h', FOLDER]] })
+/** NIP-10's reply to a reply: it names the root too, marked `root`, and that is not its parent. */
+const markedNested = event({
+  kind: 9,
+  content: 'Deeper, marked',
+  tags: [['e', root.id, '', 'root'], ['e', shipReply.id, '', 'reply'], ['h', FOLDER]],
+})
 
 let calls: Record<string, unknown>[][] = []
 function relayOver(world: SignedEvent[]): QueryFn {
@@ -97,7 +103,7 @@ function relayOver(world: SignedEvent[]): QueryFn {
     )
   }
 }
-const query = () => relayOver([manifest, root, other, shipReply, nipReply, nested])
+const query = () => relayOver([manifest, root, other, shipReply, nipReply, nested, markedNested])
 
 beforeEach(() => {
   calls = []
@@ -121,6 +127,11 @@ describe('threadsOf reads every thread of a file in one request', () => {
   it('reads one level: a reply to a reply hangs off the reply and is not counted here', async () => {
     const threads = await threadsOf(ADDRESS, [root.id], query())
     assert.ok(!threads.replies[root.id]?.some((r) => r.content === 'Deeper'))
+  })
+
+  it('follows a NIP-10 reply marker over the root-marked e, so a marked reply to a reply is not flattened', async () => {
+    const threads = await threadsOf(ADDRESS, [root.id], query())
+    assert.ok(!threads.replies[root.id]?.some((r) => r.content === 'Deeper, marked'))
   })
 
   it('asks once, with the ids and the #e filter in one POST', async () => {
