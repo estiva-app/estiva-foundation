@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.34.0 — 2026-09-29
+
+**Manifests: nothing.** No declaration is read differently. A security fix to
+how a `kind:40003` is read.
+
+- **An edit lands only on the first `e` whose value is 64 hex** (PEE-38, SPEC
+  §6.8), marker ignored — the event whose ownership the relay checked.
+  `commentDecorationsOf` used to take the first *unmarked* `e` naming a target,
+  so `['e', <own message>, '', 'mention'], ['e', <victim>]`, which the relay
+  accepts on the writer's own message, was drawn as an edit of the victim's.
+  Same with the marker left off when the writer's message was not among the
+  targets. Both now apply nowhere, or to the writer's own message when it is.
+- **`editTargetOf(event)`** — that rule, exported, so an app folding edits
+  itself reads the same `e`.
+
 ## 0.33.0 — 2026-09-29
 
 **Manifests: nothing.** No declaration is read differently. Additive.
