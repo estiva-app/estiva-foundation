@@ -74,12 +74,20 @@ export interface RetryingRead<T> {
   /**
    * Read, unless an answer fresher than `freshMs` is held, a read is in
    * flight, or a retry is already scheduled. What a mount calls.
+   *
+   * Retries run only while something is subscribed: the last unsubscribe
+   * cancels a scheduled one, and the next `ensure` reads in its place.
    */
   ensure(load: () => Promise<T>): Promise<void>
   /** Read now, whatever is held; a scheduled retry is replaced by this read. */
   reload(load: () => Promise<T>): Promise<void>
   /** Cancel a scheduled retry. The held answer stays. */
   dispose(): void
+  /**
+   * Forget everything held — for a new viewer, or between test cases. A read
+   * in flight across it neither writes its answer nor schedules a retry.
+   */
+  clear(): void
 }
 
 /** The wait before the next attempt, after `failures` consecutive retryable failures. */
@@ -97,7 +105,10 @@ export function createRetryingRead<T>(options: RetryingReadOptions = {}): Retryi
   const first = options.firstRetryMs ?? RETRY_FIRST_MS
   const max = options.maxRetryMs ?? RETRY_MAX_MS
   const freshMs = options.freshMs ?? Number.POSITIVE_INFINITY
-  const now = options.now ?? (() => Date.now())
+  // Taken when the object is made, as Peek's listing cache did: freshness is
+  // wall-clock, and a test's fake `Date` must not make a held answer look
+  // fresh (or stale) to the next test. Pass `now` to control it.
+  const now = options.now ?? Date.now
   const timers = () => options.timers ?? host
 
   let snapshot: RetryingReadSnapshot<T> = { retrying: false }
@@ -117,16 +128,23 @@ export function createRetryingRead<T>(options: RetryingReadOptions = {}): Retryi
     timer = undefined
   }
 
+  /* Bumped by `clear`, so a read in flight across it cannot write the old
+     answer back or schedule a retry for it. */
+  let generation = 0
+
   const run = (load: () => Promise<T>): Promise<void> => {
     if (inflight) return inflight
     cancel()
+    const started = generation
     inflight = (async () => {
       try {
         const value = await load()
+        if (started !== generation) return
         failures = 0
         answeredAt = now()
         set({ value, retrying: false })
       } catch (error: unknown) {
+        if (started !== generation) return
         const again = retryable(error)
         if (again) {
           failures += 1
@@ -138,7 +156,7 @@ export function createRetryingRead<T>(options: RetryingReadOptions = {}): Retryi
         // A good answer outlives any failure after it.
         set(snapshot.value !== undefined ? { value: snapshot.value, retrying: again } : { error, retrying: again })
       } finally {
-        inflight = undefined
+        if (started === generation) inflight = undefined
       }
     })()
     return inflight
@@ -148,7 +166,13 @@ export function createRetryingRead<T>(options: RetryingReadOptions = {}): Retryi
     snapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener)
-      return () => listeners.delete(listener)
+      return () => {
+        listeners.delete(listener)
+        // Nobody is looking: a retry would spend the relay's budget on an
+        // answer no one draws. The snapshot still says a retry is due, and
+        // the next `ensure` makes it.
+        if (listeners.size === 0) cancel()
+      }
     },
     ensure(load) {
       if (inflight) return inflight
@@ -158,5 +182,13 @@ export function createRetryingRead<T>(options: RetryingReadOptions = {}): Retryi
     },
     reload: run,
     dispose: cancel,
+    clear() {
+      generation += 1
+      cancel()
+      inflight = undefined
+      failures = 0
+      answeredAt = 0
+      set({ retrying: false })
+    },
   }
 }

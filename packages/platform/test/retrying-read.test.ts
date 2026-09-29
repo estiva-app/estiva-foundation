@@ -131,6 +131,37 @@ test('a reload replaces a scheduled retry rather than adding a second read', asy
   assert.equal(read.snapshot().value, 'ok')
 })
 
+test('the last subscriber leaving cancels a retry, and the next ensure reads', async () => {
+  const { timers, pending } = fakeTimers()
+  const read = createRetryingRead<string>({ timers })
+  const off = read.subscribe(() => {})
+  await read.ensure(async () => {
+    throw new Error('fetch failed')
+  })
+  assert.equal(pending.size, 1)
+  off()
+  assert.equal(pending.size, 0, 'nobody is looking, so nothing is read')
+  assert.equal(read.snapshot().retrying, true, 'the answer is still not final')
+  await read.ensure(async () => 'back')
+  assert.equal(read.snapshot().value, 'back')
+})
+
+test('clear forgets the answer, and a read in flight across it writes nothing', async () => {
+  const { timers, pending } = fakeTimers()
+  const read = createRetryingRead<string>({ timers })
+  await read.ensure(async () => 'old viewer')
+  let finish: (value: string) => void = () => {}
+  const late = read.reload(() => new Promise<string>((resolve) => (finish = resolve)))
+  read.clear()
+  assert.deepEqual(read.snapshot(), { retrying: false })
+  finish('old viewer, late')
+  await late
+  assert.deepEqual(read.snapshot(), { retrying: false })
+  assert.equal(pending.size, 0)
+  await read.ensure(async () => 'new viewer')
+  assert.equal(read.snapshot().value, 'new viewer')
+})
+
 test('subscribers hear every change; the snapshot is stable between them', async () => {
   const read = createRetryingRead<string>({ timers: fakeTimers().timers })
   let heard = 0
