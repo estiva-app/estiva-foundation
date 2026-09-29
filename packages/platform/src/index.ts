@@ -36,6 +36,16 @@ export {
 } from './folder-activity.js'
 export { assumeOnline, browserOnlineSource, type OnlineSource, type OnlineTarget } from './online.js'
 export {
+  RETRY_FIRST_MS,
+  RETRY_MAX_MS,
+  createRetryingRead,
+  retryDelayMs,
+  type RetryTimers,
+  type RetryingRead,
+  type RetryingReadOptions,
+  type RetryingReadSnapshot,
+} from './retrying-read.js'
+export {
   DEFAULT_BACKOFF_MS,
   DEFAULT_MERGE_MS,
   MIN_BACKOFF_MS,

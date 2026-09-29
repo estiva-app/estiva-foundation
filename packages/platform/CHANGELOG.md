@@ -1,5 +1,21 @@
 # @estiva-app/platform
 
+## 0.4.0
+
+One read a tab holds on to, and reads again when it fails (FOL-5). Additive.
+
+`createRetryingRead` is Peek's FOL-42 `useFolders` without React or a relay:
+a failure is read again on a backoff (5 s doubling to 60 s, or the relay's own
+`retry in Ns` for a quota refusal), a failure never replaces a good answer, and
+the answer is held past the component that asked. Ship's Folder listing read
+once and turned one failure into an empty list for the session, which dropped
+every project out of its team until a reload.
+
+- `createRetryingRead<T>({ retryable?, firstRetryMs?, maxRetryMs?, freshMs?, now?, timers? })`
+  → `{ snapshot, subscribe, ensure(load), reload(load), dispose }`. Wrap it
+  with `useSyncExternalStore(read.subscribe, read.snapshot)`.
+- `retryDelayMs(failures, error)`, `RETRY_FIRST_MS`, `RETRY_MAX_MS`.
+
 ## 0.3.1
 
 Subscribers on one interval share one timer (PER-6). No API change.

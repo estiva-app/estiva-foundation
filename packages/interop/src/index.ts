@@ -32,6 +32,7 @@ export {
   resolveFolderProject,
   resolveFolderContents,
   listFolders,
+  topLevelFolders,
   KIND_FOLDER_STATE,
   KIND_CHANNEL_METADATA,
   KIND_BARE_FILE,
