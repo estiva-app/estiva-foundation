@@ -459,7 +459,8 @@ export interface Threads {
  *
  * Only *direct* replies: a reply's lowercase `e` names its immediate parent, so
  * a reply to a reply hangs off that reply and is not here. The replies share
- * one `CONVERSATION_LIMIT`, the same budget as one file's comment read.
+ * one `limit`, by default `CONVERSATION_LIMIT` — the same budget as one file's
+ * comment read, and what Peek's pane asks for.
  *
  * A refused read is whatever `query` does with one — this adds no catch, so an
  * unreadable thread and an unanswered one stay distinguishable.
@@ -470,6 +471,8 @@ export async function threadsOf(
   rootIds: readonly string[],
   query: QueryFn,
   cache?: ProjectionCache,
+  /** How many replies, across every thread, one read asks for. */
+  limit: number = CONVERSATION_LIMIT,
 ): Promise<Threads> {
   const empty: Threads = { roots: {}, replies: {} }
   if (rootIds.length === 0) return empty
@@ -486,7 +489,7 @@ export async function threadsOf(
   const ids = [...new Set(rootIds)]
   const events = await query([
     { ids, limit: ids.length },
-    { kinds, '#e': ids, limit: CONVERSATION_LIMIT },
+    { kinds, '#e': ids, limit },
   ])
   const wanted = new Set(ids)
   const roots: Record<string, SignedEvent> = {}

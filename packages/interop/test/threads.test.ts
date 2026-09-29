@@ -143,6 +143,11 @@ describe('threadsOf reads every thread of a file in one request', () => {
     ])
   })
 
+  it('takes a caller’s limit for the replies, CONVERSATION_LIMIT when none is given', async () => {
+    await threadsOf(ADDRESS, [root.id], query(), undefined, 1000)
+    assert.deepEqual(calls.at(-1)?.[1], { kinds: [COMMENT, 9], '#e': [root.id], limit: 1000 })
+  })
+
   it('answers empty for no roots without asking, and for a reference that does not decode', async () => {
     assert.deepEqual(await threadsOf(ADDRESS, [], query()), { roots: {}, replies: {} })
     assert.equal(calls.length, 0)

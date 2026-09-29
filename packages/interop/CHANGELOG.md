@@ -17,9 +17,10 @@ still decides the kind, whether a comment exists, and what kinds are read.
   name the parent, and there is no lowercase `a` (SPEC §6.4). Refused on any
   action that is not a comment. Peek and the agent each amended the built
   event's tags to do this; now there is one.
-- **`threadsOf(reference, rootIds, query, cache?)`** — `conversationsOf`'s
+- **`threadsOf(reference, rootIds, query, cache?, limit?)`** — `conversationsOf`'s
   counterpart by `#e`: the roots by id and their direct replies, every thread
-  in one request, kinds off the owner's manifest. Returns the events, as
+  in one request, kinds off the owner's manifest. `limit` caps the replies
+  across all threads, `CONVERSATION_LIMIT` by default. Returns the events, as
   `{ roots, replies }`. Peek's thread pane and the agent's `peek topic` read.
 
 ## 0.33.0 — 2026-09-29
