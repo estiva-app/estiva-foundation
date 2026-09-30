@@ -70,6 +70,7 @@ const manifestContent = {
   projections: {
     [ISSUE_KIND]: {
       widget: ['ticket', 'row'],
+      noun: 'issue',
       slots: {
         title: { tag: 'title' },
         status: { fold: 'status', map: 'statuses', default: 'todo' },
@@ -149,6 +150,7 @@ describe('the README §1: render an object from an app you know nothing about', 
     assert.equal(object.ref, ADDRESS)
     assert.equal(object.kind, ISSUE_KIND)
     assert.equal(object.appName, 'Estiva Ship')
+    assert.equal(object.noun, 'issue')
     assert.equal(object.slots.title?.value, 'Billing entry')
     assert.deepEqual(object.widget, ['ticket', 'row'])
     assert.ok(Array.isArray(object.meta))

@@ -1091,12 +1091,36 @@ export interface ResolvedAction {
   field?: string
 }
 
+/** How the owning app asks one of its kinds to be drawn (RFC 0.4 §13.3). */
+interface Projection {
+  widget: string | string[]
+  slots: Record<string, SlotSpec | SlotSpec[]>
+  /**
+   * What one of these is called, lower case and singular — "issue",
+   * "project". Resolved onto {@link ForeignObject.noun}; see there.
+   */
+  noun?: string
+}
+
+/**
+ * The projection's `noun`, when it is one: a non-empty string, trimmed.
+ *
+ * A manifest is another app's self-description and nothing validates it on
+ * the way in, so `"noun": 5` is publishable. Passed through, it reaches a
+ * consumer typed as a string and breaks there — the first `.charAt` throws
+ * while a menu draws. Anything else reads as "this app does not say" (§7.9).
+ */
+function nounOf(projection: Projection): { noun?: string } {
+  const noun = typeof projection.noun === 'string' ? projection.noun.trim() : ''
+  return noun ? { noun } : {}
+}
+
 interface Manifest {
   name?: string
   about?: string
   actions?: ManifestAction[]
   records?: RecordsRule
-  projections?: Record<string, { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }>
+  projections?: Record<string, Projection>
   vocabularies?: Record<string, { value: string; label: string; colour: string; stage?: string }[]>
   /**
    * Which aspect of *every* file this app renders — RFC 0.5 §10.7's one
@@ -2785,6 +2809,18 @@ export interface ForeignObject {
    */
   widget: string | string[]
   appName?: string
+  /**
+   * What the owning app calls one of these — "issue", "project" — read off
+   * its projection's `noun`, lower case and singular (PEE-41).
+   *
+   * For a consumer that names the object in its own words: a menu's "Delete
+   * issue", a confirm's "Delete this project?". Without it Peek called a Ship
+   * issue a topic, because the only way to know better was to check the kind
+   * number, which is the check a manifest exists to replace. Absent when the
+   * owner declares none, and for the bare file, whose manifest lives here: a
+   * consumer says its own word for a file nobody owns.
+   */
+  noun?: string
   /** Named single slots: title, subtitle, status. */
   slots: Record<string, ResolvedSlot>
   /** Repeating slots, e.g. `meta`. */
@@ -2859,7 +2895,7 @@ function buildObject(args: {
   root: SignedEvent
   pointer: AddressPointer
   manifest: Manifest
-  projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
+  projection: Projection
   folded: Record<string, { value: string; format?: ContentFormat }>
   viaRecommendation: boolean
   webTemplate?: string
@@ -2900,6 +2936,7 @@ function buildObject(args: {
     kind: pointer.kind,
     widget: projection.widget,
     appName: manifest.name,
+    ...nounOf(projection),
     slots,
     meta,
     comments: args.comments ?? [],
@@ -3289,7 +3326,7 @@ interface ObjectPlan {
   pointer: AddressPointer
   address: string
   resolved: ResolvedManifest
-  projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
+  projection: Projection
   records: RecordsRule
   commentKinds: number[]
   childFilter: ReturnType<typeof childFilterFor>
@@ -3391,6 +3428,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges:
         kind: pointer.kind,
         widget: projection.widget,
         appName: manifest.name,
+        ...nounOf(projection),
         slots: {},
         meta: [],
         comments: [],
@@ -3619,7 +3657,7 @@ function listsChildrenOf(
 }
 
 function childFilterFor(args: {
-  projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
+  projection: Projection
   manifest: Manifest
   pointer: AddressPointer
   depth: number
@@ -3781,7 +3819,7 @@ const CHILD_CHANGE_GROUP = 10
 function buildChildObject(args: {
   root: SignedEvent
   manifest: Manifest
-  projection: { widget: string | string[]; slots: Record<string, SlotSpec | SlotSpec[]> }
+  projection: Projection
   records: RecordsRule
   webTemplate?: string
   viaRecommendation: boolean
@@ -3823,6 +3861,7 @@ function buildChildObject(args: {
     kind: root.kind,
     widget: projection.widget,
     appName: manifest.name,
+    ...nounOf(projection),
     slots,
     meta,
     comments: [],

@@ -94,6 +94,8 @@ describe('a bare file resolves with no manifest anywhere', () => {
     assert.equal(found.slots.title.value, 'Launch naming')
     assert.equal(found.widget, 'card')
     assert.equal(found.appName, 'File')
+    // A consumer says its own word for a file nobody owns (PEE-41).
+    assert.equal(found.noun, undefined)
     assert.equal(found.folder, TEAM)
     assert.deepEqual(
       found.comments.map((c) => c.body),

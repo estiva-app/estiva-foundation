@@ -84,6 +84,38 @@ test('renders an object from an app it knows nothing about', async () => {
   assert.equal(found.slots.title.value, 'Payment integration')
   assert.equal(found.slots.subtitle.value, 'Stripe')
   assert.equal(found.appName, 'Some app')
+  assert.equal('noun' in found, false, 'no noun declared, none invented')
+})
+
+test("carries the projection's noun, reachable or not (PEE-41)", async () => {
+  const named = event({
+    kind: 31990,
+    tags: [['d', 'some-app'], ['k', String(KIND)]],
+    content: JSON.stringify({
+      name: 'Some app',
+      projections: { [KIND]: { widget: 'card', noun: 'integration', slots: { title: { tag: 'title' } } } },
+    }),
+  })
+  const found = await resolveForeignObject(`${KIND}:${AUTHOR}:p1`, relay([named, object]))
+  assert.equal(found.noun, 'integration')
+  const missing = await resolveForeignObject(`${KIND}:${AUTHOR}:missing`, relay([named]))
+  assert.equal(missing.unreachable, true)
+  assert.equal(missing.noun, 'integration')
+})
+
+test('a noun that is not a string is no noun at all (PEE-41)', async () => {
+  for (const declared of [5, { en: 'issue' }, '   ', '']) {
+    const odd = event({
+      kind: 31990,
+      tags: [['d', 'some-app'], ['k', String(KIND)]],
+      content: JSON.stringify({
+        name: 'Some app',
+        projections: { [KIND]: { widget: 'card', noun: declared, slots: { title: { tag: 'title' } } } },
+      }),
+    })
+    const found = await resolveForeignObject(`${KIND}:${AUTHOR}:p1`, relay([odd, object]))
+    assert.equal('noun' in found, false, JSON.stringify(declared))
+  }
 })
 
 test('says an object is unreachable rather than returning nothing', async () => {

@@ -50,6 +50,7 @@ What comes back:
   ref: '30851:abc…:9c69f247-…',   // stable handle, whatever the object is
   kind: 30851,
   appName: 'Estiva Ship',
+  noun: 'issue',                  // what the owner calls one, if it says
   widget: 'row',                  // a hint. See §3
   slots: {
     title:    { value: 'Billing entry' },
