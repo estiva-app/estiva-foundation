@@ -4,6 +4,16 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.25.0 — 2026-09-30
+
+**Wire behaviour: unchanged.** One field read that was dropped before.
+
+- **`Profile.bot`** (CON-5): `parseProfile` reports NIP-24's `bot: true`
+  (present only when true; any other value is absent). SPEC §6.5, decided
+  2026-09-29, offers Edit and Delete on a `bot: true` author's messages,
+  because the viewer may be the agent's NIP-OA owner, and Peek reads its
+  people through this parser. Estiva ID sets it on every agent's profile.
+
 ## 0.24.0 — 2026-09-29
 
 **Wire behaviour: unchanged for every existing builder.** Two readers of a
