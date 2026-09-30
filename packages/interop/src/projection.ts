@@ -1089,6 +1089,22 @@ export interface ResolvedAction {
   /** The value this field holds right now, so a control can show it. */
   current?: string
   field?: string
+  /**
+   * The app that declared this action, **when it is not the object's own** —
+   * MAN-8.
+   *
+   * Ship declares `add-project` on a Folder, and a Folder is Peek's kind: the
+   * object is drawn by one manifest and the action comes from another. Only a
+   * creation is ever borrowed like this (see {@link creatorsOn}), so this is
+   * set only on a `form`. Absent on every action the owning app declares.
+   *
+   * A consumer acting on it must build with the manifest named here, not the
+   * object's — `buildActionEvents` finds the action by id in the manifest it is
+   * handed, and the owner's has no `add-project`. {@link resolveActingManifest}
+   * is that lookup. `appName` is the declaring app's `name`, for a consumer
+   * that says whose action it is.
+   */
+  declaredBy?: { address: string; appName?: string }
 }
 
 /** How the owning app asks one of its kinds to be drawn (RFC 0.4 §13.3). */
@@ -1736,20 +1752,28 @@ async function resolveAspectApp(
  * without `share` (hand-written, or older) keeps the old behaviour exactly:
  * look up, read, remember.
  */
-async function throughCache(
+async function throughCache<T extends CachedManifests>(
   cache: ProjectionCache | undefined,
   key: string,
-  read: () => Promise<ResolvedManifest | null>,
-): Promise<ResolvedManifest | null> {
+  read: () => Promise<T>,
+): Promise<T> {
   const now = Date.now()
   const memo = cache?.lookup(key, now)
-  if (memo) return memo.value
+  // Each key is written by one reader, so what it holds is that reader's `T`.
+  if (memo) return memo.value as T
   if (!cache) return read()
-  if (cache.share) return cache.share(key, now, read)
+  if (cache.share) return cache.share(key, now, read) as Promise<T>
   const answer = await read()
   cache.remember(key, answer, now)
   return answer
 }
+
+/**
+ * What a {@link ProjectionCache} entry holds: one app's manifest, or none — or,
+ * for {@link creatorsOn}, every manifest declaring a creation on one kind
+ * (MAN-8). Still only manifests, which is the whole of the cache's promise.
+ */
+type CachedManifests = ResolvedManifest | null | readonly ResolvedManifest[]
 
 /**
  * A memo for the half of a resolve that does not change between refreshes.
@@ -1775,16 +1799,16 @@ export interface ProjectionCache {
   /** Forget everything. Worth calling after publishing a manifest. */
   clear(): void
   /** @internal */
-  lookup(key: string, now: number): { value: ResolvedManifest | null } | undefined
+  lookup(key: string, now: number): { value: CachedManifests } | undefined
   /** @internal */
-  remember(key: string, value: ResolvedManifest | null, now: number): void
+  remember(key: string, value: CachedManifests, now: number): void
   /**
    * @internal Run `read` for `key` unless a read for it is already running, in
    * which case join that one; remember the answer as `remember` would. Optional
    * so a hand-written cache still satisfies the interface — without it, a burst
    * of cold resolves asks once each, which is the old behaviour.
    */
-  share?(key: string, now: number, read: () => Promise<ResolvedManifest | null>): Promise<ResolvedManifest | null>
+  share?(key: string, now: number, read: () => Promise<CachedManifests>): Promise<CachedManifests>
 }
 
 /**
@@ -1815,8 +1839,8 @@ export const MANIFEST_TTL_MS = 5 * 60_000
  * for the whole window over what may have been one refused request.
  */
 export function createProjectionCache(ttlMs: number = MANIFEST_TTL_MS): ProjectionCache {
-  const entries = new Map<string, { at: number; value: ResolvedManifest | null }>()
-  const flights = new Map<string, Promise<ResolvedManifest | null>>()
+  const entries = new Map<string, { at: number; value: CachedManifests }>()
+  const flights = new Map<string, Promise<CachedManifests>>()
   // Bumped by `clear`, so a read that was in flight when a manifest was
   // republished does not write its stale answer back afterwards.
   let generation = 0
@@ -1957,6 +1981,130 @@ async function resolveManifestUncached(
     }
   }
   return null
+}
+
+/**
+ * Every app that declares a way to **create one of its own kinds on this one**
+ * — MAN-8.
+ *
+ * {@link resolveManifest} answers with one manifest per kind, its owner's, and
+ * the object's actions came from it alone. So an action one app declares on a
+ * kind another app owns was on the relay and unreachable: Ship's `add-project`
+ * says `appliesTo: "39000"`, a Folder is Peek's, and a Folder resolved with
+ * Peek's `start-a-conversation` and nothing else. Measured on production
+ * 2026-09-30 with Peek's own code.
+ *
+ * **Only a creation, and only of a kind the declaring app projects.** That is
+ * the whole of what one app may say about another's kind: "one of mine can be
+ * made here". A field it sets, a comment, a deletion are the owner's to
+ * declare — the owner's `records` rule folds them, and a stranger declaring
+ * `archived` on a Folder would be offering a change nobody folds as it says.
+ * A creation needs nothing from the owner but an object to be made on, and
+ * what it makes is drawn by the app that declared it.
+ *
+ * One read for every kind, the sweep {@link resolveAspectApp} already makes,
+ * because nothing can ask for it by kind: a manifest's `k` tags name what it
+ * draws, and Ship does not draw a Folder. Newest first, and **one manifest per
+ * created kind**: an older manifest declaring the same kind on the same target
+ * is a stale copy of the same claim, and offering both is two "New project"
+ * rows. The owner is filtered out later ({@link borrowedFrom}), because who the
+ * owner is depends on the object's author and this list does not.
+ */
+async function creatorsOn(kind: number, query: QueryFn, cache?: ProjectionCache): Promise<readonly ResolvedManifest[]> {
+  return throughCache(cache, `creators:${kind}`, async () => {
+    const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+    const creators: ResolvedManifest[] = []
+    const claimed = new Set<number>()
+    for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
+      const manifest = parseManifest(candidate)
+      if (!manifest) continue
+      const makes = (manifest.actions ?? []).filter(
+        (action) =>
+          isCreationAction(action) &&
+          asArray(action.appliesTo).includes(String(kind)) &&
+          !!manifest.projections?.[String(action.emits.kind)] &&
+          !claimed.has(action.emits.kind),
+      )
+      if (makes.length === 0) continue
+      for (const action of makes) claimed.add(action.emits.kind)
+      creators.push({
+        // Only the creations: this manifest is what a consumer acts with, and
+        // nothing it was not offered for must be buildable with it.
+        manifest: { ...manifest, actions: makes },
+        address: `${candidate.kind}:${candidate.pubkey}:${tagValue(candidate, 'd') ?? ''}`,
+        viaRecommendation: false,
+        webTemplate: webTemplate(candidate, 'naddr'),
+      })
+    }
+    return creators
+  })
+}
+
+/**
+ * {@link creatorsOn} for a read, where a failed sweep is no borrowed actions.
+ *
+ * The sweep is an addition to an object, not part of it: a relay that refuses
+ * it (the meter is 300 reads a minute) must not take down a card whose own
+ * read succeeded. Not remembered — `throughCache` never keeps a failure — so
+ * the next resolve asks again. {@link resolveActingManifest} does not use
+ * this: a write that cannot find its manifest should say so, not act with none.
+ */
+function creatorsOrNone(kind: number, query: QueryFn, cache?: ProjectionCache): Promise<readonly ResolvedManifest[]> {
+  return creatorsOn(kind, query, cache).catch(() => [])
+}
+
+/**
+ * {@link creatorsOn}, less the owner and less anything the owner makes itself.
+ *
+ * The owner's own actions are already on the object. And a kind the owner
+ * creates here is the owner's to offer, so another manifest's claim to create
+ * it — a staging copy of the same app, most likely — is dropped rather than
+ * drawn as a second row.
+ */
+function borrowedFrom(kind: number, owner: ResolvedManifest, creators: readonly ResolvedManifest[]): ResolvedManifest[] {
+  const ownerMakes = new Set(
+    (owner.manifest.actions ?? [])
+      .filter((action) => isCreationAction(action) && asArray(action.appliesTo).includes(String(kind)))
+      .map((action) => action.emits.kind),
+  )
+  return creators.flatMap((creator) => {
+    if (creator.address === owner.address) return []
+    const actions = (creator.manifest.actions ?? []).filter((action) => !ownerMakes.has(action.emits.kind))
+    return actions.length ? [{ ...creator, manifest: { ...creator.manifest, actions } }] : []
+  })
+}
+
+/** Every borrowed creation, resolved as the owner's actions are, with its declaring app named. */
+function borrowedActions(kind: number, owner: ResolvedManifest, creators: readonly ResolvedManifest[]): ResolvedAction[] {
+  return borrowedFrom(kind, owner, creators).flatMap((creator) =>
+    resolveActions(creator.manifest, kind, {}).map((action) => ({
+      ...action,
+      declaredBy: { address: creator.address, ...(creator.manifest.name ? { appName: creator.manifest.name } : {}) },
+    })),
+  )
+}
+
+/**
+ * The manifest to build an action with — the object's own, or the one named by
+ * the action's {@link ResolvedAction.declaredBy} (MAN-8).
+ *
+ * `declaredBy` omitted, or naming the owner, is exactly {@link resolveManifest}.
+ * Otherwise the answer is that manifest **only if resolving the object would
+ * have offered the action from it** — the same sweep, the same filtering — and
+ * null if not. So a caller cannot act on a Folder with an arbitrary manifest by
+ * naming its address; it can only act with one this module found declaring a
+ * creation there. The manifest returned holds only those creations.
+ */
+export async function resolveActingManifest(
+  pointer: AddressPointer,
+  declaredBy: string | undefined,
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<ResolvedManifest | null> {
+  const owner = await resolveManifest(pointer, query, cache)
+  if (!owner || !declaredBy || declaredBy === owner.address) return owner
+  const creators = await creatorsOn(pointer.kind, query, cache)
+  return borrowedFrom(pointer.kind, owner, creators).find((creator) => creator.address === declaredBy) ?? null
 }
 
 /**
@@ -3070,12 +3218,29 @@ export async function resolveForeignObject(
   const plan = planObject(naddr, pointer, resolved, depth)
   if (!plan) return null
 
-  const answered = await query(plan.filters)
+  // Beside the object's own read, not after it: the sweep is cached, and cold
+  // it would otherwise add a round trip to every resolve that pays for it.
+  const [answered, creators] = await Promise.all([query(plan.filters), creatorsOrNone(pointer.kind, query, cache)])
   const followUp = childChangeFilters(plan, answered)
   const assembled = assembleObject(plan, answered, followUp.length ? await queryChunked(followUp, query) : [])
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
-  return withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled)))
+  return withBorrowed(
+    withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled))),
+    borrowedActions(pointer.kind, resolved, creators),
+  )
+}
+
+/**
+ * The object's own actions, then the ones other apps declare on it (MAN-8).
+ *
+ * The object's only, not its children's: a child is drawn inside its parent's
+ * card, and a creation offered on every issue in a project's list is a form
+ * nobody opens from there. An unreachable object gets none either — it has no
+ * Folder to create anything in.
+ */
+function withBorrowed(object: ForeignObject, borrowed: ResolvedAction[]): ForeignObject {
+  return borrowed.length ? { ...object, actions: [...object.actions, ...borrowed] } : object
 }
 
 /**
@@ -3161,7 +3326,14 @@ export async function resolveForeignObjects(
     planned.add(plan.address)
     filters.push(...plan.filters)
   }
-  const events = await queryChunked(filters, query)
+  // Who else creates on each kind in the set (MAN-8): one sweep per kind, not
+  // per object, read beside the objects themselves.
+  const kinds = [...new Set(plans.map(({ plan }) => plan.pointer.kind))]
+  const [events, creatorLists] = await Promise.all([
+    queryChunked(filters, query),
+    Promise.all(kinds.map((kind) => creatorsOrNone(kind, query, cache))),
+  ])
+  const creatorsByKind = new Map(kinds.map((kind, i) => [kind, creatorLists[i]]))
 
   // Every card's children's changes in one more read for the whole set, not
   // one per card (MAN-7) — and none at all when no card has a fold to read.
@@ -3185,7 +3357,7 @@ export async function resolveForeignObjects(
   const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
   const reachable = assembled.some(({ built }) => !built.object.unreachable)
   const people = reachable ? await (lookupPeople ?? peopleViaRelay(query))(wanted) : {}
-  for (const { reference, built } of assembled) {
+  for (const { reference, plan, built } of assembled) {
     if (built.object.unreachable) {
       results[reference] = built.object
       continue
@@ -3195,7 +3367,10 @@ export async function resolveForeignObjects(
     // it happened to be resolved beside.
     const own: People = {}
     for (const key of peopleOf(built)) if (key in people) own[key] = people[key]
-    results[reference] = withPeople(built, own)
+    results[reference] = withBorrowed(
+      withPeople(built, own),
+      borrowedActions(plan.pointer.kind, plan.resolved, creatorsByKind.get(plan.pointer.kind) ?? []),
+    )
   }
   return results
 }

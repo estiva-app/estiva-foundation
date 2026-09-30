@@ -185,7 +185,9 @@ test('without a cache, a manifest is still read once per app rather than once pe
   const relay = countingRelay(events)
   await resolveForeignObjects(refs, relay.query)
   const discovery = relay.calls.filter((filters) => filters.some((f) => f.kinds?.includes(31990) || f.kinds?.includes(31989)))
-  assert.ok(discovery.length <= 2, `discovery asked ${discovery.length} times for one app`)
+  // The recommendation, the manifest, and one sweep for what other apps
+  // create on the kind (MAN-8) — per kind, never per object.
+  assert.ok(discovery.length <= 3, `discovery asked ${discovery.length} times for one app`)
 })
 
 test('two spellings of one object are two answers from one set of filters', async () => {

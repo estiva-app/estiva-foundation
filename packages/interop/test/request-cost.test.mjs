@@ -84,8 +84,11 @@ test('the children no longer cost a round trip of their own', async () => {
 
   assert.equal(found.children.length, 1, 'the list still resolves')
   assert.equal(found.children[0].slots.title.value, 'A ticket')
-  // Two for NIP-89 discovery, one for everything about the object.
-  assert.equal(relay.count, 3, `expected 3 round trips, got ${relay.count}`)
+  // Two for NIP-89 discovery, one for everything about the object, and — since
+  // MAN-8 — one sweep of every manifest for what other apps create on this
+  // kind. The sweep is sent beside the object's read, so it adds a request and
+  // not a wait; with a cache it is paid once per kind, like the other two.
+  assert.equal(relay.count, 4, `expected 4 round trips, got ${relay.count}`)
 })
 
 test('with the manifest memoised, a refresh is a single request', async () => {
@@ -97,7 +100,7 @@ test('with the manifest memoised, a refresh is a single request', async () => {
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
   const warm = relay.count - cold
 
-  assert.equal(cold, 3)
+  assert.equal(cold, 4)
   assert.equal(warm, 1, `a refresh must be one request, was ${warm}`)
 })
 
@@ -125,7 +128,7 @@ test('no cache is exactly the old behaviour, twice over', async () => {
   const relay = world()
   await resolveForeignObject(ADDRESS, relay.query)
   await resolveForeignObject(ADDRESS, relay.query)
-  assert.equal(relay.count, 6, 'without a cache nothing is remembered between resolves')
+  assert.equal(relay.count, 8, 'without a cache nothing is remembered between resolves')
 })
 
 test('a manifest is not believed for ever', async () => {
@@ -134,7 +137,7 @@ test('a manifest is not believed for ever', async () => {
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
   const cold = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - cold, 3, 'a zero TTL must re-ask, or the TTL is decoration')
+  assert.equal(relay.count - cold, 4, 'a zero TTL must re-ask, or the TTL is decoration')
   assert.ok(MANIFEST_TTL_MS > 0)
 })
 
@@ -145,7 +148,7 @@ test('clear() forgets, so republishing a manifest is recoverable without a reloa
   cache.clear()
   const before = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - before, 3, 'after clear(), discovery runs again')
+  assert.equal(relay.count - before, 4, 'after clear(), discovery runs again')
 })
 
 test('a kind nothing claims is memoised too, so the expensive miss is paid once', async () => {
@@ -239,8 +242,9 @@ test('a burst of cold resolves shares one discovery instead of paying it once ea
   const cache = createProjectionCache()
   await Promise.all(Array.from({ length: 20 }, () => resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)))
 
-  assert.equal(discovery(relay.calls), 2, `discovery must run once for the burst, ran ${discovery(relay.calls) / 2} times`)
-  assert.equal(relay.count, 22, 'two for discovery, one per object')
+  // Three discovery reads: the recommendation, the manifest, the creators' sweep.
+  assert.equal(discovery(relay.calls), 3, `discovery must run once for the burst, ran ${discovery(relay.calls) / 3} times`)
+  assert.equal(relay.count, 23, 'three for discovery, one per object')
 })
 
 test('a failed discovery is shared by the burst and not remembered', async () => {
@@ -296,6 +300,6 @@ test('a cache without share keeps the old behaviour: look up, read, remember', a
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
   const cold = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
-  assert.equal(cold, 3)
+  assert.equal(cold, 4)
   assert.equal(relay.count - cold, 1)
 })

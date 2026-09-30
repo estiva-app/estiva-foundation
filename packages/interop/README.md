@@ -170,6 +170,12 @@ if (typeof built === 'string') return show(built)
 await relay.publish(await signer.sign(built))
 ```
 
+**Some actions are another app's.** An object also offers the creations other
+apps declare on its kind — Ship's *New project* on a Folder, which is Peek's —
+and such an action carries `declaredBy`. Build it with
+`resolveActingManifest(pointer, action.declaredBy?.address, query)` in place of
+`resolveManifest`: the owner's manifest does not declare it and refuses to.
+
 **Check the string.** `buildActionEvent` returns `UnsignedActionEvent | string`,
 and the string is why it refused — an undeclared field, a required one left
 empty, a value outside the declared vocabulary. Treat the result as an event

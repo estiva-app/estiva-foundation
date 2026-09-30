@@ -6,6 +6,43 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.40.0 — 2026-09-30
+
+**Manifests: nothing new to declare, and one declaration is read in one more
+place — an `appliesTo` naming a kind another app owns** (MAN-8). A manifest
+already published means what it meant to its own objects; an object of a kind
+some *other* manifest declares a creation on now offers that creation too.
+Needs protocol 0.24.0, unchanged.
+
+- **An object offers the creations other apps declare on its kind.** Ship
+  declares `add-project` on a Folder (`appliesTo: "39000"`), and a Folder is
+  Peek's, so `resolveForeignObject` answered with Peek's
+  `start-a-conversation` alone — measured on production. Now its `actions`
+  are the owner's, then every borrowed creation, from
+  `resolveForeignObject` and `resolveForeignObjects` alike.
+- **Only a creation, of a kind the declaring app projects.** A field change,
+  a comment or a deletion on another app's kind is the owner's to declare —
+  the owner's `records` fold it — so none is borrowed. One manifest per
+  created kind (newest wins, so a stale copy is not a second row), and none
+  for a kind the owner already creates there. Not on an unreachable object,
+  and not on a card's children.
+- **`ResolvedAction.declaredBy`** — `{ address, appName? }` — names the
+  manifest a borrowed action came from. Absent on the owner's actions.
+- **`resolveActingManifest(pointer, declaredBy, query, cache?)`** is the
+  manifest to build with. Without `declaredBy` it is `resolveManifest`; with
+  it, that manifest only if resolving the object would have offered its
+  action, and holding only those creations — otherwise null. Pass what it
+  returns to `buildActionEvents`, which finds the action by id in the manifest
+  it is handed; the owner's has no `add-project`.
+- **Cost: one more read on a cold resolve**, a sweep of every `kind:31990`
+  (the one `resolveAspectApp` makes), sent beside the object's read so it adds
+  a request and no wait. Memoised per kind in a `ProjectionCache`, so a warm
+  refresh is still one request. `ProjectionCache`'s `@internal` methods now
+  carry a list for that entry as well as one manifest. **A refused sweep
+  costs the borrowed actions, not the object**, and is not remembered;
+  `resolveActingManifest` rejects instead, since a write should not proceed
+  without its manifest.
+
 ## 0.39.0 — 2026-09-30
 
 **Manifests: one new, optional declaration — a projection's `noun`** (PEE-41).
