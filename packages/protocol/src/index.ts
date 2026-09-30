@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.25.0'
+export const PROTOCOL_VERSION = '0.26.0'
 
 export {
   // types
@@ -226,6 +226,18 @@ export {
   markerTextToBlockDocument,
   blockDocumentToMarkerText,
 } from './bridge-content.js'
+
+export {
+  type EditorNode,
+  type EditorDocument,
+  EDITOR_BLOCK_TYPES,
+  UNKNOWN_BLOCK_NODE,
+  REFERENCE_NODE,
+  documentForEditing,
+  toEditorDocument,
+  fromEditorDocument,
+  publishableFromEditor,
+} from './editor.js'
 
 export {
   type BlockAnchor,
