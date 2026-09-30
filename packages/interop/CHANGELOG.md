@@ -6,6 +6,32 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.41.0 — 2026-09-30
+
+**Manifests: nothing new to declare; how a comment is read changes in two
+cases none of production's events is in** (CON-5). The conversation rules move
+to `@estiva-app/conversation` 0.1.0, which is now a **peer dependency**
+alongside protocol 0.24.0.
+
+- **Removed, moved to `@estiva-app/conversation`:** `commentDecorationsOf`
+  (now `decorationsOf`, whose `edit` is the package's `EditFold` and whose
+  reactions follow SPEC §6.6 as decided 2026-09-29 — last `e`, empty is `+`,
+  one per `(target, pubkey, emoji)` — with the event cut reported as
+  `reactionEventsCut`), `editTargetOf`, `REACTION_HORIZON`, and the types
+  `CommentDecoration`, `CommentDecorations`, `CommentReaction`,
+  `CommentResolution`.
+- **A reply is never a root** (§6.4). `comments` and `conversationsOf` no
+  longer list an event carrying a reply `e` — a `kind:1111` whose `e` differs
+  from its `E`, or a `kind:9` with any `e` — whatever `a` it carries. 0 on
+  production (§6.9).
+- **A `kind:9` is a comment only when the owner declares `9`** among its
+  comment kinds (`emits.kind` or `emits.alsoRead`), which is what this package
+  already queried by; the rule now lives in `isCommentOn`'s `declaredKinds`,
+  so an app reading without interop applies the same one.
+- **`ts` is trusted only when `floor(ts / 1000) == created_at`** in every
+  change and comment fold (§6.2, clarified 2026-09-29). This package accepted
+  ±1 s; all 3,470 events carrying `ts` on production agree exactly.
+
 ## 0.40.0 — 2026-09-30
 
 **Manifests: nothing new to declare, and one declaration is read in one more

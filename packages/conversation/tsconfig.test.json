@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "Typecheck-only, for `test/*.test.ts`. NOT used to build the package.",
+    "",
+    "`node --test` strips types rather than checking them, so without this pass",
+    "the suite that PRO-13 moved here would be checked by nothing. Under Peek it",
+    "sat in `src/` and rode along with `tsc -b`; arriving in `test/` it would",
+    "have lost that silently, while still reporting 131 passing.",
+    "",
+    "`types: [\"node\"]` and a `lib` including DOM live in the shared base and MUST",
+    "NOT leak into tsconfig.json: the tests import node:test on purpose, while",
+    "the published package may reach for neither. That the two disagree is the",
+    "point — see ../../tsconfig.base.test.json.",
+    "",
+    "Needs `dist/` to exist: the tests import `../dist/index.js`, because dist is",
+    "what ships. `npm run typecheck` builds first."
+  ],
+  "extends": "../../tsconfig.base.test.json",
+  "include": ["test/**/*.ts"]
+}

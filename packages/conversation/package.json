@@ -1,7 +1,7 @@
 {
-  "name": "@estiva-app/interop",
-  "version": "0.41.0",
-  "description": "Render and act on another app's objects from its published NIP-89 manifest. The owner defines the projection; the consumer decides how it looks.",
+  "name": "@estiva-app/conversation",
+  "version": "0.1.0",
+  "description": "The conversation rules of the Estiva SPEC (§6.2–§6.8): comment and mention strengths, threading, the edit, reaction and attachment folds, NIP-22 comment and reply builders, and drafts. A convenience an app adopts, never a requirement.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -30,28 +30,26 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/estiva-app/estiva-foundation.git",
-    "directory": "packages/interop"
+    "directory": "packages/conversation"
   },
   "keywords": [
     "nostr",
-    "nip-89",
-    "interop",
-    "projection",
+    "nip-22",
+    "nip-25",
+    "conversation",
     "estiva"
   ],
   "scripts": {
-    "prebuild": "npm run build --workspace @estiva-app/conversation",
+    "prebuild": "npm run build --workspace @estiva-app/protocol",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs test/*.test.ts",
+    "test": "npm run build && node --test test/*.test.ts test/*.test.mjs",
     "typecheck": "npm run build && tsc -p tsconfig.test.json",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@estiva-app/conversation": ">=0.1.0",
     "@estiva-app/protocol": ">=0.24.0"
   },
   "devDependencies": {
-    "@estiva-app/conversation": ">=0.1.0",
     "@estiva-app/protocol": ">=0.24.0",
     "typescript": "~5.9.3"
   }

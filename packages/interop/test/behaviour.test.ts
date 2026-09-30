@@ -1930,22 +1930,28 @@ describe('counting a conversation without resolving each file', () => {
       relay([manifest(), reply, root, comment(ADDR_B)]),
     )
 
-    assert.deepEqual(conversations[ADDR_A], [
-      { id: root.id, at: 1_700_000_500, by: OTHER, root: root.id },
-      { id: reply.id, at: 1_700_000_900, by: AUTHOR, root: root.id },
-    ])
+    /*
+      Only the root. A reply is never a root (SPEC §6.4, added 2026-09-29):
+      the one carrying `a` here used to list as a second comment beside the
+      thread it answers, because the rule was applied per event (§6.9's first
+      row; none exists on production). Replies are `threadsOf`'s, by `#e`.
+    */
+    assert.deepEqual(conversations[ADDR_A], [{ id: root.id, at: 1_700_000_500, by: OTHER, root: root.id }])
     assert.equal(conversations[ADDR_B].length, 1)
     const counts = await conversationCountsOf([file(ADDR_A), file(ADDR_B)], relay([manifest(), reply, root, comment(ADDR_B)]))
-    assert.deepEqual(counts, { [ADDR_A]: 2, [ADDR_B]: 1 })
+    assert.deepEqual(counts, { [ADDR_A]: 1, [ADDR_B]: 1 })
   })
 
   it("takes NIP-22's uppercase E as the thread root when a comment carries one", async () => {
+    // A top-level comment on an *event* root: `E` and `e` name the same event.
+    // One whose `e` differs from its `E` is a reply, and not listed at all.
     const withRoot = event({
       kind: 1111,
-      tags: [['a', ADDR_A], ['E', 'f'.repeat(64)], ['e', 'e'.repeat(64)]],
+      tags: [['a', ADDR_A], ['E', 'f'.repeat(64)], ['e', 'f'.repeat(64)]],
     })
-    const conversations = await conversationsOf([file(ADDR_A)], relay([manifest(), withRoot]))
-    assert.equal(conversations[ADDR_A][0].root, 'f'.repeat(64))
+    const reply = event({ kind: 1111, tags: [['a', ADDR_A], ['E', 'f'.repeat(64)], ['e', 'e'.repeat(64)]] })
+    const conversations = await conversationsOf([file(ADDR_A)], relay([manifest(), withRoot, reply]))
+    assert.deepEqual(conversations[ADDR_A].map((m) => [m.id, m.root]), [[withRoot.id, 'f'.repeat(64)]])
   })
 })
 

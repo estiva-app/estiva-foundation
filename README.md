@@ -13,6 +13,7 @@ changing anything structural here. This file is the runbook.
 | `@estiva-app/protocol` | event construction, ids, signatures, the relay clients | 0.1.0 |
 | `@estiva-app/platform` | the one live socket a tab holds — credential per connect, network return, workspace watch. PWA (manifest, service worker, update flow) joins it in SHA-2 | 0.1.0 |
 | `@estiva-app/identity` | Estiva ID sign-in, NIP-98, remote signing | SHA-4 |
+| `@estiva-app/conversation` | the SPEC §6 conversation rules: comment strength, threading, the edit and reaction folds, comment builders, drafts | 0.1.0, CON-5 |
 | `@estiva-app/ui` | tokens and primitives | SHA-5 |
 
 This repo joins the sibling layout under `$HOME` alongside `buzz`, `estiva-id`,
