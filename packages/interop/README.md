@@ -93,6 +93,19 @@ lists children its app folds — their changes, so a moved or archived child is
 not drawn under its old parent (MAN-7). Event references (`nevent`) are not addresses
 and come back `null`; resolve those with `resolveForeignEvent`.
 
+Need only where each file sits? Ask for that alone — the roots, and the moves
+where a kind can be moved, without anybody's comments or children:
+
+```ts
+import { resolveParents } from '@estiva-app/interop'
+
+const parents = await resolveParents(addresses, query, cache)
+// { [address]: parent address | null } — null at the top, no key when nothing can be told
+```
+
+Folded by the same rule as `ForeignObject.parentRef`, so a moved issue is under
+the project it was moved to here as everywhere else.
+
 ### A `body` says which content model it is in — read it, do not guess
 
 `body` is the one slot that carries structure, and it arrives in one of two
