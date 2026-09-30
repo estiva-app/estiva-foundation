@@ -313,6 +313,12 @@ export interface Profile {
   displayName?: string
   /** kind:0 `picture` — an avatar URL chosen by whichever app published it. */
   picture?: string
+  /**
+   * NIP-24's `bot: true` — an agent's profile (Estiva ID sets it). Present
+   * only when true. SPEC §6.5 offers Edit and Delete on a bot's messages,
+   * because the viewer may be its NIP-OA owner (CON-5).
+   */
+  bot?: true
 }
 
 /**
@@ -332,7 +338,7 @@ export function parseProfile(event: { content: string } | undefined): Profile {
   try {
     const meta = JSON.parse(event.content)
     const str = (value: unknown) => (typeof value === 'string' && value ? value : undefined)
-    return { displayName: str(meta.display_name) ?? str(meta.name), picture: str(meta.picture) }
+    return { displayName: str(meta.display_name) ?? str(meta.name), picture: str(meta.picture), ...(meta.bot === true ? { bot: true as const } : {}) }
   } catch {
     return {}
   }
