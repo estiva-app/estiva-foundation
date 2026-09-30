@@ -159,15 +159,22 @@ export type MovePlan = { ok: true; events: UnsignedEvent[] } | { ok: false; reas
  * hides everything under the Folder's `h` for good (FOL-9), and a `kind:1852`
  * would unlist the Folder from somewhere a person would have to remember.
  *
- * Published into the Folder itself, so anyone who may write there — a member,
- * not only an admin — may archive it. `resolution` is what the person archiving
- * said about it, carried as the change's `content`; readers show it first when
- * the archived Folder is opened. Restoring takes none.
+ * **Where it is published decides who reads it**, because a change is read by
+ * the members of the channel it is in. `into` is the Folder that lists this
+ * one (`FolderSummary.listedIn`), when there is one: everyone reading that
+ * Folder then reads the archive, and a private sub-Folder is hidden from its
+ * team for the team's members too, not only for its own. A top-level Folder has
+ * no container, so it defaults to the Folder itself — anyone who may write
+ * there, a member and not only an admin, may archive it.
+ *
+ * `resolution` is what the person archiving said about it, carried as the
+ * change's `content`; readers show it first when the archived Folder is
+ * opened. Restoring takes none.
  */
 export function planArchiveFolder(
   pubkey: string,
   createdAtMs: number,
-  args: { folder: string; channel: string; archived: boolean; resolution?: string },
+  args: { folder: string; channel: string; archived: boolean; resolution?: string; into?: string },
 ): UnsignedEvent[] {
   return [
     {
@@ -180,7 +187,7 @@ export function planArchiveFolder(
         ['a', args.channel],
         ['field', 'archived'],
         ['value', args.archived ? 'true' : ''],
-        ['h', args.folder],
+        ['h', args.into ?? args.folder],
         ['ts', String(createdAtMs)],
       ],
       content: args.archived ? (args.resolution ?? '') : '',

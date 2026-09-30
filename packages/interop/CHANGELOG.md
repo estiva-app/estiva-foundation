@@ -47,8 +47,12 @@ Needs protocol 0.24.0, unchanged.
   channel archived with its record when every record naming it is.
   **`topLevelFolders` leaves an archived Folder out**, and
   `resolveFolderContents` leaves out a nested one. New
-  **`planArchiveFolder(pubkey, ms, { folder, channel, archived, resolution? })`**
-  writes the same change `buildActionEvent` writes for any other file.
+  **`planArchiveFolder(pubkey, ms, { folder, channel, archived, resolution?, into? })`**
+  writes the same change `buildActionEvent` writes for any other file; `into`
+  publishes it in the Folder that lists this one, so that Folder's readers read
+  it (default: the Folder itself).
+- A parent's or child's archive is read by the app's own `records` rule when
+  that app draws its kind, and by SPEC's otherwise.
 - **The bare file declares `archive`** (`emits: { kind: 1851, field:
   'archived' }`, vocabulary `archived`: `''` Active, `'true'` Archived — Ship's
   `ARCHIVED_STATES`), so a consumer draws Archive on a topic from the
