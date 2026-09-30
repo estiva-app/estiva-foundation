@@ -436,7 +436,8 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     assert.equal(change.kind, CHANGE_KIND)
     assert.deepEqual(
       change.tags.filter((t) => t[0] !== 'ts'),
-      [['a', TOPIC], ['field', 'parent'], ['value', target], ['h', TEAM]],
+      // `A` names the new parent where a relay indexes it (SPEC §7.2, FOL-45).
+      [['a', TOPIC], ['field', 'parent'], ['value', target], ['h', TEAM], ['A', target]],
     )
     const moved = event({ ...change, id: 'e'.repeat(64), sig: '' } as SignedEvent)
     const found = await resolveForeignObject(TOPIC, relay([topic(), moved]))
