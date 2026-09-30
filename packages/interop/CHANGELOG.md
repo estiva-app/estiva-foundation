@@ -6,6 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.37.1 — 2026-09-30
+
+**Manifests: nothing new, and nothing read differently for a file itself**
+(FOL-46, the two review findings 0.37.0 merged without). Needs protocol 0.24.0.
+
+- **A parent's or a child's archive is read by the owning app's own `records`
+  rule** when that app draws its kind — an issue's project is Ship's, as the
+  issue is — and by SPEC's `kind:1851` shape otherwise. 0.37.0 read them by
+  SPEC's tags alone, so an app folding other tag names was archived on its own
+  page while its children were not archived with it, and `archiveImpact`
+  counted its already-archived children as live. The files' own archives were
+  already read by their app's rule.
+- **`planArchiveFolder({ …, into? })`** publishes the change in the Folder that
+  lists this one, so that Folder's readers read it — a private sub-Folder is
+  then hidden from its team for every member of the team. Default: the Folder
+  itself, as in 0.37.0.
+
 ## 0.37.0 — 2026-09-29
 
 **Manifests: nothing new to declare, and one field is now read for every kind
