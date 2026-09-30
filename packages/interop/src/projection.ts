@@ -3677,7 +3677,7 @@ function childrenFrom(args: {
     */
     const folded = address ? foldOf(childChanges, address, manifest) : {}
     if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
-    if (address && movedIn.has(address) && (!movedBy || folded[movedBy]?.value !== childFilter.parent)) return []
+    if (address && movedIn.has(address) && folded[movedBy!]?.value !== childFilter.parent) return []
     if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
     if (address && manifest.records && archiveOf(childChanges, address, records)) return []
     return [
@@ -3741,8 +3741,9 @@ function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<s
   const addresses = [...new Set([...created, ...movedIn])]
   const roots = new Map<string, string[]>()
   for (const address of movedIn) {
-    const [, pubkey, identifier] = address.split(':')
-    roots.set(pubkey, [...(roots.get(pubkey) ?? []), identifier])
+    // A `d` may itself hold ':' — everything after the pubkey is the identifier.
+    const [, pubkey, ...rest] = address.split(':')
+    roots.set(pubkey, [...(roots.get(pubkey) ?? []), rest.join(':')])
   }
   return [
     ...(addresses.length ? archiveFilters(addresses, [records], CHILD_CHANGE_GROUP) : []),
@@ -4892,9 +4893,11 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // A move also names its new parent where a relay indexes it (SPEC §7.2, FOL-45):
   // `value` is not indexed, so without this no read by the new parent finds a
   // child moved in. Only for the field the kind declares as `movedBy`, and only
-  // for an address — a move to the top names no parent.
+  // for an address of the declaring kind (any kind for a bare file) — a move to
+  // the top names no parent, and a value of another kind names none either.
   const moved = declared.emits.field ? movedByOf(manifest, kind) : undefined
-  if (moved?.field === declared.emits.field && typeof value === 'string' && /^\d+:[0-9a-f]{64}:/.test(value)) {
+  const parentAddress = moved?.parentKind === undefined ? /^\d+:[0-9a-f]{64}:/ : new RegExp(`^${moved.parentKind}:[0-9a-f]{64}:`)
+  if (moved?.field === declared.emits.field && typeof value === 'string' && parentAddress.test(value)) {
     tags.push([MOVED_TO_TAG, value])
   }
 

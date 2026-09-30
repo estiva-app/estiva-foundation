@@ -214,6 +214,21 @@ describe('a child moved in (FOL-45)', () => {
     assert.deepEqual(titles(await resolveForeignObject(bedAddress('east'), query)), ['basil'])
   })
 
+  test('is left out when hidden, as a child created here would be', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    events.push(change(plantAddress('basil'), 'pulled', 'true'))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), [])
+  })
+
+  test('is found when its identifier holds a colon', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('row:3', 'east')]
+    events.push(move(plantAddress('row:3'), bedAddress('west')))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), ['row:3'])
+  })
+
   test('is not a child of another kind: a move naming this parent for another kind is ignored', async () => {
     const events = [manifestOf(GARDEN), bed('east'), bed('west')]
     events.push(move(bedAddress('east'), bedAddress('west')))
