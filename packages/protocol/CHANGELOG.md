@@ -4,6 +4,28 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.26.0 — 2026-09-30
+
+**Wire behaviour: unchanged.** A block document's translation to and from an
+editor, moved down from Ship so a second editor of one gets it (MAN-9).
+
+- **New: `toEditorDocument` / `fromEditorDocument`** — a §13.3 document as
+  ProseMirror's JSON and back, with every block id riding in
+  `attrs.blockId`. An unknown block is parked as an `unknownBlock` atom
+  carrying its source and its inline text, and handed back untouched; a
+  duplicated id is re-minted on the way out; a `null` attribute is dropped.
+  Ship's `src/lib/blockEditor.ts` (RIC-14) had the only copy, and Peek's
+  editor for a declared prose field (`format: estiva-blocks-1`) needs the
+  same one, or an edit there re-mints ids and detaches anchored comments.
+- **New: `documentForEditing(value, format)`** — the document a stored value
+  is edited as: parsed when tagged `blocks`, bridged from marker text
+  otherwise, including a `blocks` value that does not parse.
+- **New: `publishableFromEditor(doc)`** — what a save writes: the serialised
+  document and `contentFormat: 'estiva-blocks-1'`, or `{ value: '' }` for an
+  empty one.
+- **New: `EDITOR_BLOCK_TYPES`, `UNKNOWN_BLOCK_NODE`, `REFERENCE_NODE`** — the
+  node names the editor schema must supply; `@estiva-app/ui/editor` does.
+
 ## 0.25.0 — 2026-09-30
 
 **Wire behaviour: unchanged.** One field read that was dropped before.
