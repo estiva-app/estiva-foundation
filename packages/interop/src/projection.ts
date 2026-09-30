@@ -2041,6 +2041,19 @@ async function creatorsOn(kind: number, query: QueryFn, cache?: ProjectionCache)
 }
 
 /**
+ * {@link creatorsOn} for a read, where a failed sweep is no borrowed actions.
+ *
+ * The sweep is an addition to an object, not part of it: a relay that refuses
+ * it (the meter is 300 reads a minute) must not take down a card whose own
+ * read succeeded. Not remembered — `throughCache` never keeps a failure — so
+ * the next resolve asks again. {@link resolveActingManifest} does not use
+ * this: a write that cannot find its manifest should say so, not act with none.
+ */
+function creatorsOrNone(kind: number, query: QueryFn, cache?: ProjectionCache): Promise<readonly ResolvedManifest[]> {
+  return creatorsOn(kind, query, cache).catch(() => [])
+}
+
+/**
  * {@link creatorsOn}, less the owner and less anything the owner makes itself.
  *
  * The owner's own actions are already on the object. And a kind the owner
@@ -3207,7 +3220,7 @@ export async function resolveForeignObject(
 
   // Beside the object's own read, not after it: the sweep is cached, and cold
   // it would otherwise add a round trip to every resolve that pays for it.
-  const [answered, creators] = await Promise.all([query(plan.filters), creatorsOn(pointer.kind, query, cache)])
+  const [answered, creators] = await Promise.all([query(plan.filters), creatorsOrNone(pointer.kind, query, cache)])
   const followUp = childChangeFilters(plan, answered)
   const assembled = assembleObject(plan, answered, followUp.length ? await queryChunked(followUp, query) : [])
   if (assembled.object.unreachable) return assembled.object
@@ -3318,7 +3331,7 @@ export async function resolveForeignObjects(
   const kinds = [...new Set(plans.map(({ plan }) => plan.pointer.kind))]
   const [events, creatorLists] = await Promise.all([
     queryChunked(filters, query),
-    Promise.all(kinds.map((kind) => creatorsOn(kind, query, cache))),
+    Promise.all(kinds.map((kind) => creatorsOrNone(kind, query, cache))),
   ])
   const creatorsByKind = new Map(kinds.map((kind, i) => [kind, creatorLists[i]]))
 

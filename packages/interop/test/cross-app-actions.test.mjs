@@ -259,6 +259,28 @@ test('a set of Folders sweeps once for the kind, and each Folder carries the bor
   assert.equal(sweeps.length, 1)
 })
 
+test('a refused sweep costs the borrowed rows, not the object, and is asked again', async () => {
+  const ledger = ledgerManifest(LEDGER_APP)
+  const relay = countingRelay([talk, ledger, folder()])
+  let refuse = true
+  const query = async (filters) => {
+    const sweep = filters.some((f) => f.kinds?.includes(31990) && !f['#k'] && !f['#d'])
+    if (refuse && sweep) throw new Error('rate-limited: quota exceeded; retry in 8s')
+    return relay.query(filters)
+  }
+  const cache = createProjectionCache()
+  const degraded = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)
+  assert.equal(degraded.slots.title.value, 'Accounts', 'the Folder still resolves')
+  assert.deepEqual(degraded.actions.map((a) => a.id), ['start-talking'])
+
+  const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
+  await assert.rejects(resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query, cache), /rate-limited/, 'acting says so')
+
+  refuse = false
+  const recovered = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)
+  assert.deepEqual(recovered.actions.map((a) => a.id), ['start-talking', 'open-book'], 'the failure was not remembered')
+})
+
 test('with a cache the sweep is paid once, and a Folder nobody can read offers nothing', async () => {
   const ledger = ledgerManifest(LEDGER_APP)
   const relay = countingRelay([talk, ledger, folder()])

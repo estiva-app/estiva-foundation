@@ -38,7 +38,10 @@ Needs protocol 0.24.0, unchanged.
   (the one `resolveAspectApp` makes), sent beside the object's read so it adds
   a request and no wait. Memoised per kind in a `ProjectionCache`, so a warm
   refresh is still one request. `ProjectionCache`'s `@internal` methods now
-  carry a list for that entry as well as one manifest.
+  carry a list for that entry as well as one manifest. **A refused sweep
+  costs the borrowed actions, not the object**, and is not remembered;
+  `resolveActingManifest` rejects instead, since a write should not proceed
+  without its manifest.
 
 ## 0.39.0 — 2026-09-30
 
