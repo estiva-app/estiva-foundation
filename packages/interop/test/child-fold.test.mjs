@@ -112,9 +112,10 @@ describe('a child moved to another parent', () => {
     assert.deepEqual(titles(east), ['tomato'], 'basil was moved to the west bed')
 
     /*
-      Not found under the new parent either, and that is SPEC §7.2 rather than
-      this fix falling short: a `#via` read cannot see a move *in*, because the
-      new parent is in a `value`. The Folder listing is the read that can.
+      Not found under the new parent either: a `#via` read cannot see a move
+      *in*, because the new parent is in a `value`. A move carrying no
+      `MOVED_TO_TAG` — one written before SPEC §7.2 asked for it — stays
+      invisible there; see "a child moved in" below for one that carries it.
     */
     const west = await resolveForeignObject(bedAddress('west'), query)
     assert.deepEqual(titles(west), [])
@@ -173,6 +174,89 @@ describe('a child moved to another parent', () => {
 
     assert.deepEqual(titles(await resolveForeignObject(`${PLOT}:${GARDENER}:north`, query)), ['basil'])
     assert.deepEqual(titles(await resolveForeignObject(bedAddress('east'), query)), [], 'the bed’s list still moves it')
+  })
+})
+
+/** A move as SPEC §7.2 writes it since FOL-45: the new parent again, as `A`, where a relay indexes it. */
+const move = (target, toBed, by = GARDENER) =>
+  event({ kind: 1851, pubkey: by, tags: [['a', target], ['f', 'bed'], ['v', toBed], ['A', toBed]] })
+
+describe('a child moved in (FOL-45)', () => {
+  test('is on its new parent’s card, found by its move, and folded like any child', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('tomato', 'west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west'), HELPER))
+    events.push(change(plantAddress('basil'), 'stage', 'flowering'))
+    const { query } = countingRelay(events)
+
+    const west = await resolveForeignObject(bedAddress('west'), query)
+    assert.deepEqual(titles(west), ['tomato', 'basil'])
+    const basil = west.children.find((c) => c.slots.title.value === 'basil')
+    assert.equal(basil.parentRef, bedAddress('west'))
+    assert.equal(basil.slots.stage.value, 'flowering', 'its fold, read with its move')
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('east'), query)), [])
+  })
+
+  test('is gone again once moved on — the tag found it, the fold decides', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), bed('north'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    events.push(move(plantAddress('basil'), bedAddress('north')))
+    const { query } = countingRelay(events)
+
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), [], 'the west move is stale')
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('north'), query)), ['basil'])
+  })
+
+  test('is drawn once when it was created here, moved away and moved back', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    events.push(move(plantAddress('basil'), bedAddress('east')))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('east'), query)), ['basil'])
+  })
+
+  test('is left out when hidden, as a child created here would be', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    events.push(change(plantAddress('basil'), 'pulled', 'true'))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), [])
+  })
+
+  test('is found when its identifier holds a colon', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('row:3', 'east')]
+    events.push(move(plantAddress('row:3'), bedAddress('west')))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), ['row:3'])
+  })
+
+  test('is not a child of another kind: a move naming this parent for another kind is ignored', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west')]
+    events.push(move(bedAddress('east'), bedAddress('west')))
+    const { query } = countingRelay(events)
+    assert.deepEqual(titles(await resolveForeignObject(bedAddress('west'), query)), [])
+  })
+
+  test('costs no request of its own: its moves ride the card’s read, its root the fold’s', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    const relay = countingRelay(events)
+    const cache = createProjectionCache()
+    await resolveForeignObject(bedAddress('west'), relay.query, undefined, 0, cache)
+    const cold = relay.calls.length
+    await resolveForeignObject(bedAddress('west'), relay.query, undefined, 0, cache)
+    const calls = relay.calls.slice(cold)
+    assert.equal(calls.length, 2)
+    assert.ok(calls[0].some((f) => f['#A']?.[0] === bedAddress('west')), 'the moves are in the card’s own read')
+    assert.ok(calls[1].some((f) => f['#d']?.[0] === 'basil' && f.kinds[0] === PLANT), 'the root is read with the changes')
+  })
+
+  test('in a batched set too', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west')))
+    const { query } = countingRelay(events)
+    const cards = await resolveForeignObjects([bedAddress('east'), bedAddress('west')], query)
+    assert.deepEqual(titles(cards[bedAddress('east')]), [])
+    assert.deepEqual(titles(cards[bedAddress('west')]), ['basil'])
   })
 })
 

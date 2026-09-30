@@ -1251,6 +1251,21 @@ export interface ResolvedManifest {
 export const KIND_BARE_FILE = 30840
 
 /**
+ * The tag a move carries naming its new parent — SPEC §7.2 (FOL-45).
+ *
+ * A move is a change to the field a list declares as `movedBy`, and its new
+ * parent is the change's `value`, which no relay indexes. So a move also
+ * carries `["A", <new parent address>]`, after `ts`, and a list reads
+ * `{ kinds: [changeKind], "#A": [parent] }` to find the children moved in.
+ *
+ * Uppercase because a lowercase `a` is the change's target to every reader —
+ * and Folder listings match *every* `a` on a change, so a second one would
+ * fold the move into the parent itself. Only on a change, never read without a
+ * `kinds` filter, and only ever a hint: the child's own fold decides.
+ */
+export const MOVED_TO_TAG = 'A'
+
+/**
  * The field that archives a file, whatever its kind — FOL-46.
  *
  * **One concept for every file.** A Ship project, a Ship issue, a Peek topic, a
@@ -3253,6 +3268,7 @@ function planObject(
     ...(manifest.records ? [] : [{ kinds: [ARCHIVE_RULE.changeKind], '#a': [address], limit: 500 }]),
     { kinds: commentKinds, '#a': [address], limit: CONVERSATION_LIMIT },
     ...(childFilter ? [childFilter.filter] : []),
+    ...(childFilter?.movedIn ? [childFilter.movedIn] : []),
   ]
   return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, openUrl }
 }
@@ -3536,7 +3552,10 @@ function childFilterFor(args: {
   manifest: Manifest
   pointer: AddressPointer
   depth: number
-}): { filter: Record<string, unknown>; kind: number; via: string; parent: string; movedBy?: string } | null | undefined {
+}):
+  | { filter: Record<string, unknown>; kind: number; via: string; parent: string; movedBy?: string; movedIn?: Record<string, unknown> }
+  | null
+  | undefined {
   const { projection, manifest, pointer, depth } = args
   const children = declaredChildSpec(projection)
   if (!children) return undefined
@@ -3552,6 +3571,7 @@ function childFilterFor(args: {
       ? pointer.identifier
       : pointerToAddress({ ...pointer, relays: [] })
 
+  const movedBy = children.movedBy && children.match !== 'identifier' ? children.movedBy : undefined
   return {
     filter: { kinds: [children.kind], [`#${children.via}`]: [parent], limit: children.limit ?? 100 },
     kind: children.kind,
@@ -3559,8 +3579,36 @@ function childFilterFor(args: {
     parent,
     // This list's own, not whichever projection declares one for the kind — and
     // none on an identifier list, where a move's address never names the parent.
-    ...(children.movedBy && children.match !== 'identifier' ? { movedBy: children.movedBy } : {}),
+    ...(movedBy ? { movedBy } : {}),
+    // The children moved *in*: the moves naming this parent by `MOVED_TO_TAG`
+    // (SPEC §7.2, FOL-45). A `#via` read cannot see them — their parent is in a
+    // `value` — so without this a child moved here was drawn under nothing.
+    ...(movedBy && manifest.records
+      ? { movedIn: { kinds: [manifest.records.changeKind], [`#${MOVED_TO_TAG}`]: [parent], limit: children.limit ?? 100 } }
+      : {}),
   }
+}
+
+/**
+ * The addresses of children a pooled answer says were moved in to this parent:
+ * the target of every change naming it by `MOVED_TO_TAG`, of the child kind.
+ *
+ * **A hint, never the answer.** A later move away names the *new* parent, not
+ * this one, so a change found here may be stale; the child's own fold decides
+ * (`childrenFrom`), exactly as it decides for a child created here.
+ */
+function movedInAddressesOf(
+  events: SignedEvent[],
+  childFilter: NonNullable<ReturnType<typeof childFilterFor>>,
+  records: Manifest['records'],
+): string[] {
+  if (!childFilter.movedIn || !records) return []
+  const prefix = `${childFilter.kind}:`
+  const targets = events
+    .filter((e) => e.kind === records.changeKind && hasTagValue(e, MOVED_TO_TAG, childFilter.parent))
+    .map((e) => tagValue(e, records.targetTag))
+    .filter((address): address is string => !!address && address.startsWith(prefix))
+  return [...new Set(targets)]
 }
 
 /**
@@ -3591,8 +3639,20 @@ function childrenFrom(args: {
   if (!childProjection) return []
   const records = foldRuleOf(manifest)
   const { movedBy } = childFilter
+  const created = childRootsOf(events, childFilter)
+  const createdAddresses = new Set(created.map(childAddressOf))
+  // Moved in: the roots `childChangeFilters` read for the moves naming this parent,
+  // newest version of each, and only those not already found as created here.
+  const movedIn = new Set(movedInAddressesOf(events, childFilter, manifest.records).filter((a) => !createdAddresses.has(a)))
+  const movedInRoots = new Map<string, SignedEvent>()
+  for (const event of childChanges) {
+    const address = event.kind === childFilter.kind ? childAddressOf(event) : undefined
+    if (!address || !movedIn.has(address)) continue
+    const current = movedInRoots.get(address)
+    if (!current || event.created_at > current.created_at) movedInRoots.set(address, event)
+  }
 
-  return childRootsOf(events, childFilter).flatMap((event) => {
+  return [...created, ...[...movedInRoots.values()].sort(byOrder)].flatMap((event) => {
     const address = childAddressOf(event)
     /*
       The child's own fold — MAN-7. Until this, a card's children were built
@@ -3610,12 +3670,14 @@ function childrenFrom(args: {
         found the child.
       - **hidden** by the app's own `hiddenWhen`, or **archived** (FOL-46).
 
-      A child moved *in* is not found here and cannot be: its new parent is in
-      a `value`, which no relay indexes. SPEC §7.2 names the Folder listing as
-      the only read that sees one.
+      - **moved in** and since moved on, or never really here — FOL-45. A
+        child found by its move's `MOVED_TO_TAG` has no `via` naming this
+        parent, so only a folded value that names it keeps it: the tag is how
+        it was found, not proof that it is still here.
     */
     const folded = address ? foldOf(childChanges, address, manifest) : {}
     if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
+    if (address && movedIn.has(address) && folded[movedBy!]?.value !== childFilter.parent) return []
     if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
     if (address && manifest.records && archiveOf(childChanges, address, records)) return []
     return [
@@ -3672,8 +3734,21 @@ function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<s
   if (!answered.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)) {
     return []
   }
-  const addresses = [...new Set(childRootsOf(answered, childFilter).flatMap((e) => childAddressOf(e) ?? []))]
-  return addresses.length ? archiveFilters(addresses, [records], CHILD_CHANGE_GROUP) : []
+  const created = childRootsOf(answered, childFilter).flatMap((e) => childAddressOf(e) ?? [])
+  // Moved in (FOL-45): found by their moves, so their roots are not in the answer
+  // yet. They are read here with the changes, in the same POST, and folded the same.
+  const movedIn = movedInAddressesOf(answered, childFilter, records).filter((address) => !created.includes(address))
+  const addresses = [...new Set([...created, ...movedIn])]
+  const roots = new Map<string, string[]>()
+  for (const address of movedIn) {
+    // A `d` may itself hold ':' — everything after the pubkey is the identifier.
+    const [, pubkey, ...rest] = address.split(':')
+    roots.set(pubkey, [...(roots.get(pubkey) ?? []), rest.join(':')])
+  }
+  return [
+    ...(addresses.length ? archiveFilters(addresses, [records], CHILD_CHANGE_GROUP) : []),
+    ...[...roots].map(([pubkey, identifiers]) => ({ kinds: [childFilter.kind], authors: [pubkey], '#d': identifiers, limit: identifiers.length })),
+  ]
 }
 
 /** Addresses per filter when reading a card's children's changes — see {@link childChangeFilters}. */
@@ -4815,6 +4890,16 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // depending on which app you asked (FRICTION.md A6).
   if (records.order?.includes('ts')) tags.push(['ts', String(args.createdAtMs)])
   tags.push(...files)
+  // A move also names its new parent where a relay indexes it (SPEC §7.2, FOL-45):
+  // `value` is not indexed, so without this no read by the new parent finds a
+  // child moved in. Only for the field the kind declares as `movedBy`, and only
+  // for an address of the declaring kind (any kind for a bare file) — a move to
+  // the top names no parent, and a value of another kind names none either.
+  const moved = declared.emits.field ? movedByOf(manifest, kind) : undefined
+  const parentAddress = moved?.parentKind === undefined ? /^\d+:[0-9a-f]{64}:/ : new RegExp(`^${moved.parentKind}:[0-9a-f]{64}:`)
+  if (moved?.field === declared.emits.field && typeof value === 'string' && parentAddress.test(value)) {
+    tags.push([MOVED_TO_TAG, value])
+  }
 
   return {
     pubkey: args.pubkey,

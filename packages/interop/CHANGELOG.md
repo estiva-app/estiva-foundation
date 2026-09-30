@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.42.0 — 2026-09-30
+
+**Manifests: nothing new to declare; a `movedBy` move now writes one more tag
+and a card reads it** (FOL-45). A manifest already published means what it
+meant. Needs protocol 0.24.0 and conversation 0.1.0, unchanged.
+
+- **A move names its new parent where a relay indexes it** (SPEC §7.2).
+  `buildActionEvent` adds `["A", <new parent>]` after `ts` to a change setting
+  the field a list declares as `movedBy` — Ship's issue `project`, the bare
+  file's `parent` — when the value is an address. A move to the top adds
+  nothing, and no other change carries it. Exported as `MOVED_TO_TAG`.
+- **A card lists the children moved in.** Until now a `#via` read found only
+  the children created under a parent, so an issue moved to another project was
+  drawn under neither. The card's own read also asks
+  `{ kinds: [changeKind], "#A": [parent] }`; the roots it names are read with
+  the children's changes, in the same follow-up, so a card costs no more
+  requests. A child found this way is kept only while its fold still names this
+  parent: the tag is a hint, a later move away names another parent.
+- **A move written before this** carries no `A`, so the child it moved stays
+  invisible under its new parent until it is moved again. The Folder listing
+  (`resolveFolderContents`) is unchanged, and still sees such a move when both
+  are listed.
+
 ## 0.41.0 — 2026-09-30
 
 **Manifests: nothing new to declare; how a comment is read changes in two
