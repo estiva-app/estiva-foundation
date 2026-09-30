@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.39.0 — 2026-09-30
+
+**Manifests: one new, optional declaration — a projection's `noun`** (PEE-41).
+A manifest already published means what it meant; one without a `noun` resolves
+exactly as before. Needs protocol 0.24.0, unchanged.
+
+- **`ForeignObject.noun`** is what the owning app calls one of these, lower case
+  and singular: `projections: { "30851": { "noun": "issue", … } }`. Peek's file
+  menu said "Delete topic" on a Ship issue, because the only way to know better
+  was to check the kind number — the check a manifest exists to replace. Set on
+  every object the projection draws, an unreachable one included.
+- **The bare file declares none.** Its manifest is this package's, and "File"
+  is already its `appName`; a consumer says its own word for a file nobody
+  owns, which in Peek is "topic".
+
 ## 0.38.0 — 2026-09-30
 
 **Manifests: nothing new to declare, and one declaration is read in one more
