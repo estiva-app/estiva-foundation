@@ -3020,7 +3020,7 @@ export async function resolveForeignObject(
 
   const assembled = assembleObject(plan, await query(plan.filters))
   if (assembled.object.unreachable) return assembled.object
-  if (options.archivedWith) await markArchivedParents([assembled.object], query)
+  if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
   return withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled)))
 }
 
@@ -3113,8 +3113,10 @@ export async function resolveForeignObjects(
   }
   const events = (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
 
-  const assembled = plans.map(({ reference, plan }) => ({ reference, built: assembleObject(plan, events) }))
-  if (options.archivedWith) await markArchivedParents(assembled.map(({ built }) => built.object), query)
+  const assembled = plans.map(({ reference, plan }) => ({ reference, plan, built: assembleObject(plan, events) }))
+  if (options.archivedWith) {
+    await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query)
+  }
   const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
   const reachable = assembled.some(({ built }) => !built.object.unreachable)
   const people = reachable ? await (lookupPeople ?? peopleViaRelay(query))(wanted) : {}
@@ -3158,18 +3160,35 @@ export interface ArchiveReadOptions {
  * container, and a deeper walk is a round trip per level. A Folder listing
  * walks the whole chain it holds ({@link resolveFolderContents}).
  *
- * The parent is folded by SPEC's rule, which every Estiva app writes: the
- * parent may belong to another app, whose manifest is not in hand.
+ * The parent is folded by the child's app's rule when that app also draws the
+ * parent's kind — a project is Ship's as its issue is — and by SPEC's rule
+ * otherwise, since the parent's own manifest is not in hand ({@link relatedRuleOf}).
  */
-async function markArchivedParents(objects: ForeignObject[], query: QueryFn): Promise<void> {
-  const waiting = objects.filter((o) => !o.unreachable && !o.archived && o.parentRef && addressPointerOf(o.parentRef))
+async function markArchivedParents(
+  entries: { object: ForeignObject; manifest?: Pick<Manifest, 'records' | 'projections'> }[],
+  query: QueryFn,
+): Promise<void> {
+  const waiting = entries.filter(
+    ({ object: o }) => !o.unreachable && !o.archived && o.parentRef && addressPointerOf(o.parentRef),
+  )
   if (waiting.length === 0) return
-  const parents = [...new Set(waiting.map((o) => o.parentRef!))]
-  const changes = await readArchiveChanges(parents, query)
-  for (const object of waiting) {
-    const archive = archiveOf(changes, object.parentRef!, ARCHIVE_RULE)
+  const rules = waiting.map(({ object, manifest }) => relatedRuleOf(manifest, object.parentRef!))
+  const parents = [...new Set(waiting.map(({ object }) => object.parentRef!))]
+  const changes = await readArchiveChanges(parents, query, rules)
+  for (const [index, { object }] of waiting.entries()) {
+    const archive = archiveOf(changes, object.parentRef!, rules[index]!)
     if (archive) object.archived = { ...archive, with: object.parentRef! }
   }
+}
+
+/**
+ * The rule another file's archive is read by, from an app known to hold it:
+ * that app's own, when it draws the file's kind — an issue's project is Ship's,
+ * a hive's inspection the hive log's — and SPEC's otherwise.
+ */
+function relatedRuleOf(manifest: Pick<Manifest, 'records' | 'projections'> | undefined, address: string): RecordsRule {
+  const kind = addressPointerOf(address)?.kind
+  return manifest && kind !== undefined && manifest.projections?.[String(kind)] ? archiveRuleOf(manifest) : ARCHIVE_RULE
 }
 
 /**
@@ -3180,19 +3199,29 @@ async function markArchivedParents(objects: ForeignObject[], query: QueryFn): Pr
  */
 const ARCHIVE_READ_GROUP = 25
 
-/** The filters asking for every SPEC-shaped change naming these addresses. */
-function archiveFilters(addresses: readonly string[]): Record<string, unknown>[] {
+/**
+ * The filters asking for every change naming these addresses, once per distinct
+ * change shape among `rules` — SPEC's alone unless an app writes its own.
+ */
+function archiveFilters(addresses: readonly string[], rules: readonly RecordsRule[] = [ARCHIVE_RULE]): Record<string, unknown>[] {
+  const shapes = new Map(rules.map((rule) => [`${rule.changeKind}:${rule.targetTag}`, rule]))
   const filters: Record<string, unknown>[] = []
-  for (let start = 0; start < addresses.length; start += ARCHIVE_READ_GROUP) {
-    const group = addresses.slice(start, start + ARCHIVE_READ_GROUP)
-    filters.push({ kinds: [ARCHIVE_RULE.changeKind], '#a': group, limit: RELAY_PAGE_CEILING })
+  for (const rule of shapes.values()) {
+    for (let start = 0; start < addresses.length; start += ARCHIVE_READ_GROUP) {
+      const group = addresses.slice(start, start + ARCHIVE_READ_GROUP)
+      filters.push({ kinds: [rule.changeKind], [`#${rule.targetTag}`]: group, limit: RELAY_PAGE_CEILING })
+    }
   }
   return filters
 }
 
-/** Every SPEC-shaped change naming these addresses, in as few requests as the relay allows. */
-async function readArchiveChanges(addresses: readonly string[], query: QueryFn): Promise<SignedEvent[]> {
-  const filters = archiveFilters(addresses)
+/** Every change naming these addresses, in each of `rules`' shapes, in as few requests as the relay allows. */
+async function readArchiveChanges(
+  addresses: readonly string[],
+  query: QueryFn,
+  rules?: readonly RecordsRule[],
+): Promise<SignedEvent[]> {
+  const filters = archiveFilters(addresses, rules)
   const events: SignedEvent[] = []
   for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
     events.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
@@ -5134,14 +5163,16 @@ async function countLiveChildren(
     }),
   )
   const filters: Record<string, unknown>[] = []
-  const wanted: { kind: number; via: string; parent: string }[] = []
+  const wanted: { kind: number; via: string; parent: string; rule: RecordsRule }[] = []
   for (const { address, pointer } of parents) {
-    const projection = manifests.get(manifestKeyOf(pointer))?.manifest.projections?.[String(pointer.kind)]
+    const manifest = manifests.get(manifestKeyOf(pointer))?.manifest
+    const projection = manifest?.projections?.[String(pointer.kind)]
     const declared = projection && declaredChildSpec(projection)
+    // A declared child is the parent's app's, and folds by its rule; a sub-topic is a bare file, SPEC's.
     const specs = [
-      ...(declared ? [{ kind: declared.kind, via: declared.via }] : []),
+      ...(declared ? [{ kind: declared.kind, via: declared.via, rule: archiveRuleOf(manifest) }] : []),
       // A sub-topic may sit under a file of any kind (SPEC §6.7).
-      ...(declared?.kind === KIND_BARE_FILE && declared.via === 'a' ? [] : [{ kind: KIND_BARE_FILE, via: 'a' }]),
+      ...(declared?.kind === KIND_BARE_FILE && declared.via === 'a' ? [] : [{ kind: KIND_BARE_FILE, via: 'a', rule: ARCHIVE_RULE }]),
     ]
     for (const spec of specs) {
       wanted.push({ ...spec, parent: address })
@@ -5152,18 +5183,19 @@ async function countLiveChildren(
   for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
     events.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
   }
-  const children = new Map<string, number>()
+  const children = new Map<string, { kind: number; rule: RecordsRule }>()
   for (const event of events) {
     const identifier = tagValue(event, 'd')
     if (identifier === undefined) continue
-    if (!wanted.some((w) => w.kind === event.kind && hasTagValue(event, w.via, w.parent))) continue
+    const match = wanted.find((w) => w.kind === event.kind && hasTagValue(event, w.via, w.parent))
+    if (!match) continue
     const child = pointerToAddress({ kind: event.kind, pubkey: event.pubkey, identifier, relays: [] })
-    if (!counted.has(child)) children.set(child, event.kind)
+    if (!counted.has(child)) children.set(child, { kind: event.kind, rule: match.rule })
   }
   if (children.size === 0) return byKind
-  const changes = await readArchiveChanges([...children.keys()], query)
-  for (const [child, kind] of children) {
-    if (archiveOf(changes, child, ARCHIVE_RULE)) continue
+  const changes = await readArchiveChanges([...children.keys()], query, [...children.values()].map((c) => c.rule))
+  for (const [child, { kind, rule }] of children) {
+    if (archiveOf(changes, child, rule)) continue
     byKind.set(kind, (byKind.get(kind) ?? 0) + 1)
   }
   return byKind
@@ -5466,6 +5498,8 @@ export async function resolveFolderContents(
   const listed: { file: ForeignObject; archive?: Archive }[] = []
   const archiveByAddress = new Map<string, Archive | undefined>()
   const parentByAddress = new Map<string, string | undefined>()
+  // How a parent outside this listing is read: its child's app's rule when that app draws it.
+  const parentRuleOf = new Map<string, RecordsRule>()
   for (const { address, pointer } of pointers) {
     const resolved = manifests.get(manifestKeyOf(pointer))
     // No app claims this kind, so there is no projection to draw it with.
@@ -5485,7 +5519,9 @@ export async function resolveFolderContents(
     )
     const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest))
     archiveByAddress.set(address, archive)
-    parentByAddress.set(address, parentRefOf(resolved.manifest, pointer.kind, root, folded))
+    const parent = parentRefOf(resolved.manifest, pointer.kind, root, folded)
+    parentByAddress.set(address, parent)
+    if (parent) parentRuleOf.set(parent, relatedRuleOf(resolved.manifest, parent))
     // An app hiding a record from its own lists is saying it is not part of the
     // folder any more. `hiddenWhen` is the app's own declaration of that — the
     // archive above is the same statement for a kind whose app declared none.
@@ -5555,8 +5591,9 @@ export async function resolveFolderContents(
     ),
   ]
   if (outside.length) {
-    const changes = await readArchiveChanges(outside, query)
-    for (const parent of outside) archiveByAddress.set(parent, archiveOf(changes, parent, ARCHIVE_RULE))
+    const ruleFor = (parent: string) => parentRuleOf.get(parent) ?? ARCHIVE_RULE
+    const changes = await readArchiveChanges(outside, query, outside.map(ruleFor))
+    for (const parent of outside) archiveByAddress.set(parent, archiveOf(changes, parent, ruleFor(parent)))
   }
   const files: ForeignObject[] = []
   for (const { file, archive } of listed) {

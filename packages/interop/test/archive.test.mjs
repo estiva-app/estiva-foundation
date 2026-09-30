@@ -292,6 +292,22 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(folderChange, fileChange)
     const [restore] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: false, resolution: 'ignored' })
     assert.deepEqual([restore.tags[2], restore.content], [['value', ''], ''])
+    // A nested Folder's archive goes where its container's readers read it.
+    const [nested] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: true, into: ORCHARD })
+    assert.deepEqual(nested.tags.find((t) => t[0] === 'h'), ['h', ORCHARD])
+  })
+
+  test('an app’s own change tags are read for a parent and for a child, not only for the file itself', async () => {
+    // The hive log, rewritten to fold `f`/`v` rather than SPEC's `field`/`value`.
+    const own = { ...JSON.parse(hiveLog.content) }
+    own.records = { ...own.records, fieldTag: 'f', valueTag: 'v' }
+    const log = event({ ...hiveLog, id: 'e'.repeat(64), content: JSON.stringify(own), created_at: hiveLog.created_at + 1 })
+    const archived = event({ kind: 1851, pubkey: HELPER, tags: [['a', addressOf(hive)], ['f', 'archived'], ['v', 'true'], ['h', HIVE_TALK]] })
+    const found = await resolveForeignObject(addressOf(spring), relay([log, hive, spring, archived]), noPeople, 0, undefined, { archivedWith: true })
+    assert.equal(found.archived?.with, addressOf(hive), 'the parent is read by the app that draws it')
+    const childArchived = event({ kind: 1851, pubkey: HELPER, tags: [['a', addressOf(summer)], ['f', 'archived'], ['v', 'true'], ['h', HIVE_TALK]] })
+    const impact = await archiveImpact(addressOf(hive), relay([log, hive, spring, summer, childArchived]))
+    assert.deepEqual(impact.hides, [{ kind: INSPECTION, count: 1 }], 'an archived child is not counted as live')
   })
 
   test('an archived Folder is not top-level, and says why; restoring brings it back', async () => {
