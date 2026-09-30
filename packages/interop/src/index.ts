@@ -29,6 +29,7 @@ export {
   resolveActingManifest,
   resolveForeignObject,
   resolveForeignObjects,
+  resolveParents,
   resolveForeignEvent,
   resolveFolderProject,
   resolveFolderContents,

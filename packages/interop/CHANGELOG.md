@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.43.0 — 2026-09-30
+
+**Manifests: nothing new to declare, and nothing read differently** (FOL-50). A
+manifest already published means what it meant. Needs protocol 0.24.0 and
+conversation 0.1.0, unchanged.
+
+- **`resolveParents(references, query, cache?)`: the parent of each file in a
+  set, and nothing else.** The roots, grouped by author and kind, and the
+  changes only of a kind a list declares `movedBy` for, one filter per file
+  with the object reader's limit so an old move is never paged out behind
+  newer edits — one POST per ~120 files once the manifests are cached.
+  `resolveForeignObjects` answers the same question on the way to a whole
+  object and reads every comment and child besides: for the 110 issues Peek's
+  Folder dots name on production that was 20 POSTs and 1 MB, against 1 POST and
+  ~500 KB here (the roots carry the descriptions, and a relay cannot be asked
+  for one field of a change).
+- Folded by `parentRefOf`, the rule behind `ForeignObject.parentRef`, and
+  answered only for a kind its app draws — checked against
+  `resolveForeignObjects` on those 110 issues with no disagreement. A parent's
+  address, `null` at the top, no key when nothing can be told (not an address,
+  no manifest, a root the reader cannot see).
+
 ## 0.42.0 — 2026-09-30
 
 **Manifests: nothing new to declare; a `movedBy` move now writes one more tag

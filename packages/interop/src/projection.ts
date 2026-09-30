@@ -3090,6 +3090,103 @@ export async function resolveForeignObjects(
   return results
 }
 
+/**
+ * The parent each file sits under, and nothing else — FOL-50.
+ *
+ * {@link resolveForeignObjects} answers this on the way to a whole object, and
+ * for a caller that needs only the parent that is the wrong price: it reads
+ * every object's comments and children too. Peek's Folder dots place an
+ * issue's talk by its project, and on production on 2026-09-30 the 110 issues
+ * the dots name cost 20 POSTs and a megabyte that way. This asks for the roots,
+ * and for the changes only of a kind whose app declares a `movedBy` — a filter
+ * per 100 roots and one per movable file, so a POST per ~120 files: one for the
+ * set the dots held on production.
+ *
+ * Folded by the rule the card and the listing use (`parentRefOf`), so a moved
+ * issue is under the project it was moved to here as everywhere else, and a
+ * file is answered only when its app draws its kind — as it is by the object
+ * readers.
+ *
+ * Keyed by the reference as given: the parent's address, or `null` for a file
+ * at the top. **Absent** when there is nothing to tell — not an address, no
+ * manifest, or a root this reader cannot see — because "at the top" and
+ * "unknown" are different sentences.
+ *
+ * **A failed read rejects the whole call**, as {@link resolveForeignObjects}
+ * does.
+ */
+export async function resolveParents(
+  references: readonly string[],
+  query: QueryFn,
+  /** See {@link ProjectionCache}. Omitting it still reads each app's manifest once per call. */
+  cache?: ProjectionCache,
+): Promise<Record<string, string | null>> {
+  const results: Record<string, string | null> = {}
+  const asked: { reference: string; pointer: AddressPointer }[] = []
+  for (const reference of new Set(references)) {
+    const pointer = addressPointerOf(reference)
+    if (pointer) asked.push({ reference, pointer })
+  }
+  if (asked.length === 0) return results
+
+  const byApp = new Map<string, AddressPointer>()
+  for (const { pointer } of asked) byApp.set(manifestKeyOf(pointer), pointer)
+  const manifests = new Map<string, Manifest>()
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved.manifest)
+    }),
+  )
+
+  // The roots by author and kind, the one filter shape that names many; the
+  // moves by the app's change shape, only where the kind can be moved at all.
+  const roots = new Map<string, { kind: number; pubkey: string; identifiers: Set<string> }>()
+  const moves = new Map<string, { rule: RecordsRule; addresses: Set<string> }>()
+  for (const { pointer } of asked) {
+    const manifest = manifests.get(manifestKeyOf(pointer))
+    if (!manifest?.projections?.[String(pointer.kind)]) continue
+    const group = `${pointer.kind}:${pointer.pubkey}`
+    const held = roots.get(group) ?? { kind: pointer.kind, pubkey: pointer.pubkey, identifiers: new Set<string>() }
+    held.identifiers.add(pointer.identifier)
+    roots.set(group, held)
+    if (!manifest.records || !movedByOf(manifest, pointer.kind)) continue
+    const shape = `${manifest.records.changeKind}:${manifest.records.targetTag}`
+    const movable = moves.get(shape) ?? { rule: manifest.records, addresses: new Set<string>() }
+    movable.addresses.add(pointerToAddress(pointer))
+    moves.set(shape, movable)
+  }
+  const filters: Record<string, unknown>[] = []
+  for (const { kind, pubkey, identifiers } of roots.values()) {
+    const all = [...identifiers]
+    for (let start = 0; start < all.length; start += PARENT_ROOT_GROUP) {
+      const group = all.slice(start, start + PARENT_ROOT_GROUP)
+      filters.push({ kinds: [kind], authors: [pubkey], '#d': group, limit: group.length })
+    }
+  }
+  // One filter per file, with the object reader's own limit: a group sharing a
+  // page could push an old move out of it behind newer statuses and edits, and
+  // this would then disagree with `parentRef`.
+  for (const { rule, addresses } of moves.values()) {
+    for (const address of addresses) filters.push({ kinds: [rule.changeKind], [`#${rule.targetTag}`]: [address], limit: 500 })
+  }
+  if (filters.length === 0) return results
+  const events = await queryChunked(filters, query)
+
+  for (const { reference, pointer } of asked) {
+    const manifest = manifests.get(manifestKeyOf(pointer))
+    if (!manifest?.projections?.[String(pointer.kind)]) continue
+    const root = events
+      .filter((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)
+      .sort(byOrder)
+      .at(-1)
+    if (!root) continue
+    const folded = foldOf(events, pointerToAddress(pointer), manifest)
+    results[reference] = parentRefOf(manifest, pointer.kind, root, folded) ?? null
+  }
+  return results
+}
+
 /** What {@link resolveForeignObject} and {@link resolveForeignObjects} may read beyond the file itself. */
 export interface ArchiveReadOptions {
   /**
@@ -3153,6 +3250,13 @@ function relatedRuleOf(manifest: Pick<Manifest, 'records' | 'projections'> | und
  * archive change inside the page.
  */
 const ARCHIVE_READ_GROUP = 25
+
+/**
+ * Identifiers per root filter in {@link resolveParents}. A root read answers
+ * one event per identifier, so it needs no room kept for a page — only a `#d`
+ * list short enough for a relay to take.
+ */
+const PARENT_ROOT_GROUP = 100
 
 /**
  * The filters asking for every change naming these addresses, once per distinct
