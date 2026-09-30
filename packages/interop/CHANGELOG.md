@@ -6,6 +6,35 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.38.0 — 2026-09-30
+
+**Manifests: nothing new to declare, and one declaration is read in one more
+place — a `list`'s `movedBy`, now on a card's children as well as in the Folder
+listing** (MAN-7). A manifest already published means what it meant; a card
+drawn from one that declares `movedBy` or `records` changes what it lists.
+Needs protocol 0.24.0, unchanged.
+
+- **A card's children are folded.** `resolveForeignObject(s)` built a `list`
+  slot's children from their roots alone, so a Ship issue moved to another
+  project was still drawn on the old project's card, and every folded slot on
+  a child (an issue's status) showed what its root said at creation. Each
+  addressable child now gets its own fold, and a child is left out when the
+  Folder listing leaves it out: its folded `movedBy` names another parent, or
+  none (SPEC §7.2's MUST); or it is hidden by the app's `hiddenWhen`; or it is
+  archived. Measured on production: all 36 issues moved away from a project
+  were on its card under 0.37.1 and are on none under 0.38.0, and every other
+  child is still there.
+- **A child moved in is still not on its new parent's card.** Its new parent is
+  in a `value`, which no relay indexes; SPEC §7.2 names the Folder listing as
+  the read that sees it.
+- **One more request, only when there is a fold to read** — the app declares
+  `records` and the card lists an addressable child. The children's changes
+  name addresses not known until the children are back, so they cannot ride in
+  the object's request (SHI-13). A Ship project card with issues is two requests
+  a refresh; a Peek Topic card, whose children are `kind:9` messages, stays
+  one. `resolveForeignObjects` reads every card's children's changes in one
+  more request for the whole set, not one per card.
+
 ## 0.37.1 — 2026-09-30
 
 **Manifests: nothing new, and nothing read differently for a file itself**
