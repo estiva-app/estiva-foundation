@@ -87,7 +87,9 @@ const objects = await resolveForeignObjects(addresses, query, undefined, cache)
 
 Every object keeps its own filters and limits, so a busy one never crowds out
 another's comments; they share the POST. A warm refresh of up to 32 objects is
-one request and a people lookup. Event references (`nevent`) are not addresses
+one request and a people lookup, plus one more for the whole set when a card
+lists children its app folds — their changes, so a moved or archived child is
+not drawn under its old parent (MAN-7). Event references (`nevent`) are not addresses
 and come back `null`; resolve those with `resolveForeignEvent`.
 
 ### A `body` says which content model it is in — read it, do not guess

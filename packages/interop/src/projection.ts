@@ -2069,6 +2069,21 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
 }
 
 /**
+ * One object's fold out of a pooled answer: its app's change kind, naming it as
+ * the **first** target tag, as `archiveOf` reads it. Empty when the app declares
+ * no change events — `foldRuleOf`'s substitute is never asked for.
+ */
+function foldOf(events: SignedEvent[], address: string, manifest: Manifest) {
+  const records = foldRuleOf(manifest)
+  return foldChanges(
+    manifest.records
+      ? events.filter((e) => e.kind === records.changeKind && tagValue(e, records.targetTag) === address)
+      : [],
+    records,
+  )
+}
+
+/**
  * How an `archived` change is read when the file's kind declares no rule of its
  * own — a Folder, whose `kind:39000` no app owns, and a bare file. SPEC §7.1's
  * `kind:1851` shape, the one every Estiva app writes.
@@ -3018,7 +3033,9 @@ export async function resolveForeignObject(
   const plan = planObject(naddr, pointer, resolved, depth)
   if (!plan) return null
 
-  const assembled = assembleObject(plan, await query(plan.filters))
+  const answered = await query(plan.filters)
+  const followUp = childChangeFilters(plan, answered)
+  const assembled = assembleObject(plan, answered, followUp.length ? await queryChunked(followUp, query) : [])
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
   return withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled)))
@@ -3107,13 +3124,24 @@ export async function resolveForeignObjects(
     planned.add(plan.address)
     filters.push(...plan.filters)
   }
-  const chunks: Record<string, unknown>[][] = []
-  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-    chunks.push(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
-  }
-  const events = (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
+  const events = await queryChunked(filters, query)
 
-  const assembled = plans.map(({ reference, plan }) => ({ reference, plan, built: assembleObject(plan, events) }))
+  // Every card's children's changes in one more read for the whole set, not
+  // one per card (MAN-7) — and none at all when no card has a fold to read.
+  const followUp: Record<string, unknown>[] = []
+  const followed = new Set<string>()
+  for (const { plan } of plans) {
+    if (followed.has(plan.address)) continue
+    followed.add(plan.address)
+    followUp.push(...childChangeFilters(plan, events))
+  }
+  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+
+  const assembled = plans.map(({ reference, plan }) => ({
+    reference,
+    plan,
+    built: assembleObject(plan, events, childChanges),
+  }))
   if (options.archivedWith) {
     await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query)
   }
@@ -3203,12 +3231,16 @@ const ARCHIVE_READ_GROUP = 25
  * The filters asking for every change naming these addresses, once per distinct
  * change shape among `rules` — SPEC's alone unless an app writes its own.
  */
-function archiveFilters(addresses: readonly string[], rules: readonly RecordsRule[] = [ARCHIVE_RULE]): Record<string, unknown>[] {
+function archiveFilters(
+  addresses: readonly string[],
+  rules: readonly RecordsRule[] = [ARCHIVE_RULE],
+  groupSize = ARCHIVE_READ_GROUP,
+): Record<string, unknown>[] {
   const shapes = new Map(rules.map((rule) => [`${rule.changeKind}:${rule.targetTag}`, rule]))
   const filters: Record<string, unknown>[] = []
   for (const rule of shapes.values()) {
-    for (let start = 0; start < addresses.length; start += ARCHIVE_READ_GROUP) {
-      const group = addresses.slice(start, start + ARCHIVE_READ_GROUP)
+    for (let start = 0; start < addresses.length; start += groupSize) {
+      const group = addresses.slice(start, start + groupSize)
       filters.push({ kinds: [rule.changeKind], [`#${rule.targetTag}`]: group, limit: RELAY_PAGE_CEILING })
     }
   }
@@ -3221,12 +3253,16 @@ async function readArchiveChanges(
   query: QueryFn,
   rules?: readonly RecordsRule[],
 ): Promise<SignedEvent[]> {
-  const filters = archiveFilters(addresses, rules)
-  const events: SignedEvent[] = []
+  return queryChunked(archiveFilters(addresses, rules), query)
+}
+
+/** `filters` in as few POSTs as the relay takes, answers pooled. */
+async function queryChunked(filters: Record<string, unknown>[], query: QueryFn): Promise<SignedEvent[]> {
+  const chunks: Record<string, unknown>[][] = []
   for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-    events.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
+    chunks.push(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
   }
-  return events
+  return (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
 }
 
 /** An `naddr` or a `<kind>:<pubkey>:<d>`, or null for anything else. */
@@ -3332,8 +3368,8 @@ interface AssembledObject {
  * filters match — a comment naming two files in the set, a `kind:9` that is a
  * Topic's child and its comment — would otherwise be drawn twice.
  */
-function assembleObject(plan: ObjectPlan, answered: SignedEvent[]): AssembledObject {
-  const { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, openUrl } = plan
+function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges: SignedEvent[] = []): AssembledObject {
+  const { naddr, pointer, address, resolved, projection, commentKinds, childFilter, openUrl } = plan
   const { manifest, viaRecommendation } = resolved
   const seen = new Set<string>()
   const events = answered.filter((e) => !seen.has(e.id) && !!seen.add(e.id))
@@ -3368,12 +3404,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[]): AssembledObj
     }
   }
 
-  const folded = foldChanges(
-    manifest.records
-      ? events.filter((e) => e.kind === records.changeKind && tagValue(e, records.targetTag) === address)
-      : [],
-    records,
-  )
+  const folded = foldOf(events, address, manifest)
 
   /*
     Matched on the comment filter's own criteria — the kind **and** the `a` tag.
@@ -3427,6 +3458,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[]): AssembledObj
     manifest,
     webTemplate: resolved.webTemplate,
     viaRecommendation,
+    childChanges,
   })
 
   return { object, ...(children ? { children } : {}) }
@@ -3591,7 +3623,7 @@ function childFilterFor(args: {
   manifest: Manifest
   pointer: AddressPointer
   depth: number
-}): { filter: Record<string, unknown>; kind: number; via: string; parent: string } | null | undefined {
+}): { filter: Record<string, unknown>; kind: number; via: string; parent: string; movedBy?: string } | null | undefined {
   const { projection, manifest, pointer, depth } = args
   const children = declaredChildSpec(projection)
   if (!children) return undefined
@@ -3612,6 +3644,9 @@ function childFilterFor(args: {
     kind: children.kind,
     via: children.via,
     parent,
+    // This list's own, not whichever projection declares one for the kind — and
+    // none on an identifier list, where a move's address never names the parent.
+    ...(children.movedBy && children.match !== 'identifier' ? { movedBy: children.movedBy } : {}),
   }
 }
 
@@ -3632,22 +3667,104 @@ function childrenFrom(args: {
   manifest: Manifest
   webTemplate?: string
   viaRecommendation: boolean
+  /** What {@link childChangeFilters} asked for; empty when it asked nothing. */
+  childChanges?: SignedEvent[]
 }): ForeignObject[] | undefined {
-  const { events, childFilter, manifest, webTemplate, viaRecommendation } = args
+  const { events, childFilter, manifest, webTemplate, viaRecommendation, childChanges = [] } = args
   if (childFilter === undefined) return undefined
   if (childFilter === null) return []
 
   const childProjection = manifest.projections?.[String(childFilter.kind)]
   if (!childProjection) return []
   const records = foldRuleOf(manifest)
+  const { movedBy } = childFilter
 
+  return childRootsOf(events, childFilter).flatMap((event) => {
+    const address = childAddressOf(event)
+    /*
+      The child's own fold — MAN-7. Until this, a card's children were built
+      from their roots alone, so a moved issue was drawn under the project it
+      was created in, and its status was whatever the root said at creation.
+
+      Folded as the object itself is (`foldOf`, the first target tag), and
+      dropped for the reasons the Folder listing drops a file:
+
+      - **moved away** — SPEC §7.2: a `#via` read finds the children created
+        here, including the ones moved since, and a consumer MUST drop a child
+        whose folded `movedBy` names another parent. An empty value, or one
+        that names no parent at all, is not this parent either. Only a folded
+        value counts: without one the `via` tag is the parent, and that is what
+        found the child.
+      - **hidden** by the app's own `hiddenWhen`, or **archived** (FOL-46).
+
+      A child moved *in* is not found here and cannot be: its new parent is in
+      a `value`, which no relay indexes. SPEC §7.2 names the Folder listing as
+      the only read that sees one.
+    */
+    const folded = address ? foldOf(childChanges, address, manifest) : {}
+    if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
+    if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
+    if (address && manifest.records && archiveOf(childChanges, address, records)) return []
+    return [
+      buildChildObject({ root: event, manifest, projection: childProjection, records, webTemplate, viaRecommendation, folded }),
+    ]
+  })
+}
+
+/** The child roots a `list` filter asked for, picked back out of a pooled answer on its own criteria. */
+function childRootsOf(events: SignedEvent[], childFilter: NonNullable<ReturnType<typeof childFilterFor>>): SignedEvent[] {
   return events
     .filter((e) => e.kind === childFilter.kind && hasTagValue(e, childFilter.via, childFilter.parent))
     .sort(byOrder)
-    .map((event) =>
-      buildChildObject({ root: event, manifest, projection: childProjection, records, webTemplate, viaRecommendation }),
-    )
 }
+
+/** A child's address, or undefined for a regular event, which has none. */
+function childAddressOf(event: SignedEvent): string | undefined {
+  const identifier = tagValue(event, 'd')
+  return identifier === undefined
+    ? undefined
+    : pointerToAddress({ kind: event.kind, pubkey: event.pubkey, identifier, relays: [] })
+}
+
+/**
+ * The second read a card's children need, or none — MAN-7.
+ *
+ * A child's changes name the child's address, which is not known until the
+ * children are back, so this cannot ride in the object's own request the way
+ * the children do (SHI-13). It is asked **only when there is a fold to read**:
+ * the app declares change events (`records`) and the list holds at least one
+ * addressable child. Peek's Topic lists `kind:9` messages, which nothing can
+ * change by address, so a Topic card stays one request; a Ship project card
+ * with issues is two.
+ *
+ * The alternative on the ticket — folding from a cached Folder read — was not
+ * taken: interop's caches are the caller's (`ProjectionCache` holds manifests,
+ * never objects), a card is pasted into Folders other than its own, and a stale
+ * cached fold is the moved-issue bug again with a delay on it.
+ *
+ * Grouped as the archive reads are ({@link archiveFilters}), but smaller: a
+ * filter's `limit` covers every change naming every address in it, and a relay
+ * answers newest first, so a group whose changes overflow the page loses its
+ * *oldest* — and a move made long ago is exactly what must not fall off. Ten
+ * issues to a page of 1,000 is a hundred changes each; a card of 200 is twenty
+ * filters, still one POST.
+ *
+ * Nothing when the root did not come back: the object is unreachable and its
+ * children are never drawn, so their changes would be a request for nothing.
+ */
+function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<string, unknown>[] {
+  const { childFilter, resolved, pointer } = plan
+  const records = resolved.manifest.records
+  if (!childFilter || !records) return []
+  if (!answered.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)) {
+    return []
+  }
+  const addresses = [...new Set(childRootsOf(answered, childFilter).flatMap((e) => childAddressOf(e) ?? []))]
+  return addresses.length ? archiveFilters(addresses, [records], CHILD_CHANGE_GROUP) : []
+}
+
+/** Addresses per filter when reading a card's children's changes — see {@link childChangeFilters}. */
+const CHILD_CHANGE_GROUP = 10
 
 /**
  * Build a `ForeignObject` from an event that may have no address of its own.
@@ -3677,8 +3794,13 @@ function buildChildObject(args: {
    * `openUrl` at all, which is PRO-11's "its web link opens that message".
    */
   nevent?: string
+  /**
+   * The child's own fold, when {@link childChangeFilters} read its changes
+   * (MAN-7). Empty for a regular event, which nothing can change by address.
+   */
+  folded?: Record<string, { value: string; format?: ContentFormat }>
 }): ForeignObject {
-  const { root, manifest, projection, webTemplate, viaRecommendation, nevent } = args
+  const { root, manifest, projection, webTemplate, viaRecommendation, nevent, folded = {} } = args
   const identifier = tagValue(root, 'd')
   const addressable = identifier !== undefined
   const pointer: AddressPointer = {
@@ -3689,7 +3811,7 @@ function buildChildObject(args: {
   }
   const address = addressable ? pointerToAddress(pointer) : undefined
   const naddr = addressable ? encodeNaddr(pointer) : undefined
-  const { slots, meta } = resolveSlots(projection, root, {}, manifest)
+  const { slots, meta } = resolveSlots(projection, root, folded, manifest)
 
   return {
     // A regular event's identity is its id; a replaceable one's is its address,
@@ -3709,7 +3831,7 @@ function buildChildObject(args: {
     // way and not the other. A child already knows its parent contextually, but
     // an inconsistent shape is what makes a consumer defensive about a value it
     // should be able to trust.
-    parentRef: parentRefOf(manifest, root.kind, root),
+    parentRef: parentRefOf(manifest, root.kind, root, folded),
     ...parentFieldsOf(manifest, root.kind),
     folder: tagValue(root, 'h'),
     /*
