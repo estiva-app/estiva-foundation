@@ -12,8 +12,8 @@
  * anything: it becomes an integration written against one app, which is the
  * thing the whole exercise argues against.
  */
-import { decodeNaddr, decodeNevent, encodeNaddr, encodeNevent, findNaddrs, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
-import { imetaOf, parseProfile, type Imeta, type Profile, type SignedEvent } from '@estiva-app/protocol'
+import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
+import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
@@ -23,6 +23,14 @@ import {
   parseBlockDocument,
 } from '@estiva-app/protocol'
 import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
+/*
+  SPEC §6.4's comment strength and §6.3's ordering are the conversation
+  package's (CON-5): one copy of each rule, read here for a file's `comments`,
+  `conversationsOf` and every change fold. Its `isCommentOn` is stricter than
+  the copy that lived here — a `kind:9` is never a comment (CON-20 migrated
+  them), a reply is never a root, and `ts` is trusted only inside its own second.
+*/
+import { byOrder, isCommentOn, orderingMs } from '@estiva-app/conversation'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -347,7 +355,8 @@ function rootOf(event: SignedEvent): string {
  * on another file, a `kind:9` whose body names this one — and those are
  * *Mentioned in*, which §6.4 says MUST NOT be presented as the file's own
  * discussion. A badge counting them said "3" beside an issue with one comment.
- * See `isCommentOn` for the per-kind rule.
+ * See `@estiva-app/conversation`'s `isCommentOn` for the per-kind rule, which
+ * this passes the owner's declared comment kinds (§7.3).
  */
 export async function conversationsOf(
   files: ForeignObject[],
@@ -397,6 +406,7 @@ export async function conversationsOf(
   if (asked.length === 0) return {}
 
   const refOf = new Map(asked.map((a) => [a.address, a.ref]))
+  const kindsOf = new Map(asked.map((a) => [a.address, a.filter.kinds]))
   const conversations: Record<string, ConversationMessage[]> = {}
   for (const a of asked) conversations[a.ref] = []
 
@@ -425,7 +435,7 @@ export async function conversationsOf(
         neither when it merely mentions them. `isCommentOn` is §6.4's rule.
       */
       const ref = event.tags
-        .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1]))
+        .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1], kindsOf.get(t[1])))
         .map((t) => refOf.get(t[1]))
         .find((found) => found !== undefined)
       if (ref !== undefined) {
@@ -526,242 +536,6 @@ export async function threadsOf(
     thread.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : 1))
   }
   return { roots, replies }
-}
-
-/**
- * How many targets a reaction read asks about — SPEC §6.6, decided by CON-1.
- *
- * A `kind:7` carries no `h` and no `a`, so reactions are found only by asking
- * for the ids on screen, and the number asked for is a horizon every reader
- * shares: two apps with different N disagree about a count, legitimately and
- * unfixably. The value is the specification's, not this package's.
- */
-export const REACTION_HORIZON = 100
-
-/** A `kind:7` on a comment. */
-export interface CommentReaction {
-  id: string
-  emoji: string
-  by: string
-  at: number
-}
-
-/** A `kind:9101` resolution assertion on a comment (PEEK-128). */
-export interface CommentResolution {
-  id: string
-  action: 'resolved' | 'reopened'
-  by: string
-  at: number
-  /** The assertion's free text, when it carried one. */
-  message?: string
-  /** The reply that carried the resolution, when the writer named one. */
-  supportingEventId?: string
-}
-
-/** What has been done to one comment since it was written. */
-export interface CommentDecoration {
-  /**
-   * The newest `kind:40003` — the body to show, and when. RFC 0.4 §7.2.1: a
-   * reader MUST be told the body changed, so this is kept beside the original
-   * rather than folded over it; the consumer draws the marker.
-   *
-   * When the caller passes the target's `body`, `at` and `by` are those of the
-   * last edit that **changed** the body — content not byte-identical to the
-   * body it replaced — and `edit` is absent when none did (§7.2.1, amended
-   * 2026-09-23, CON-5: the mark is about the body). `body` is always the newest
-   * edit's content. Without `body` it is the newest edit, as before.
-   */
-  edit?: { body: string; at: number; by: string }
-  /**
-   * The `imeta` set of the newest edit that carries at least one — RFC 0.4
-   * §7.2.1 as amended 2026-09-23 (CON-5). A set replaces the target's own; it
-   * does not append. Absent when no edit carries one, in which case the
-   * target's own attachments stand: an edit with no `imeta` means "unchanged".
-   */
-  attachments?: Imeta[]
-  /** Every reaction found, in the order the relay holds them. Empty inside the horizon means none. */
-  reactions: CommentReaction[]
-  /** Oldest first; the last one is the current state. Empty means never resolved. */
-  resolutions: CommentResolution[]
-}
-
-/** The answer of {@link commentDecorationsOf}. */
-export interface CommentDecorations {
-  /** Keyed by comment id. A target nothing happened to is present, with nothing in it. */
-  byId: Record<string, CommentDecoration>
-  /**
-   * How many of the targets were **not** asked about reactions, because they
-   * fell outside the horizon. SPEC §6.6 makes reporting this a MUST: a cap
-   * nobody can see is indistinguishable from "nobody reacted".
-   */
-  reactionTargetsOmitted: number
-}
-
-/** The three kinds a comment's decorations come in. Numbers, and here for the same reason `KIND_BARE_FILE` is. */
-const KIND_REACTION = 7
-const KIND_ASSERTION = 9101
-const KIND_MESSAGE_EDIT = 40003
-
-/**
- * The message a `kind:40003` edits: **the first `e` whose value is 64 hex,
- * marker ignored**, lowercased (SPEC §6.8, PEE-38). That is exactly the event
- * whose ownership the relay checked (`validate_edit_ownership`), and a reader
- * MUST NOT apply an edit to any other `e` — nothing refuses an edit carrying a
- * second one, so `['e', <own>, '', 'mention'], ['e', <victim>]` is accepted on
- * the writer's own message and must not be drawn on the victim's.
- *
- * Undefined when there is none, which the relay refuses; a reader holding one
- * anyway applies it nowhere.
- */
-export function editTargetOf(event: { tags: readonly (readonly string[])[] }): string | undefined {
-  const tag = event.tags.find((t) => t[0] === 'e' && typeof t[1] === 'string' && /^[0-9a-fA-F]{64}$/.test(t[1]))
-  return tag?.[1].toLowerCase()
-}
-
-/** Ids per `#e` filter. A comfortable fraction of the relay's page, so one filter's answer is never cut. */
-const DECORATION_TARGETS_PER_FILTER = 100
-
-/**
- * What has been done to a set of comments — edits, reactions, resolutions — in
- * one request, read by `#e`.
- *
- * **A second round trip, and that is why this is a function rather than part of
- * {@link resolveForeignObject}.** Everything that read returns is addressed by
- * `#a`, so it arrives with the root. An edit (`kind:40003`), a reaction
- * (`kind:7`) and a resolution (`kind:9101`) name the *comment* by `e` and not
- * the file, so they cannot be asked for until the comment ids are known. A
- * widget that never draws comments should not pay for that, so a consumer
- * that draws a conversation asks here with the ids it has — the roots off the
- * object, the replies off its thread read — and pays once for both.
- *
- * Three rules, each from the ticket that established it:
- *
- * - **Edits fold newest-wins** (CON-8). The original stays on the relay and so
- *   does every edit; the fold is the reader's, and this is it. Attachments
- *   fold separately (CON-5): the newest edit carrying `imeta` sets them.
- * - **Reactions have a horizon of {@link REACTION_HORIZON} targets** (SPEC
- *   §6.6, CON-1) — the *newest* targets by `at`, one budget across whatever
- *   id spaces the caller mixes, and the number left out is reported. Edits
- *   and resolutions have no horizon: they are one event per change, not one
- *   per reader.
- * - **A resolution is a `kind:9101` carrying `t=resolution`** (PEEK-128); its
- *   `action` tag is the state, its content the rationale, and a second `e`
- *   marked `support` names the reply that carried it.
- *
- * Nothing here checks who wrote an edit against who wrote the comment. The
- * relay adjudicates writes; a `40003` it stored is one it accepted — **for
- * the `e` it checked**, which is why an edit lands only on
- * {@link editTargetOf} and never on another `e` it carries.
- */
-export async function commentDecorationsOf(
-  targets: readonly { id: string; at: number; body?: string }[],
-  query: QueryFn,
-): Promise<CommentDecorations> {
-  const byId: Record<string, CommentDecoration> = {}
-  const unique = new Map<string, number>()
-  for (const t of targets) if (!unique.has(t.id)) unique.set(t.id, t.at)
-  for (const id of unique.keys()) byId[id] = { reactions: [], resolutions: [] }
-  if (unique.size === 0) return { byId, reactionTargetsOmitted: 0 }
-
-  const ids = [...unique.keys()]
-  // Newest first, ties on the higher id so the cut is stable between reads.
-  const forReactions = [...unique]
-    .sort((a, b) => b[1] - a[1] || (a[0] > b[0] ? -1 : 1))
-    .slice(0, REACTION_HORIZON)
-    .map(([id]) => id)
-
-  const filters: Record<string, unknown>[] = []
-  const chunked = (list: string[]) => {
-    const out: string[][] = []
-    for (let i = 0; i < list.length; i += DECORATION_TARGETS_PER_FILTER) {
-      out.push(list.slice(i, i + DECORATION_TARGETS_PER_FILTER))
-    }
-    return out
-  }
-  for (const chunk of chunked(ids)) {
-    filters.push({ kinds: [KIND_MESSAGE_EDIT, KIND_ASSERTION], '#e': chunk, limit: RELAY_PAGE_CEILING })
-  }
-  for (const chunk of chunked(forReactions)) {
-    filters.push({ kinds: [KIND_REACTION], '#e': chunk, limit: RELAY_PAGE_CEILING })
-  }
-
-  const seen = new Set<string>()
-  const edits = new Map<string, SignedEvent[]>()
-  const bodies = new Map<string, string>()
-  for (const t of targets) if (t.body !== undefined && !bodies.has(t.id)) bodies.set(t.id, t.body)
-  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-    const events = await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
-    for (const event of events) {
-      if (seen.has(event.id)) continue
-      seen.add(event.id)
-      /*
-        An edit's target is the one the relay checked ownership of, and no
-        other (SPEC §6.8, PEE-38): see {@link editTargetOf}. For the rest, the
-        `e` that names one of *our* targets — a resolution carries a second `e`
-        for its supporting reply, so its first `e` is not necessarily the target.
-        `hasOwn`, not `in`: an `e` of `constructor` is anybody's to write, and
-        `in` finds it on the prototype.
-      */
-      const ours = (id: string | undefined): id is string => id !== undefined && Object.hasOwn(byId, id)
-      const target =
-        event.kind === KIND_MESSAGE_EDIT
-          ? editTargetOf(event)
-          : event.tags.find((t) => t[0] === 'e' && ours(t[1]) && !t[3])?.[1]
-      if (!ours(target)) continue
-      const into = byId[target]
-      if (event.kind === KIND_MESSAGE_EDIT) {
-        edits.set(target, [...(edits.get(target) ?? []), event])
-      } else if (event.kind === KIND_REACTION) {
-        if (!forReactions.includes(target)) continue
-        into.reactions.push({ id: event.id, emoji: event.content, by: event.pubkey, at: event.created_at })
-      } else if (event.kind === KIND_ASSERTION) {
-        if (tagValue(event, 't') !== 'resolution') continue
-        const action = tagValue(event, 'action')
-        if (action !== 'resolved' && action !== 'reopened') continue
-        const support = event.tags.find((t) => t[0] === 'e' && t[3] === 'support')?.[1]
-        into.resolutions.push({
-          id: event.id,
-          action,
-          by: event.pubkey,
-          at: event.created_at,
-          ...(event.content ? { message: event.content } : {}),
-          ...(support ? { supportingEventId: support } : {}),
-        })
-      }
-    }
-  }
-  for (const [target, list] of edits) {
-    const ordered = [...list].sort(byOrder)
-    const into = byId[target]
-    const newest = ordered[ordered.length - 1]
-    let body = bodies.get(target)
-    if (body === undefined) {
-      into.edit = { body: newest.content, at: newest.created_at, by: newest.pubkey }
-    } else {
-      // Replayed from the target's own body, so "byte-identical to the body it
-      // replaces" is judged against the body as it then stood.
-      let changed: SignedEvent | undefined
-      for (const edit of ordered) {
-        if (edit.content !== body) changed = edit
-        body = edit.content
-      }
-      if (changed) into.edit = { body: newest.content, at: changed.created_at, by: changed.pubkey }
-    }
-    for (let i = ordered.length - 1; i >= 0; i--) {
-      const set = imetaOf(ordered[i])
-      if (set.length > 0) {
-        into.attachments = set
-        break
-      }
-    }
-  }
-  const oldestFirst = (a: { at: number; id: string }, b: { at: number; id: string }) =>
-    a.at - b.at || (a.id < b.id ? -1 : 1)
-  for (const decoration of Object.values(byId)) {
-    decoration.reactions.sort(oldestFirst)
-    decoration.resolutions.sort(oldestFirst)
-  }
-  return { byId, reactionTargetsOmitted: ids.length - forReactions.length }
 }
 
 /** How the owning app says its records should be read. */
@@ -1348,53 +1122,6 @@ export function folderOf(root: SignedEvent): string | null {
  */
 const hasTagValue = (e: SignedEvent, name: string, value: string) =>
   e.tags.some((t) => t[0] === name && t[1] === value)
-
-/** The addresses a body names by `nostr:naddr…`; a pointer that will not decode is prose. */
-function namedInBody(body: string): Set<string> {
-  const addresses = new Set<string>()
-  for (const naddr of findNaddrs(body)) {
-    try {
-      addresses.add(pointerToAddress(decodeNaddr(naddr)))
-    } catch {
-      // A malformed pointer is prose.
-    }
-  }
-  return addresses
-}
-
-/**
- * Is this event a *comment* on the address, rather than a message elsewhere
- * that merely names it?
- *
- * Both arrive by the object's `#a` read — the `a` tag is the index of every
- * reference, whichever strength — and SPEC §6.4 says an app MUST NOT present
- * the two as one list: a comment is the object's own discussion, a mention is
- * *Mentioned in*. Until CON-15 this package handed the raw `#a` union to
- * {@link resolveForeignObject}'s `comments` and {@link conversationsOf}, and
- * a widget said "3" beside an issue with one comment and two mentions. The
- * rule is §6.4's per-tag one, applied per kind (CON-13, CON-14):
- *
- * - A `kind:1111`'s uppercase `A` is the comment — NIP-22's thread root. One
- *   whose `A` is another file is that file's conversation; its `a` for this
- *   one is the index of a reference. One with no `A` at all is read by its
- *   `a`, the way §6.4 says to read it rather than drop the thread.
- * - Any other comment kind has no `A`, so its `a` is read against its body.
- *   A `kind:9` whose body names the address is the index of that reference —
- *   what Peek writes for every `[`-menu reference in a topic message — and a
- *   mention. One whose body does not is the anchor of a comment written
- *   before REW-10 moved comments to `1111`, which is not replaceable and so
- *   reads as a comment for good.
- *
- * `commentDecorationsOf` is deliberately not behind this: a reaction or a
- * status on a comment is about the *comment*, whatever that comment is about.
- */
-function isCommentOn(event: SignedEvent, address: string): boolean {
-  if (event.kind === KIND_COMMENT) {
-    const roots = event.tags.filter((t) => t[0] === 'A' && t[1])
-    return roots.length > 0 ? roots.some((t) => t[1] === address) : hasTagValue(event, 'a', address)
-  }
-  return hasTagValue(event, 'a', address) && !namedInBody(event.content).has(address)
-}
 
 /**
  * A manifest event's `content`, or null when it is not parseable JSON.
@@ -2105,33 +1832,6 @@ export async function resolveActingManifest(
   if (!owner || !declaredBy || declaredBy === owner.address) return owner
   const creators = await creatorsOn(pointer.kind, query, cache)
   return borrowedFrom(pointer.kind, owner, creators).find((creator) => creator.address === declaredBy) ?? null
-}
-
-/**
- * Ordering key for an append-only event, per the manifest's `records.order`.
- *
- * The manifest declares `["ts", "created_at", "id"]` and, crucially, the
- * condition under which `ts` may be believed: only when it agrees with
- * `created_at` to the second. `created_at` has one-second resolution and the
- * relay validates it, so a `ts` pinned inside that second inherits that
- * validation and can only refine ordering *within* it.
- *
- * Peek enforces that bound itself rather than trusting the writer. Under the
- * honour-system model nothing validates these events (RFC_UPDATES.md §3), so a
- * buggy or pushy client claiming a far-future `ts` would otherwise win every
- * fold forever — in Peek's rendering as much as in the owning app's.
- */
-function orderingMs(event: SignedEvent): number {
-  const raw = Number.parseInt(tagValue(event, 'ts') ?? '', 10)
-  if (Number.isFinite(raw) && Math.abs(Math.floor(raw / 1000) - event.created_at) <= 1) return raw
-  return event.created_at * 1000
-}
-
-/** Total order, oldest first. Ties break on the lower event id (NIP-01's rule). */
-function byOrder(a: SignedEvent, b: SignedEvent): number {
-  const [at, bt] = [orderingMs(a), orderingMs(b)]
-  if (at !== bt) return at - bt
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 /** Replay change events into current field values. Last write wins per field. */
@@ -3632,10 +3332,10 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges:
 
     Then narrowed to §6.4's *comment* strength (CON-15): the `a` tag is also the
     index of a mention, and a mention is not this object's discussion. See
-    `isCommentOn` for the per-kind rule.
+    `isCommentOn` (`@estiva-app/conversation`) for the per-kind rule.
   */
   const comments = events
-    .filter((e) => commentKinds.includes(e.kind) && isCommentOn(e, address))
+    .filter((e) => commentKinds.includes(e.kind) && isCommentOn(e, address, commentKinds))
     .sort(byOrder)
     .map((e) => ({ id: e.id, author: e.pubkey, body: e.content, createdAt: e.created_at }))
 

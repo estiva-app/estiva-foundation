@@ -1,15 +1,13 @@
 /**
- * What has been done to a comment since it was written — `commentDecorationsOf`.
+ * What has been done to a message since it was written — `decorationsOf`.
  *
- * Against the published artifact through the public entry point, like
- * `projection.test.mjs`, and for the same reason: a consumer drawing a file's
- * conversation is the first thing that needs an edit, a reaction and a
- * resolution off a `kind:1111`, and every rule below was established by a
- * ticket in another app (CON-1, CON-8, PEEK-128) rather than here.
+ * Moved from `@estiva-app/interop` with the function (CON-5), where it was
+ * `commentDecorationsOf`. Every rule below was established by a ticket in
+ * an app (CON-1, CON-8, PEEK-128, PEE-38) rather than here.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { commentDecorationsOf, REACTION_HORIZON } from '../dist/index.js'
+import { decorationsOf, REACTION_HORIZON } from '../dist/index.js'
 
 const AUTHOR = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -47,13 +45,13 @@ const comment = () => event({ kind: 1111, tags: [['h', FOLDER]], content: 'first
 
 test('an untouched comment is present with nothing in it', async () => {
   const c = comment()
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([]))
-  assert.deepEqual(found, { byId: { [c.id]: { reactions: [], resolutions: [] } }, reactionTargetsOmitted: 0 })
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([]))
+  assert.deepEqual(found, { byId: { [c.id]: { reactions: [], resolutions: [] } }, reactionTargetsOmitted: 0, reactionEventsCut: false, editEventsCut: false })
 })
 
 test('asks nothing when given nothing', async () => {
   const calls = []
-  await commentDecorationsOf([], relay([], calls))
+  await decorationsOf([], relay([], calls))
   assert.equal(calls.length, 0)
 })
 
@@ -62,8 +60,8 @@ test('the newest edit wins, and the original is kept beside it', async () => {
   const older = event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id]], content: 'second' })
   const newer = event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id]], content: 'third' })
   // Answered newest first, as a relay does — the fold must not trust the order.
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([newer, older]))
-  assert.deepEqual(found.byId[c.id].edit, { body: 'third', at: newer.created_at, by: AUTHOR })
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([newer, older]))
+  assert.deepEqual(found.byId[c.id].edit, { body: 'third', edited: true, editedAt: newer.created_at * 1000, editedBy: AUTHOR })
 })
 
 test('two edits in the same second are ordered by their ts tag', async () => {
@@ -71,7 +69,7 @@ test('two edits in the same second are ordered by their ts tag', async () => {
   const at = 1_700_009_000
   const a = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 900)]], content: 'later' })
   const b = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 100)]], content: 'earlier' })
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([b, a]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([b, a]))
   assert.equal(found.byId[c.id].edit.body, 'later')
 })
 
@@ -88,11 +86,11 @@ test('an edit lands only on its first 64-hex e — never on a second e the relay
   const unmarked = event({ kind: 40003, pubkey: OTHER, tags: [['h', FOLDER], ['e', mine.id], ['e', victim.id]], content: 'FORGED' })
 
   // The attacker's own message off screen: both shapes used to land on the victim.
-  const offScreen = await commentDecorationsOf([{ id: victim.id, at: victim.created_at }], relay([marked, unmarked]))
+  const offScreen = await decorationsOf([{ id: victim.id, at: victim.created_at }], relay([marked, unmarked]))
   assert.equal(offScreen.byId[victim.id].edit, undefined)
 
   // On screen: the edit is the attacker's message's, which is what the relay accepted.
-  const both = await commentDecorationsOf(
+  const both = await decorationsOf(
     [{ id: victim.id, at: victim.created_at }, { id: mine.id, at: mine.created_at }],
     relay([marked]),
   )
@@ -103,12 +101,12 @@ test('an edit lands only on its first 64-hex e — never on a second e the relay
 test('an e that is not 64 hex is skipped, as the relay skips it; case does not matter', async () => {
   const c = comment()
   const nonHex = event({ kind: 40003, tags: [['h', FOLDER], ['e', 'not-an-id'], ['e', c.id]], content: 'past a non-hex e' })
-  assert.equal((await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([nonHex]))).byId[c.id].edit.body, 'past a non-hex e')
+  assert.equal((await decorationsOf([{ id: c.id, at: c.created_at }], relay([nonHex]))).byId[c.id].edit.body, 'past a non-hex e')
 
   const lettered = event({ id: 'ab'.repeat(32), kind: 1111, tags: [['h', FOLDER]], content: 'first' })
   const upper = event({ kind: 40003, tags: [['h', FOLDER], ['e', lettered.id.toUpperCase()]], content: 'upper' })
   // The fake relay matches `#e` exactly, so the uppercase edit is handed over directly.
-  const found = await commentDecorationsOf([{ id: lettered.id, at: lettered.created_at }], async () => [upper])
+  const found = await decorationsOf([{ id: lettered.id, at: lettered.created_at }], async () => [upper])
   assert.equal(found.byId[lettered.id].edit.body, 'upper')
 })
 
@@ -117,7 +115,7 @@ test('an e naming a property of Object.prototype is nobody\'s target', async () 
   const hostile = ['constructor', '__proto__', 'toString'].map((key) =>
     event({ kind: 9101, pubkey: OTHER, tags: [['h', FOLDER], ['e', key], ['e', c.id], ['t', 'resolution'], ['action', 'resolved']] }),
   )
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay(hostile))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay(hostile))
   // Past the hostile `e`, the next one names the comment: that is the resolution's target.
   assert.equal(found.byId[c.id].resolutions.length, 3)
 })
@@ -128,13 +126,13 @@ test('an e naming a property of Object.prototype is nobody\'s target', async () 
 */
 const imeta = (x) => ['imeta', `url /media/${x}.png`, 'm image/png', `x ${x}`, 'size 10']
 const editOf = (c, content, extra = []) => event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id], ...extra], content })
-const shas = (d) => d.attachments?.map((f) => f.x)
+const shas = (d) => d.edit?.attachments?.map((f) => f.x)
 
 test('a later edit carrying imeta replaces the set — it does not append', async () => {
   const c = comment()
   const first = editOf(c, 'first', [imeta('aaa'), imeta('bbb')])
   const second = editOf(c, 'first', [imeta('ccc')])
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([second, first]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([second, first]))
   assert.deepEqual(shas(found.byId[c.id]), ['ccc'])
 })
 
@@ -142,13 +140,13 @@ test('an edit without imeta leaves the attachments as they were', async () => {
   const c = comment()
   const attach = editOf(c, 'first', [imeta('aaa')])
   const reword = editOf(c, 'reworded')
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([reword, attach]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([reword, attach]))
   assert.equal(found.byId[c.id].edit.body, 'reworded')
   assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
   // No edit carrying any: no set, so the comment's own stands.
   const d = comment()
-  const only = await commentDecorationsOf([{ id: d.id, at: d.created_at }], relay([editOf(d, 'changed')]))
-  assert.equal(only.byId[d.id].attachments, undefined)
+  const only = await decorationsOf([{ id: d.id, at: d.created_at }], relay([editOf(d, 'changed')]))
+  assert.equal(only.byId[d.id].edit.attachments, undefined)
 })
 
 test('the newest edit carrying imeta wins, ordered like the body', async () => {
@@ -157,24 +155,27 @@ test('the newest edit carrying imeta wins, ordered like the body', async () => {
   const a = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 900)], imeta('aaa')], content: 'first' })
   const b = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 100)], imeta('bbb')], content: 'first' })
   const later = event({ kind: 40003, created_at: at + 60, tags: [['h', FOLDER], ['e', c.id]], content: 'changed' })
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([b, later, a]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([b, later, a]))
   assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
 })
 
 test('given the body, an edit identical to the body it replaces is not an edit of it', async () => {
   const c = comment()
   const attachOnly = editOf(c, 'first', [imeta('aaa')])
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([attachOnly]))
-  assert.equal(found.byId[c.id].edit, undefined)
+  const found = await decorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([attachOnly]))
+  assert.equal(found.byId[c.id].edit.edited, false)
+  assert.equal(found.byId[c.id].edit.editedAt, undefined)
   assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
   // The mark stays with the last edit that changed the body.
   const reword = editOf(c, 'reworded')
   const reattach = editOf(c, 'reworded', [imeta('bbb')])
-  const again = await commentDecorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([reattach, reword, attachOnly]))
-  assert.deepEqual(again.byId[c.id].edit, { body: 'reworded', at: reword.created_at, by: AUTHOR })
-  // Without the body, the newest edit is reported, as before.
-  const blind = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([attachOnly]))
-  assert.equal(blind.byId[c.id].edit.at, attachOnly.created_at)
+  const again = await decorationsOf([{ id: c.id, at: c.created_at, body: c.content }], relay([reattach, reword, attachOnly]))
+  const { attachments, ...mark } = again.byId[c.id].edit
+  assert.deepEqual(mark, { body: 'reworded', edited: true, editedAt: reword.created_at * 1000, editedBy: AUTHOR })
+  assert.deepEqual(attachments.map((f) => f.x), ['bbb'])
+  // Without the body, the first edit counts as a change.
+  const blind = await decorationsOf([{ id: c.id, at: c.created_at }], relay([attachOnly]))
+  assert.equal(blind.byId[c.id].edit.editedAt, attachOnly.created_at * 1000)
 })
 
 test('reactions are attributed to their target, oldest first', async () => {
@@ -183,7 +184,7 @@ test('reactions are attributed to their target, oldest first', async () => {
   const r1 = event({ kind: 7, pubkey: OTHER, tags: [['e', c.id]], content: '👍' })
   const r2 = event({ kind: 7, tags: [['e', d.id]], content: '🎉' })
   const r3 = event({ kind: 7, tags: [['e', c.id]], content: '👍' })
-  const found = await commentDecorationsOf(
+  const found = await decorationsOf(
     [{ id: c.id, at: c.created_at }, { id: d.id, at: d.created_at }],
     relay([r3, r2, r1]),
   )
@@ -203,7 +204,7 @@ test('resolutions come back oldest first with the current state last', async () 
     content: 'shipped',
   })
   const reopened = event({ kind: 9101, tags: [['h', FOLDER], ['e', c.id], ['t', 'resolution'], ['action', 'reopened']] })
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([reopened, resolved]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([reopened, resolved]))
   assert.deepEqual(found.byId[c.id].resolutions, [
     { id: resolved.id, action: 'resolved', by: AUTHOR, at: resolved.created_at, message: 'shipped', supportingEventId: reply.id },
     { id: reopened.id, action: 'reopened', by: AUTHOR, at: reopened.created_at },
@@ -220,7 +221,7 @@ test('a supporting reply is never mistaken for the target', async () => {
     kind: 9101,
     tags: [['h', FOLDER], ['e', c.id], ['t', 'resolution'], ['action', 'resolved'], ['e', reply.id, '', 'support']],
   })
-  const found = await commentDecorationsOf(
+  const found = await decorationsOf(
     [{ id: c.id, at: c.created_at }, { id: reply.id, at: reply.created_at }],
     relay([resolved]),
   )
@@ -231,7 +232,7 @@ test('a supporting reply is never mistaken for the target', async () => {
 test('an assertion that is not a resolution is ignored', async () => {
   const c = comment()
   const other = event({ kind: 9101, tags: [['h', FOLDER], ['e', c.id], ['t', 'something-else'], ['action', 'resolved']] })
-  const found = await commentDecorationsOf([{ id: c.id, at: c.created_at }], relay([other]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([other]))
   assert.deepEqual(found.byId[c.id].resolutions, [])
 })
 
@@ -246,7 +247,7 @@ test('reactions are asked for the newest targets only, and the rest is reported'
   const onOldest = event({ kind: 7, tags: [['e', oldest.id]], content: '👍' })
   const onNewest = event({ kind: 7, tags: [['e', newest.id]], content: '👍' })
   const calls = []
-  const found = await commentDecorationsOf(targets, relay([onOldest, onNewest], calls))
+  const found = await decorationsOf(targets, relay([onOldest, onNewest], calls))
   assert.equal(found.reactionTargetsOmitted, 5)
   assert.equal(found.byId[newest.id].reactions.length, 1)
   // Not asked, so not reported — and never "0 reactions" on the strength of it.
@@ -263,11 +264,18 @@ test('reactions are asked for the newest targets only, and the rest is reported'
 test('one request for everything, and a duplicate id counts once', async () => {
   const c = comment()
   const calls = []
-  const found = await commentDecorationsOf(
+  const found = await decorationsOf(
     [{ id: c.id, at: c.created_at }, { id: c.id, at: c.created_at }],
     relay([], calls),
   )
   assert.equal(calls.length, 1)
   assert.equal(Object.keys(found.byId).length, 1)
   assert.equal(found.reactionTargetsOmitted, 0)
+})
+
+test('a target passed in uppercase still collects its edit, keyed lowercase', async () => {
+  const c = event({ id: 'ab'.repeat(32), kind: 1111, tags: [['h', FOLDER]], content: 'first' })
+  const edit = event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id]], content: 'second' })
+  const found = await decorationsOf([{ id: c.id.toUpperCase(), at: c.created_at }], relay([edit]))
+  assert.equal(found.byId[c.id].edit.body, 'second')
 })
