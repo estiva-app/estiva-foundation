@@ -1102,6 +1102,19 @@ interface Projection {
   noun?: string
 }
 
+/**
+ * The projection's `noun`, when it is one: a non-empty string, trimmed.
+ *
+ * A manifest is another app's self-description and nothing validates it on
+ * the way in, so `"noun": 5` is publishable. Passed through, it reaches a
+ * consumer typed as a string and breaks there — the first `.charAt` throws
+ * while a menu draws. Anything else reads as "this app does not say" (§7.9).
+ */
+function nounOf(projection: Projection): { noun?: string } {
+  const noun = typeof projection.noun === 'string' ? projection.noun.trim() : ''
+  return noun ? { noun } : {}
+}
+
 interface Manifest {
   name?: string
   about?: string
@@ -2923,7 +2936,7 @@ function buildObject(args: {
     kind: pointer.kind,
     widget: projection.widget,
     appName: manifest.name,
-    ...(projection.noun ? { noun: projection.noun } : {}),
+    ...nounOf(projection),
     slots,
     meta,
     comments: args.comments ?? [],
@@ -3415,7 +3428,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges:
         kind: pointer.kind,
         widget: projection.widget,
         appName: manifest.name,
-        ...(projection.noun ? { noun: projection.noun } : {}),
+        ...nounOf(projection),
         slots: {},
         meta: [],
         comments: [],
@@ -3848,7 +3861,7 @@ function buildChildObject(args: {
     kind: root.kind,
     widget: projection.widget,
     appName: manifest.name,
-    ...(projection.noun ? { noun: projection.noun } : {}),
+    ...nounOf(projection),
     slots,
     meta,
     comments: [],

@@ -16,7 +16,8 @@ exactly as before. Needs protocol 0.24.0, unchanged.
   and singular: `projections: { "30851": { "noun": "issue", … } }`. Peek's file
   menu said "Delete topic" on a Ship issue, because the only way to know better
   was to check the kind number — the check a manifest exists to replace. Set on
-  every object the projection draws, an unreachable one included.
+  every object the projection draws, an unreachable one included. Trimmed, and
+  left unset when the declaration is not a non-empty string.
 - **The bare file declares none.** Its manifest is this package's, and "File"
   is already its `appName`; a consumer says its own word for a file nobody
   owns, which in Peek is "topic".
