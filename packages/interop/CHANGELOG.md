@@ -6,6 +6,58 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.37.0 — 2026-09-29
+
+**Manifests: nothing new to declare, and one field is now read for every kind
+— `archived`** (FOL-46). A manifest already published means what it meant: a
+Ship project archived through its `hiddenWhen` is hidden exactly as before. What
+moves is that an `archived = 'true'` change now hides *any* file — including one
+whose app declares no `records` (a Folder) — and hides what is under it.
+Needs protocol 0.24.0, unchanged.
+
+- **Archive is one concept for every file.** New **`ARCHIVED_FIELD`**,
+  **`type Archive`** (`by`, `at`, `resolution?`, `with?`) and
+  **`isArchived(file)`**. `ForeignObject.archived` is set by
+  `resolveForeignObject(s)` on an archived file, so a link opens it and can say
+  so. Read by the file's own `records` rule when it declares one, else by
+  SPEC's `kind:1851` `a`/`field`/`value`. Only `'true'` archives, as
+  `hiddenWhen` already read it; an empty value restores.
+- **The resolution is the archiving change's `content`.** New
+  **`ActionEventArgs.note`** writes a change's `content`, and is refused on a
+  comment, a deletion or a creation, which would drop it. Ship's pre-FOL-46
+  placeholder note `archived` (twelve on production) is not a resolution.
+- **The cascade is computed when reading, never written.** A file whose parent
+  (`parentRef`, walked through everything the Folder lists) is archived is left
+  out of `resolveFolderContents` with it — an issue with its project, a
+  sub-topic with its topic. A parent in another Folder is read once, one level.
+  **New option `resolveForeignObject(…, cache, { archivedWith: true })`** (and
+  the same last argument on `resolveForeignObjects`, `type
+  ArchiveReadOptions`) marks a file archived **with** its parent
+  (`archived.with`), one level, in one more request for the whole set — off by
+  default so a refresh tick stays one request. **New option
+  `resolveFolderContents(…, cache, { includeArchived })`** returns them marked
+  instead of leaving them out. The archives ride in the Folder read's request
+  in groups of 25 addresses, so a busy Folder's other changes cannot push them
+  off the shared filter's 500.
+- **A Folder is archived the way any file is.** `FolderSummary.channel` is its
+  `kind:39000` address and `FolderSummary.archived` its archive;
+  `FolderContents` carries both for the Folder read. `listFolders` reads every
+  Folder's archive **in the request it already makes for the record roots**
+  (one more request only when no state lists a record), and marks a record's
+  channel archived with its record when every record naming it is.
+  **`topLevelFolders` leaves an archived Folder out**, and
+  `resolveFolderContents` leaves out a nested one. New
+  **`planArchiveFolder(pubkey, ms, { folder, channel, archived, resolution? })`**
+  writes the same change `buildActionEvent` writes for any other file.
+- **The bare file declares `archive`** (`emits: { kind: 1851, field:
+  'archived' }`, vocabulary `archived`: `''` Active, `'true'` Archived — Ship's
+  `ARCHIVED_STATES`), so a consumer draws Archive on a topic from the
+  declaration, as it draws Rename.
+- **New `archiveImpact(address, query, { folders?, cache? })`** — the counts
+  behind the warning: `hides` by kind (children, and for a Folder what only it
+  lists with their children, not counting what is archived already) and
+  `staysVisible` (files another live Folder also lists).
+
 ## 0.36.0 — 2026-09-29
 
 **Manifests: three new declarations, and every manifest already published

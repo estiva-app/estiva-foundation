@@ -16,6 +16,7 @@ import {
   buildActionEvent,
   commentKindsOf,
   createProjectionCache,
+  isArchived,
   resolveFolderContents,
   resolveForeignEvent,
   resolveForeignObject,
@@ -391,7 +392,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     })
   let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
 
-  it('declares comment, rename, move and delete, each as the control a consumer draws', async () => {
+  it('declares comment, rename, move, archive and delete, each as the control a consumer draws', async () => {
     const found = await resolveForeignObject(TOPIC, relay([topic()]))
     assert.deepEqual(
       found?.actions.map((a) => [a.id, a.control, a.effect]),
@@ -399,6 +400,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
         ['comment', 'text', 'writes'],
         ['rename', 'text', 'writes'],
         ['move', 'text', 'writes'],
+        ['archive', 'select', 'writes'],
         ['delete', 'confirm', 'destructive'],
       ],
     )
@@ -439,6 +441,66 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     assert.equal(found?.parentRef, target)
     // The field a consumer keeps out of its property rows: the move is the tree's.
     assert.equal(found?.parentField, found?.actions.find((a) => a.id === 'move')?.field)
+  })
+
+  it('archives with a change carrying the resolution, and the file reads as archived until restored (FOL-46)', async () => {
+    const built = build('archive', 'true')
+    assert.notEqual(typeof built, 'string', String(built))
+    const change = { ...(built as Exclude<typeof built, string>) }
+    assert.deepEqual(
+      change.tags.filter((t) => t[0] !== 'ts'),
+      [['a', TOPIC], ['field', 'archived'], ['value', 'true'], ['h', TEAM]],
+    )
+    assert.equal(change.content, '', 'no note, no content')
+    const noted = buildActionEvent({
+      manifest: BARE_MANIFEST,
+      kind: KIND_BARE_FILE,
+      address: TOPIC,
+      objectAuthor: AUTHOR,
+      folder: TEAM,
+      actionId: 'archive',
+      value: 'true',
+      note: 'Shipped as 0.37.0.',
+      pubkey: OTHER,
+      createdAtMs: 1_700_000_000_000,
+    })
+    assert.equal((noted as Exclude<typeof noted, string>).content, 'Shipped as 0.37.0.')
+
+    const archived = event({ ...(noted as SignedEvent), id: 'c'.repeat(64), sig: '' })
+    const found = await resolveForeignObject(TOPIC, relay([topic(), archived]))
+    assert.ok(isArchived(found), 'a link still opens it, and says it is archived')
+    assert.deepEqual(found?.archived, { by: OTHER, at: archived.created_at, resolution: 'Shipped as 0.37.0.' })
+
+    const restore = build('archive', '')
+    const restored = event({
+      ...(restore as SignedEvent),
+      id: 'd'.repeat(64),
+      sig: '',
+      created_at: archived.created_at + 1,
+      tags: (restore as SignedEvent).tags.map((t) => (t[0] === 'ts' ? ['ts', String((archived.created_at + 1) * 1000)] : t)),
+    })
+    const back = await resolveForeignObject(TOPIC, relay([topic(), archived, restored]))
+    assert.equal(isArchived(back), false)
+    assert.equal(back?.archived, undefined)
+  })
+
+  it('refuses an archive value outside the vocabulary, and a note on anything but a change', () => {
+    assert.equal(typeof build('archive', 'yes'), 'string')
+    for (const actionId of ['comment', 'delete']) {
+      const refused = buildActionEvent({
+        manifest: BARE_MANIFEST,
+        kind: KIND_BARE_FILE,
+        address: TOPIC,
+        objectAuthor: AUTHOR,
+        folder: TEAM,
+        actionId,
+        value: 'Hello',
+        note: 'lost',
+        pubkey: OTHER,
+        createdAtMs: 1_700_000_000_000,
+      })
+      assert.equal(typeof refused, 'string', `${actionId} took a note it would drop`)
+    }
   })
 
   it('deletes with a NIP-09 request naming the address, for the relay to adjudicate', () => {

@@ -1484,6 +1484,19 @@ export interface ResolvedManifest {
 export const KIND_BARE_FILE = 30840
 
 /**
+ * The field that archives a file, whatever its kind — FOL-46.
+ *
+ * **One concept for every file.** A Ship project, a Ship issue, a Peek topic, a
+ * bare file and a Folder are all archived the same way: a change setting
+ * `archived` to `'true'` on the file's address, and an empty value to restore
+ * it. That is the shape Ship has written for projects since SPEC §6.5, so
+ * nothing on the relay needs migrating. It is a change, never a deletion, so it
+ * is reversible, attributed, and open to anyone who may write in the Folder —
+ * not only the author.
+ */
+export const ARCHIVED_FIELD = 'archived'
+
+/**
  * Where a `ResolvedManifest.address` would name the manifest event, this names
  * the section of the specification the manifest is built from. Not an address,
  * and deliberately not shaped like one — a consumer that tried to fetch it
@@ -1594,6 +1607,23 @@ const BARE_FILE_MANIFEST: Manifest = {
       emits: { kind: 1851, field: 'parent' },
       input: { type: 'string' },
     },
+    /*
+      `archive` is the one field every file may carry (FOL-46): `true` hides the
+      file and everything under it from every list, an empty value brings it
+      back. A change, so anyone in the team may, and the archiving change's
+      `content` is the resolution summary a person gave (`ActionEventArgs.note`).
+    */
+    {
+      id: 'archive',
+      label: 'Archive',
+      description:
+        'Take this file and everything under it out of every list once nobody needs to see it, or bring it ' +
+        'back: `true` archives, an empty value restores. Nothing is deleted, and a link still opens it.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: 1851, field: ARCHIVED_FIELD },
+      input: { type: 'string', enum: ARCHIVED_FIELD },
+    },
     {
       id: 'delete',
       label: 'Delete',
@@ -1605,6 +1635,13 @@ const BARE_FILE_MANIFEST: Manifest = {
       emits: { kind: KIND_DELETION },
     },
   ],
+  vocabularies: {
+    // Ship's `ARCHIVED_STATES`, value for value: one field, one vocabulary.
+    [ARCHIVED_FIELD]: [
+      { value: '', label: 'Active', colour: 'neutral' },
+      { value: 'true', label: 'Archived', colour: 'muted' },
+    ],
+  },
 }
 
 function bareFileManifest(): ResolvedManifest {
@@ -2029,6 +2066,112 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
     }
   }
   return fields
+}
+
+/**
+ * How an `archived` change is read when the file's kind declares no rule of its
+ * own — a Folder, whose `kind:39000` no app owns, and a bare file. SPEC §7.1's
+ * `kind:1851` shape, the one every Estiva app writes.
+ */
+const ARCHIVE_RULE: RecordsRule = {
+  changeKind: 1851,
+  targetTag: 'a',
+  fieldTag: 'field',
+  valueTag: 'value',
+  order: ['ts', 'created_at', 'id'],
+  rule: 'last-write-wins-per-field',
+}
+
+/** The rule an `archived` change on this file is folded by: its app's, or SPEC's. */
+function archiveRuleOf(manifest: Pick<Manifest, 'records'> | undefined): RecordsRule {
+  return manifest?.records ?? ARCHIVE_RULE
+}
+
+/**
+ * The note Ship wrote on every archive before FOL-46, when the note was the
+ * activity feed's wording rather than anything a person typed. Twelve are on
+ * production (measured 2026-09-29), and none of them is a resolution.
+ */
+const PLACEHOLDER_ARCHIVE_NOTE = 'archived'
+
+/** A file that is archived: who did it, when, and what they said about it. */
+export interface Archive {
+  /** Who wrote the archiving change. */
+  by: string
+  /** Its `created_at`, in seconds. */
+  at: number
+  /**
+   * The resolution summary, when the person archiving gave one — the archiving
+   * change's `content`. One event, so the summary can never land without the
+   * archive or outlive the unarchive that replaces it.
+   */
+  resolution?: string
+  /**
+   * Present when the file is not archived itself but is hidden **with** an
+   * archived ancestor: that ancestor's address — the project an issue belongs
+   * to, the file a sub-topic sits under, the record a channel belongs to.
+   *
+   * Computed when reading and never written to the file (FOL-46): unarchiving
+   * the ancestor restores exactly what was there before, and archiving a
+   * project with two hundred issues is one event rather than two hundred.
+   */
+  with?: string
+}
+
+/**
+ * Whether a file — or a Folder — is archived, itself or with an ancestor.
+ *
+ * Reads the {@link Archive} a resolver put on it. A resolver leaves archived
+ * files out of a Folder's contents, so this matters where a file is reached
+ * directly: a link, a mention, a page opened by address.
+ */
+export function isArchived(file: { archived?: Archive } | null | undefined): boolean {
+  return !!file?.archived
+}
+
+/**
+ * The file's archive, if the last `archived` change archived it.
+ *
+ * `changes` may hold any events; only this rule's change kind, naming this
+ * address, setting this field, is read. Last write wins, by the same order as
+ * every other field.
+ */
+function archiveOf(changes: SignedEvent[], address: string, rule: RecordsRule): Archive | undefined {
+  let last: SignedEvent | undefined
+  for (const change of changes) {
+    // The target is the first target tag, as every other fold reads it: a
+    // change archiving one file must not archive another it also mentions.
+    if (change.kind !== rule.changeKind || tagValue(change, rule.targetTag) !== address) continue
+    if (tagValue(change, rule.fieldTag) !== ARCHIVED_FIELD || tagValue(change, rule.valueTag) === undefined) continue
+    if (!last || byOrder(last, change) < 0) last = change
+  }
+  if (!last || tagValue(last, rule.valueTag) !== 'true') return undefined
+  const note = last.content.trim()
+  return {
+    by: last.pubkey,
+    at: last.created_at,
+    ...(note && note !== PLACEHOLDER_ARCHIVE_NOTE ? { resolution: last.content } : {}),
+  }
+}
+
+/**
+ * The first archived ancestor of `address`, walking `parentOf`, with its archive.
+ *
+ * Stops at a cycle rather than looping: `parentRef` is written by people, and
+ * two files each moved under the other is a state the relay accepts.
+ */
+function archivedAncestorOf(
+  address: string,
+  parentOf: (address: string) => string | undefined,
+  archiveAt: (address: string) => Archive | undefined,
+): Archive | undefined {
+  const seen = new Set([address])
+  for (let parent = parentOf(address); parent && !seen.has(parent); parent = parentOf(parent)) {
+    seen.add(parent)
+    const archive = archiveAt(parent)
+    if (archive) return { ...archive, with: archive.with ?? parent }
+  }
+  return undefined
 }
 
 function truncate(text: string, limit?: number) {
@@ -2679,6 +2822,15 @@ export interface ForeignObject {
    * rendering nothing.
    */
   unreachable?: boolean
+  /**
+   * Present when the file is archived, itself or with an ancestor (FOL-46).
+   *
+   * A Folder's contents leave archived files out, so this is set where a file
+   * is reached by address: its page draws an Archived banner with the
+   * resolution and an Unarchive control rather than drawing it as live work.
+   * See {@link Archive} and {@link isArchived}.
+   */
+  archived?: Archive
 }
 
 
@@ -2697,6 +2849,7 @@ function buildObject(args: {
   viaRecommendation: boolean
   webTemplate?: string
   comments?: ForeignObject['comments']
+  archived?: Archive
 }): ForeignObject {
   const { root, pointer, manifest, projection, folded } = args
   const naddr = encodeNaddr(pointer)
@@ -2748,6 +2901,7 @@ function buildObject(args: {
         : action,
     ),
     viaRecommendation: args.viaRecommendation,
+    ...(args.archived ? { archived: args.archived } : {}),
   }
 }
 
@@ -2855,6 +3009,7 @@ export async function resolveForeignObject(
    * omitting it is exactly the old behaviour.
    */
   cache?: ProjectionCache,
+  options: ArchiveReadOptions = {},
 ): Promise<ForeignObject | null> {
   const pointer = addressPointerOf(naddr)
   if (!pointer) return null
@@ -2865,6 +3020,7 @@ export async function resolveForeignObject(
 
   const assembled = assembleObject(plan, await query(plan.filters))
   if (assembled.object.unreachable) return assembled.object
+  if (options.archivedWith) await markArchivedParents([assembled.object], query)
   return withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled)))
 }
 
@@ -2911,6 +3067,7 @@ export async function resolveForeignObjects(
   lookupPeople?: PeopleFn,
   /** See {@link ProjectionCache}. Omitting it still reads each app's manifest once per call. */
   cache?: ProjectionCache,
+  options: ArchiveReadOptions = {},
 ): Promise<Record<string, ForeignObject | null>> {
   const results: Record<string, ForeignObject | null> = {}
   const asked: { reference: string; pointer: AddressPointer }[] = []
@@ -2957,6 +3114,7 @@ export async function resolveForeignObjects(
   const events = (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
 
   const assembled = plans.map(({ reference, plan }) => ({ reference, built: assembleObject(plan, events) }))
+  if (options.archivedWith) await markArchivedParents(assembled.map(({ built }) => built.object), query)
   const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
   const reachable = assembled.some(({ built }) => !built.object.unreachable)
   const people = reachable ? await (lookupPeople ?? peopleViaRelay(query))(wanted) : {}
@@ -2973,6 +3131,73 @@ export async function resolveForeignObjects(
     results[reference] = withPeople(built, own)
   }
   return results
+}
+
+/** What {@link resolveForeignObject} and {@link resolveForeignObjects} may read beyond the file itself. */
+export interface ArchiveReadOptions {
+  /**
+   * Also read whether each file's parent is archived, and mark the file
+   * archived **with** it (`archived.with`) — FOL-46. For the page a link opens,
+   * which draws the banner; off by default because it is one more request
+   * whenever a file has a parent, and a refresh tick that resolves an issue
+   * card would pay it every time (SHI-13's one request per tick).
+   */
+  archivedWith?: boolean
+}
+
+/**
+ * Mark each object that is hidden with an archived parent — FOL-46.
+ *
+ * An issue whose project is archived is archived with it, and its page says so
+ * rather than drawing live work. The cascade is computed here and never written
+ * to the issue, so unarchiving the project restores it exactly.
+ *
+ * **One read for the whole set, and only when some object has a parent**, so a
+ * topic page or a project page pays nothing. One level: the parent's own
+ * parent is not followed, because the page is about this file and its
+ * container, and a deeper walk is a round trip per level. A Folder listing
+ * walks the whole chain it holds ({@link resolveFolderContents}).
+ *
+ * The parent is folded by SPEC's rule, which every Estiva app writes: the
+ * parent may belong to another app, whose manifest is not in hand.
+ */
+async function markArchivedParents(objects: ForeignObject[], query: QueryFn): Promise<void> {
+  const waiting = objects.filter((o) => !o.unreachable && !o.archived && o.parentRef && addressPointerOf(o.parentRef))
+  if (waiting.length === 0) return
+  const parents = [...new Set(waiting.map((o) => o.parentRef!))]
+  const changes = await readArchiveChanges(parents, query)
+  for (const object of waiting) {
+    const archive = archiveOf(changes, object.parentRef!, ARCHIVE_RULE)
+    if (archive) object.archived = { ...archive, with: object.parentRef! }
+  }
+}
+
+/**
+ * Addresses per filter when reading archive changes. A filter's `limit` caps
+ * every change naming its addresses — titles, statuses, moves — not only the
+ * archives, and a relay answers newest first, so a small group keeps the
+ * archive change inside the page.
+ */
+const ARCHIVE_READ_GROUP = 25
+
+/** The filters asking for every SPEC-shaped change naming these addresses. */
+function archiveFilters(addresses: readonly string[]): Record<string, unknown>[] {
+  const filters: Record<string, unknown>[] = []
+  for (let start = 0; start < addresses.length; start += ARCHIVE_READ_GROUP) {
+    const group = addresses.slice(start, start + ARCHIVE_READ_GROUP)
+    filters.push({ kinds: [ARCHIVE_RULE.changeKind], '#a': group, limit: RELAY_PAGE_CEILING })
+  }
+  return filters
+}
+
+/** Every SPEC-shaped change naming these addresses, in as few requests as the relay allows. */
+async function readArchiveChanges(addresses: readonly string[], query: QueryFn): Promise<SignedEvent[]> {
+  const filters = archiveFilters(addresses)
+  const events: SignedEvent[] = []
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    events.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
+  }
+  return events
 }
 
 /** An `naddr` or a `<kind>:<pubkey>:<d>`, or null for anything else. */
@@ -3046,6 +3271,9 @@ function planObject(
     { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
     // Only when the app actually declares a change kind — see `foldRuleOf`.
     ...(manifest.records ? [{ kinds: [manifest.records.changeKind], '#a': [address], limit: 500 }] : []),
+    // Every file may be archived, including one whose app folds nothing
+    // (FOL-46). SPEC's change kind, when the app has not named its own.
+    ...(manifest.records ? [] : [{ kinds: [ARCHIVE_RULE.changeKind], '#a': [address], limit: 500 }]),
     { kinds: commentKinds, '#a': [address], limit: CONVERSATION_LIMIT },
     ...(childFilter ? [childFilter.filter] : []),
   ]
@@ -3147,6 +3375,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[]): AssembledObj
     viaRecommendation,
     webTemplate: resolved.webTemplate,
     comments,
+    archived: archiveOf(events, address, archiveRuleOf(manifest)),
   })
   /*
     The `list` slot — PRO-7.
@@ -4294,6 +4523,12 @@ export interface ActionEventArgs {
    * marker text, which is always correct.
    */
   contentFormat?: string
+  /**
+   * What the person said about a change, carried as its `content` — the
+   * resolution summary of an archive (FOL-46), or any change's note. A change
+   * only: a comment's text is its `value`, and a creation has its own body.
+   */
+  note?: string
   pubkey: string
   createdAtMs: number
 }
@@ -4397,6 +4632,11 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // no value, and a comment's body is §13.2 marker text.
   if (args.contentFormat !== undefined && !isCreation && (!declared.emits.field || declared.emits.kind === KIND_DELETION)) {
     return `"${declared.label}" takes no prose value, so it takes no content format.`
+  }
+  // A note is a change's `content`. Anywhere else it would be dropped, and the
+  // resolution a person typed lost without a word.
+  if (args.note !== undefined && (isCreation || !declared.emits.field || declared.emits.kind === KIND_DELETION)) {
+    return `"${declared.label}" is not a change, so it takes no note.`
   }
 
   // An object-creating action is a different event entirely — a new object
@@ -4516,7 +4756,7 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
     created_at: Math.floor(args.createdAtMs / 1000),
     kind: declared.emits.kind,
     tags,
-    content: declared.emits.field ? '' : value,
+    content: declared.emits.field ? (args.note ?? '') : value,
   }
 }
 
@@ -4604,6 +4844,25 @@ export interface FolderSummary {
    * another app's files resolves them with {@link resolveFolderContents}.
    */
   addresses?: string[]
+  /**
+   * The Folder's own address as a file — its `kind:39000`, `39000:<relay>:<id>`.
+   * What a state lists when it holds this Folder, and what an `archived`
+   * change on the Folder names. Absent only for a state whose channel the
+   * relay did not return.
+   */
+  channel?: string
+  /**
+   * Present when the Folder is archived (FOL-46) — or, for a record's channel,
+   * when the record it belongs to is (`with` names the record). See
+   * {@link Archive}.
+   *
+   * {@link topLevelFolders} leaves an archived Folder out, and
+   * {@link resolveFolderContents} leaves one out of the Folder that lists it,
+   * so its subtree goes with it. What it holds stays readable: a link still
+   * opens it, and a file it lists that another Folder also lists stays visible
+   * there.
+   */
+  archived?: Archive
 }
 
 /**
@@ -4620,9 +4879,14 @@ export interface FolderSummary {
  *
  * Not a list of ids: a new team is a folder somebody creates, not a code
  * change. Moved here from Peek and Ship, which each held the same line.
+ *
+ * An archived Folder is not navigated by (FOL-46), and a listing that has not
+ * read archives — a summary with no `archived` field — keeps every Folder.
  */
-export function topLevelFolders<T extends Pick<FolderSummary, 'hasState' | 'listedIn'>>(folders: T[]): T[] {
-  return folders.filter((folder) => folder.hasState && !folder.listedIn?.length)
+export function topLevelFolders<T extends Pick<FolderSummary, 'hasState' | 'listedIn' | 'archived'>>(
+  folders: T[],
+): T[] {
+  return folders.filter((folder) => folder.hasState && !folder.listedIn?.length && !folder.archived)
 }
 
 /** A folder and everything in it, each file drawn through its owner's manifest. */
@@ -4687,6 +4951,11 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
       ...(addresses.length ? { addresses } : {}),
     })
   }
+  for (const event of events) {
+    const id = tagValue(event, 'd')
+    const folder = id && event.kind === KIND_CHANNEL ? byId.get(id) : undefined
+    if (folder) folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: event.pubkey, identifier: id!, relays: [] })
+  }
   /*
     A folder listed in another folder's state is a file there. Read off the
     states already in hand: an `a` naming a `kind:39000` is a channel, and its
@@ -4707,12 +4976,197 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
       listedIn.set(identifier, containers)
     }
   }
-  await placeRecordChannels(events, byId, listedIn, query)
+  const { recordsOf, archives } = await placeRecordChannels(events, byId, listedIn, query)
   for (const [id, containers] of listedIn) {
     const folder = byId.get(id)
     if (folder) folder.listedIn = containers
   }
+  markArchivedFolders(byId, recordsOf, archives)
   return [...byId.values()].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id))
+}
+
+/**
+ * Which Folders are archived — FOL-46, from the changes {@link placeRecordChannels}
+ * read with the record roots.
+ *
+ * A Folder is archived by a change naming its channel's address, the way any
+ * file is. A record's channel — a Ship project's conversation — is archived
+ * with its record, so an archived project's channel stops lighting its team's
+ * dot the way the project stopped being listed — only when every record naming
+ * the channel is archived, since two projects may share one. Its own archive
+ * wins when it has one.
+ *
+ * A refused read throws before this, like the reads beside it: a listing that
+ * silently reported every Folder live would put archived teams back in
+ * everyone's sidebar.
+ */
+function markArchivedFolders(
+  byId: Map<string, FolderSummary>,
+  recordsOf: Map<string, string[]>,
+  changes: SignedEvent[],
+): void {
+  for (const folder of byId.values()) {
+    const own = folder.channel ? archiveOf(changes, folder.channel, ARCHIVE_RULE) : undefined
+    if (own) {
+      folder.archived = own
+      continue
+    }
+    const records = recordsOf.get(folder.id) ?? []
+    const archives = records.map((record) => archiveOf(changes, record, ARCHIVE_RULE))
+    if (records.length && archives.every(Boolean)) folder.archived = { ...archives[0]!, with: records[0] }
+  }
+}
+
+/** How many Folders deep {@link archiveImpact} follows nested Folders. A request per Folder. */
+const MAX_ARCHIVE_DEPTH = 3
+
+/** What archiving one file would hide, for the warning a person reads first — FOL-46. */
+export interface ArchiveImpact {
+  /**
+   * The files that would go out of every list with it, counted by kind: its
+   * children, and — for a Folder — every file only that Folder lists, with
+   * their children. Files already archived are not counted; they are hidden
+   * already. Kinds with no files are absent.
+   */
+  hides: { kind: number; count: number }[]
+  /**
+   * Files a Folder lists that another Folder, not archived, lists too. They
+   * stay visible there, and a warning that said they would be hidden would
+   * make Archive look more destructive than it is. Empty for a file that is
+   * not a Folder.
+   */
+  staysVisible: { address: string; kind: number; in: { id: string; name?: string }[] }[]
+}
+
+/**
+ * Count what archiving `address` would hide — the read behind the warning.
+ *
+ * "Hides 14 issues and 6 topics that are only here; 2 topics also in Estiva HQ
+ * stay visible." The words are the app's; the counts are the same in every
+ * app, which is why they are read here.
+ *
+ * - **A Folder** (a `kind:39000` address, `FolderSummary.channel`): what it
+ *   lists, split by whether another Folder lists it too, the children of what
+ *   would be hidden, and — three Folders deep — what a nested Folder only it
+ *   lists holds. Pass `folders` from the app's own `listFolders` to save that
+ *   read.
+ * - **Any other file**: the children its kind declares (a project's issues), and
+ *   bare files placed under it (sub-topics), by their root's `a` tag.
+ *
+ * One level of children, as a listing draws them. A few requests, whatever the
+ * size: the Folder, one per app's manifest (memoised by `cache`), the children,
+ * and their archives.
+ */
+export async function archiveImpact(
+  address: string,
+  query: QueryFn,
+  options: { folders?: FolderSummary[]; cache?: ProjectionCache } = {},
+): Promise<ArchiveImpact> {
+  const pointer = addressPointerOf(address)
+  if (!pointer) return { hides: [], staysVisible: [] }
+  const counts = new Map<number, number>()
+  const count = (kind: number, n = 1) => counts.set(kind, (counts.get(kind) ?? 0) + n)
+  const staysVisible: ArchiveImpact['staysVisible'] = []
+  let parents: { address: string; pointer: AddressPointer }[] = [{ address, pointer }]
+
+  if (pointer.kind === KIND_CHANNEL) {
+    const folders = options.folders ?? (await listFolders(query))
+    parents = []
+    /*
+      A nested Folder only this one lists goes out of view with it, and so does
+      everything only *that* one lists — walked the same way, a Folder at a
+      time, to a small depth. "Only" is judged against the live Folders outside
+      the tree being archived.
+    */
+    const inTree = new Set([pointer.identifier])
+    const walk = async (folder: string, depth: number) => {
+      const contents = await resolveFolderContents(folder, query, async () => ({}), options.cache)
+      for (const file of contents.files) {
+        if (!file.address) continue
+        const others = folders.filter(
+          (other) => !inTree.has(other.id) && !other.archived && other.addresses?.includes(file.address!),
+        )
+        if (others.length) {
+          staysVisible.push({ address: file.address, kind: file.kind, in: others.map(({ id, name }) => ({ id, name })) })
+          continue
+        }
+        count(file.kind)
+        const filePointer = addressPointerOf(file.address)
+        if (!filePointer) continue
+        if (filePointer.kind === KIND_CHANNEL) {
+          if (depth < MAX_ARCHIVE_DEPTH && !inTree.has(filePointer.identifier)) {
+            inTree.add(filePointer.identifier)
+            await walk(filePointer.identifier, depth + 1)
+          }
+        } else {
+          parents.push({ address: file.address, pointer: filePointer })
+        }
+      }
+    }
+    await walk(pointer.identifier, 0)
+  }
+
+  // A record channel lists a project *and* its issues; each is counted once.
+  const counted = new Set(parents.map((p) => p.address))
+  for (const [kind, n] of await countLiveChildren(parents, counted, query, options.cache)) count(kind, n)
+  return {
+    hides: [...counts].map(([kind, n]) => ({ kind, count: n })),
+    staysVisible,
+  }
+}
+
+/** The children of each parent that are not archived already, by kind. */
+async function countLiveChildren(
+  parents: { address: string; pointer: AddressPointer }[],
+  counted: ReadonlySet<string>,
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<Map<number, number>> {
+  const byKind = new Map<number, number>()
+  if (parents.length === 0) return byKind
+  const byApp = new Map<string, AddressPointer>()
+  for (const { pointer } of parents) byApp.set(manifestKeyOf(pointer), pointer)
+  const manifests = new Map<string, ResolvedManifest>()
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+  const filters: Record<string, unknown>[] = []
+  const wanted: { kind: number; via: string; parent: string }[] = []
+  for (const { address, pointer } of parents) {
+    const projection = manifests.get(manifestKeyOf(pointer))?.manifest.projections?.[String(pointer.kind)]
+    const declared = projection && declaredChildSpec(projection)
+    const specs = [
+      ...(declared ? [{ kind: declared.kind, via: declared.via }] : []),
+      // A sub-topic may sit under a file of any kind (SPEC §6.7).
+      ...(declared?.kind === KIND_BARE_FILE && declared.via === 'a' ? [] : [{ kind: KIND_BARE_FILE, via: 'a' }]),
+    ]
+    for (const spec of specs) {
+      wanted.push({ ...spec, parent: address })
+      filters.push({ kinds: [spec.kind], [`#${spec.via}`]: [address], limit: RELAY_PAGE_CEILING })
+    }
+  }
+  const events: SignedEvent[] = []
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    events.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
+  }
+  const children = new Map<string, number>()
+  for (const event of events) {
+    const identifier = tagValue(event, 'd')
+    if (identifier === undefined) continue
+    if (!wanted.some((w) => w.kind === event.kind && hasTagValue(event, w.via, w.parent))) continue
+    const child = pointerToAddress({ kind: event.kind, pubkey: event.pubkey, identifier, relays: [] })
+    if (!counted.has(child)) children.set(child, event.kind)
+  }
+  if (children.size === 0) return byKind
+  const changes = await readArchiveChanges([...children.keys()], query)
+  for (const [child, kind] of children) {
+    if (archiveOf(changes, child, ARCHIVE_RULE)) continue
+    byKind.set(kind, (byKind.get(kind) ?? 0) + 1)
+  }
+  return byKind
 }
 
 /**
@@ -4763,7 +5217,7 @@ async function placeRecordChannels(
   byId: Map<string, FolderSummary>,
   listedIn: Map<string, string[]>,
   query: QueryFn,
-): Promise<void> {
+): Promise<{ recordsOf: Map<string, string[]>; archives: SignedEvent[] }> {
   const containersOf = new Map<string, { pointer: AddressPointer; containers: string[] }>()
   for (const event of events) {
     if (event.kind !== KIND_FOLDER_STATE) continue
@@ -4784,7 +5238,18 @@ async function placeRecordChannels(
       containersOf.set(key, entry)
     }
   }
-  if (containersOf.size === 0) return
+  // Every Folder's archive, and every listed record's, ride with the roots
+  // (FOL-46): the channel addresses are in hand from the listing and the
+  // record addresses are the keys above, so neither needs the roots first.
+  const channels = [...byId.values()].flatMap((folder) => (folder.channel ? [folder.channel] : []))
+  const archiveAsk = archiveFilters([...new Set([...channels, ...containersOf.keys()])])
+  if (containersOf.size === 0) {
+    const archives: SignedEvent[] = []
+    for (let start = 0; start < archiveAsk.length; start += MAX_FILTERS_PER_QUERY) {
+      archives.push(...(await query(archiveAsk.slice(start, start + MAX_FILTERS_PER_QUERY))))
+    }
+    return { recordsOf: new Map(), archives }
+  }
 
   const groups = new Map<string, { kind: number; pubkey: string; identifiers: string[] }>()
   for (const { pointer } of containersOf.values()) {
@@ -4800,10 +5265,14 @@ async function placeRecordChannels(
       filters.push({ kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length })
     }
   }
-  const roots: SignedEvent[] = []
+  filters.push(...archiveAsk)
+  const answered: SignedEvent[] = []
   for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-    roots.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
+    answered.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
   }
+  // A state lists files, never change events, so the kind tells them apart.
+  const archives = answered.filter((e) => e.kind === ARCHIVE_RULE.changeKind)
+  const roots = answered.filter((e) => e.kind !== ARCHIVE_RULE.changeKind)
 
   // Newest wins, as it does for any addressable event a relay has not yet replaced.
   const newest = new Map<string, SignedEvent>()
@@ -4812,10 +5281,14 @@ async function placeRecordChannels(
     const held = newest.get(key)
     if (!held || root.created_at > held.created_at) newest.set(key, root)
   }
+  const recordsOf = new Map<string, string[]>()
   for (const [key, { containers }] of containersOf) {
     const root = newest.get(key)
     const channel = root && folderOf(root)
     if (!channel || byId.get(channel)?.hasState) continue
+    // A file published into the Folder that lists it names that Folder, and
+    // does not own it: a topic's `h` is its team's.
+    if (!containers.includes(channel)) recordsOf.set(channel, [...(recordsOf.get(channel) ?? []), key])
     for (const container of containers) {
       if (container === channel) continue
       const placed = listedIn.get(channel) ?? []
@@ -4823,6 +5296,7 @@ async function placeRecordChannels(
       listedIn.set(channel, placed)
     }
   }
+  return { recordsOf, archives }
 }
 
 /**
@@ -4875,6 +5349,14 @@ export async function resolveFolderContents(
   lookupPeople?: PeopleFn,
   /** See {@link ProjectionCache}. Omitting it is exactly the old behaviour. */
   cache?: ProjectionCache,
+  options: {
+    /**
+     * Return archived files — and files hidden with an archived parent — each
+     * carrying its {@link Archive}, instead of leaving them out. For a view
+     * that lists what was archived; every other list wants the default.
+     */
+    includeArchived?: boolean
+  } = {},
 ): Promise<FolderContents> {
   // 1. The folder itself. Both kinds in one trip: the state is the model and
   //    the channel is what names a folder that has none yet.
@@ -4884,11 +5366,15 @@ export async function resolveFolderContents(
   ])
   const state = identity.find((e) => e.kind === KIND_FOLDER_STATE && tagValue(e, 'd') === folder)
   const channel = identity.find((e) => e.kind === KIND_CHANNEL && tagValue(e, 'd') === folder)
+  const channelAddress = channel
+    ? pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: folder, relays: [] })
+    : undefined
 
   const summary: FolderSummary & { address?: string } = {
     id: folder,
     name: nameOf(state) ?? nameOf(channel),
     hasState: !!state,
+    ...(channelAddress ? { channel: channelAddress } : {}),
     ...(state
       ? { address: pointerToAddress({ kind: state.kind, pubkey: state.pubkey, identifier: folder, relays: [] }) }
       : {}),
@@ -4904,7 +5390,12 @@ export async function resolveFolderContents(
     : await addressesByContainment(folder, query)
 
   if (addresses.length === 0) {
-    return { ...summary, files: [], source: state ? 'state' : 'channel' }
+    // Nothing listed, so no change query to ride on: the Folder's own archive
+    // is one small read of its own.
+    const archived = channelAddress
+      ? archiveOf(await readArchiveChanges([channelAddress], query), channelAddress, ARCHIVE_RULE)
+      : undefined
+    return { ...summary, ...(archived ? { archived } : {}), files: [], source: state ? 'state' : 'channel' }
   }
 
   // 2. Group by (kind, author): one manifest answers for every file an app owns
@@ -4943,10 +5434,15 @@ export async function resolveFolderContents(
   //    Change kinds are a set because two apps may fold differently, and a kind
   //    is a u16 — the relay refuses an out-of-range one outright, so an app
   //    declaring no `records` contributes no filter rather than an empty one.
+  //
+  //    SPEC's change kind is always asked for, whatever the apps declare: any
+  //    file may be archived (FOL-46), a nested Folder included, and so may this
+  //    Folder, whose own address rides in the same filter.
   const changeKinds = [
-    ...new Set(
-      [...manifests.values()].flatMap((r) => (r.manifest.records ? [r.manifest.records.changeKind] : [])),
-    ),
+    ...new Set([
+      ARCHIVE_RULE.changeKind,
+      ...[...manifests.values()].flatMap((r) => (r.manifest.records ? [r.manifest.records.changeKind] : [])),
+    ]),
   ]
   const events = await query([
     ...[...groups.values()].map(({ pointer, addresses: group }) => ({
@@ -4955,13 +5451,21 @@ export async function resolveFolderContents(
       '#d': group.map((a) => referenceToPointer(a).identifier),
       limit: group.length,
     })),
-    ...(changeKinds.length
-      ? [{ kinds: changeKinds, '#a': addresses, limit: 500 }]
-      : []),
+    { kinds: changeKinds, '#a': addresses, limit: 500 },
+    // The archives again, in groups small enough that a busy Folder's other
+    // changes cannot push them off the page — the filter above holds 500
+    // changes for every file together, and one Folder has already had 688.
+    // Same request.
+    ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
   ])
+  const ownArchive = channelAddress ? archiveOf(events, channelAddress, ARCHIVE_RULE) : undefined
+  if (ownArchive) summary.archived = ownArchive
 
-  // 4. Build each file, in the order the folder listed them.
-  const files: ForeignObject[] = []
+  // 4. Build each file, in the order the folder listed them. Archived files are
+  //    held back until the cascade below has read their parents.
+  const listed: { file: ForeignObject; archive?: Archive }[] = []
+  const archiveByAddress = new Map<string, Archive | undefined>()
+  const parentByAddress = new Map<string, string | undefined>()
   for (const { address, pointer } of pointers) {
     const resolved = manifests.get(manifestKeyOf(pointer))
     // No app claims this kind, so there is no projection to draw it with.
@@ -4979,11 +5483,16 @@ export async function resolveFolderContents(
       events.filter((e) => e.kind === records.changeKind && hasTagValue(e, records.targetTag, address)),
       records,
     )
+    const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest))
+    archiveByAddress.set(address, archive)
+    parentByAddress.set(address, parentRefOf(resolved.manifest, pointer.kind, root, folded))
     // An app hiding a record from its own lists is saying it is not part of the
-    // folder any more. `hiddenWhen` is the app's own declaration of that.
-    if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) {
-      continue
-    }
+    // folder any more. `hiddenWhen` is the app's own declaration of that — the
+    // archive above is the same statement for a kind whose app declared none.
+    // Not reported as an archive: the app said "hidden", which may mean more.
+    const hidden =
+      !!records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals
+    if (hidden && !archive) continue
     /*
       A placed file stays listed only while the placement is current.
 
@@ -5008,8 +5517,9 @@ export async function resolveFolderContents(
       })
       if (!current) continue
     }
-    files.push(
-      buildObject({
+    listed.push({
+      archive,
+      file: buildObject({
         root,
         pointer,
         manifest: resolved.manifest,
@@ -5018,7 +5528,45 @@ export async function resolveFolderContents(
         viaRecommendation: resolved.viaRecommendation,
         webTemplate: resolved.webTemplate,
       }),
-    )
+    })
+  }
+
+  /*
+    5. The cascade (FOL-46): a file under an archived file is hidden with it —
+       an issue with its project, a sub-topic with its topic. Computed here and
+       never written to the children, so unarchiving the parent restores
+       exactly what was there.
+
+       The chain is walked through everything this Folder lists. A parent that
+       lives in another Folder is read once for all such parents, one level: a
+       project whose record channel lists its issues is the case that matters,
+       and there the project is listed too.
+
+       Only by parent. A file this Folder lists is never hidden because some
+       *other* Folder that lists it is archived — that is what lets a file
+       placed in two Folders stay visible in the one that is not archived.
+  */
+  const outside = [
+    ...new Set(
+      listed.flatMap(({ file }) => {
+        const parent = file.address && parentByAddress.get(file.address)
+        return parent && !archiveByAddress.has(parent) && addressPointerOf(parent) ? [parent] : []
+      }),
+    ),
+  ]
+  if (outside.length) {
+    const changes = await readArchiveChanges(outside, query)
+    for (const parent of outside) archiveByAddress.set(parent, archiveOf(changes, parent, ARCHIVE_RULE))
+  }
+  const files: ForeignObject[] = []
+  for (const { file, archive } of listed) {
+    const effective =
+      archive ??
+      (file.address
+        ? archivedAncestorOf(file.address, (a) => parentByAddress.get(a), (a) => archiveByAddress.get(a))
+        : undefined)
+    if (!effective) files.push(file)
+    else if (options.includeArchived) files.push({ ...file, archived: effective })
   }
 
   const people = await (lookupPeople ?? peopleViaRelay(query))([
