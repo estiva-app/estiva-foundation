@@ -3099,7 +3099,7 @@ export async function resolveForeignObjects(
  * issue's talk by its project, and on production on 2026-09-30 the 110 issues
  * the dots name cost 20 POSTs and a megabyte that way. This asks for the roots,
  * and for the changes only of a kind whose app declares a `movedBy` — a filter
- * per 25 roots and one per movable file, so a POST per ~120 files: one for the
+ * per 100 roots and one per movable file, so a POST per ~120 files: one for the
  * set the dots held on production.
  *
  * Folded by the rule the card and the listing use (`parentRefOf`), so a moved
@@ -3159,8 +3159,8 @@ export async function resolveParents(
   const filters: Record<string, unknown>[] = []
   for (const { kind, pubkey, identifiers } of roots.values()) {
     const all = [...identifiers]
-    for (let start = 0; start < all.length; start += ARCHIVE_READ_GROUP) {
-      const group = all.slice(start, start + ARCHIVE_READ_GROUP)
+    for (let start = 0; start < all.length; start += PARENT_ROOT_GROUP) {
+      const group = all.slice(start, start + PARENT_ROOT_GROUP)
       filters.push({ kinds: [kind], authors: [pubkey], '#d': group, limit: group.length })
     }
   }
@@ -3250,6 +3250,13 @@ function relatedRuleOf(manifest: Pick<Manifest, 'records' | 'projections'> | und
  * archive change inside the page.
  */
 const ARCHIVE_READ_GROUP = 25
+
+/**
+ * Identifiers per root filter in {@link resolveParents}. A root read answers
+ * one event per identifier, so it needs no room kept for a page — only a `#d`
+ * list short enough for a relay to take.
+ */
+const PARENT_ROOT_GROUP = 100
 
 /**
  * The filters asking for every change naming these addresses, once per distinct

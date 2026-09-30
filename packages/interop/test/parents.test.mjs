@@ -143,6 +143,7 @@ describe('resolveParents', () => {
     assert.equal(relay.own().length, 1, 'one POST for the set')
     const kinds = new Set(relay.own()[0].flatMap((f) => f.kinds))
     assert.deepEqual([...kinds].sort(), [CHANGE, ISSUE], 'roots and changes, nothing else')
+    assert.equal(relay.own()[0].filter((f) => f.kinds.includes(ISSUE)).length, 1, 'one root filter for one author’s hundred')
     for (let n = 0; n < 100; n++) assert.equal(parents[I(`i${n}`)], n % 3 === 0 ? P2 : P1)
   })
 
