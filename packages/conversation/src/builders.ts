@@ -8,9 +8,7 @@
  * NIP-22 pair below, whose shape the SPEC decided rather than Buzz.
  */
 import { imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'
-import { KIND_COMMENT } from './kinds.js'
-
-const FOLDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+import { FOLDER_ID, KIND_COMMENT } from './kinds.js'
 
 /**
  * A `kind:1111` is channel-scoped when it carries an `h` and **global when it

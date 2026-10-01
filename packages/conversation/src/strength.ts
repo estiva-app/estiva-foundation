@@ -155,8 +155,8 @@ export function referenceTagsFor(body: string, own = ''): NostrTag[] {
 /** The most `p` tags a message carries — Buzz's cap, and `buildMessage`'s. */
 export const MAX_MENTIONED_PEOPLE = 50
 
-/** The people a body mentions by `nostr:npub…`, as `p` tags, capped at {@link MAX_MENTIONED_PEOPLE}. */
-export function mentionTagsFor(body: string): NostrTag[] {
+/** The people a body mentions by `nostr:npub…` (§13.1), in the order it names them. */
+export function peopleNamedInBody(body: string): Set<string> {
   const pubkeys = new Set<string>()
   for (const uri of findNostrUris(body)) {
     if (!/^nostr:npub1/i.test(uri)) continue
@@ -166,5 +166,10 @@ export function mentionTagsFor(body: string): NostrTag[] {
       // A malformed key is prose.
     }
   }
-  return [...pubkeys].slice(0, MAX_MENTIONED_PEOPLE).map((p) => ['p', p])
+  return pubkeys
+}
+
+/** The people a body mentions by `nostr:npub…`, as `p` tags, capped at {@link MAX_MENTIONED_PEOPLE}. */
+export function mentionTagsFor(body: string): NostrTag[] {
+  return [...peopleNamedInBody(body)].slice(0, MAX_MENTIONED_PEOPLE).map((p) => ['p', p])
 }
