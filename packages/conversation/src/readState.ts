@@ -22,7 +22,9 @@
  * Nothing here opens a socket or touches the browser: the relay read, the
  * signer, NIP-44 and storage are parameters.
  */
-import { KIND, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { FILE_ADDRESS as ADDRESS_RE, FOLDER_ID as UUID_RE, KIND_APP_DATA } from './kinds.js'
+import type { QueryFn } from './decorations.js'
 
 /** NIP-RS's own `t` tag. */
 export const READ_STATE_TAG = 'read-state'
@@ -54,9 +56,7 @@ export const MAX_CONTEXTS_BYTES =
 /** A horizon of 90 days: what both apps used. NIP-RS fixes none (§11.6). */
 export const READ_STATE_HORIZON_DAYS = 90
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const EVENT_ID_RE = /^[0-9a-f]{64}$/
-const ADDRESS_RE = /^3[0-9]{4}:[0-9a-f]{64}:[^\s]*$/
 const SLOT_ID_RE = /^[0-9a-f]{32}$/
 
 /** Bytes of UTF-8 — counted here, since a package may not reach for `TextEncoder` (ADR 0002). */
@@ -160,7 +160,9 @@ export interface SlotSource {
  */
 export function loadSlotIdentity(source: SlotSource): SlotIdentity {
   const { storage, storageKey, clientPrefix, random } = source
-  const fresh = (): SlotIdentity => ({ slotId: hexOf(random(16)), clientId: `${clientPrefix}-${hexOf(random(4))}`.slice(0, MAX_CLIENT_ID_BYTES) })
+  // ASCII and short, so the `client_id` is under the byte limit the reload checks — a longer one would mint a new slot every load.
+  if (!/^[a-z0-9-]{1,55}$/.test(clientPrefix)) throw new Error(`client prefix must be 1–55 of [a-z0-9-], got ${JSON.stringify(clientPrefix)}`)
+  const fresh = (): SlotIdentity => ({ slotId: hexOf(random(16)), clientId: `${clientPrefix}-${hexOf(random(4))}` })
   if (!storage) return fresh()
   try {
     const raw = storage.getItem(storageKey)
@@ -310,7 +312,7 @@ export function buildReadStateEvent(pubkey: string, nowMs: number, slotId: strin
   return {
     pubkey,
     created_at: Math.floor(nowMs / 1000),
-    kind: KIND.APP_DATA,
+    kind: KIND_APP_DATA,
     tags: [
       ['d', readStateDTag(slotId)],
       ['t', READ_STATE_TAG],
@@ -325,7 +327,7 @@ export function buildReadStateEvent(pubkey: string, nowMs: number, slotId: strin
  */
 export function allSlotsFilter(pubkey: string, nowMs: number, horizonDays: number = READ_STATE_HORIZON_DAYS): Record<string, unknown> {
   const since = toContextSeconds(nowMs) - Math.round(horizonDays * 86_400)
-  return { kinds: [KIND.APP_DATA], authors: [pubkey], '#t': [READ_STATE_TAG], since: Math.max(0, since) }
+  return { kinds: [KIND_APP_DATA], authors: [pubkey], '#t': [READ_STATE_TAG], since: Math.max(0, since) }
 }
 
 // ── Merge — §11.3, §11.4 ────────────────────────────────────────────────────
@@ -414,7 +416,7 @@ export interface FetchedReadState {
 
 /** Fetch every slot within the horizon, decrypt what decrypts, merge. */
 export async function fetchReadState(
-  query: (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>,
+  query: QueryFn,
   pubkey: string,
   nip44: Pick<Nip44, 'decrypt'>,
   identity: SlotIdentity,
@@ -431,10 +433,12 @@ export async function fetchReadState(
   const slots: SlotBlob[] = []
   let ownUndecryptable = false
   for (const event of events) {
-    if (event.pubkey !== pubkey || event.kind !== KIND.APP_DATA) continue
+    if (event.pubkey !== pubkey || event.kind !== KIND_APP_DATA) continue
     const dTag = event.tags.find((t) => t[0] === 'd')?.[1]
     if (!dTag?.startsWith(READ_STATE_D_PREFIX)) continue
     let plaintext: string | undefined
+    // One at a time on purpose: `/nip44/decrypt` answers 429 to a burst, and
+    // a 429 on our own slot reads as undecryptable and blocks publishing.
     try {
       plaintext = await nip44.decrypt(event.content)
     } catch {
@@ -472,7 +476,8 @@ export async function publishReadState(
   contexts: Readonly<Record<string, number>>,
   nowMs: number,
 ): Promise<{ ok: boolean; reason?: string }> {
-  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: { ...contexts } })
+  // Filtered here as well: the blob is grow-only, and a map built outside `advanceContexts` must not put an id into it.
+  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts({}, contexts).contexts })
   if (utf8(plaintext) > MAX_BLOB_BYTES) return { ok: false, reason: `read state is ${utf8(plaintext)} bytes, over ${MAX_BLOB_BYTES}` }
   const ciphertext = await deps.nip44.encrypt(plaintext)
   const signed = await deps.sign(buildReadStateEvent(pubkey, nowMs, identity.slotId, ciphertext))

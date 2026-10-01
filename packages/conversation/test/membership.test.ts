@@ -67,7 +67,7 @@ describe('C17 — membership fold', () => {
     assert.deepEqual(membershipOf(ISSUE, CAROL, events), { member: true, since: T0 + 110 })
     const dave = 'd'.repeat(64)
     assert.deepEqual(membershipOf(ISSUE, dave, [change(ALICE, T0 + 200, 'assignee', dave)]), { member: true, since: T0 + 200 })
-    assert.deepEqual(membershipOf(ISSUE, dave, [change(ALICE, T0 + 210, 'lead', '', [['p', dave]])]), { member: true, since: T0 + 210 })
+    assert.deepEqual(membershipOf(ISSUE, dave, [change(ALICE, T0 + 210, 'lead', dave, [['p', dave]])]), { member: true, since: T0 + 210 })
     assert.deepEqual(membershipOf(ISSUE, dave, [member(ALICE, T0 + 220, dave, true)]), { member: true, since: T0 + 220 })
   })
 
@@ -87,6 +87,16 @@ describe('C17 — membership fold', () => {
     assert.equal(membershipOf(ISSUE, BOB, [...left, comment(CAROL, T0 + 300)]).member, false)
     const back = [...left, comment(CAROL, T0 + 300, mention(BOB)), comment(BOB, T0 + 400)]
     assert.deepEqual(membershipOf(ISSUE, BOB, back), { member: true, since: T0 + 300 })
+  })
+
+  it('an edit of the root after the author left does not make her a member again', () => {
+    const events = [comment(ALICE, T0 + 50), member(ALICE, T0 + 100, ALICE, false), root(T0 + 500)]
+    assert.equal(membershipOf(ISSUE, ALICE, events).member, false)
+    assert.deepEqual(membershipOf(ISSUE, ALICE, [root(T0 + 500), comment(ALICE, T0 + 50)]), { member: true, since: T0 + 50 })
+  })
+
+  it('an unassign places nobody, whatever p it carries', () => {
+    assert.equal(membershipOf(ISSUE, BOB, [change(ALICE, T0 + 10, 'assignee', '', [['p', BOB]])]).member, false)
   })
 
   it('orders by trusted ts inside one second', () => {
@@ -164,6 +174,9 @@ describe('membership change, discovery and the mute list', () => {
     const unsigned = buildMembershipChange(ALICE, 1_700_000_000_123, { file: ISSUE, folder: FOLDER, person: BOB, member: true })
     assert.deepEqual(unsigned.tags, [['a', ISSUE], ['field', `member:${BOB}`], ['value', 'true'], ['h', FOLDER], ['ts', '1700000000123'], ['p', BOB]])
     assert.equal(unsigned.created_at, 1_700_000_000)
+    assert.equal(unsigned.content, 'Add')
+    assert.equal(buildMembershipChange(BOB, 0, { file: ISSUE, folder: FOLDER, person: BOB, member: true }).content, 'Join')
+    assert.equal(buildMembershipChange(BOB, 0, { file: ISSUE, folder: FOLDER, person: BOB, member: false }).content, 'Leave')
     assert.throws(() => buildMembershipChange(ALICE, 0, { file: ISSUE, folder: 'nope', person: BOB, member: true }))
   })
 

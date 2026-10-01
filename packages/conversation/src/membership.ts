@@ -30,24 +30,21 @@
  * {@link parseMutedBlob}.
  */
 import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
-import { KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
+import { FILE_ADDRESS as ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { byOrder } from './order.js'
 import { anchorsOf, isCommentOn, peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 
-/** A `kind:1851` field change (§6.2). */
-export const KIND_CHANGE = 1851
+export { KIND_CHANGE }
 
 /** The field prefix of a membership change: `member:<pubkey>`. */
 export const MEMBER_FIELD_PREFIX = 'member:'
 
 const PUBKEY = /^[0-9a-f]{64}$/
-const FOLDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-const ADDRESS = /^3[0-9]{4}:[0-9a-f]{64}:\S*$/
 
 type Event = Pick<SignedEvent, 'id' | 'pubkey' | 'kind' | 'created_at' | 'tags' | 'content'>
 
-/** A relay filter, as {@link QueryFn} takes one. */
+/** A relay filter, as `QueryFn` takes one. */
 type Filter = Record<string, unknown>
 
 const tag = (event: Pick<SignedEvent, 'tags'>, name: string): string | undefined => event.tags.find((t) => t[0] === name)?.[1]
@@ -111,7 +108,8 @@ export interface Membership {
 
 const NOT_A_MEMBER: Membership = { member: false }
 
-type Step = { event: Event; join: boolean }
+/** `creation` is the root: it orders before everything else for the file, whichever version the reader holds. */
+type Step = { event: Event; join: boolean; creation?: boolean }
 
 /**
  * Every join and leave in a file's events, per person. `events` may hold
@@ -120,15 +118,18 @@ type Step = { event: Event; join: boolean }
  */
 function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
   const steps = new Map<string, Step[]>()
-  const add = (person: string, event: Event, join: boolean) => {
+  const add = (person: string, event: Event, join: boolean, creation = false) => {
     if (!PUBKEY.test(person)) return
     const list = steps.get(person) ?? []
-    list.push({ event, join })
+    list.push({ event, join, creation })
     steps.set(person, list)
   }
 
+  // A relay keeps only the latest version of an addressable event, so the root
+  // the reader holds is usually the last edit. Its join is ordered first, so
+  // an edit after a leave does not make the author a member again.
   const versions = events.filter((e) => addressOf(e) === file).sort(byOrder)
-  if (versions[0]) add(versions[0].pubkey, versions[0], true)
+  if (versions[0]) add(versions[0].pubkey, versions[0], true, true)
 
   for (const message of streamOf(file, events)) {
     add(message.pubkey, message, true)
@@ -145,9 +146,10 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
       else if (value === 'false' && change.pubkey === member) add(member, change, false)
       continue
     }
-    if (field?.startsWith(MEMBER_FIELD_PREFIX)) continue
+    // A change with an empty value takes someone off (an unassign) and places nobody, whatever `p` it carries.
+    if (field?.startsWith(MEMBER_FIELD_PREFIX) || !value) continue
     const placed = new Set(change.tags.filter((t) => t[0] === 'p' && typeof t[1] === 'string').map((t) => t[1]))
-    if (value !== undefined) placed.add(value)
+    placed.add(value)
     for (const person of placed) add(person, change, true)
   }
   return steps
@@ -155,12 +157,16 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
 
 function fold(steps: readonly Step[] | undefined): Membership {
   if (!steps || steps.length === 0) return NOT_A_MEMBER
-  const ordered = [...steps].sort((a, b) => byOrder(a.event, b.event) || Number(a.join) - Number(b.join))
+  const ordered = [...steps].sort(
+    (a, b) => Number(b.creation ?? false) - Number(a.creation ?? false) || byOrder(a.event, b.event) || Number(a.join) - Number(b.join),
+  )
   if (!ordered[ordered.length - 1].join) return NOT_A_MEMBER
+  // Since: the earliest second among the joins after the last leave — the creation's
+  // held version can be a later edit than the author's first comment.
   let since: number | undefined
   for (const step of ordered) {
     if (!step.join) since = undefined
-    else if (since === undefined) since = step.event.created_at
+    else since = since === undefined ? step.event.created_at : Math.min(since, step.event.created_at)
   }
   return { member: true, since }
 }
@@ -219,12 +225,17 @@ export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): str
  *
  * Sign one only when the person chose it — joining, leaving, or adding
  * somebody. Never to migrate a private follow (§11.8 *Following, retired*).
+ *
+ * `content` is the note an activity feed shows, as for every change: a change
+ * with none renders as a blank line in Ship's feed. "Join", "Leave" or "Add"
+ * by default.
  */
 export function buildMembershipChange(
   pubkey: string,
   createdAtMs: number,
-  args: { file: string; folder: string; person: string; member: boolean },
+  args: { file: string; folder: string; person: string; member: boolean; note?: string },
 ): UnsignedEvent {
+  const note = args.note ?? (!args.member ? 'Leave' : args.person === pubkey ? 'Join' : 'Add')
   if (!ADDRESS.test(args.file)) throw new Error(`not a file address: ${JSON.stringify(args.file)}`)
   if (!FOLDER_ID.test(args.folder)) throw new Error(`not a Folder id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
@@ -240,7 +251,7 @@ export function buildMembershipChange(
       ['ts', String(createdAtMs)],
       ['p', args.person],
     ],
-    content: '',
+    content: note,
   }
 }
 
@@ -289,7 +300,7 @@ export function buildMutedEvent(pubkey: string, createdAtMs: number, ciphertext:
   return {
     pubkey,
     created_at: Math.floor(createdAtMs / 1000),
-    kind: 30078,
+    kind: KIND_APP_DATA,
     tags: [
       ['d', MUTED_D_TAG],
       ['t', APPDATA_TAG],
@@ -300,7 +311,7 @@ export function buildMutedEvent(pubkey: string, createdAtMs: number, ciphertext:
 
 /** The filter for the person's mute list. */
 export function mutedFilter(pubkey: string): Filter {
-  return { kinds: [30078], authors: [pubkey], '#d': [MUTED_D_TAG], limit: 1 }
+  return { kinds: [KIND_APP_DATA], authors: [pubkey], '#d': [MUTED_D_TAG], limit: 1 }
 }
 
 /**

@@ -5,9 +5,9 @@ The conversation rules of the [Estiva SPEC](https://github.com/estiva-app/estiva
 and estiva-agent read conversations through it.
 
 **A convenience, never a requirement.** SPEC §9's conversation checks
-(C10–C16) are written so an app can build conversations from the specification
+(C10–C18) are written so an app can build conversations from the specification
 alone, and this package's tests are those checks
-(`test/conformance.test.ts`). If you find this package disagreeing with the
+(`test/conformance.test.ts` for C10–C16, `test/membership.test.ts` for C17 and C18). If you find this package disagreeing with the
 SPEC, the package is wrong.
 
 ```bash
@@ -44,6 +44,13 @@ Read state takes its environment like the rest: slot storage and randomness
 (`loadSlotIdentity`), the relay query, the signer and NIP-44 (`fetchReadState`,
 `publishReadState`). When to write — the debounce, the dwell before a view
 counts as read — stays the app's.
+
+**Light a dot from the files you already load, not from discovery alone.** A
+file's membership comes from `membershipOf` over that file's own events, which
+an app already holds for any file it shows. `membershipFilters` is for listing
+"your files", and a busy person's results are cut short by the relay's limit
+(each filter returned 2,000 events for one person in 90 days on 2026-10-01). A
+dot built only on discovery would miss a file the limit dropped.
 
 ## What is not in it
 

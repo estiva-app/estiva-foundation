@@ -63,8 +63,9 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
     consider(root, undefined)
     for (const reply of replies[root.id] ?? []) consider(reply, root.id)
   }
+  const held = new Set(roots.map((r) => r.id))
   for (const [root, list] of Object.entries(replies)) {
-    if (roots.some((r) => r.id === root)) continue
+    if (held.has(root)) continue
     for (const reply of list) consider(reply, root)
   }
   return out
