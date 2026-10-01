@@ -15,8 +15,9 @@ protocol 0.24.0, unchanged.
 - **Membership** (`membership.ts`, §11.8): `membershipOf`, `membersOf`,
   `streamOf`, the discovery `membershipFilters` with `candidateFilesOf`, and
   `buildMembershipChange` (`kind:1851`, `member:<P>`, tags `a field value h ts
-  p`). A placement is read from the change's `value` as well as its `p`, since
-  most assignee changes on production carry no `p`. The private mute list
+  p`). A placement counts by its `p` alone, and only with a non-empty `value`
+  (an unassign places nobody). The creation orders before every other event
+  for the file, so an edit does not re-join an author who left. The private mute list
   (`estiva:muted:v1`) and the one-time `mutedFromFollowed` migration, which
   never returns a follow.
 - **Read state** (`readState.ts`, §11.1–§11.6): ported from Peek and Ship.

@@ -9,22 +9,20 @@
  *
  * | join | the event |
  * | --- | --- |
- * | created it | the root, at the earliest version the reader holds |
+ * | created it | the root, ordered before every other event for the file |
  * | took part | a message in the stream, by `P` |
  * | was mentioned | a message in the stream whose content names `P` (`nostr:npub…`) |
- * | was placed | a `kind:1851` on the file, not a membership field, whose `value` is `P` or that carries `["p", P]` |
+ * | was placed | a `kind:1851` on the file, not a membership field, with a non-empty `value`, carrying `["p", P]` |
  * | was added, or joined | a `kind:1851` setting `member:<P>` to `true`, by anyone |
  *
  * A **leave** is a `member:<P>` = `false` signed by `P`; one signed by anybody
  * else is ignored. Joins and leaves order as §6.3 orders changes, `P` is a
- * member when the last is a join, and a member **since** the first join after
- * the last leave.
+ * member when the last is a join, and a member **since** the earliest join
+ * after the last leave.
  *
- * *Placed* reads the `value` as well as the `p`: on production (2026-09-30)
- * 37 of 52 assignee changes and every lead change carried no `p`, including
- * one written that day, so a `p`-only reading would miss most placements the
- * fold can see. The `p` is what makes a placement discoverable by `#p`, which
- * is why {@link buildMembershipChange} writes it.
+ * *Placed* is the `p` alone, so membership and the `#p` discovery query are
+ * the same set. A placement written without one does not count (on production,
+ * most assignee changes before 2026-10-01).
  *
  * Muting is private and separate (§11.8 *Muting is private*): see
  * {@link parseMutedBlob}.
@@ -148,9 +146,7 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
     }
     // A change with an empty value takes someone off (an unassign) and places nobody, whatever `p` it carries.
     if (field?.startsWith(MEMBER_FIELD_PREFIX) || !value) continue
-    const placed = new Set(change.tags.filter((t) => t[0] === 'p' && typeof t[1] === 'string').map((t) => t[1]))
-    placed.add(value)
-    for (const person of placed) add(person, change, true)
+    for (const t of change.tags) if (t[0] === 'p' && typeof t[1] === 'string') add(t[1], change, true)
   }
   return steps
 }
@@ -194,9 +190,6 @@ export function membersOf(file: string, events: readonly Event[]): Map<string, M
  * changes that name them, what they wrote, and what mentions them. Each
  * candidate file is then read and folded with {@link membershipOf}. The files
  * they created are the app's own query; `since` bounds all three.
- *
- * A placement written without a `p` is not found here — only a read of that
- * file sees it — which is why every writer SHOULD add one.
  */
 export function membershipFilters(person: string, since?: number): Filter[] {
   if (!PUBKEY.test(person)) throw new Error(`not a lowercase hex pubkey: ${JSON.stringify(person)}`)
