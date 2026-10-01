@@ -4,6 +4,19 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.26.1 — 2026-10-01
+
+**Wire behaviour: unchanged.** Same document shape; a different block keeps a
+repeated id (MAN-10).
+
+- **Fixed: Enter at the start of an anchored block moved its id to the new
+  empty block.** Tiptap copies a split node's attrs to both halves, and
+  `fromEditorDocument` kept a repeated id on the first in document order — the
+  empty line above — so the comment anchored there (§13.6) pointed at nothing.
+  A repeated id now stays on the first copy that holds text, and falls back to
+  the first only when none does. A split in the middle or at the end, and a
+  pasted copy, keep the id where they did.
+
 ## 0.26.0 — 2026-09-30
 
 **Wire behaviour: unchanged.** A block document's translation to and from an

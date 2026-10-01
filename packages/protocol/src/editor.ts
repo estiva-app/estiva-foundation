@@ -46,7 +46,15 @@ import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
  *
  * **A duplicate id.** Copy a block, paste it, and both copies carry the same
  * id — a document `validateBlockDocument` rejects and an anchor that points at
- * two places. The second one gets a fresh id on the way out.
+ * two places. One keeps the id and the other gets a fresh one on the way out.
+ *
+ * Which one keeps it is decided by text, not by order (MAN-10). Enter inside a
+ * block is the other way to get a repeat — Tiptap copies a split node's attrs
+ * to both halves, whatever `keepOnSplit` says — and Enter at the very start of
+ * a paragraph puts an empty copy *above* it. Keeping the first would move the
+ * id, and every comment anchored to it, onto that empty line. So the id stays
+ * with the first copy that holds text, and only an all-empty set falls back to
+ * the first.
  */
 
 /** A ProseMirror/Tiptap node, as JSON. */
@@ -233,11 +241,47 @@ export function toEditorDocument(document: BlockDocument): EditorDocument {
 
 // ── Editor → document ────────────────────────────────────────────────────────
 
-/** Mints on a missing id and on a repeat — see the header on duplicates. */
-function idFor(node: EditorNode, seen: Set<string>): string {
+/** What one save has decided about ids: which node keeps each, and which are taken. */
+interface IdClaims {
+  owners: Map<string, EditorNode>
+  seen: Set<string>
+}
+
+const claimOf = (node: EditorNode): string | undefined => {
   const claimed = node.attrs?.blockId
-  const id = typeof claimed === 'string' && claimed !== '' && !seen.has(claimed) ? claimed : newBlockId()
-  seen.add(id)
+  return typeof claimed === 'string' && claimed !== '' ? claimed : undefined
+}
+
+/** Whether anything a person typed or inserted is inside — an empty paragraph is not. */
+function holdsText(node: EditorNode): boolean {
+  if (node.type === 'text') return (node.text ?? '') !== ''
+  if (node.type === REFERENCE_NODE) return true
+  return (node.content ?? []).some(holdsText)
+}
+
+/**
+ * Picks the node that keeps each claimed id, before any is handed out — see
+ * the header on duplicates. Walks exactly the nodes {@link blockFromEditor}
+ * turns into blocks, in the same order.
+ */
+function claimIds(nodes: readonly EditorNode[], owners: Map<string, EditorNode>): void {
+  for (const node of nodes) {
+    if (node.type === UNKNOWN_BLOCK_NODE) continue
+    const claimed = claimOf(node)
+    if (claimed !== undefined) {
+      const owner = owners.get(claimed)
+      if (!owner || (!holdsText(owner) && holdsText(node))) owners.set(claimed, node)
+    }
+    if (BLOCK_CONTAINERS.has(node.type)) claimIds(node.content ?? [], owners)
+  }
+}
+
+/** Mints on a missing id and on a repeat that lost — see the header on duplicates. */
+function idFor(node: EditorNode, claims: IdClaims): string {
+  const claimed = claimOf(node)
+  const keeps = claimed !== undefined && claims.owners.get(claimed) === node && !claims.seen.has(claimed)
+  const id = keeps ? claimed : newBlockId()
+  claims.seen.add(id)
   return id
 }
 
@@ -283,7 +327,7 @@ function sameMarks(a: readonly InlineMarkNode[], b: readonly InlineMarkNode[]): 
   return a.every((m, i) => m.type === b[i].type)
 }
 
-function blockFromEditor(node: EditorNode, seen: Set<string>): Block | null {
+function blockFromEditor(node: EditorNode, claims: IdClaims): Block | null {
   if (node.type === UNKNOWN_BLOCK_NODE) {
     /*
       Handed back exactly as it arrived, id included. Re-minting it here would
@@ -292,7 +336,7 @@ function blockFromEditor(node: EditorNode, seen: Set<string>): Block | null {
     */
     const source = node.attrs?.source as Block | undefined
     if (!source) return null
-    seen.add(source.id)
+    claims.seen.add(source.id)
     return source
   }
 
@@ -305,7 +349,7 @@ function blockFromEditor(node: EditorNode, seen: Set<string>): Block | null {
     than in the one place that noticed.
   */
   const attrs = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== null && v !== undefined))
-  const id = idFor(node, seen)
+  const id = idFor(node, claims)
   const base = { type: node.type, id, ...(Object.keys(attrs).length ? { attrs } : {}) }
 
   if (node.type === 'codeBlock') {
@@ -332,7 +376,7 @@ function blockFromEditor(node: EditorNode, seen: Set<string>): Block | null {
 
   if (BLOCK_CONTAINERS.has(node.type)) {
     const children = (node.content ?? [])
-      .map((child) => blockFromEditor(child, seen))
+      .map((child) => blockFromEditor(child, claims))
       .filter((b): b is Block => b !== null)
     return { ...base, content: children }
   }
@@ -342,10 +386,11 @@ function blockFromEditor(node: EditorNode, seen: Set<string>): Block | null {
 }
 
 export function fromEditorDocument(document: EditorDocument): BlockDocument {
-  const seen = new Set<string>()
+  const claims: IdClaims = { owners: new Map(), seen: new Set() }
+  claimIds(document.content, claims.owners)
   return {
     type: 'doc',
-    content: document.content.map((node) => blockFromEditor(node, seen)).filter((b): b is Block => b !== null),
+    content: document.content.map((node) => blockFromEditor(node, claims)).filter((b): b is Block => b !== null),
   }
 }
 
