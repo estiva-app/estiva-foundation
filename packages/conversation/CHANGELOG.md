@@ -6,6 +6,35 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.2.0 — 2026-10-01
+
+**Read state and membership** (CON-19): SPEC §11, and §11.8 as amended in
+estiva-docs#201, #202 and the placement clarification of 2026-10-01. Needs
+protocol 0.24.0, unchanged.
+
+- **Membership** (`membership.ts`, §11.8): `membershipOf`, `membersOf`,
+  `streamOf`, the discovery `membershipFilters` with `candidateFilesOf`, and
+  `buildMembershipChange` (`kind:1851`, `member:<P>`, tags `a field value h ts
+  p`). A placement is read from the change's `value` as well as its `p`, since
+  most assignee changes on production carry no `p`. The private mute list
+  (`estiva:muted:v1`) and the one-time `mutedFromFollowed` migration, which
+  never returns a follow.
+- **Read state** (`readState.ts`, §11.1–§11.6): ported from Peek and Ship.
+  Where the two differed: the cap is in **bytes** (Peek; Ship capped at
+  10,000 contexts, which never binds), eviction and the merged cap are
+  deterministic to the tie, a coordinate holding another installation's
+  `client_id` is reported, and an unreachable relay and an undecryptable own
+  slot are kept apart from "no slots" (Ship). Storage, randomness, the relay,
+  the signer and NIP-44 are parameters. Peek's `containerContext` is
+  `channelContext` here.
+- **Unread** (`unread.ts`): `unreadIn` and `isUnread`, §11.8's four
+  conditions over §11.3's effective marker.
+- `peopleNamedInBody`, which `mentionTagsFor` now uses.
+
+**SPEC:** §9 C17 (membership fold) and C18 (unread for a member) are
+`test/membership.test.ts`. Nothing about how a conversation is read or
+written in §6 changed.
+
 ## 0.1.0 — 2026-09-30
 
 **First release** (CON-5). Extracted from Peek (`src/nostr/fileConversation.ts`,

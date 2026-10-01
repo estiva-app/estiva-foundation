@@ -31,12 +31,21 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | one read for all of the above | §6.6, §6.8 | `decorationsOf` |
 | which controls to offer | §6.5 | `offersEditAndDelete` |
 | drafts | — | `createDraftStore`, `draftKeys` |
+| membership | §11.8 | `membershipOf`, `membersOf`, `streamOf`, `membershipFilters`, `candidateFilesOf`, `buildMembershipChange` |
+| muting | §11.8 | `parseMutedBlob`, `serializeMutedBlob`, `buildMutedEvent`, `mutedFilter`, `mutedFromFollowed` |
+| read state | §11.1–§11.6 | `channelContext`, `fileContext`, `threadContext`, `loadSlotIdentity`, `advanceContexts`, `fetchReadState`, `publishReadState`, `mergeSlots`, `effectiveReadAt` |
+| unread | §11.3, §11.8 | `unreadIn`, `isUnread` |
 
 Chat, an edit, a reaction and a deletion are built with
 `@estiva-app/protocol`'s `buildMessage`, `buildEdit`, `buildReaction` and
 `buildDeletion`.
 
+Read state takes its environment like the rest: slot storage and randomness
+(`loadSlotIdentity`), the relay query, the signer and NIP-44 (`fetchReadState`,
+`publishReadState`). When to write — the debounce, the dwell before a view
+counts as read — stays the app's.
+
 ## What is not in it
 
-The views (CON-18), unread (CON-19), the composer's editor, and anything only
-one app needs.
+The views (CON-18), the composer's editor, a Folder's roster (the relay's
+`kind:39002`), and anything only one app needs.

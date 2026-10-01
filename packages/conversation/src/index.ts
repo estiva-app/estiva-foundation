@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.1.0'
+export const CONVERSATION_VERSION = '0.2.0'
 
 export {
   KIND_MESSAGE,
@@ -37,6 +37,7 @@ export {
   threadStrength,
   referenceTagsFor,
   mentionTagsFor,
+  peopleNamedInBody,
   MAX_MENTIONED_PEOPLE,
   type Strength,
 } from './strength.js'
@@ -62,6 +63,73 @@ export {
 export { decorationsOf, type Decoration, type Decorations, type Resolution, type QueryFn } from './decorations.js'
 
 export { buildComment, buildReply, offersEditAndDelete, type CommentRef } from './builders.js'
+
+export {
+  KIND_CHANGE,
+  MEMBER_FIELD_PREFIX,
+  memberField,
+  memberOfField,
+  mentions,
+  streamOf,
+  membershipOf,
+  membersOf,
+  membershipFilters,
+  candidateFilesOf,
+  buildMembershipChange,
+  MUTED_D_TAG,
+  APPDATA_TAG,
+  parseMutedBlob,
+  serializeMutedBlob,
+  buildMutedEvent,
+  mutedFilter,
+  mutedFromFollowed,
+  type Membership,
+  type MutedList,
+} from './membership.js'
+
+export {
+  READ_STATE_TAG,
+  READ_STATE_D_PREFIX,
+  MAX_CONTEXTS,
+  MAX_CONTEXT_ID_BYTES,
+  MAX_TIMESTAMP,
+  MAX_CLIENT_ID_BYTES,
+  MAX_BLOB_BYTES,
+  MAX_CONTEXTS_BYTES,
+  READ_STATE_HORIZON_DAYS,
+  channelContext,
+  fileContext,
+  threadContext,
+  messageContext,
+  toContextSeconds,
+  isPublishableContextId,
+  loadSlotIdentity,
+  rotateSlotId,
+  readStateDTag,
+  parseReadStateBlob,
+  serializeReadStateBlob,
+  capContextsToBytes,
+  advanceContexts,
+  buildReadStateEvent,
+  allSlotsFilter,
+  mergeSlots,
+  classifyOwnSlots,
+  effectiveReadAt,
+  fetchReadState,
+  publishReadState,
+  type SlotIdentity,
+  type SlotStorage,
+  type SlotSource,
+  type RandomBytes,
+  type ReadStateBlob,
+  type CappedContexts,
+  type SlotBlob,
+  type OwnSlotVerdict,
+  type Nip44,
+  type FetchedReadState,
+} from './readState.js'
+
+export { unreadIn, isUnread, type StreamJudge } from './unread.js'
 
 export {
   createDraftStore,
