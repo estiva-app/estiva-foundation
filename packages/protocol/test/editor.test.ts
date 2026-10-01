@@ -18,6 +18,7 @@ import {
   parseBlockDocument,
   publishableFromEditor,
   toEditorDocument,
+  type Block,
   type BlockDocument,
   type EditorDocument,
 } from '../dist/index.js'
@@ -124,6 +125,130 @@ describe('the three things it must not lose', () => {
     const ids = idsOf(publishableFromEditor(editing).value)
     assert.equal(ids.length, 2)
     assert.equal(new Set(ids).size, 2)
+  })
+
+  describe('Enter inside an anchored block — MAN-10', () => {
+    /*
+      Tiptap copies a split node's attrs to both halves, so Enter gives two
+      nodes with one `blockId`. This is what that looks like: the node at
+      `at`, cut into `before` and `after`, both claiming its id.
+    */
+    const split = (doc: EditorDocument, at: number, before: string, after: string) => {
+      const node = doc.content[at]
+      const half = (text: string) => ({ ...structuredClone(node), content: text ? [{ type: 'text', text }] : [] })
+      doc.content.splice(at, 1, half(before), half(after))
+      return doc
+    }
+    const save = (doc: EditorDocument) =>
+      parseBlockDocument(publishableFromEditor(doc).value).content.map((b) => ({
+        id: b.id,
+        text: ((b.content ?? []) as { text?: string }[]).map((n) => n.text ?? '').join(''),
+      }))
+
+    const stored = reopen('intro\n\nthe anchored paragraph').value
+    const [introId, anchoredId] = idsOf(stored)
+
+    it('keeps the id on the text when Enter is pressed at the start', () => {
+      // The case that broke: the id went to the new empty line above, and the
+      // comment with it.
+      const saved = save(split(open(stored, 'blocks'), 1, '', 'the anchored paragraph'))
+      assert.equal(saved[0].id, introId)
+      assert.deepEqual(saved[2], { id: anchoredId, text: 'the anchored paragraph' })
+      assert.notEqual(saved[1].id, anchoredId)
+      assert.equal(new Set(saved.map((b) => b.id)).size, 3)
+    })
+
+    it('keeps the id on the first half when Enter is pressed in the middle', () => {
+      const saved = save(split(open(stored, 'blocks'), 1, 'the anchored', ' paragraph'))
+      assert.deepEqual(saved[1], { id: anchoredId, text: 'the anchored' })
+      assert.notEqual(saved[2].id, anchoredId)
+    })
+
+    it('keeps the id on the text when Enter is pressed at the end', () => {
+      const saved = save(split(open(stored, 'blocks'), 1, 'the anchored paragraph', ''))
+      assert.deepEqual(saved[1], { id: anchoredId, text: 'the anchored paragraph' })
+      assert.notEqual(saved[2].id, anchoredId)
+    })
+
+    it('does the same inside a list, where the repeat is a list item', () => {
+      const list = reopen('- first\n- second').value
+      const listId = idsOf(list)[0]
+      const editing = open(list, 'blocks')
+      const items = editing.content[0].content!
+      const second = items[1]
+      const secondId = second.attrs?.blockId
+      const empty = { ...structuredClone(second), content: [{ type: 'paragraph' }] }
+      items.splice(1, 0, empty)
+
+      const saved = parseBlockDocument(publishableFromEditor(editing).value).content[0]
+      assert.equal(saved.id, listId)
+      const savedItems = saved.content as { id: string; content?: { text: string }[] }[]
+      assert.equal(savedItems.length, 3)
+      assert.notEqual(savedItems[1].id, secondId)
+      assert.equal(savedItems[2].id, secondId)
+      assert.equal(savedItems[2].content?.[0].text, 'second')
+    })
+
+    it('leaves the id on the first when no copy holds text', () => {
+      const saved = save(split(open(stored, 'blocks'), 1, '', ''))
+      assert.equal(saved[1].id, anchoredId)
+      assert.notEqual(saved[2].id, anchoredId)
+    })
+
+    it('counts a line break on its own as holding something', () => {
+      const editing = open(stored, 'blocks')
+      const copy = { ...structuredClone(editing.content[1]), content: [{ type: 'text', text: 'typed later' }] }
+      editing.content[1].content = [{ type: 'hardBreak' }]
+      editing.content.push(copy)
+      assert.equal(save(editing)[1].id, anchoredId)
+    })
+
+    it('does the same inside a table cell', () => {
+      const table: BlockDocument = {
+        type: 'doc',
+        content: [
+          {
+            type: 'table',
+            id: 't1',
+            content: [
+              {
+                type: 'tableRow',
+                id: 'r1',
+                content: [
+                  {
+                    type: 'tableCell',
+                    id: 'c1',
+                    content: [{ type: 'paragraph', id: 'p1', content: [{ type: 'text', text: 'in a cell' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+      const editing = toEditorDocument(table)
+      const cell = editing.content[0].content![0].content![0]
+      cell.content!.unshift({ type: 'paragraph', attrs: { blockId: 'p1' } })
+
+      const savedCell = (fromEditorDocument(editing).content[0].content as Block[])[0].content![0] as Block
+      const paragraphs = savedCell.content as Block[]
+      assert.notEqual(paragraphs[0].id, 'p1')
+      assert.equal(paragraphs[1].id, 'p1')
+    })
+
+    it('never gives an unknown block’s id to an ordinary block, wherever it sits', () => {
+      // The unknown block hands its id back untouched, so the other one must yield.
+      const editing = toEditorDocument({
+        type: 'doc',
+        content: [
+          { type: 'paragraph', id: 'w1', content: [{ type: 'text', text: 'claims the same id' }] },
+          { type: 'widget', id: 'w1', content: [{ type: 'text', text: 'a widget' }] },
+        ],
+      })
+      const ids = fromEditorDocument(editing).content.map((b) => b.id)
+      assert.equal(ids[1], 'w1')
+      assert.notEqual(ids[0], 'w1')
+    })
   })
 
   const withWidget: BlockDocument = {
