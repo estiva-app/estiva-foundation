@@ -241,9 +241,17 @@ export function toEditorDocument(document: BlockDocument): EditorDocument {
 
 // ── Editor → document ────────────────────────────────────────────────────────
 
+/** The node that keeps a claimed id, and why it would give it up. */
+interface Owner {
+  node: EditorNode
+  holdsText: boolean
+  /** An unknown block, which hands its id back untouched and so never loses it. */
+  fixed: boolean
+}
+
 /** What one save has decided about ids: which node keeps each, and which are taken. */
 interface IdClaims {
-  owners: Map<string, EditorNode>
+  owners: Map<string, Owner>
   seen: Set<string>
 }
 
@@ -252,10 +260,13 @@ const claimOf = (node: EditorNode): string | undefined => {
   return typeof claimed === 'string' && claimed !== '' ? claimed : undefined
 }
 
-/** Whether anything a person typed or inserted is inside — an empty paragraph is not. */
+/**
+ * Whether anything a person typed or inserted is inside — an empty paragraph
+ * is not, and a line break on its own is.
+ */
 function holdsText(node: EditorNode): boolean {
   if (node.type === 'text') return (node.text ?? '') !== ''
-  if (node.type === REFERENCE_NODE) return true
+  if (node.type === REFERENCE_NODE || node.type === 'hardBreak') return true
   return (node.content ?? []).some(holdsText)
 }
 
@@ -263,14 +274,22 @@ function holdsText(node: EditorNode): boolean {
  * Picks the node that keeps each claimed id, before any is handed out — see
  * the header on duplicates. Walks exactly the nodes {@link blockFromEditor}
  * turns into blocks, in the same order.
+ *
+ * An unknown block's id is reserved wherever it sits: it cannot be re-minted,
+ * so an ordinary block claiming the same id loses even when it comes first.
  */
-function claimIds(nodes: readonly EditorNode[], owners: Map<string, EditorNode>): void {
+function claimIds(nodes: readonly EditorNode[], owners: Map<string, Owner>): void {
   for (const node of nodes) {
-    if (node.type === UNKNOWN_BLOCK_NODE) continue
+    if (node.type === UNKNOWN_BLOCK_NODE) {
+      const id = (node.attrs?.source as Block | undefined)?.id
+      if (id && !owners.get(id)?.fixed) owners.set(id, { node, holdsText: true, fixed: true })
+      continue
+    }
     const claimed = claimOf(node)
     if (claimed !== undefined) {
       const owner = owners.get(claimed)
-      if (!owner || (!holdsText(owner) && holdsText(node))) owners.set(claimed, node)
+      const holds = holdsText(node)
+      if (!owner || (!owner.fixed && !owner.holdsText && holds)) owners.set(claimed, { node, holdsText: holds, fixed: false })
     }
     if (BLOCK_CONTAINERS.has(node.type)) claimIds(node.content ?? [], owners)
   }
@@ -279,7 +298,7 @@ function claimIds(nodes: readonly EditorNode[], owners: Map<string, EditorNode>)
 /** Mints on a missing id and on a repeat that lost — see the header on duplicates. */
 function idFor(node: EditorNode, claims: IdClaims): string {
   const claimed = claimOf(node)
-  const keeps = claimed !== undefined && claims.owners.get(claimed) === node && !claims.seen.has(claimed)
+  const keeps = claimed !== undefined && claims.owners.get(claimed)?.node === node && !claims.seen.has(claimed)
   const id = keeps ? claimed : newBlockId()
   claims.seen.add(id)
   return id

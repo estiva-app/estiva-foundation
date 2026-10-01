@@ -18,6 +18,7 @@ import {
   parseBlockDocument,
   publishableFromEditor,
   toEditorDocument,
+  type Block,
   type BlockDocument,
   type EditorDocument,
 } from '../dist/index.js'
@@ -186,6 +187,67 @@ describe('the three things it must not lose', () => {
       assert.notEqual(savedItems[1].id, secondId)
       assert.equal(savedItems[2].id, secondId)
       assert.equal(savedItems[2].content?.[0].text, 'second')
+    })
+
+    it('leaves the id on the first when no copy holds text', () => {
+      const saved = save(split(open(stored, 'blocks'), 1, '', ''))
+      assert.equal(saved[1].id, anchoredId)
+      assert.notEqual(saved[2].id, anchoredId)
+    })
+
+    it('counts a line break on its own as holding something', () => {
+      const editing = open(stored, 'blocks')
+      const copy = { ...structuredClone(editing.content[1]), content: [{ type: 'text', text: 'typed later' }] }
+      editing.content[1].content = [{ type: 'hardBreak' }]
+      editing.content.push(copy)
+      assert.equal(save(editing)[1].id, anchoredId)
+    })
+
+    it('does the same inside a table cell', () => {
+      const table: BlockDocument = {
+        type: 'doc',
+        content: [
+          {
+            type: 'table',
+            id: 't1',
+            content: [
+              {
+                type: 'tableRow',
+                id: 'r1',
+                content: [
+                  {
+                    type: 'tableCell',
+                    id: 'c1',
+                    content: [{ type: 'paragraph', id: 'p1', content: [{ type: 'text', text: 'in a cell' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+      const editing = toEditorDocument(table)
+      const cell = editing.content[0].content![0].content![0]
+      cell.content!.unshift({ type: 'paragraph', attrs: { blockId: 'p1' } })
+
+      const savedCell = (fromEditorDocument(editing).content[0].content as Block[])[0].content![0] as Block
+      const paragraphs = savedCell.content as Block[]
+      assert.notEqual(paragraphs[0].id, 'p1')
+      assert.equal(paragraphs[1].id, 'p1')
+    })
+
+    it('never gives an unknown block’s id to an ordinary block, wherever it sits', () => {
+      // The unknown block hands its id back untouched, so the other one must yield.
+      const editing = toEditorDocument({
+        type: 'doc',
+        content: [
+          { type: 'paragraph', id: 'w1', content: [{ type: 'text', text: 'claims the same id' }] },
+          { type: 'widget', id: 'w1', content: [{ type: 'text', text: 'a widget' }] },
+        ],
+      })
+      const ids = fromEditorDocument(editing).content.map((b) => b.id)
+      assert.equal(ids[1], 'w1')
+      assert.notEqual(ids[0], 'w1')
     })
   })
 

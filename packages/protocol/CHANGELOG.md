@@ -13,9 +13,13 @@ repeated id (MAN-10).
   empty block.** Tiptap copies a split node's attrs to both halves, and
   `fromEditorDocument` kept a repeated id on the first in document order — the
   empty line above — so the comment anchored there (§13.6) pointed at nothing.
-  A repeated id now stays on the first copy that holds text, and falls back to
-  the first only when none does. A split in the middle or at the end, and a
-  pasted copy, keep the id where they did.
+  A repeated id now stays on the first copy that holds text (a line break
+  counts), and falls back to the first only when none does. A split in the
+  middle or at the end keeps the id where it did; so does a pasted copy,
+  unless the original has since been emptied, when the id follows the text.
+- **Fixed: an ordinary block before an unknown block with the same id** kept
+  it too, and the document went out with the id twice. An unknown block's id
+  is now reserved wherever it sits, and the ordinary block is re-minted.
 
 ## 0.26.0 — 2026-09-30
 
