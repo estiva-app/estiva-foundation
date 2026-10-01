@@ -55,6 +55,12 @@ import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
  * id, and every comment anchored to it, onto that empty line. So the id stays
  * with the first copy that holds text, and only an all-empty set falls back to
  * the first.
+ *
+ * This is the backstop. `@estiva-app/ui/editor`'s `BlockId` settles a repeat
+ * inside the editor as it happens, where the change itself says which copy
+ * the original carried on into — the only place Enter-then-type above a
+ * paragraph can be told from the paragraph. It falls back to this rule, so a
+ * change to `holdsText` here belongs there too.
  */
 
 /** A ProseMirror/Tiptap node, as JSON. */
