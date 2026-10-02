@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { encodeNaddr, encodeNpub, type SignedEvent } from '@estiva-app/protocol'
+import { decodeNevent, encodeNaddr, encodeNpub, type SignedEvent } from '@estiva-app/protocol'
 import {
   anchorsOf,
   buildComment,
@@ -18,12 +18,16 @@ import {
   foldAttachments,
   groupReactions,
   mentionTagsFor,
+  mentionText,
+  messageReference,
   parentOf,
   reactionEventsOf,
   referenceTagsFor,
   groupThreads,
   threadStrength,
   trustedTs,
+  URGENT_TAG,
+  urgentTagsFor,
   type DraftStorage,
 } from '../dist/index.js'
 
@@ -134,6 +138,31 @@ describe('writing a comment', () => {
     const body = `${naddrOf(ISSUE)} and ${naddrOf(OTHER)} and nostr:naddr1broken, cc nostr:${encodeNpub(BOB)}`
     assert.deepEqual(referenceTagsFor(body, ISSUE), [['a', OTHER]])
     assert.deepEqual(mentionTagsFor(body), [['p', BOB]])
+  })
+})
+
+describe('what a composer pick writes (§13.1)', () => {
+  it('names a person by key, and by name only when there is none', () => {
+    assert.equal(mentionText({ pubkey: BOB, label: 'Bob' }), `nostr:${encodeNpub(BOB)}`)
+    assert.equal(mentionText({ pubkey: BOB, label: 'Bob' }, true), `nostr:${encodeNpub(BOB)}`)
+    assert.equal(mentionText({ pubkey: null, label: 'Bob' }), '@Bob')
+    assert.equal(mentionText({ label: 'Bob' }, true), '!@Bob')
+  })
+
+  it('references a message exactly as Peek wrote one on production', () => {
+    // QA-1's `[` pick on the QA file, 2026-10-02, before CON-27.
+    const sent = 'nostr:nevent1qqsds8wuep0d8vya3nnj3l32d5wcm7kza3kcsmhx0juzpgggrwn3fhcrqsqqqqqfcqncpp'
+    const pointer = decodeNevent(sent.slice('nostr:'.length))
+    assert.equal(pointer.kind, 9)
+    assert.deepEqual(pointer.relays, [])
+    assert.equal(messageReference(pointer.id, 9), sent)
+  })
+
+  it('tags each urgent person the body names, once, and drops one it no longer names', () => {
+    const body = `nostr:${encodeNpub(BOB)} and nostr:${encodeNpub(ALICE)}`
+    assert.deepEqual(urgentTagsFor(body, [BOB, BOB, 'c'.repeat(64)]), [[URGENT_TAG, BOB]])
+    assert.deepEqual(urgentTagsFor(body, undefined), [])
+    assert.deepEqual(urgentTagsFor(body, []), [])
   })
 })
 

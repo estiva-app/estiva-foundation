@@ -25,6 +25,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | comment or mention | §6.4 | `isCommentOn`, `strengthOn`, `threadStrength`, `anchorsOf`, `isReply`, `namedInBody` |
 | threading | §6.4 *Replies* | `parentOf`, `groupThreads` |
 | writing | §6.4 | `buildComment`, `buildReply`, `referenceTagsFor`, `mentionTagsFor` |
+| what a composer's pick writes | §13.1 | `mentionText`, `messageReference`, `urgentTagsFor`, `URGENT_TAG` |
 | ordering | §6.2, §6.3 | `trustedTs`, `orderingMs`, `byOrder` |
 | edits and attachments | §6.8 | `editTargetOf`, `foldEdits`, `foldAttachments` |
 | reactions | §6.6 | `REACTION_HORIZON`, `reactionHorizon`, `reactionTargetOf`, `reactionEmojiOf`, `foldReactions` |
@@ -54,5 +55,7 @@ dot built only on discovery would miss a file the limit dropped.
 
 ## What is not in it
 
-The views (CON-18), the composer's editor, a Folder's roster (the relay's
+The views (CON-18), the composer's editor and its `@`, `!@`, `[` and `/`
+menus (`@estiva-app/ui/editor`, which writes through `mentionText` and
+`messageReference` above), a Folder's roster (the relay's
 `kind:39002`), and anything only one app needs.

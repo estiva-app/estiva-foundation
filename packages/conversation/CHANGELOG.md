@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.3.0 — 2026-10-02
+
+**What a composer's pick writes** (CON-27): SPEC §13.1, unchanged. Needs
+protocol 0.24.0, unchanged.
+
+- `mentionText` — a person as the body names them: `nostr:npub…`, or `@Name`
+  (`!@Name` when urgent) for somebody with no key.
+- `messageReference` — a message as `nostr:nevent…` with its kind and no
+  relay hint.
+- `urgentTagsFor` and `URGENT_TAG` — `["urgent", <pubkey>]`, one per urgent
+  person the body names (CON-17), moved here from Peek.
+
+The bytes are the ones Peek wrote; it takes them from here now, and
+`@estiva-app/ui/editor`'s `@`, `!@` and `[` menus write through them. **SPEC:**
+none changed — this is the writing half of §13.1 an app had to implement
+itself.
+
 ## 0.2.0 — 2026-10-01
 
 **Read state and membership** (CON-19): SPEC §11, and §11.8 as amended in
