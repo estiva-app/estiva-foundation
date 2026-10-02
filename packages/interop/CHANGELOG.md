@@ -6,6 +6,24 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.45.0 — 2026-10-02
+
+**Manifests: nothing changes.** Every published manifest means what it meant,
+and every existing export behaves as before. One new export (PER-21). Needs
+protocol 0.24.0 and conversation 0.1.0, unchanged.
+
+- **`projectEvents(events, manifestFor)`**: every object in a set of events
+  the caller already holds, projected with no requests. `manifestFor` answers
+  the manifest per root author (`kind:pubkey`), as `resolveManifest` does, so
+  an object is still drawn by the app its own author recommended. Each root of a kind the
+  manifest projects becomes the object `resolveForeignObject` builds for it:
+  the same fold, archive, slots, meta, parent and actions. It has no
+  `comments`, `children`, `people` or borrowed actions, because each of those
+  needs a read. Two versions of one root collapse by NIP-01's rule.
+  It is for a reader that wants a whole app's workspace. estiva-agent re-reads
+  Ship's on every command, which costs ~100 POSTs through
+  `resolveForeignObjects` and a few paged queries this way.
+
 ## 0.44.0 — 2026-10-02
 
 **Manifests: one new optional field, `fileNoun`, read only beside `aspect`; and

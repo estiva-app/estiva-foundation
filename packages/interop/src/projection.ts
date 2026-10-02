@@ -3147,6 +3147,103 @@ export async function resolveForeignObjects(
 }
 
 /**
+ * Every object in a set of events the caller already holds, projected — PER-21.
+ * **No requests.**
+ *
+ * {@link resolveForeignObjects} reads each object's own filters, which is the
+ * right price for a sidebar holding a few dozen and the wrong one for a reader
+ * that wants a whole app's workspace: interop's own measurement put 110 issues
+ * at 20 POSTs and a megabyte (FOL-50), and estiva-agent re-reads its workspace
+ * on every command. A reader like that can fetch the roots and the app's change
+ * kind in bulk — a few paged queries — and hand them here.
+ *
+ * Each root of a kind the manifest projects becomes exactly the object
+ * `resolveForeignObject` builds for it: the same fold (`records`, §6.2–6.3),
+ * the same archive read, the same slots, meta, parent and actions. What is
+ * deliberately absent is everything that would need another read:
+ *
+ * - **`comments` is `[]`.** A comment is a separate event in a Folder, and
+ *   which comments the caller fetched says nothing about which it did not.
+ *   Read conversations with {@link conversationsOf} and {@link threadsOf}.
+ * - **No `children`.** A `list` slot is containment, and the children are
+ *   other objects in the same answer: nest them by `parentRef`.
+ * - **No `people`, and no borrowed actions** (MAN-8) — both are reads.
+ *
+ * - **No archive inherited from a parent.** `archived` is the object's own
+ *   change; `resolveForeignObjects`'s `archivedWith` reads the parents' too,
+ *   and here the parent is simply another object in the answer, whose
+ *   `archived` the consumer can read by `parentRef`.
+ *
+ * Two versions of one root (a replay, two relays) collapse by NIP-01's rule,
+ * as the relay's own replacement does: later `created_at`, then the lower id.
+ * Objects come back in no particular order; sort them as the consumer draws.
+ *
+ * Linear in the events: the changes are grouped by target once, so a
+ * workspace of hundreds of roots does not rescan thousands of changes per root.
+ */
+export function projectEvents(
+  events: readonly SignedEvent[],
+  /**
+   * The manifest each root is read through, **per author** — what
+   * {@link resolveManifest} answered for that root's `kind:pubkey`, from the
+   * caller's own resolution (a {@link ProjectionCache} keeps it to one read per
+   * author). Per author, not one for all, because that is the trust anchor
+   * `resolveForeignObject` keeps: an object is drawn by the app *its author*
+   * recommended, and `viaRecommendation` says whether they did. A root this
+   * answers `undefined` for, or whose kind its manifest does not project, is
+   * not an object here.
+   */
+  manifestFor: (pointer: AddressPointer) => ResolvedManifest | undefined,
+): ForeignObject[] {
+  const roots = new Map<string, { root: SignedEvent; pointer: AddressPointer; resolved: ResolvedManifest }>()
+  for (const event of events) {
+    const identifier = tagValue(event, 'd')
+    if (identifier === undefined) continue
+    const pointer: AddressPointer = { kind: event.kind, pubkey: event.pubkey, identifier, relays: [] }
+    const resolved = manifestFor(pointer)
+    if (!resolved?.manifest.projections?.[String(event.kind)]) continue
+    const address = `${event.kind}:${event.pubkey}:${identifier}`
+    const held = roots.get(address)?.root
+    if (!held || event.created_at > held.created_at || (event.created_at === held.created_at && event.id < held.id)) {
+      roots.set(address, { root: event, pointer, resolved })
+    }
+  }
+
+  // Each helper still applies its own kind and target test to what it is
+  // handed; grouping by target once only narrows what it has to look at.
+  const grouped = new Map<string, Map<string, SignedEvent[]>>()
+  const byTarget = (targetTag: string) => {
+    let byAddress = grouped.get(targetTag)
+    if (byAddress) return byAddress
+    byAddress = new Map()
+    for (const event of events) {
+      const target = tagValue(event, targetTag)
+      if (target === undefined || !roots.has(target)) continue
+      const list = byAddress.get(target)
+      if (list) list.push(event)
+      else byAddress.set(target, [event])
+    }
+    grouped.set(targetTag, byAddress)
+    return byAddress
+  }
+
+  return [...roots].map(([address, { root, pointer, resolved }]) => {
+    const { manifest } = resolved
+    const archiveRule = archiveRuleOf(manifest)
+    return buildObject({
+      root,
+      pointer,
+      manifest,
+      projection: manifest.projections![String(root.kind)],
+      folded: foldOf(byTarget(foldRuleOf(manifest).targetTag).get(address) ?? [], address, manifest),
+      viaRecommendation: resolved.viaRecommendation,
+      webTemplate: resolved.webTemplate,
+      archived: archiveOf(byTarget(archiveRule.targetTag).get(address) ?? [], address, archiveRule),
+    })
+  })
+}
+
+/**
  * The parent each file sits under, and nothing else — FOL-50.
  *
  * {@link resolveForeignObjects} answers this on the way to a whole object, and
