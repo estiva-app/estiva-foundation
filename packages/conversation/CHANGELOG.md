@@ -6,6 +6,22 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.4.0 — 2026-10-02
+
+**A reference records which message it points at** (CON-25, Miky
+2026-10-02). Needs protocol 0.24.0, unchanged.
+
+- `quoteTagsFor(body, own?)` — `["q", <event id>]`, one per message the body
+  references by `nostr:nevent…` or `nostr:note…`, deduplicated, leaving out
+  `own`. A writer appends it to a `kind:9` or a `kind:1111` beside the `p`
+  and `a` tags the body earns.
+- `eventsNamedInBody` — the ids behind them.
+
+**SPEC:** §13.1 gains the `q` rule (estiva-docs, CON-25): a `q` is an index
+of what a message points at, never a reply, and a writer MUST NOT write one
+for an event its body does not name. Reading is unchanged — nothing in this
+package reads `q` yet.
+
 ## 0.3.0 — 2026-10-02
 
 **What a composer's pick writes** (CON-27): SPEC §13.1, unchanged. Needs
