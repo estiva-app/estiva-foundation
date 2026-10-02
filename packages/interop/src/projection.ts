@@ -926,6 +926,17 @@ interface Manifest {
    * where a link to it should land. Nothing else consults it yet.
    */
   aspect?: string
+  /**
+   * What this app calls a file nobody owns when it opens one, lower case and
+   * singular: Peek's is "topic" (PRO-24). Read only beside `aspect`, from the
+   * same manifest a bare file's link comes from, and resolved onto that bare
+   * file's {@link ForeignObject.noun}.
+   *
+   * The opener's word and not the protocol's, Miky's call on 2026-10-02: a
+   * company running its own conversation app calls these whatever its people
+   * call them, and the specification never has to pick.
+   */
+  fileNoun?: string
 }
 
 /**
@@ -1243,10 +1254,11 @@ export interface ResolvedManifest {
  * folds the way an issue's `project` field does — a root tag seeds the value,
  * a change event overrides it.
  *
- * `name` is what a consumer prints where it would print the owning app's
- * name. "File" rather than "Bare file", because that word is for the
- * specification and a person looking at a card next to a Ship issue is better
- * served by the plain noun.
+ * What a person reads on it comes from that app too (PRO-24). Its `appName` is
+ * the opener's name, because that is where its link goes — "Open in File" told
+ * nobody anything. Its `noun` is the opener's `fileNoun`, so Peek's topic says
+ * "topic". `name` below is "File" only for the file nothing can open, where a
+ * consumer has no app to print.
  */
 export const KIND_BARE_FILE = 30840
 
@@ -1428,6 +1440,31 @@ const BARE_FILE_MANIFEST: Manifest = {
 
 function bareFileManifest(): ResolvedManifest {
   return { manifest: BARE_FILE_MANIFEST, address: BARE_FILE_MANIFEST_ADDRESS, viaRecommendation: false }
+}
+
+/**
+ * The built-in manifest, named by the app that opens it — PRO-24.
+ *
+ * Only the name and the bare file's noun are the opener's. The address stays
+ * the specification's, and every rule — fold, slots, actions — stays this
+ * runtime's, so a published manifest still cannot change how a bare file
+ * behaves; it can only say what it is called where it opens. A comment takes
+ * the name (it opens in the same app) and not the noun, which is the file's.
+ */
+function bareFileOpenedBy(opener: Manifest, template: string): ResolvedManifest {
+  const name = typeof opener.name === 'string' && opener.name.trim() ? opener.name.trim() : BARE_FILE_MANIFEST.name
+  const fileNoun = typeof opener.fileNoun === 'string' ? opener.fileNoun.trim() : ''
+  const projections = BARE_FILE_MANIFEST.projections!
+  const bare = String(KIND_BARE_FILE)
+  return {
+    ...bareFileManifest(),
+    manifest: {
+      ...BARE_FILE_MANIFEST,
+      name,
+      ...(fileNoun ? { projections: { ...projections, [bare]: { ...projections[bare], noun: fileNoun } } } : {}),
+    },
+    webTemplate: template,
+  }
 }
 
 /**
@@ -1662,9 +1699,7 @@ export async function resolveManifest(
   // is the one that can show a thread in it (FOL-38).
   if (pointer.kind === KIND_BARE_FILE || pointer.kind === KIND_COMMENT) {
     const opener = await resolveAspectApp('conversation', query, cache, pointer.kind === KIND_COMMENT ? 'nevent' : 'naddr')
-    return opener?.webTemplate
-      ? { ...bareFileManifest(), webTemplate: opener.webTemplate }
-      : bareFileManifest()
+    return opener?.webTemplate ? bareFileOpenedBy(opener.manifest, opener.webTemplate) : bareFileManifest()
   }
   return throughCache(cache, `${pointer.kind}:${pointer.pubkey}`, () => resolveManifestUncached(pointer, query))
 }
@@ -2680,8 +2715,8 @@ export interface ForeignObject {
    * issue", a confirm's "Delete this project?". Without it Peek called a Ship
    * issue a topic, because the only way to know better was to check the kind
    * number, which is the check a manifest exists to replace. Absent when the
-   * owner declares none, and for the bare file, whose manifest lives here: a
-   * consumer says its own word for a file nobody owns.
+   * owner declares none. A bare file's is the `fileNoun` of the app that
+   * opens it (PRO-24), and absent when that app declares none.
    */
   noun?: string
   /** Named single slots: title, subtitle, status. */

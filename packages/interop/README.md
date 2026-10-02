@@ -480,7 +480,7 @@ in the workspace** — a chat app draws each file's conversation, a writing app
 each file's document (RFC 0.5 §10.7). Its manifest says so with one field:
 
 ```jsonc
-{ "name": "Peek", "aspect": "conversation", "projections": {} }
+{ "name": "Peek", "aspect": "conversation", "fileNoun": "topic", "projections": {} }
 ```
 
 What a consumer does with it today: a **bare file** (`kind:30840`, SPEC §6.7)
@@ -489,6 +489,12 @@ conversation is where a link to it belongs. Publish `aspect` and a `web`
 template for `naddr` on the same `kind:31990`, and every consumer's card for a
 topic becomes a link into your app — with no change on their side. `ASPECTS`
 is exported and holds the two values.
+
+The bare file is then named after your app too: its `appName` is your `name`,
+and its `noun` is your `fileNoun` — what your people call a file nobody owns,
+lower case and singular. Leave `fileNoun` out and the file has no noun, and a
+consumer falls back to your app's name. Nothing else in your manifest applies to
+a bare file; its slots, fold rule and actions are the runtime's.
 
 The same is true of a **comment** (`kind:1111`): every app writes one and none
 owns it, so the built-in manifest draws it — the author as its title, the text
