@@ -11,9 +11,9 @@
  * | --- | --- | --- |
  * | a person (`@`) | `nostr:npub…`, or `@Name` with no key | `p`, from {@link mentionTagsFor} |
  * | a person, urgently (`!@`) | the same `nostr:npub…`, or `!@Name` | `p`, and {@link urgentTagsFor}'s `["urgent", <pubkey>]` |
- * | a message (`[`) | `nostr:nevent…` with its kind and no relay | none yet — a `q` from CON-25 (Decided on CON-26) |
+ * | a message (`[`) | `nostr:nevent…` with its kind and no relay | `q`, from {@link quoteTagsFor} (CON-25) |
  */
-import { encodeNevent, encodeNpub, type NostrTag } from '@estiva-app/protocol'
+import { bech32Decode, convertBits, decodeNevent, encodeNevent, encodeNpub, findNostrUris, type NostrTag } from '@estiva-app/protocol'
 import { mentionTagsFor } from './strength.js'
 
 /**
@@ -60,4 +60,43 @@ export function urgentTagsFor(body: string, urgent: readonly string[] | undefine
   if (!urgent || urgent.length === 0) return []
   const named = new Set(mentionTagsFor(body).map((tag) => tag[1]))
   return [...new Set(urgent)].filter((pubkey) => named.has(pubkey)).map((pubkey) => [URGENT_TAG, pubkey])
+}
+
+/** The event id a `note1…` names: its 32 bytes, as hex. Throws on anything else. */
+function decodeNote(encoded: string): string {
+  const { hrp, data } = bech32Decode(encoded.toLowerCase())
+  if (hrp !== 'note') throw new Error(`expected a note, got ${hrp}`)
+  const bytes = convertBits(data, 5, 8, false)
+  if (bytes.length !== 32) throw new Error('a note is 32 bytes')
+  return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** The events a body references by `nostr:nevent…` or `nostr:note…` (§13.1), in the order it names them. */
+export function eventsNamedInBody(body: string): Set<string> {
+  const ids = new Set<string>()
+  for (const uri of findNostrUris(body)) {
+    const bech = uri.slice('nostr:'.length)
+    try {
+      if (bech.startsWith('nevent1')) ids.add(decodeNevent(bech).id)
+      else if (bech.startsWith('note1')) ids.add(decodeNote(bech))
+    } catch {
+      // A malformed pointer is prose.
+    }
+  }
+  return ids
+}
+
+/**
+ * The `q` tags a body earns: `["q", <event id>]`, one per event it references
+ * (SPEC §13.1, CON-25). NIP-18's quote, as an index of *which message this one
+ * points at* — never a reply, which is `e` (§6.4). Two elements: the relay is
+ * the workspace's, and a `[` pick's `nevent` carries no author to fill a third.
+ *
+ * `own`, when given, is left out — the event a reply already names by `e`, so
+ * one message is not both answered and quoted.
+ */
+export function quoteTagsFor(body: string, own = ''): NostrTag[] {
+  const ids = eventsNamedInBody(body)
+  ids.delete(own)
+  return [...ids].map((id) => ['q', id])
 }

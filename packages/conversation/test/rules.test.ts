@@ -21,6 +21,7 @@ import {
   mentionText,
   messageReference,
   parentOf,
+  quoteTagsFor,
   reactionEventsOf,
   referenceTagsFor,
   groupThreads,
@@ -163,6 +164,18 @@ describe('what a composer pick writes (§13.1)', () => {
     assert.deepEqual(urgentTagsFor(body, [BOB, BOB, 'c'.repeat(64)]), [[URGENT_TAG, BOB]])
     assert.deepEqual(urgentTagsFor(body, undefined), [])
     assert.deepEqual(urgentTagsFor(body, []), [])
+  })
+
+  it('earns a q per message the body references, by nevent or note, once, and never its own', () => {
+    // The same `[` pick as above, and a `note1…` naming another event (NIP-19's own example id).
+    const picked = 'nostr:nevent1qqsds8wuep0d8vya3nnj3l32d5wcm7kza3kcsmhx0juzpgggrwn3fhcrqsqqqqqfcqncpp'
+    const id = decodeNevent(picked.slice('nostr:'.length)).id
+    const note = 'nostr:note1fntxtkcy9pjwucqwa9mddn7v03wwwsu9j330jj350nvhpky2tuaspk6nqc'
+    const other = '4cd665db042864ee600ee976d6cfcc7c5ce743859462f94a347cd970d88a5f3b'
+    const body = `${picked} and ${note}, again ${picked}, and nostr:nevent1broken cc nostr:${encodeNpub(BOB)}`
+    assert.deepEqual(quoteTagsFor(body), [['q', id], ['q', other]])
+    assert.deepEqual(quoteTagsFor(body, id), [['q', other]])
+    assert.deepEqual(quoteTagsFor('no references'), [])
   })
 })
 
