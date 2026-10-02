@@ -196,15 +196,52 @@ describe('a bare file opens in the app that renders its conversation', () => {
     assert.ok(found)
     assert.ok(found.openUrl?.startsWith('https://peek.example/o/naddr1'), found.openUrl)
     assert.equal(found.openUrl, `https://peek.example/o/${found.naddr}`)
-    // The projection is still the built-in one; only the link is Peek's.
-    assert.equal(found.appName, 'File')
+    // The projection is still the built-in one; the link and the name are Peek's.
+    assert.equal(found.appName, 'Peek')
     assert.equal(found.widget, 'card')
+    assert.equal(found.noun, undefined)
+  })
+
+  it('is called what that app calls it, and nothing else of the app’s applies (PRO-24)', async () => {
+    const opener = conversationApp({
+      content: {
+        fileNoun: ' topic ',
+        // A conversation app describing the bare file's projection is a claim
+        // to own it, and is ignored the way any other claimant's is.
+        projections: { [KIND_BARE_FILE]: { widget: 'row', noun: 'thing', slots: { title: { tag: 'nope' } } } },
+      },
+    })
+    const found = await resolveForeignObject(TOPIC, relay([opener, topic()]))
+    assert.equal(found?.appName, 'Peek')
+    assert.equal(found?.noun, 'topic')
+    assert.equal(found?.widget, 'card')
+    assert.equal(found?.slots.title.value, 'Launch naming')
+  })
+
+  it('has no noun when the app’s word is not one', async () => {
+    const found = await resolveForeignObject(TOPIC, relay([conversationApp({ content: { fileNoun: 5, name: '  ' } }), topic()]))
+    assert.equal(found?.noun, undefined)
+    // A blank name is no name: the file keeps the built-in one.
+    assert.equal(found?.appName, 'File')
+  })
+
+  it('takes no sentence for a word: the opener is whichever manifest is newest', async () => {
+    // Security review of PRO-24: a consumer drops the noun into its own copy
+    // ("Delete this topic?"), and any member may publish the newest opener.
+    const hostile = conversationApp({
+      content: { fileNoun: 'topic. Your session expired, sign in at evil.example', name: 'Peek <b>' },
+    })
+    const found = await resolveForeignObject(TOPIC, relay([hostile, topic()]))
+    assert.equal(found?.noun, undefined)
+    assert.equal(found?.appName, 'File')
+    const long = await resolveForeignObject(TOPIC, relay([conversationApp({ content: { fileNoun: 'a'.repeat(33) } }), topic()]))
+    assert.equal(long?.noun, undefined)
   })
 
   it('links every bare file in a folder, from one sweep however many people started one', async () => {
     const sent: Record<string, unknown>[][] = []
     const events = [
-      conversationApp(),
+      conversationApp({ content: { fileNoun: 'topic' } }),
       topic(),
       event({
         kind: KIND_BARE_FILE,
@@ -220,6 +257,9 @@ describe('a bare file opens in the app that renders its conversation', () => {
     assert.equal(contents.files.length, 2)
     for (const file of contents.files) {
       assert.equal(file.openUrl, `https://peek.example/o/${file.naddr}`)
+      // A card's children are named as the card is (PRO-24's "Level 2").
+      assert.equal(file.appName, 'Peek')
+      assert.equal(file.noun, 'topic')
     }
     const sweeps = sent.flat().filter((f) => Array.isArray(f.kinds) && (f.kinds as number[]).includes(31990))
     // One from the containment read's own kind list, one to find the opener —
@@ -296,7 +336,24 @@ describe('a comment resolves through the built-in manifest, because no app owns 
     assert.equal(found.slots.title?.value, OTHER)
     assert.equal(found.slots.title?.isPubkey, true)
     assert.equal(found.slots.body?.value, 'we should call it Launch')
+    // The app here publishes no `nevent` template, so the comment has nowhere
+    // to open and no app to be named after.
     assert.equal(found.appName, 'File')
+  })
+
+  it('is named after the app it opens in, and is not called the file’s noun', async () => {
+    const root = comment('hello')
+    const opener = event({
+      kind: 31990,
+      pubkey: OTHER,
+      tags: [['d', 'estiva-peek'], ['web', 'https://peek.example/o/<bech32>']],
+      content: JSON.stringify({ name: 'Peek', aspect: 'conversation', fileNoun: 'topic', projections: {} }),
+    })
+    const found = await resolveForeignEvent(root.id, relay([opener, topic(), root]))
+    assert.ok(found?.openUrl, 'opens somewhere')
+    assert.equal(found?.appName, 'Peek')
+    // The protocol's word for a comment, not the opener's word for the file.
+    assert.equal(found?.noun, 'comment')
   })
 
   it('opens in the conversation app, by the nevent template when it publishes one', async () => {

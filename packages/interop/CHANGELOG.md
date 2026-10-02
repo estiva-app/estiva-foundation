@@ -6,6 +6,41 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.44.0 — 2026-10-02
+
+**Manifests: one new optional field, `fileNoun`, read only beside `aspect`; and
+the bare file reads its opener's `name`** (PRO-24). A manifest already
+published means what it meant for every kind it owns. What changes is how the
+manifest a bare file *opens in* is read. Needs protocol 0.24.0 and conversation
+0.1.0, unchanged.
+
+- **A bare file is named by the app that opens it.** Its `appName` was always
+  "File", while its `openUrl` came from the conversation app's manifest. So
+  Ship labelled a Peek topic "File", and its hand-off had to name the app
+  itself for the top card (ship#226). It now
+  takes `appName` from that same manifest ("Peek"), and stays "File" only when
+  no app can open it. A comment (`kind:1111`) takes the opener's name the same
+  way.
+- **`fileNoun`: what a generic app calls a file nobody owns.** Lower case and
+  singular, next to `aspect`; Peek's will be "topic". It resolves onto the bare
+  file's `ForeignObject.noun`, and is absent when the opener declares none or
+  declares something that is not a non-empty string. A comment does not take
+  it. This is the opener's word, not the protocol's (Miky, 2026-10-02): another
+  company's conversation app may call these threads.
+- **A comment's noun is "comment"**, declared on the built-in `kind:1111`
+  projection: NIP-22's word and SPEC §6.4's, not any one app's (Miky,
+  2026-10-02).
+- **A noun is a short word or it is nothing.** Every `noun`, an owner's
+  included, and a bare file's `fileNoun` and opener `name` must be at most 32
+  letters, digits, spaces, hyphens or apostrophes. Anything else is read as
+  "this app does not say". A consumer drops the noun into its own copy, and the
+  opener is whichever manifest declares the aspect newest. The name and noun
+  are as unverified as the link already was (PRO-25 tracks a trusted opener).
+- Nothing else of the opener applies. The bare file's address is still
+  `spec:6.7`, and its slots, fold rule and actions are still this runtime's,
+  so a `projections["30840"]` in the opener's manifest is ignored, as any
+  claimant's is.
+
 ## 0.43.0 — 2026-09-30
 
 **Manifests: nothing new to declare, and nothing read differently** (FOL-50). A
