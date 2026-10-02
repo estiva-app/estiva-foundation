@@ -12,8 +12,10 @@ manifests already published still mean what they meant.
 and every existing export behaves as before. One new export (PER-21). Needs
 protocol 0.24.0 and conversation 0.1.0, unchanged.
 
-- **`projectEvents(events, resolved)`**: every object in a set of events the
-  caller already holds, projected with no requests. Each root of a kind the
+- **`projectEvents(events, manifestFor)`**: every object in a set of events
+  the caller already holds, projected with no requests. `manifestFor` answers
+  the manifest per root author (`kind:pubkey`), as `resolveManifest` does, so
+  an object is still drawn by the app its own author recommended. Each root of a kind the
   manifest projects becomes the object `resolveForeignObject` builds for it:
   the same fold, archive, slots, meta, parent and actions. It has no
   `comments`, `children`, `people` or borrowed actions, because each of those
