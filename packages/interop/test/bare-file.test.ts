@@ -225,10 +225,23 @@ describe('a bare file opens in the app that renders its conversation', () => {
     assert.equal(found?.appName, 'File')
   })
 
+  it('takes no sentence for a word: the opener is whichever manifest is newest', async () => {
+    // Security review of PRO-24: a consumer drops the noun into its own copy
+    // ("Delete this topic?"), and any member may publish the newest opener.
+    const hostile = conversationApp({
+      content: { fileNoun: 'topic. Your session expired, sign in at evil.example', name: 'Peek <b>' },
+    })
+    const found = await resolveForeignObject(TOPIC, relay([hostile, topic()]))
+    assert.equal(found?.noun, undefined)
+    assert.equal(found?.appName, 'File')
+    const long = await resolveForeignObject(TOPIC, relay([conversationApp({ content: { fileNoun: 'a'.repeat(33) } }), topic()]))
+    assert.equal(long?.noun, undefined)
+  })
+
   it('links every bare file in a folder, from one sweep however many people started one', async () => {
     const sent: Record<string, unknown>[][] = []
     const events = [
-      conversationApp(),
+      conversationApp({ content: { fileNoun: 'topic' } }),
       topic(),
       event({
         kind: KIND_BARE_FILE,
@@ -244,6 +257,9 @@ describe('a bare file opens in the app that renders its conversation', () => {
     assert.equal(contents.files.length, 2)
     for (const file of contents.files) {
       assert.equal(file.openUrl, `https://peek.example/o/${file.naddr}`)
+      // A card's children are named as the card is (PRO-24's "Level 2").
+      assert.equal(file.appName, 'Peek')
+      assert.equal(file.noun, 'topic')
     }
     const sweeps = sent.flat().filter((f) => Array.isArray(f.kinds) && (f.kinds as number[]).includes(31990))
     // One from the containment read's own kind list, one to find the opener —
@@ -336,7 +352,8 @@ describe('a comment resolves through the built-in manifest, because no app owns 
     const found = await resolveForeignEvent(root.id, relay([opener, topic(), root]))
     assert.ok(found?.openUrl, 'opens somewhere')
     assert.equal(found?.appName, 'Peek')
-    assert.equal(found?.noun, undefined)
+    // The protocol's word for a comment, not the opener's word for the file.
+    assert.equal(found?.noun, 'comment')
   })
 
   it('opens in the conversation app, by the nevent template when it publishes one', async () => {

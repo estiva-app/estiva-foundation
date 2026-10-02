@@ -901,8 +901,24 @@ interface Projection {
  * while a menu draws. Anything else reads as "this app does not say" (§7.9).
  */
 function nounOf(projection: Projection): { noun?: string } {
-  const noun = typeof projection.noun === 'string' ? projection.noun.trim() : ''
+  const noun = wordOf(projection.noun)
   return noun ? { noun } : {}
+}
+
+const WORD_MAX = 32
+
+/**
+ * A manifest's word, trimmed — or undefined unless it is a short name: at most
+ * {@link WORD_MAX} letters, digits, spaces, hyphens and apostrophes.
+ *
+ * A consumer drops a noun into its own sentences ("Delete this issue?"), and a
+ * bare file's noun and name come from whichever manifest declares the aspect
+ * newest (PRO-24 review). Capped, a hostile manifest can put a wrong word
+ * there, but not a sentence of its own that reads as the consumer's.
+ */
+function wordOf(value: unknown): string | undefined {
+  const word = typeof value === 'string' ? value.trim() : ''
+  return word.length <= WORD_MAX && /^[\p{L}\p{N}][\p{L}\p{N}\p{M} '’-]*$/u.test(word) ? word : undefined
 }
 
 interface Manifest {
@@ -1335,9 +1351,14 @@ const BARE_FILE_MANIFEST: Manifest = {
       null, and a pasted thread link stayed a plain link. Drawn the way Peek
       draws a `kind:9` — the author as the title, the text as the body — so a
       consumer that already has a `message` widget draws a comment with it.
+
+      Its noun is the protocol's own word, unlike a bare file's (PRO-24, Miky
+      2026-10-02): NIP-22 and SPEC §6.4 already call it a comment, so there is
+      no app whose word it would be.
     */
     [String(KIND_COMMENT)]: {
       widget: ['message', 'card'],
+      noun: 'comment',
       slots: {
         title: { field: 'pubkey', as: 'pubkey' },
         body: { field: 'content' },
@@ -1452,8 +1473,8 @@ function bareFileManifest(): ResolvedManifest {
  * the name (it opens in the same app) and not the noun, which is the file's.
  */
 function bareFileOpenedBy(opener: Manifest, template: string): ResolvedManifest {
-  const name = typeof opener.name === 'string' && opener.name.trim() ? opener.name.trim() : BARE_FILE_MANIFEST.name
-  const fileNoun = typeof opener.fileNoun === 'string' ? opener.fileNoun.trim() : ''
+  const name = wordOf(opener.name) ?? BARE_FILE_MANIFEST.name
+  const fileNoun = wordOf(opener.fileNoun)
   const projections = BARE_FILE_MANIFEST.projections!
   const bare = String(KIND_BARE_FILE)
   return {
