@@ -3147,6 +3147,62 @@ export async function resolveForeignObjects(
 }
 
 /**
+ * Every object in a set of events the caller already holds, projected — PER-21.
+ * **No requests.**
+ *
+ * {@link resolveForeignObjects} reads each object's own filters, which is the
+ * right price for a sidebar holding a few dozen and the wrong one for a reader
+ * that wants a whole app's workspace: interop's own measurement put 110 issues
+ * at 20 POSTs and a megabyte (FOL-50), and estiva-agent re-reads its workspace
+ * on every command. A reader like that can fetch the roots and the app's change
+ * kind in bulk — a few paged queries — and hand them here.
+ *
+ * Each root of a kind the manifest projects becomes exactly the object
+ * `resolveForeignObject` builds for it: the same fold (`records`, §6.2–6.3),
+ * the same archive read, the same slots, meta, parent and actions. What is
+ * deliberately absent is everything that would need another read:
+ *
+ * - **`comments` is `[]`.** A comment is a separate event in a Folder, and
+ *   which comments the caller fetched says nothing about which it did not.
+ *   Read conversations with {@link conversationsOf} and {@link threadsOf}.
+ * - **No `children`.** A `list` slot is containment, and the children are
+ *   other objects in the same answer: nest them by `parentRef`.
+ * - **No `people`, and no borrowed actions** (MAN-8) — both are reads.
+ *
+ * Two versions of one root (a replay, two relays) collapse by NIP-01's rule,
+ * as the relay's own replacement does: later `created_at`, then the lower id.
+ * Objects come back in no particular order; sort them as the consumer draws.
+ */
+export function projectEvents(events: readonly SignedEvent[], resolved: ResolvedManifest): ForeignObject[] {
+  const { manifest } = resolved
+  const roots = new Map<string, SignedEvent>()
+  for (const event of events) {
+    if (!manifest.projections?.[String(event.kind)]) continue
+    const d = tagValue(event, 'd')
+    if (d === undefined) continue
+    const address = `${event.kind}:${event.pubkey}:${d}`
+    const held = roots.get(address)
+    if (!held || event.created_at > held.created_at || (event.created_at === held.created_at && event.id < held.id)) {
+      roots.set(address, event)
+    }
+  }
+  const all = [...events]
+  return [...roots].map(([address, root]) => {
+    const pointer: AddressPointer = { kind: root.kind, pubkey: root.pubkey, identifier: tagValue(root, 'd') ?? '', relays: [] }
+    return buildObject({
+      root,
+      pointer,
+      manifest,
+      projection: manifest.projections![String(root.kind)],
+      folded: foldOf(all, address, manifest),
+      viaRecommendation: resolved.viaRecommendation,
+      webTemplate: resolved.webTemplate,
+      archived: archiveOf(all, address, archiveRuleOf(manifest)),
+    })
+  })
+}
+
+/**
  * The parent each file sits under, and nothing else — FOL-50.
  *
  * {@link resolveForeignObjects} answers this on the way to a whole object, and
