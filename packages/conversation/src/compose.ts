@@ -11,7 +11,7 @@
  * | --- | --- | --- |
  * | a person (`@`) | `nostr:npub…`, or `@Name` with no key | `p`, from {@link mentionTagsFor} |
  * | a person, urgently (`!@`) | the same `nostr:npub…`, or `!@Name` | `p`, and {@link urgentTagsFor}'s `["urgent", <pubkey>]` |
- * | a message (`[`) | `nostr:nevent…` with its kind and no relay | none |
+ * | a message (`[`) | `nostr:nevent…` with its kind and no relay | none yet — a `q` from CON-25 (Decided on CON-26) |
  */
 import { encodeNevent, encodeNpub, type NostrTag } from '@estiva-app/protocol'
 import { mentionTagsFor } from './strength.js'
