@@ -73,6 +73,11 @@ export interface RankReferencesInput {
   /** The kinds the app itself writes — the last tie-breaker. */
   ownKinds?: readonly number[]
   caps?: { messages: number; files: number }
+  /**
+   * Files never offered, by address: the file you are writing in, whose
+   * messages already lead Messages (Miky, 2026-10-03).
+   */
+  exclude?: readonly string[]
 }
 
 const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim()
@@ -123,9 +128,10 @@ const newer = (a: ReferenceCandidate, b: ReferenceCandidate) => (b.at ?? 0) - (a
  * does not match what was typed. Ties end on recency, then the title, so the
  * list holds still between keystrokes.
  */
-export function rankReferences({ messages, files, query, ownKinds = [], caps = REFERENCE_CAPS }: RankReferencesInput): RankedReferences {
+export function rankReferences({ messages, files, query, ownKinds = [], caps = REFERENCE_CAPS, exclude = [] }: RankReferencesInput): RankedReferences {
   const typed = normalize(query) !== ''
   const own = new Set(ownKinds)
+  const excluded = new Set(exclude)
   const ownFirst = (a: ReferenceCandidate, b: ReferenceCandidate) => Number(!own.has(a.kind)) - Number(!own.has(b.kind))
   const byTitle = (a: ReferenceCandidate, b: ReferenceCandidate) => a.title.localeCompare(b.title)
 
@@ -138,7 +144,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
     .map(({ m }) => m)
 
   const shownFiles = closest(files)
-    .filter((f) => typed || f.tier !== FILE_TIER.search)
+    .filter((f) => !excluded.has(f.id) && (typed || f.tier !== FILE_TIER.search))
     .map((f) => ({ f, score: typed ? referenceMatch(f.title, query) : 0 }))
     .filter(({ score }) => !typed || score > 0)
     .sort(

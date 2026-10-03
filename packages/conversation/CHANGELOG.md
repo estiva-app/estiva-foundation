@@ -6,6 +6,13 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.5.1 — 2026-10-03
+
+**`[` never offers the file you are writing in** (PEE-21, Miky 2026-10-03):
+its messages already lead Messages, and a widget pointing back at the page
+you are on is no use. `rankReferences` takes `exclude`, the addresses no Files
+tier offers. SPEC: none — nothing read or written changed.
+
 ## 0.5.0 — 2026-10-03
 
 **What `[` offers, and in what order** (PEE-21, CON-26's ranking, Miky
