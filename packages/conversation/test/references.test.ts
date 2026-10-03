@@ -72,6 +72,13 @@ describe('rankReferences', () => {
     assert.deepEqual(titles(shown), ['Unread', 'Unread dots in the sidebar', 'Unread dots on Desk'])
   })
 
+  it('never offers the file you are writing in, from any tier', () => {
+    const here = `30851:${PK}:folder`
+    const again = [...files, file('folder', 'Unread dots in the sidebar', FILE_TIER.recent, { at: 300 })]
+    assert.deepEqual(titles(rankReferences({ messages: [], files: again, query: '', exclude: [here] }).files), ['Unread dots on Desk', 'Relay rate limits'])
+    assert.deepEqual(titles(rankReferences({ messages: [], files: again, query: 'sidebar', exclude: [here] }).files), [])
+  })
+
   it('drops what does not match what was typed', () => {
     const { files: shown } = rankReferences({ messages: [], files, query: 'rate' })
     assert.deepEqual(titles(shown), ['Relay rate limits'])
