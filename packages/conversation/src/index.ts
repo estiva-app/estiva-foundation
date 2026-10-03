@@ -67,6 +67,23 @@ export { buildComment, buildReply, offersEditAndDelete, type CommentRef } from '
 export { eventsNamedInBody, mentionText, messageReference, quoteTagsFor, URGENT_TAG, urgentTagsFor } from './compose.js'
 
 export {
+  FILE_TIER,
+  fileReference,
+  MESSAGE_TIER,
+  rankReferences,
+  REFERENCE_CAPS,
+  referenceMatch,
+  referenceSearch,
+  type RankedReferences,
+  type RankReferencesInput,
+  type ReferenceCandidate,
+  type ReferenceSearch,
+  type ReferenceSearchFn,
+  type ReferenceSearchOptions,
+  type ReferenceType,
+} from './references.js'
+
+export {
   KIND_CHANGE,
   MEMBER_FIELD_PREFIX,
   memberField,
