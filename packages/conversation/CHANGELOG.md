@@ -14,14 +14,17 @@ about a conversation.
 - `rankReferences({messages, files, query, ownKinds?, caps?})` — two capped
   sections, Messages (this thread or file, then its parent) above Files (this
   Folder, then recently read, then search hits only once something is typed).
-  Typed, a better title match beats a higher tier; an open issue goes before a
-  closed one on an equal match; the app's own kinds break what ties are left.
-  `REFERENCE_CAPS` is 4 and 6.
+  Typed, a better title match beats a higher tier; an archived file goes after
+  every other row of the same match, typed or not, and an open issue before a
+  closed one; the app's own kinds break what ties are left. `REFERENCE_CAPS`
+  is 4 and 6.
 - `referenceMatch(text, query)` — 4 whole, 3 start, 2 word start, 1 anywhere.
 - `fileReference(address)` — `nostr:naddr…` with no relay hint, the bytes a
   pasted link resolves to.
 - `referenceSearch({search})` — the search tier per keystroke: debounced,
-  cached, a failure remembered as no hits, listeners told when an answer lands.
+  cached, a failure answered as no hits for `retryMs` (5s) and then asked
+  again, listeners told when an answer lands. `reset()` it when the signed-in
+  person changes.
 
 **SPEC:** none of §6 or §9 changes how this package reads or writes. A file
 pick writes what a paste writes and earns `["a", <address>]` through

@@ -42,6 +42,11 @@ export interface ReferenceCandidate {
   tier: number
   /** A done or cancelled issue: offered, after an open one on an equal match. */
   closed?: boolean
+  /**
+   * An archived file, or an issue in an archived project: offered at the lowest
+   * priority — after every row that is not, on an equal match (Miky, 2026-10-03).
+   */
+  archived?: boolean
   /** When it was written or last read, in seconds — newer first within a tier. */
   at?: number
 }
@@ -128,7 +133,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
   const shownMessages = closest(messages)
     .map((m) => ({ m, score: typed ? messageScore(m) : 0 }))
     .filter(({ score }) => !typed || score > 0)
-    .sort((a, b) => b.score - a.score || a.m.tier - b.m.tier || newer(a.m, b.m))
+    .sort((a, b) => b.score - a.score || a.m.tier - b.m.tier || newer(a.m, b.m) || a.m.id.localeCompare(b.m.id))
     .slice(0, caps.messages)
     .map(({ m }) => m)
 
@@ -139,6 +144,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
     .sort(
       (a, b) =>
         b.score - a.score ||
+        Number(!!a.f.archived) - Number(!!b.f.archived) ||
         (typed ? Number(!!a.f.closed) - Number(!!b.f.closed) || a.f.tier - b.f.tier : a.f.tier - b.f.tier || Number(!!a.f.closed) - Number(!!b.f.closed)) ||
         ownFirst(a.f, b.f) ||
         newer(a.f, b.f) ||
@@ -178,7 +184,11 @@ export interface ReferenceSearch {
   hits(query: string): readonly ReferenceCandidate[]
   /** Called when an answer lands; returns the unsubscribe. */
   subscribe(listener: () => void): () => void
-  /** Drops what is pending and what was answered. */
+  /**
+   * Drops what is pending and what was answered. Call it when the signed-in
+   * person changes: answers are kept by the text asked, not by who asked, and
+   * the last person's hits name files the next one may not be able to read.
+   */
   reset(): void
 }
 
@@ -186,6 +196,8 @@ export interface ReferenceSearchOptions {
   search: ReferenceSearchFn
   /** The pause after a keystroke before asking. Default 200ms. */
   delayMs?: number
+  /** How long a failed query answers no hits before it may be asked again. Default 5s. */
+  retryMs?: number
   /** Shorter queries ask nothing. Default 2. */
   minLength?: number
 }
@@ -196,15 +208,16 @@ export interface ReferenceSearchOptions {
  *
  * The rows already on screen never wait for the relay: a slow or failing
  * search leaves them as they are, with no spinner and no error row
- * (PEE-21). A failure is remembered as no hits, so it is not retried on
- * every keystroke of the same query. Answers are filtered again by
+ * (PEE-21). A failure answers no hits for `retryMs`, so a rate limit is not
+ * hammered on every render, and is then forgotten, so one blip does not hide
+ * that query for the rest of the session. Answers are filtered again by
  * {@link rankReferences}, so a shorter query's hits shown meanwhile never
  * offer a row the typed text does not match.
  *
  * Only the pause is cancelled by the next keystroke: a query already asked
  * keeps its answer, which is still true of that query.
  */
-export function referenceSearch({ search, delayMs = 200, minLength = 2 }: ReferenceSearchOptions): ReferenceSearch {
+export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLength = 2 }: ReferenceSearchOptions): ReferenceSearch {
   const answered = new Map<string, readonly ReferenceCandidate[]>()
   const asking = new Set<string>()
   const listeners = new Set<() => void>()
@@ -221,10 +234,19 @@ export function referenceSearch({ search, delayMs = 200, minLength = 2 }: Refere
       paused = null
       asking.add(query)
       search(query)
-        .catch(() => [] as readonly ReferenceCandidate[])
+        .then(
+          (found) => found,
+          () => {
+            const failed: readonly ReferenceCandidate[] = []
+            timers.setTimeout(() => {
+              if (answered.get(query) === failed) answered.delete(query)
+            }, retryMs)
+            return failed
+          },
+        )
         .then((found) => {
           if (!asking.delete(query)) return
-          answered.set(query, found.map((f) => ({ ...f, tier: FILE_TIER.search })))
+          answered.set(query, found.length ? found.map((f) => ({ ...f, tier: FILE_TIER.search })) : found)
           // A session's worth of queries; the oldest goes first.
           if (answered.size > 64) answered.delete(answered.keys().next().value!)
           for (const listener of listeners) listener()

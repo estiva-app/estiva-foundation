@@ -110,6 +110,17 @@ describe('rankReferences', () => {
     assert.deepEqual(rankReferences({ messages, files: [], query: 'ana' }).messages.map((m) => m.id), ['p1'])
   })
 
+  it('an archived file goes after every other row of the same match, typed or not', () => {
+    const files = [
+      file('old', 'Roadmap', FILE_TIER.folder, { archived: true }),
+      file('done', 'Roadmap review', FILE_TIER.search, { closed: true }),
+      file('live', 'Roadmap draft', FILE_TIER.recent),
+    ]
+    assert.deepEqual(titles(rankReferences({ messages: [], files, query: '' }).files), ['Roadmap draft', 'Roadmap'])
+    assert.deepEqual(titles(rankReferences({ messages: [], files, query: 'road' }).files), ['Roadmap draft', 'Roadmap review', 'Roadmap'])
+    assert.deepEqual(titles(rankReferences({ messages: [], files, query: 'roadmap' }).files)[0], 'Roadmap', 'an exact title still wins')
+  })
+
   it('caps each section so neither crowds out the other', () => {
     const many = Array.from({ length: 20 }, (_, i) => file(`f${i}`, `File ${i}`, FILE_TIER.folder))
     const chat = Array.from({ length: 20 }, (_, i) => message(`m${i}`, 'Ana', `line ${i}`, MESSAGE_TIER.here, i))
@@ -160,10 +171,11 @@ describe('referenceSearch', () => {
     assert.deepEqual(asked, ['un', 'unr'])
   })
 
-  it('a failing search is no hits, asked once', async () => {
+  it('a failing search is no hits, asked once until the retry pause has passed', async () => {
     let calls = 0
     const source = referenceSearch({
       delayMs: 1,
+      retryMs: 30,
       search: async () => {
         calls++
         throw new Error('relay down')
@@ -172,6 +184,27 @@ describe('referenceSearch', () => {
     source.hits('unread')
     await tick(10)
     assert.deepEqual(source.hits('unread'), [])
+    await tick(10)
+    assert.equal(calls, 1)
+    await tick(30)
+    source.hits('unread')
+    await tick(10)
+    assert.equal(calls, 2, 'one blip does not hide the query for the session')
+  })
+
+  it('an empty answer that succeeded is kept', async () => {
+    let calls = 0
+    const source = referenceSearch({
+      delayMs: 1,
+      retryMs: 5,
+      search: async () => {
+        calls++
+        return []
+      },
+    })
+    source.hits('nothing')
+    await tick(20)
+    source.hits('nothing')
     await tick(10)
     assert.equal(calls, 1)
   })

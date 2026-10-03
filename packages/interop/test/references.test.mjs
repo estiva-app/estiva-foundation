@@ -85,6 +85,8 @@ const issue = (d, title, status = 'todo') =>
   event({ kind: ISSUE, tags: [['d', d], ['title', title], ['status', status], ['a', P1], ['h', 'f1']] })
 const rename = (address, value) =>
   event({ kind: CHANGE, tags: [['a', address], ['field', 'title'], ['value', value], ['h', 'f1']] })
+const archive = (address) =>
+  event({ kind: CHANGE, tags: [['a', address], ['field', 'archived'], ['value', 'true'], ['h', 'f1'], ['ts', String(Date.now())]] })
 
 describe('searchFileReferences', () => {
   test('finds an issue by the title it was renamed to, captioned with its project', async () => {
@@ -124,6 +126,26 @@ describe('searchFileReferences', () => {
     const quiet = { ...relay, query: async (filters) => (filters.some((f) => f.search) ? (relay.calls.push(filters), []) : relay.query(filters)) }
     assert.deepEqual(await searchFileReferences('unindexed', quiet.query), [])
     assert.equal(relay.calls.length, 1)
+  })
+
+  test('asks for roots and renames apart, as a prefix search, and reads no comments', async () => {
+    const renames = Array.from({ length: 5 }, (_, n) => rename(I('busy'), `Sync attempt ${n}`))
+    const relay = searchingRelay([manifest, project, issue('busy', 'x'), issue('quiet', 'Sync engine'), ...renames])
+    const found = await searchFileReferences('sync', relay.query, { limit: 3 })
+    assert.deepEqual(found.map((c) => c.id).sort(), [I('busy'), I('quiet')])
+    const [search] = relay.calls
+    assert.equal(search.length, 2)
+    assert.ok(search.every((f) => f.search === 'sync' && f.search_mode === 'prefix'))
+    assert.ok(!relay.calls.flat().some((f) => f.kinds?.includes(1111)))
+  })
+
+  test('offers an archived file, and an issue in an archived project, marked archived', async () => {
+    const relay = searchingRelay([manifest, project, archive(P1), issue('i4', 'Archived work')])
+    const found = await searchFileReferences('archived', relay.query)
+    assert.equal(found.length, 1)
+    assert.equal(found[0].archived, true)
+    const projects = await searchFileReferences('conversation', relay.query)
+    assert.equal(projects[0].archived, true)
   })
 
   test('nothing typed asks nothing', async () => {

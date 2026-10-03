@@ -3244,6 +3244,60 @@ export function projectEvents(
 }
 
 /**
+ * The objects at a set of addresses, as their roots and changes alone draw
+ * them — PEE-21.
+ *
+ * For a reader that needs what a file *is* now (its folded title, status,
+ * parent, own archive) and not what is said about it: {@link projectEvents}
+ * over each address's root and change filters — the same two
+ * {@link resolveForeignObjects} sends — without the comments, children and
+ * people that make up most of that call's bytes. `[` reads a search answer's
+ * hits through this on every pause in typing.
+ *
+ * An address whose root the reader is not handed is simply absent, so a file
+ * in a Folder they cannot read never comes back. A failed read rejects.
+ */
+export async function resolveForeignRoots(
+  references: readonly string[],
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<ForeignObject[]> {
+  const pointers = new Map<string, AddressPointer>()
+  for (const reference of references) {
+    const pointer = addressPointerOf(reference)
+    if (pointer) pointers.set(`${pointer.kind}:${pointer.pubkey}:${pointer.identifier}`, pointer)
+  }
+  if (pointers.size === 0) return []
+
+  const manifests = new Map<string, ResolvedManifest>()
+  const byApp = new Map<string, AddressPointer>()
+  for (const pointer of pointers.values()) byApp.set(manifestKeyOf(pointer), pointer)
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+
+  const filters: Record<string, unknown>[] = []
+  for (const [address, pointer] of pointers) {
+    const resolved = manifests.get(manifestKeyOf(pointer))
+    if (!resolved?.manifest.projections?.[String(pointer.kind)]) continue
+    // A manifest without `records` folds by a placeholder kind 0, never sent.
+    const changeKinds = new Set(
+      [foldRuleOf(resolved.manifest).changeKind, archiveRuleOf(resolved.manifest).changeKind].filter((k) => k !== 0),
+    )
+    filters.push(
+      { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
+      { kinds: [...changeKinds], '#a': [address], limit: 500 },
+    )
+  }
+  if (filters.length === 0) return []
+  const events = await queryChunked(filters, query)
+  return projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+}
+
+/**
  * The parent each file sits under, and nothing else — FOL-50.
  *
  * {@link resolveForeignObjects} answers this on the way to a whole object, and

@@ -14,15 +14,20 @@ Needs protocol 0.24.0, unchanged, and **conversation 0.5.0**.
 
 - **`searchFileReferences(text, query, options?)`**: the files whose
   *current* title holds `text`, as conversation's search tier. Asks the relay
-  `{kinds: [30850, 30851, 30840, 1851], search, limit: 32}`; a root hit and a
-  title change's `a` target are only addresses, each resolved through its
-  app's manifest (which folds every rename) and kept only when what it is
-  called now matches. A relay that indexes none of these kinds answers
-  nothing, and so does this. A failed read rejects.
+  for roots (30850, 30851, 30840) and title changes (1851) as two filters of
+  32 each, with buzz's `search_mode: "prefix"` so a half-typed word matches;
+  each hit is only an address, read back through `resolveForeignRoots` and
+  kept only when what it is called now matches. A relay that indexes none of
+  these kinds answers nothing, and so does this. A failed read rejects.
+- **`resolveForeignRoots(references, query, cache?)`**: objects from their
+  roots and changes alone — `projectEvents` over the same root and change
+  filters `resolveForeignObjects` sends, without comments, children or
+  people. An address whose root the reader is not handed is absent.
 - **`fileCandidates(objects, tier, query, options?)`**: resolved files as
   `[` rows — type word, current title, an issue captioned with its project's
-  title (read in one batch for the projects not already in the set). Leaves
-  out unreachable, archived and untitled objects and kinds `[` does not offer.
+  title (read in one batch for the projects not already in the set). Marks a
+  file `archived` when it or its project is. Leaves out unreachable and
+  untitled objects and kinds `[` does not offer.
 - **`REFERENCE_FILE_TYPES`**: 30850 project, 30851 issue, 30840 topic.
 - **`isClosedStatus(slot)`**: a `status` slot that is done or dropped, by its
   words — for a consumer holding the object without its manifest.
