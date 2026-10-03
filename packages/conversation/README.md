@@ -26,6 +26,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | threading | §6.4 *Replies* | `parentOf`, `groupThreads` |
 | writing | §6.4 | `buildComment`, `buildReply`, `referenceTagsFor`, `mentionTagsFor` |
 | what a composer's pick writes | §13.1 | `mentionText`, `messageReference`, `urgentTagsFor`, `URGENT_TAG` |
+| what `[` offers, and in what order | §13.1 | `rankReferences`, `referenceMatch`, `fileReference`, `referenceSearch`, `MESSAGE_TIER`, `FILE_TIER`, `REFERENCE_CAPS` |
 | ordering | §6.2, §6.3 | `trustedTs`, `orderingMs`, `byOrder` |
 | edits and attachments | §6.8 | `editTargetOf`, `foldEdits`, `foldAttachments` |
 | reactions | §6.6 | `REACTION_HORIZON`, `reactionHorizon`, `reactionTargetOf`, `reactionEmojiOf`, `foldReactions` |

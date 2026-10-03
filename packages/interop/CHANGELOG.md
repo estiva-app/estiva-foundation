@@ -6,6 +6,32 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.46.0 — 2026-10-03
+
+**Manifests: nothing changes.** Every published manifest means what it meant,
+and every existing export behaves as before. New exports for `[` (PEE-21).
+Needs protocol 0.24.0, unchanged, and **conversation 0.5.0**.
+
+- **`searchFileReferences(text, query, options?)`**: the files whose
+  *current* title holds `text`, as conversation's search tier. Asks the relay
+  for roots (30850, 30851, 30840) and title changes (1851) as two filters of
+  32 each, with buzz's `search_mode: "prefix"` so a half-typed word matches;
+  each hit is only an address, read back through `resolveForeignRoots` and
+  kept only when what it is called now matches. A relay that indexes none of
+  these kinds answers nothing, and so does this. A failed read rejects.
+- **`resolveForeignRoots(references, query, cache?)`**: objects from their
+  roots and changes alone — `projectEvents` over the same root and change
+  filters `resolveForeignObjects` sends, without comments, children or
+  people. An address whose root the reader is not handed is absent.
+- **`fileCandidates(objects, tier, query, options?)`**: resolved files as
+  `[` rows — type word, current title, an issue captioned with its project's
+  title (read in one batch for the projects not already in the set). Marks a
+  file `archived` when it or its project is. Leaves out unreachable and
+  untitled objects and kinds `[` does not offer.
+- **`REFERENCE_FILE_TYPES`**: 30850 project, 30851 issue, 30840 topic.
+- **`isClosedStatus(slot)`**: a `status` slot that is done or dropped, by its
+  words — for a consumer holding the object without its manifest.
+
 ## 0.45.0 — 2026-10-02
 
 **Manifests: nothing changes.** Every published manifest means what it meant,

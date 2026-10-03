@@ -29,6 +29,7 @@ export {
   resolveActingManifest,
   resolveForeignObject,
   resolveForeignObjects,
+  resolveForeignRoots,
   projectEvents,
   resolveParents,
   resolveForeignEvent,
@@ -38,6 +39,7 @@ export {
   topLevelFolders,
   ARCHIVED_FIELD,
   isArchived,
+  isClosedStatus,
   archiveImpact,
   type Archive,
   type ArchiveImpact,
@@ -102,6 +104,18 @@ export {
  * breadcrumbs and move targets, with cycles cut. No requests.
  */
 export { nestingOf, type Nestable, type Nesting } from './nesting.js'
+
+/**
+ * The files `[` offers (PEE-21): resolved objects as rows, and typed text as
+ * the search tier, both folded to the current title. conversation ranks them.
+ */
+export {
+  fileCandidates,
+  REFERENCE_FILE_TYPES,
+  searchFileReferences,
+  type FileCandidatesOptions,
+  type SearchFileReferencesOptions,
+} from './references.js'
 
 /**
  * Folder writes as unsigned events in publish order — create, rename, place,
