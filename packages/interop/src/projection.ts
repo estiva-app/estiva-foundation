@@ -5312,7 +5312,8 @@ function folderArchiveOf(changes: SignedEvent[], folder: Pick<FolderSummary, 'id
   if (!folder.channel) return undefined
   const admins = new Set(folder.admins ?? [])
   const counted = changes.filter(
-    (change) => tagValue(change, ARCHIVE_RULE.targetTag) !== folder.channel || (tagValue(change, 'h') === folder.id && admins.has(change.pubkey)),
+    (change) =>
+      tagValue(change, ARCHIVE_RULE.targetTag) === folder.channel && tagValue(change, 'h') === folder.id && admins.has(change.pubkey),
   )
   return archiveOf(counted, folder.channel, ARCHIVE_RULE)
 }

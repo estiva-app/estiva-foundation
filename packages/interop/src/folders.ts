@@ -244,13 +244,21 @@ export type MovePlan =
  */
 export function listedBeneath<T extends MovableFile>(listing: readonly T[], file: Pick<MovableFile, 'ref' | 'parentRef'>): T[] {
   const byRef = new Map(listing.map((candidate) => [candidate.ref, candidate]))
+  const cycles = new Map<string, boolean>()
   const onCycle = (ref: string) => {
+    let found = cycles.get(ref)
+    if (found !== undefined) return found
+    found = false
     const seen = new Set<string>()
     for (let at = byRef.get(ref)?.parentRef; at && !seen.has(at); at = byRef.get(at)?.parentRef) {
-      if (at === ref) return true
+      if (at === ref) {
+        found = true
+        break
+      }
       seen.add(at)
     }
-    return false
+    cycles.set(ref, found)
+    return found
   }
   // Up from `candidate` until `file`; a file on a cycle is at the top, so the walk ends there.
   const isBeneath = (candidate: MovableFile) => {
@@ -276,8 +284,12 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
  * relay applies every address on a command in one state write, so a failure
  * can never split the subtree between the two Folders. The file itself is
  * moved only when the source lists it — a Ship issue is listed by no Folder,
- * its project is — and without a `listing`, the file is the whole set. The
- * file's `h` does not change.
+ * its project is. The file's `h` does not change.
+ *
+ * `listing` is required, and `null` says "nothing can be listed beneath this
+ * file", making the file the whole set. A move that silently left its
+ * sub-files behind is the bug this planner exists to end, so omitting the
+ * listing is a type error rather than a quiet single-file move.
  *
  * **Add first.** There is no atomic move — state is per Folder — so something
  * can fail between the two. After the add, a failure leaves the set in both
@@ -297,18 +309,15 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
 export function planMoveFile(
   pubkey: string,
   createdAtMs: number,
-  args: { file: MovableFile; from: FolderRef; to: FolderRef; listing?: readonly MovableFile[] },
+  args: { file: MovableFile; from: FolderRef; to: FolderRef; listing: readonly MovableFile[] | null },
 ): MovePlan {
   if (args.from.id === args.to.id) return { ok: true, events: [], moved: [] }
   if (!args.from.hasState) return { ok: false, reason: 'source-has-no-state' }
   if (!args.to.hasState) return { ok: false, reason: 'target-has-no-state' }
   const { file, listing } = args
-  const set = listing
-    ? [
-        ...listing.filter((candidate) => candidate.ref === file.ref || (!!file.address && candidate.address === file.address)).slice(0, 1),
-        ...listedBeneath(listing, file),
-      ]
-    : [file]
+  // The listing's own entry when it has one, so the walk goes by the refs the listing's children name.
+  const listed = listing?.find((candidate) => candidate.ref === file.ref || (!!file.address && candidate.address === file.address))
+  const set = listing ? [...(listed ? [listed] : []), ...listedBeneath(listing, listed ?? file)] : [file]
   const moving = set.filter((candidate) => candidate.address)
   if (args.to.private && moving.some((candidate) => candidate.folder !== args.to.id)) return { ok: false, reason: 'target-is-private' }
   const moved = [...new Set(moving.map((candidate) => candidate.address!))]

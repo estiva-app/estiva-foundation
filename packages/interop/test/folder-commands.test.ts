@@ -130,7 +130,7 @@ describe('planMoveFile', () => {
   const to = { id: B, hasState: true }
 
   it('adds to the target before removing from the source', () => {
-    const plan = planMoveFile(PUB, MS, { file: file(FILE), from, to })
+    const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from, to })
     assert.ok(plan.ok)
     assert.deepEqual(shape(plan.events), [
       { kind: 1852, tags: [['h', B], ['op', 'add'], ['a', FILE]] },
@@ -157,6 +157,13 @@ describe('planMoveFile', () => {
     assert.deepEqual(plan.moved, [CHILD])
   })
 
+  it('walks from the listing’s own entry, whatever ref the caller holds', () => {
+    const listing = [file(FILE), file(CHILD, FILE)]
+    const plan = planMoveFile(PUB, MS, { file: { ref: 'naddr1-something-else', address: FILE, folder: A }, from, to, listing })
+    assert.ok(plan.ok)
+    assert.deepEqual(plan.moved, [FILE, CHILD])
+  })
+
   it('plans nothing when nothing it would move is listed', () => {
     const issue = { ref: `30851:${PUB}:i1`, address: `30851:${PUB}:i1` }
     assert.deepEqual(planMoveFile(PUB, MS, { file: issue, from, to, listing: [file(OTHER)] }), { ok: true, events: [], moved: [] })
@@ -170,7 +177,7 @@ describe('planMoveFile', () => {
 
   it('refuses a move into a private Folder of a file with no h — readable by the whole workspace', () => {
     const project = { ref: `30850:${PUB}:p1`, address: `30850:${PUB}:p1` }
-    assert.deepEqual(planMoveFile(PUB, MS, { file: project, from, to: { ...to, private: true } }), {
+    assert.deepEqual(planMoveFile(PUB, MS, { listing: null, file: project, from, to: { ...to, private: true } }), {
       ok: false,
       reason: 'target-is-private',
     })
@@ -184,28 +191,28 @@ describe('planMoveFile', () => {
   })
 
   it('does not care whether the source is private: a listing never changes who can read', () => {
-    const plan = planMoveFile(PUB, MS, { file: file(FILE, undefined, C), from: { ...from, private: true }, to })
+    const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE, undefined, C), from: { ...from, private: true }, to })
     assert.ok(plan.ok)
   })
 
   it('refuses a move into a Folder with no state — its contents would disappear', () => {
-    const plan = planMoveFile(PUB, MS, { file: file(FILE), from, to: { id: B, hasState: false } })
+    const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from, to: { id: B, hasState: false } })
     assert.deepEqual(plan, { ok: false, reason: 'target-has-no-state' })
   })
 
   it('refuses a move out of a Folder with no state — the source would empty', () => {
-    const plan = planMoveFile(PUB, MS, { file: file(FILE), from: { id: A, hasState: false }, to })
+    const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from: { id: A, hasState: false }, to })
     assert.deepEqual(plan, { ok: false, reason: 'source-has-no-state' })
   })
 
   it('reports the source first when neither has state, since no target fixes it', () => {
-    const plan = planMoveFile(PUB, MS, { file: file(FILE), from: { id: A, hasState: false }, to: { id: B, hasState: false } })
+    const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from: { id: A, hasState: false }, to: { id: B, hasState: false } })
     assert.deepEqual(plan, { ok: false, reason: 'source-has-no-state' })
   })
 
   it('plans nothing for a move to the same Folder, whatever its state', () => {
     for (const hasState of [true, false]) {
-      assert.deepEqual(planMoveFile(PUB, MS, { file: file(FILE), from: { id: A, hasState }, to: { id: A, hasState } }), {
+      assert.deepEqual(planMoveFile(PUB, MS, { listing: null, file: file(FILE), from: { id: A, hasState }, to: { id: A, hasState } }), {
         ok: true,
         events: [],
         moved: [],
@@ -227,7 +234,7 @@ describe('the invariants', () => {
       [true, false],
       [false, false],
     ]) {
-      const plan = planMoveFile(PUB, MS, { file: file(FILE), from: { id: A, hasState: from }, to: { id: B, hasState: to } })
+      const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from: { id: A, hasState: from }, to: { id: B, hasState: to } })
       plans.push(plan.ok ? plan.events : [])
     }
     for (const events of plans) assert.deepEqual(commandsTo(events, A), [])

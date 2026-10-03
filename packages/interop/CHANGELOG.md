@@ -16,9 +16,10 @@ unchanged.
 - **New: `planDeleteFolder(pubkey, ms, { folder })`** = `[kind:9008]`. The
   relay refuses it while the Folder holds a file, naming the count; show that.
 - **Changed: `planMoveFile` moves a subtree, and refuses a private move.** It
-  takes `{ file, from, to, listing? }` instead of `{ address, … }`: `file` is a
+  takes `{ file, from, to, listing }` instead of `{ address, … }`: `file` is a
   `MovableFile` (any `ForeignObject`), `listing` the source's
-  `FolderContents.files`. The plan is one `kind:1852 add` in the target naming
+  `FolderContents.files` — required, `null` only for a file nothing can sit
+  beneath. The plan is one `kind:1852 add` in the target naming
   the file and every file listed beneath it, then one `remove` naming the same
   set in the source (Miky, 2026-10-03), and returns `moved`. New refusal
   `target-is-private`: the target's `kind:39000` is private and a moved file's

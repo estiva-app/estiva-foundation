@@ -646,8 +646,14 @@ next state from its current one and a group with no `kind:30890` has none: a
 everything filed in it by `h` stops being listed. So place and unlist send no
 command to such a group, and a move into or out of one is refused.
 
+`listing` is required; pass `null` only for a file nothing can sit beneath, so
+a move that leaves sub-files behind is never an accident.
+
 Delete is for an empty Folder. The relay refuses a `kind:9008` while the Folder
-holds a file, with a reason naming the count — show it.
+holds a file, with a reason naming the count (`folder holds 2 file(s) …`).
+Its wording is the relay's. Take the count and say it in your app's words
+("This Folder still has 2 files. Move or delete them first."), as you would
+for `target-is-private`.
 
 ### Archiving anything (0.37.0)
 
