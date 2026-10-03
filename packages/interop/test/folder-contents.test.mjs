@@ -283,6 +283,16 @@ describe('listFolders', () => {
     const held = folders.find((f) => f.id === FOLDER)
     assert.deepEqual(held.addresses, [addressOf(reading), addressOf(colony)])
   })
+
+  test('the channel names the folder whichever arrived first, as resolveFolderContents does (SHA-26)', async () => {
+    const placed = event({ kind: KIND_FOLDER_STATE, pubkey: RELAY, tags: [['d', FOLDER]] })
+    for (const events of [[placed, channel], [channel, placed], [state([]), channel]]) {
+      const query = relay(events)
+      const listed = (await listFolders(query)).find((f) => f.id === FOLDER)
+      assert.equal(listed.name, 'The estuary')
+      assert.equal(listed.name, (await resolveFolderContents(FOLDER, query, async () => ({}))).name)
+    }
+  })
 })
 
 describe('topLevelFolders (FOL-5)', () => {
