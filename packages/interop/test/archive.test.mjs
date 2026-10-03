@@ -358,7 +358,7 @@ describe('a Folder is archived the way any file is', () => {
 
   test('a nested Folder that is archived is left out of the Folder listing it', async () => {
     const archived = archive(addressOf(apiary))
-    const events = [apiary, orchard, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [addressOf(apiary)])]
+    const events = [apiary, orchard, apiaryAdmins, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [addressOf(apiary)])]
     // The orchard lists the apiary as a file; drawn with the relay's own 39000 projection, when there is one.
     const peekLike = event({
       kind: 31990,
@@ -370,6 +370,13 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(titles(live), ['Apiary'])
     const gone = await resolveFolderContents(ORCHARD, relay([peekLike, ...events, archived]), noPeople)
     assert.deepEqual(titles(gone), [], 'archived, although its app folds nothing')
+    // From a member who is not the apiary's admin, published in the orchard: means nothing (§3.2).
+    const byMember = archive(addressOf(apiary), { by: KEEPER, folder: ORCHARD })
+    const stays = await resolveFolderContents(ORCHARD, relay([peekLike, ...events, byMember]), noPeople)
+    assert.deepEqual(titles(stays), ['Apiary'])
+    // With no admin list read, no change counts.
+    const unread = await resolveFolderContents(ORCHARD, relay([peekLike, ...events.filter((e) => e !== apiaryAdmins), archived]), noPeople)
+    assert.deepEqual(titles(unread), ['Apiary'])
   })
 
   test('a record’s channel is archived with its record, and not with a topic published into it', async () => {

@@ -2093,8 +2093,24 @@ export function isArchived(file: { archived?: Archive } | null | undefined): boo
  * `changes` may hold any events; only this rule's change kind, naming this
  * address, setting this field, is read. Last write wins, by the same order as
  * every other field.
+ *
+ * **A Folder is the exception** (SPEC §3.2): on a `kind:39000` address only a
+ * change in the Folder's own `h` by one of `folderAdmins` — the owners and
+ * admins on its relay-signed `kind:39001` — counts. A caller that has not read
+ * the admin list passes none, and then no change counts: a Folder shown live
+ * when it is archived is recoverable, one any member could hide is not.
  */
-function archiveOf(changes: SignedEvent[], address: string, rule: RecordsRule): Archive | undefined {
+function archiveOf(
+  changes: SignedEvent[],
+  address: string,
+  rule: RecordsRule,
+  folderAdmins?: ReadonlySet<string>,
+): Archive | undefined {
+  const [kind, , folderId] = address.split(':')
+  if (Number(kind) === KIND_CHANNEL) {
+    if (!folderAdmins?.size) return undefined
+    changes = changes.filter((change) => tagValue(change, 'h') === folderId && folderAdmins.has(change.pubkey))
+  }
   let last: SignedEvent | undefined
   for (const change of changes) {
     // The target is the first target tag, as every other fold reads it: a
@@ -5309,13 +5325,7 @@ function folderAdminsOf(admins: SignedEvent | undefined, channel: SignedEvent | 
  * change, and it means nothing.
  */
 function folderArchiveOf(changes: SignedEvent[], folder: Pick<FolderSummary, 'id' | 'channel' | 'admins'>): Archive | undefined {
-  if (!folder.channel) return undefined
-  const admins = new Set(folder.admins ?? [])
-  const counted = changes.filter(
-    (change) =>
-      tagValue(change, ARCHIVE_RULE.targetTag) === folder.channel && tagValue(change, 'h') === folder.id && admins.has(change.pubkey),
-  )
-  return archiveOf(counted, folder.channel, ARCHIVE_RULE)
+  return folder.channel ? archiveOf(changes, folder.channel, ARCHIVE_RULE, new Set(folder.admins ?? [])) : undefined
 }
 
 /** One folder, enough to draw a sidebar row. */
@@ -5986,6 +5996,7 @@ export async function resolveFolderContents(
       ...[...manifests.values()].flatMap((r) => (r.manifest.records ? [r.manifest.records.changeKind] : [])),
     ]),
   ]
+  const nestedFolderIds = pointers.filter(({ pointer }) => pointer.kind === KIND_CHANNEL).map(({ pointer }) => pointer.identifier)
   const events = await query([
     ...[...groups.values()].map(({ pointer, addresses: group }) => ({
       kinds: [pointer.kind],
@@ -5999,6 +6010,8 @@ export async function resolveFolderContents(
     // changes for every file together, and one Folder has already had 688.
     // Same request.
     ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
+    // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
+    ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
   ])
   const ownArchive = folderArchiveOf(events, summary)
   if (ownArchive) summary.archived = ownArchive
@@ -6027,7 +6040,16 @@ export async function resolveFolderContents(
       events.filter((e) => e.kind === records.changeKind && hasTagValue(e, records.targetTag, address)),
       records,
     )
-    const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest))
+    const nestedAdmins =
+      pointer.kind === KIND_CHANNEL
+        ? new Set(
+            folderAdminsOf(
+              events.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === pointer.identifier),
+              root,
+            ),
+          )
+        : undefined
+    const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest), nestedAdmins)
     archiveByAddress.set(address, archive)
     const parent = parentRefOf(resolved.manifest, pointer.kind, root, folded)
     parentByAddress.set(address, parent)

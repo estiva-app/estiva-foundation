@@ -73,6 +73,11 @@ export interface FolderRef {
  * and nowhere else without `hasState`: the channel was created by the first
  * event, so nothing is filed in it to hide. The relay emits state for an `add`
  * with no addresses and no name.
+ *
+ * `folder` MUST be a uuid nobody has used. The relay answers a `kind:9007` for
+ * an existing channel with `duplicate:`, which the bridge reports as accepted,
+ * so a reused id would send the `add` to a group that may hold files and no
+ * state — and empty it on every surface.
  */
 export function planCreateFolder(
   pubkey: string,
