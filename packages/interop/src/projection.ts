@@ -4236,6 +4236,17 @@ function isDone(stage: Stage | undefined, raw: string | undefined, label: string
   return isDoneStatusByLabel(raw, label)
 }
 
+/**
+ * Is a resolved `status` slot finished work — done or dropped — by its words?
+ *
+ * For a consumer holding only the object, not its manifest: the declared stage
+ * is not on a {@link ResolvedSlot}, so this is the word-list fallback alone.
+ * `[` uses it to put a closed issue after an open one (PEE-21).
+ */
+export function isClosedStatus(slot: ResolvedSlot | undefined): boolean {
+  return slot !== undefined && isDoneStatusByLabel(slot.value, slot.label)
+}
+
 function isOpen(stage: Stage | undefined, raw: string | undefined, label: string | undefined) {
   if (stage) return stage === 'open' || stage === 'started'
   return isOpenStatusByLabel(raw, label)

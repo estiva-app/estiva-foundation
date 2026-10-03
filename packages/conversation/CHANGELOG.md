@@ -6,6 +6,27 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.5.0 — 2026-10-03
+
+**What `[` offers, and in what order** (PEE-21, CON-26's ranking, Miky
+2026-10-02/03). Needs protocol 0.24.0, unchanged.
+
+- `rankReferences({messages, files, query, ownKinds?, caps?})` — two capped
+  sections, Messages (this thread or file, then its parent) above Files (this
+  Folder, then recently read, then search hits only once something is typed).
+  Typed, a better title match beats a higher tier; an open issue goes before a
+  closed one on an equal match; the app's own kinds break what ties are left.
+  `REFERENCE_CAPS` is 4 and 6.
+- `referenceMatch(text, query)` — 4 whole, 3 start, 2 word start, 1 anywhere.
+- `fileReference(address)` — `nostr:naddr…` with no relay hint, the bytes a
+  pasted link resolves to.
+- `referenceSearch({search})` — the search tier per keystroke: debounced,
+  cached, a failure remembered as no hits, listeners told when an answer lands.
+
+**SPEC:** none of §6 or §9 changes how this package reads or writes. A file
+pick writes what a paste writes and earns `["a", <address>]` through
+`referenceTagsFor`, as §13.1 already says; ranking is a client's choice.
+
 ## 0.4.0 — 2026-10-02
 
 **A reference records which message it points at** (CON-25, Miky

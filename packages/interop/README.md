@@ -373,6 +373,18 @@ every file moved in. A parent outside the listing is not drawn, and a file on a
 cycle is drawn at the top, so every listed file stays reachable and no walk
 loops.
 
+### Offering files to reference (0.46.0)
+
+A composer's `[` offers files as `@estiva-app/conversation`'s
+`rankReferences` ranks them. `fileCandidates(objects, tier, query)` turns
+resolved objects — a Folder's listing, the files you read recently — into its
+rows: the type word from `REFERENCE_FILE_TYPES`, the current title, an issue
+captioned with its project's title. `searchFileReferences(text, query)` is the
+search tier: it asks the relay for roots and title changes holding the word,
+resolves each address through its manifest, and keeps only the files whose
+*current* title matches. Pass it to conversation's `referenceSearch`. Neither
+offers what the reader could not resolve.
+
 ## 3. Widgets: draw what you know, degrade honestly
 
 `widget` is a *layout hint*, and it may be a single type or an ordered chain:
