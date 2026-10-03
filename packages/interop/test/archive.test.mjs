@@ -105,6 +105,10 @@ const hiveLog = event({
 const channelOf = (id, name) => event({ kind: 39000, pubkey: RELAY, tags: [['d', id], ['name', name]] })
 const apiary = channelOf(APIARY, 'Apiary')
 const orchard = channelOf(ORCHARD, 'Orchard')
+// The relay's admin list: a Folder's archive counts only from these (SPEC §3.2, MAN-17).
+const adminsOf = (id, ...people) => event({ kind: 39001, pubkey: RELAY, tags: [['d', id], ...people.map((p) => ['p', p, 'owner'])] })
+const apiaryAdmins = adminsOf(APIARY, HELPER)
+const orchardAdmins = adminsOf(ORCHARD, HELPER)
 const hiveTalk = channelOf(HIVE_TALK, 'Hive talk')
 
 // A hive whose conversation is its own channel, and two inspections in it.
@@ -247,7 +251,7 @@ describe('a link still opens an archived file, and says so', () => {
       for (const f of filters) out.push(...(await relay(events)([f])).sort((a, b) => b.created_at - a.created_at).slice(0, f.limit ?? Infinity))
       return out
     }
-    const contents = await resolveFolderContents(APIARY, limited([hiveLog, apiary, hive, stateOf(APIARY, 'Apiary', [addressOf(hive)]), archived, ...busy]), noPeople)
+    const contents = await resolveFolderContents(APIARY, limited([hiveLog, apiary, apiaryAdmins, hive, stateOf(APIARY, 'Apiary', [addressOf(hive)]), archived, ...busy]), noPeople)
     assert.ok(contents.archived, 'the archive was not pushed off the page')
   })
 
@@ -292,9 +296,9 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(folderChange, fileChange)
     const [restore] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: false, resolution: 'ignored' })
     assert.deepEqual([restore.tags[2], restore.content], [['value', ''], ''])
-    // A nested Folder's archive goes where its container's readers read it.
+    // Always the Folder's own `h` (SPEC §3.3): readers count no other (MAN-17).
     const [nested] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: true, into: ORCHARD })
-    assert.deepEqual(nested.tags.find((t) => t[0] === 'h'), ['h', ORCHARD])
+    assert.deepEqual(nested.tags.find((t) => t[0] === 'h'), ['h', APIARY])
   })
 
   test('an app’s own change tags are read for a parent and for a child, not only for the file itself', async () => {
@@ -312,7 +316,7 @@ describe('a Folder is archived the way any file is', () => {
 
   test('an archived Folder is not top-level, and says why; restoring brings it back', async () => {
     const archived = archive(addressOf(apiary), { note: 'Season over.' })
-    const base = [apiary, orchard, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [])]
+    const base = [apiary, orchard, apiaryAdmins, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [])]
     const folders = await listFolders(relay([...base, archived]))
     const held = folders.find((f) => f.id === APIARY)
     assert.equal(held.channel, addressOf(apiary))
@@ -324,13 +328,31 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(new Set(topLevelFolders(back).map((f) => f.id)), new Set([APIARY, ORCHARD]))
   })
 
+  test('a Folder’s archive counts only from its owners and admins, in its own h', async () => {
+    const base = [apiary, stateOf(APIARY, 'Apiary', [])]
+    const archivedOf = async (events) => (await listFolders(relay([...base, ...events]))).find((f) => f.id === APIARY).archived
+    const opened = async (events) => (await resolveFolderContents(APIARY, relay([...base, ...events]), noPeople)).archived
+    // A member who is not an admin: the relay accepts it, and it means nothing.
+    assert.equal(await archivedOf([apiaryAdmins, archive(addressOf(apiary), { by: KEEPER })]), undefined)
+    assert.equal(await opened([apiaryAdmins, archive(addressOf(apiary), { by: KEEPER })]), undefined)
+    // An admin, from the Folder that used to list it: not its own h.
+    assert.equal(await archivedOf([apiaryAdmins, archive(addressOf(apiary), { folder: ORCHARD })]), undefined)
+    // An admin list somebody other than the relay signed.
+    const forged = { ...adminsOf(APIARY, KEEPER), pubkey: KEEPER }
+    assert.equal(await archivedOf([forged, archive(addressOf(apiary), { by: KEEPER })]), undefined)
+    // The admin, in its own h: archived; and the listing says who may.
+    const folders = await listFolders(relay([...base, apiaryAdmins, archive(addressOf(apiary))]))
+    assert.equal(folders[0].archived?.by, HELPER)
+    assert.deepEqual(folders[0].admins, [HELPER])
+  })
+
   test('opened by id, an archived Folder still lists what it holds, and carries its archive', async () => {
     const archived = archive(addressOf(apiary), { note: 'Season over.' })
-    const contents = await resolveFolderContents(APIARY, relay([hiveLog, apiary, hive, topic, stateOf(APIARY, 'Apiary', both), archived]), noPeople)
+    const contents = await resolveFolderContents(APIARY, relay([hiveLog, apiary, apiaryAdmins, hive, topic, stateOf(APIARY, 'Apiary', both), archived]), noPeople)
     assert.equal(contents.archived.resolution, 'Season over.')
     assert.equal(contents.channel, addressOf(apiary))
     assert.deepEqual(new Set(titles(contents)), new Set(['North hive', 'Queens']))
-    const empty = await resolveFolderContents(APIARY, relay([apiary, stateOf(APIARY, 'Apiary', []), archived]), noPeople)
+    const empty = await resolveFolderContents(APIARY, relay([apiary, apiaryAdmins, stateOf(APIARY, 'Apiary', []), archived]), noPeople)
     assert.equal(empty.archived.resolution, 'Season over.', 'an empty Folder reads its archive too')
   })
 
@@ -392,7 +414,7 @@ describe('archiveImpact counts what would be hidden', () => {
   test('a Folder listed elsewhere only by an archived Folder hides it', async () => {
     const orchardArchived = archive(addressOf(orchard), { folder: ORCHARD })
     const events = [
-      hiveLog, apiary, orchard, topic,
+      hiveLog, apiary, orchard, orchardAdmins, topic,
       stateOf(APIARY, 'Apiary', [addressOf(topic)]),
       stateOf(ORCHARD, 'Orchard', [addressOf(topic)]),
       orchardArchived,

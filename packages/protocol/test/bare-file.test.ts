@@ -45,7 +45,7 @@ describe('buildBareFile', () => {
     )
   })
 
-  it('refuses a file with no team channel', () => {
+  it('refuses a file with no Folder', () => {
     // The relay only says SHOULD; SPEC says MUST, for the reason issues do.
     assert.throws(
       () =>
@@ -54,7 +54,7 @@ describe('buildBareFile', () => {
           title: 'Launch naming',
           channelUuid: '',
         }),
-      /team channel/,
+      /name the Folder it lives in/,
     )
   })
 

@@ -97,7 +97,7 @@ describe('a folder lists files from different apps as peers', () => {
     const contents = await resolveFolderContents(FOLDER, query, async () => ({}))
 
     assert.equal(contents.source, 'state')
-    assert.equal(contents.name, 'Estuary survey', 'the folder names itself, not its channel')
+    assert.equal(contents.name, 'The estuary', 'the title is the channel’s; a name on the state is never shown (SPEC §3.2)')
     assert.deepEqual(
       contents.files.map((f) => [f.appName, f.slots.title?.value]),
       [['Ringing log', 'Weir colony'], ['Tide table', 'Spring tides']],
@@ -267,13 +267,13 @@ describe('a folder lists the files placed in it, not only the files whose h it i
 })
 
 describe('listFolders', () => {
-  test('state and bare channels in one list, state naming the folder', async () => {
+  test('state and bare channels in one list, the channel titling the folder', async () => {
     const other = event({ kind: 39000, pubkey: RELAY, tags: [['d', 'aaa'], ['name', 'Another channel']] })
     const query = relay([channel, other, state([])])
     const folders = await listFolders(query)
     assert.deepEqual(folders, [
       { id: 'aaa', name: 'Another channel', hasState: false, channel: `39000:${RELAY}:aaa` },
-      { id: FOLDER, name: 'Estuary survey', hasState: true, channel: addressOf(channel) },
+      { id: FOLDER, name: 'The estuary', hasState: true, channel: addressOf(channel) },
     ])
   })
 

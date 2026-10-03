@@ -947,7 +947,7 @@ export function buildBareFile(
     /** Stable id, an opaque uuid (RFC 0.4 §4.3). Never a slug. */
     fileId: string
     title: string
-    /** The team's channel. Required — see above. */
+    /** The Folder's channel. Required — see above. */
     channelUuid: string
     /** Address of the file this one sits under, of any kind. At most one. */
     parent?: string
@@ -956,7 +956,7 @@ export function buildBareFile(
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
-  if (!args.channelUuid) throw new Error('a bare file must name the team channel it lives in (h)')
+  if (!args.channelUuid) throw new Error('a bare file must name the Folder it lives in (h)')
   if (args.parent !== undefined && !/^\d+:[0-9a-f]{64}:/.test(args.parent)) {
     throw new Error(`parent must be an address "<kind>:<pubkey>:<d>", got "${args.parent}"`)
   }
