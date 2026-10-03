@@ -4,6 +4,13 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.26.2 — 2026-10-03
+
+**Wire behaviour: unchanged.** One error message (MAN-17).
+
+- `buildBareFile` without a channel now throws "a bare file must name the
+  Folder it lives in (h)" — "Folder", never "team".
+
 ## 0.26.1 — 2026-10-01
 
 **Wire behaviour: unchanged.** Same document shape; a different block keeps a

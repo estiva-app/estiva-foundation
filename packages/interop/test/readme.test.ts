@@ -304,7 +304,9 @@ describe('the README §5: read a whole folder', () => {
         ['a', `${ISSUE_KIND}:${AUTHOR}:not-a-folder`],
       ],
     })
-    const folders = await listFolders(relay([manifest, channel, issue, teamState]))
+    // Titled by its channel; the state's `name` is never read (SPEC §3.2).
+    const teamChannel = event({ kind: CHANNEL_KIND, pubkey: RELAY_KEY, tags: [['d', TEAM], ['name', 'Finance']] })
+    const folders = await listFolders(relay([manifest, channel, teamChannel, issue, { ...teamState, tags: teamState.tags.map((t) => (t[0] === 'name' ? ['name', 'Old'] : t)) }]))
     assert.deepEqual(folders, [
       {
         id: FOLDER,
@@ -322,6 +324,7 @@ describe('the README §5: read a whole folder', () => {
           `${CHANNEL_KIND}:${RELAY_KEY}:${TEAM}`,
           `${ISSUE_KIND}:${AUTHOR}:not-a-folder`,
         ],
+        channel: `${CHANNEL_KIND}:${RELAY_KEY}:${TEAM}`,
       },
     ])
     assert.deepEqual(topLevelFolders(folders).map((f) => f.id), [TEAM])

@@ -100,7 +100,7 @@ export {
 } from './projection.js'
 
 /**
- * SPEC §6.7's nesting, drawn from one team listing: roots, children,
+ * SPEC §6.7's nesting, drawn from one Folder listing: roots, children,
  * breadcrumbs and move targets, with cycles cut. No requests.
  */
 export { nestingOf, type Nestable, type Nesting } from './nesting.js'
@@ -118,18 +118,22 @@ export {
 } from './references.js'
 
 /**
- * Folder writes as unsigned events in publish order — create, rename, place,
- * unlist, move. Each takes `hasState` from the caller, because a `kind:1852`
- * against a Folder with no state empties it. No signing, no requests.
+ * SPEC §3.3's Folder operations as unsigned events in publish order — create,
+ * rename, archive, delete, place, unlist, move. Where a `kind:1852` is sent,
+ * `hasState` comes from the caller, because one against a group with no state
+ * empties it. No signing, no requests.
  */
 export {
   planCreateFolder,
   planRenameFolder,
+  planDeleteFolder,
   planPlaceFile,
   planUnlistFile,
   planMoveFile,
   planArchiveFolder,
+  listedBeneath,
   type FolderRef,
+  type MovableFile,
   type MovePlan,
   type MoveRefusal,
 } from './folders.js'

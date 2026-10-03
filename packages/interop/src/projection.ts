@@ -1244,7 +1244,7 @@ export interface ResolvedManifest {
 /**
  * The bare file — `kind:30840`, SPEC §6.7, decided in RFC 0.5 §10.7.
  *
- * A file **no app owns**: a `d`, a `title`, the `h` of the team it lives in, at
+ * A file **no app owns**: a `d`, a `title`, the `h` of the Folder it lives in, at
  * most one `a` naming the file it sits under, and a §13.3 block document (or
  * nothing) for content. A Peek topic is one. Typed kinds — a project, an issue
  * — add properties on top of this; the bare file adds none, which is exactly
@@ -1374,7 +1374,7 @@ const BARE_FILE_MANIFEST: Manifest = {
 
     `rename` is a `kind:1851` change to the `title` field, not a re-publish of
     the `30840`. The title slot already folds `title`, so a rename by anyone in
-    the team lands for every reader the way a re-parent does; a re-publish
+    the Folder lands for every reader the way a re-parent does; a re-publish
     could only ever be the author's, because a `30840` from another pubkey is a
     different address and not a refusal. `delete` is NIP-09's `kind:5` naming
     the address — the relay decides who may (the author, or the owner of an
@@ -1386,7 +1386,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'comment',
       label: 'Comment',
       description:
-        'Say something about this file. The comment lands in the team Folder the file lives in, ' +
+        'Say something about this file. The comment lands in the Folder the file lives in, ' +
         'and is what every reader of the file sees under it.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
@@ -1397,7 +1397,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'rename',
       label: 'Rename',
       description:
-        'Give this file a new title. A change event, so anyone in the team may, and every app ' +
+        'Give this file a new title. A change event, so anyone in the Folder may, and every app ' +
         'reading the file folds it into the title.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
@@ -1407,16 +1407,16 @@ const BARE_FILE_MANIFEST: Manifest = {
     /*
       `move` is the `parent` field SPEC §6.7 already defines, declared so a
       consumer draws the control from here as it draws Rename (FOL-4). The value
-      is the new parent's address, or empty for the top of the team. A move
+      is the new parent's address, or empty for the top of the Folder. A move
       never changes `h`: nesting organises and never grants access, so a file
-      moved under another stays readable by exactly the team it was.
+      moved under another stays readable by exactly the people it was.
     */
     {
       id: 'move',
       label: 'Move',
       description:
-        "Put this file under another file in the same team, or back at the top. A change event, so anyone in " +
-        'the team may; who can read the file does not change.',
+        "Put this file under another file in the same Folder, or back at the top. A change event, so anyone in " +
+        'the Folder may; who can read the file does not change.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: 'parent' },
@@ -1425,7 +1425,7 @@ const BARE_FILE_MANIFEST: Manifest = {
     /*
       `archive` is the one field every file may carry (FOL-46): `true` hides the
       file and everything under it from every list, an empty value brings it
-      back. A change, so anyone in the team may, and the archiving change's
+      back. A change, so anyone in the Folder may, and the archiving change's
       `content` is the resolution summary a person gave (`ActionEventArgs.note`).
     */
     {
@@ -2093,8 +2093,24 @@ export function isArchived(file: { archived?: Archive } | null | undefined): boo
  * `changes` may hold any events; only this rule's change kind, naming this
  * address, setting this field, is read. Last write wins, by the same order as
  * every other field.
+ *
+ * **A Folder is the exception** (SPEC §3.2): on a `kind:39000` address only a
+ * change in the Folder's own `h` by one of `folderAdmins` — the owners and
+ * admins on its relay-signed `kind:39001` — counts. A caller that has not read
+ * the admin list passes none, and then no change counts: a Folder shown live
+ * when it is archived is recoverable, one any member could hide is not.
  */
-function archiveOf(changes: SignedEvent[], address: string, rule: RecordsRule): Archive | undefined {
+function archiveOf(
+  changes: SignedEvent[],
+  address: string,
+  rule: RecordsRule,
+  folderAdmins?: ReadonlySet<string>,
+): Archive | undefined {
+  const [kind, , folderId] = address.split(':')
+  if (Number(kind) === KIND_CHANNEL) {
+    if (!folderAdmins?.size) return undefined
+    changes = changes.filter((change) => tagValue(change, 'h') === folderId && folderAdmins.has(change.pubkey))
+  }
   let last: SignedEvent | undefined
   for (const change of changes) {
     // The target is the first target tag, as every other fold reads it: a
@@ -5272,14 +5288,45 @@ export const KIND_FOLDER_STATE = 30890
 /**
  * NIP-29 group metadata — the Folder's channel.
  *
- * Named here for two unrelated jobs: it carries the folder's `name` before any
- * folder state exists, and its own address is what makes a Peek topic a file
- * like any other (§5.2).
+ * Named here for two unrelated jobs: it carries the Folder's title — its
+ * `name`, and only that (SPEC §3.2) — and its own address is what makes a Peek
+ * topic a file like any other (§5.2).
  */
 const KIND_CHANNEL = 39000
 
+/** NIP-29 group admins — the relay's list of who holds which role in a channel. */
+const KIND_CHANNEL_ADMINS = 39001
+
+/** The roles on a `kind:39001` that may rename a Folder, and so archive it (SPEC §3.2). */
+const FOLDER_ADMIN_ROLES = new Set(['owner', 'admin'])
+
 /** The `name` tag, when there is an event to read it off at all. */
 const nameOf = (event: SignedEvent | undefined) => (event ? tagValue(event, 'name') : undefined)
+
+/**
+ * The owners and admins a `kind:39001` lists — kept only when the channel's own
+ * signer, the relay, signed it: anybody can publish an event of that shape.
+ */
+function folderAdminsOf(admins: SignedEvent | undefined, channel: SignedEvent | undefined): string[] {
+  if (!admins || !channel || admins.pubkey !== channel.pubkey) return []
+  return [
+    ...new Set(
+      admins.tags
+        .filter((tag) => tag[0] === 'p' && tag[1] && tag.slice(2).some((role) => FOLDER_ADMIN_ROLES.has(role)))
+        .map((tag) => tag[1]),
+    ),
+  ]
+}
+
+/**
+ * A Folder's own archive (SPEC §3.2): the `archived` changes on its channel's
+ * address, counting only one carrying the Folder's own `h` whose author the
+ * relay lists as its owner or admin. From anybody else the relay accepts the
+ * change, and it means nothing.
+ */
+function folderArchiveOf(changes: SignedEvent[], folder: Pick<FolderSummary, 'id' | 'channel' | 'admins'>): Archive | undefined {
+  return folder.channel ? archiveOf(changes, folder.channel, ARCHIVE_RULE, new Set(folder.admins ?? [])) : undefined
+}
 
 /** One folder, enough to draw a sidebar row. */
 export interface FolderSummary {
@@ -5289,17 +5336,33 @@ export interface FolderSummary {
    * measured across all of production's channels).
    */
   id: string
+  /**
+   * The title: its `kind:39000`'s `name`, and only that (SPEC §3.2). A `name`
+   * an older `kind:1852` left on the state is never read — any member may send
+   * one, and only owners and admins may rename the channel.
+   */
   name?: string
   /** True once the relay maintains state for it, rather than it being a bare channel. */
   hasState: boolean
+  /**
+   * Present when the Folder's relay-signed `kind:39000` carries `["private"]`
+   * (NIP-29). What `planMoveFile` reads as `FolderRef.private`.
+   */
+  private?: true
+  /**
+   * Who may rename and archive it: the owners and admins on its relay-signed
+   * `kind:39001`. Offer Archive only to them — a reader ignores an archive from
+   * anybody else (§3.2). Absent when the relay returned no admin list.
+   */
+  admins?: string[]
   /**
    * The folders whose state lists this one as a file — present only when there
    * are any.
    *
    * A channel is addressable (§5.2), so a folder can be placed inside another
    * the way any file is, and Peek's topics are (FOL-22): each is a channel
-   * listed by its team's state. A sidebar that drew every channel as a top-level
-   * folder would show the team and, beside it, every topic in it. This is what
+   * listed by its Folder's state. A sidebar that drew every channel as a top-level
+   * folder would show the Folder and, beside it, every topic in it. This is what
    * lets a consumer tell the two apart without reading any folder's contents:
    * `listFolders` already holds every state, so the answer is free.
    */
@@ -5311,7 +5374,7 @@ export interface FolderSummary {
    * `listedIn` in the other direction, and free for the same reason: the
    * states are already in hand. It is the unresolved list — a row that names
    * an archived or unreachable record is still here — so a consumer that
-   * draws one app's own records under a folder (Ship's projects under a team,
+   * draws one app's own records under a folder (Ship's projects under a Folder,
    * FOL-5) intersects it with the records it holds, and a consumer that draws
    * another app's files resolves them with {@link resolveFolderContents}.
    */
@@ -5349,7 +5412,7 @@ export interface FolderSummary {
  * never gets; and a folder another one lists (`listedIn`) is a row inside
  * that one, not a section beside it.
  *
- * Not a list of ids: a new team is a folder somebody creates, not a code
+ * Not a list of ids: a new Folder is a folder somebody creates, not a code
  * change. Moved here from Peek and Ship, which each held the same line.
  *
  * An archived Folder is not navigated by (FOL-46), and a listing that has not
@@ -5394,8 +5457,8 @@ export interface FolderContents extends FolderSummary {
  * Every folder this identity can see, for a sidebar.
  *
  * Both shapes in one pass: folders the relay maintains state for, and bare
- * channels that have none yet. A channel with state appears once, named by its
- * state — the folder's name is the folder's to say.
+ * channels that have none yet. A channel with state appears once, titled by its
+ * `kind:39000` (SPEC §3.2), with the owners and admins its `kind:39001` lists.
  *
  * **A direct route, deliberately.** §4.2's post-mortem on REW-11 is that
  * discovering children only through their parent loses them when the parent
@@ -5406,27 +5469,36 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
   const events = await query([
     { kinds: [KIND_FOLDER_STATE], limit: 500 },
     { kinds: [KIND_CHANNEL], limit: 500 },
+    { kinds: [KIND_CHANNEL_ADMINS], limit: 500 },
   ])
   const byId = new Map<string, FolderSummary>()
+  const channelOf = new Map<string, SignedEvent>()
+  const adminsOf = new Map<string, SignedEvent>()
   for (const event of events) {
     const id = tagValue(event, 'd')
     if (!id) continue
+    if (event.kind === KIND_CHANNEL) channelOf.set(id, event)
+    if (event.kind === KIND_CHANNEL_ADMINS) adminsOf.set(id, event)
+    if (event.kind !== KIND_FOLDER_STATE && event.kind !== KIND_CHANNEL) continue
     const state = event.kind === KIND_FOLDER_STATE
     const existing = byId.get(id)
-    // State wins over the channel for the name, whichever order they arrived.
-    if (existing && !state) continue
-    const addresses = state ? event.tags.filter((tag) => tag[0] === 'a' && tag[1]).map((tag) => tag[1]) : []
+    const addresses = state ? event.tags.filter((tag) => tag[0] === 'a' && tag[1]).map((tag) => tag[1]) : (existing?.addresses ?? [])
     byId.set(id, {
       id,
-      name: tagValue(event, 'name') ?? existing?.name,
       hasState: state || (existing?.hasState ?? false),
       ...(addresses.length ? { addresses } : {}),
     })
   }
-  for (const event of events) {
-    const id = tagValue(event, 'd')
-    const folder = id && event.kind === KIND_CHANNEL ? byId.get(id) : undefined
-    if (folder) folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: event.pubkey, identifier: id!, relays: [] })
+  // The title, privacy and admins are the channel's (§3.2), whichever order the events arrived.
+  for (const [id, folder] of byId) {
+    const channel = channelOf.get(id)
+    if (!channel) continue
+    const name = nameOf(channel)
+    if (name !== undefined) folder.name = name
+    if (channel.tags.some((tag) => tag[0] === 'private')) folder.private = true
+    const admins = folderAdminsOf(adminsOf.get(id), channel)
+    if (admins.length) folder.admins = admins
+    folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: id, relays: [] })
   }
   /*
     A folder listed in another folder's state is a file there. Read off the
@@ -5463,13 +5535,13 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
  *
  * A Folder is archived by a change naming its channel's address, the way any
  * file is. A record's channel — a Ship project's conversation — is archived
- * with its record, so an archived project's channel stops lighting its team's
+ * with its record, so an archived project's channel stops lighting its Folder's
  * dot the way the project stopped being listed — only when every record naming
  * the channel is archived, since two projects may share one. Its own archive
  * wins when it has one.
  *
  * A refused read throws before this, like the reads beside it: a listing that
- * silently reported every Folder live would put archived teams back in
+ * silently reported every Folder live would put archived Folders back in
  * everyone's sidebar.
  */
 function markArchivedFolders(
@@ -5478,7 +5550,7 @@ function markArchivedFolders(
   changes: SignedEvent[],
 ): void {
   for (const folder of byId.values()) {
-    const own = folder.channel ? archiveOf(changes, folder.channel, ARCHIVE_RULE) : undefined
+    const own = folderArchiveOf(changes, folder)
     if (own) {
       folder.archived = own
       continue
@@ -5651,13 +5723,13 @@ async function countLiveChildren(
  * names the channel its conversation lives in with {@link folderOf}'s tags. No
  * state lists that channel, so without this `listFolders` reports it placed
  * nowhere, and a consumer folding an unread verdict into the containers of a
- * channel (Peek's team dot) has nowhere to fold it: correct, and drawn
+ * channel (Peek's Folder dot) has nowhere to fold it: correct, and drawn
  * nowhere. Measured on production 2026-09-22: of the 43 records the six
  * states list, 23 name a channel other than the state's own and no state lists
  * any of them. This places 21 channels and moves no top-level Folder.
  *
  * Derived rather than published, so it cannot drift: a `kind:1852` adding each
- * channel to its team would have to be repeated by every app that places a
+ * channel to its Folder would have to be repeated by every app that places a
  * record, and would stay wrong the first time one did not.
  *
  * Both of `folderOf`'s spellings, because production has both — about half of
@@ -5682,7 +5754,7 @@ async function countLiveChildren(
  * production that was the bug it was meant to prevent: Peek reads the listing
  * once per page load, the load is when the relay's budget is most contested,
  * and one refused read on 2026-09-22 left a project's channel unplaced for the
- * whole session — the team's dot dark, and nothing anywhere saying why. A
+ * whole session — the Folder's dot dark, and nothing anywhere saying why. A
  * listing missing placements looks exactly like a correct one, so only the
  * caller can recover, and only if it is told. Keeping the last good listing
  * and retrying is the caller's to do.
@@ -5762,7 +5834,7 @@ async function placeRecordChannels(
     const channel = root && folderOf(root)
     if (!channel || byId.get(channel)?.hasState) continue
     // A file published into the Folder that lists it names that Folder, and
-    // does not own it: a topic's `h` is its team's.
+    // does not own it: a topic's `h` is its Folder's.
     if (!containers.includes(channel)) recordsOf.set(channel, [...(recordsOf.get(channel) ?? []), key])
     for (const container of containers) {
       if (container === channel) continue
@@ -5838,17 +5910,24 @@ export async function resolveFolderContents(
   const identity = await query([
     { kinds: [KIND_FOLDER_STATE], '#d': [folder], limit: 1 },
     { kinds: [KIND_CHANNEL], '#d': [folder], limit: 1 },
+    { kinds: [KIND_CHANNEL_ADMINS], '#d': [folder], limit: 1 },
   ])
   const state = identity.find((e) => e.kind === KIND_FOLDER_STATE && tagValue(e, 'd') === folder)
   const channel = identity.find((e) => e.kind === KIND_CHANNEL && tagValue(e, 'd') === folder)
+  const admins = folderAdminsOf(
+    identity.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === folder),
+    channel,
+  )
   const channelAddress = channel
     ? pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: folder, relays: [] })
     : undefined
 
   const summary: FolderSummary & { address?: string } = {
     id: folder,
-    name: nameOf(state) ?? nameOf(channel),
+    name: nameOf(channel),
     hasState: !!state,
+    ...(channel?.tags.some((tag) => tag[0] === 'private') ? { private: true as const } : {}),
+    ...(admins.length ? { admins } : {}),
     ...(channelAddress ? { channel: channelAddress } : {}),
     ...(state
       ? { address: pointerToAddress({ kind: state.kind, pubkey: state.pubkey, identifier: folder, relays: [] }) }
@@ -5867,9 +5946,7 @@ export async function resolveFolderContents(
   if (addresses.length === 0) {
     // Nothing listed, so no change query to ride on: the Folder's own archive
     // is one small read of its own.
-    const archived = channelAddress
-      ? archiveOf(await readArchiveChanges([channelAddress], query), channelAddress, ARCHIVE_RULE)
-      : undefined
+    const archived = channelAddress ? folderArchiveOf(await readArchiveChanges([channelAddress], query), summary) : undefined
     return { ...summary, ...(archived ? { archived } : {}), files: [], source: state ? 'state' : 'channel' }
   }
 
@@ -5919,6 +5996,7 @@ export async function resolveFolderContents(
       ...[...manifests.values()].flatMap((r) => (r.manifest.records ? [r.manifest.records.changeKind] : [])),
     ]),
   ]
+  const nestedFolderIds = pointers.filter(({ pointer }) => pointer.kind === KIND_CHANNEL).map(({ pointer }) => pointer.identifier)
   const events = await query([
     ...[...groups.values()].map(({ pointer, addresses: group }) => ({
       kinds: [pointer.kind],
@@ -5932,8 +6010,10 @@ export async function resolveFolderContents(
     // changes for every file together, and one Folder has already had 688.
     // Same request.
     ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
+    // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
+    ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
   ])
-  const ownArchive = channelAddress ? archiveOf(events, channelAddress, ARCHIVE_RULE) : undefined
+  const ownArchive = folderArchiveOf(events, summary)
   if (ownArchive) summary.archived = ownArchive
 
   // 4. Build each file, in the order the folder listed them. Archived files are
@@ -5960,7 +6040,16 @@ export async function resolveFolderContents(
       events.filter((e) => e.kind === records.changeKind && hasTagValue(e, records.targetTag, address)),
       records,
     )
-    const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest))
+    const nestedAdmins =
+      pointer.kind === KIND_CHANNEL
+        ? new Set(
+            folderAdminsOf(
+              events.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === pointer.identifier),
+              root,
+            ),
+          )
+        : undefined
+    const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest), nestedAdmins)
     archiveByAddress.set(address, archive)
     const parent = parentRefOf(resolved.manifest, pointer.kind, root, folded)
     parentByAddress.set(address, parent)
@@ -5981,7 +6070,7 @@ export async function resolveFolderContents(
       the file is here; if the fold has moved on, somebody has since placed it
       somewhere else and this folder is holding a statement that has been
       superseded, which an append-only stream cannot retract. Ship linking a
-      project to a second team is the case: the first team's Folder keeps the
+      project to a second Folder is the case: the first Folder keeps the
       old statement for ever, and without this check would list the project
       for ever.
 
@@ -6081,17 +6170,17 @@ export async function resolveFolderContents(
  *
  * A folder lists the files whose `h` it is **and** the files placed in it.
  * An event cannot change its own `h`, so a project filed in one Folder and
- * later linked to a team keeps the `h` it was born with, and the only thing
+ * later linked to a Folder keeps the `h` it was born with, and the only thing
  * that can say "it belongs over there now" is a change event. Ship publishes
  * that change twice — into the record's own Folder, and *into the Folder
- * being linked*: a `kind:1851` carried by the team's `h`, targeting the
- * project, whose value is the team Folder itself. The second copy is the
+ * being linked*: a `kind:1851` carried by the Folder's `h`, targeting the
+ * project, whose value is the Folder itself. The second copy is the
  * placement, and it is what this reads.
  *
  * {@link resolveFolderProject} has read the same statement since PEEK-24 to
  * answer "which project is this topic paired with". This is the listing's
- * half of it, and it is the rule the tidy-up rests on: five team Folders,
- * fourteen projects linked into them and none re-created, so a team Folder
+ * half of it, and it is the rule the tidy-up rests on: five Folders,
+ * fourteen projects linked into them and none re-created, so a Folder
  * whose `h` is on nothing lists its projects anyway.
  *
  * App-neutral by the same discipline as everything else here. The change

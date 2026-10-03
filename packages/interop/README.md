@@ -583,7 +583,7 @@ explaining a short list should read this field.
 ```ts
 import { listFolders, topLevelFolders } from '@estiva-app/interop'
 
-const folders = await listFolders(query)   // { id, name, hasState, listedIn?, addresses?, channel?, archived? }[]
+const folders = await listFolders(query)   // { id, name, hasState, private?, admins?, listedIn?, addresses?, channel?, archived? }[]
 const teams = topLevelFolders(folders)     // state, nothing lists it, not archived
 ```
 
@@ -612,26 +612,48 @@ A channel with state of its own is a Folder, and only states place it.
 ```ts
 import { planMoveFile } from '@estiva-app/interop'
 
+const here = await resolveFolderContents(from.id, query)
 const plan = planMoveFile(me, Date.now(), {
-  address,
-  from: { id: here.id, hasState: here.hasState },  // from a read, never a guess
-  to: { id: there.id, hasState: there.hasState },
+  file,                                                 // a ForeignObject from `here.files`
+  listing: here.files,                                  // what is listed beneath `file` moves with it
+  from: { id: here.id, hasState: here.hasState },       // from a read, never a guess
+  to: { id: there.id, hasState: there.hasState, private: there.private },
 })
-if (!plan.ok) return plan.reason          // 'source-has-no-state' | 'target-has-no-state'
-for (const event of plan.events) {        // publish in order; stop at the first refusal
+if (!plan.ok) return plan.reason   // 'source-has-no-state' | 'target-has-no-state' | 'target-is-private'
+for (const event of plan.events) { // publish in order; stop at the first refusal
   if (!(await publish(await sign(event))).ok) break
 }
 ```
 
-`planCreateFolder`, `planRenameFolder`, `planPlaceFile`, `planUnlistFile` and
-`planMoveFile` return **unsigned** events in publish order. Signing and
-publishing stay yours.
+The planners are SPEC §3.3's operations — `planCreateFolder`,
+`planRenameFolder`, `planArchiveFolder`, `planDeleteFolder`, `planPlaceFile`,
+`planUnlistFile` and `planMoveFile` — and return **unsigned** events in publish
+order. Signing and publishing stay yours.
 
-Every one but create takes `hasState`, because the relay computes a folder's
-next state from its current one and a folder with no `kind:30890` has none: a
+A move is one `kind:1852 add` in the target naming the file and every file
+listed beneath it (`listedBeneath`), then one `remove` naming the same set in
+the source, so a failure between the two leaves the whole subtree in both
+Folders and never splits it. Into a private Folder it is refused when any moved
+file's `h` is another channel, or absent: a listing never changes who can read
+a file (§3.1).
+
+No command carries a name: the title is the `kind:39000`'s, so a rename is the
+`kind:9002` alone and `listFolders` reads the title from the channel.
+
+Place, unlist and move take `hasState`, because the relay computes a folder's
+next state from its current one and a group with no `kind:30890` has none: a
 `kind:1852` against it emits state listing only what the command named, and
-everything filed in it by `h` stops being listed. So rename, place and unlist
-send no command to such a folder, and a move into or out of one is refused.
+everything filed in it by `h` stops being listed. So place and unlist send no
+command to such a group, and a move into or out of one is refused.
+
+`listing` is required; pass `null` only for a file nothing can sit beneath, so
+a move that leaves sub-files behind is never an accident.
+
+Delete is for an empty Folder. The relay refuses a `kind:9008` while the Folder
+holds a file, with a reason naming the count (`folder holds 2 file(s) …`).
+Its wording is the relay's. Take the count and say it in your app's words
+("This Folder still has 2 files. Move or delete them first."), as you would
+for `target-is-private`.
 
 ### Archiving anything (0.37.0)
 
@@ -650,7 +672,10 @@ if (isArchived(opened)) showBanner(opened.archived)       // { by, at, resolutio
 One field for every file, whatever its kind: a change setting `archived` to
 `'true'` on the file's address archives it and an empty value restores it. It
 is a change, so anyone who may write in the Folder may, and the change's
-`content` is the resolution a person gave.
+`content` is the resolution a person gave. **A Folder itself is the
+exception** (SPEC §3.2): its archive counts only from an owner or admin on its
+`kind:39001`, published in its own `h` — offer Archive on a Folder only to
+`folder.admins`.
 
 **The cascade is read, never written.** A Folder's contents leave out an
 archived file and everything under it — an issue with its project, a sub-topic

@@ -6,6 +6,38 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.47.0 — 2026-10-03
+
+**Manifests: nothing changes.** Every published manifest means what it meant.
+**Folder writes and reads change to SPEC §3.3 / §3.2** (MAN-17), and three
+planner signatures moved. Needs protocol 0.24.0 and conversation 0.5.0,
+unchanged.
+
+- **New: `planDeleteFolder(pubkey, ms, { folder })`** = `[kind:9008]`. The
+  relay refuses it while the Folder holds a file, naming the count; show that.
+- **Changed: `planMoveFile` moves a subtree, and refuses a private move.** It
+  takes `{ file, from, to, listing }` instead of `{ address, … }`: `file` is a
+  `MovableFile` (any `ForeignObject`), `listing` the source's
+  `FolderContents.files` — required, `null` only for a file nothing can sit
+  beneath. The plan is one `kind:1852 add` in the target naming
+  the file and every file listed beneath it, then one `remove` naming the same
+  set in the source (Miky, 2026-10-03), and returns `moved`. New refusal
+  `target-is-private`: the target's `kind:39000` is private and a moved file's
+  `h` is another channel or absent. New export `listedBeneath(listing, file)`.
+- **Changed: no `kind:1852` carries a `name`.** `planCreateFolder` sends a bare
+  `add`; `planRenameFolder` is the `kind:9002` alone and no longer takes
+  `hasState`.
+- **Changed: `planArchiveFolder` always publishes into the Folder's own `h`**;
+  `into` is gone.
+- **Changed: a Folder's title is its `kind:39000` name** in `listFolders` and
+  `resolveFolderContents`; a `name` on the state is no longer read.
+- **Changed: a Folder's own archive counts only from an owner or admin** on its
+  relay-signed `kind:39001`, published in its own `h`. `FolderSummary` gains
+  `admins` (offer Archive only to them) and `private`. `listFolders` and
+  `resolveFolderContents` each ask for the `kind:39001` in the request they
+  already make.
+- The bare file's action descriptions say "Folder", not "team".
+
 ## 0.46.0 — 2026-10-03
 
 **Manifests: nothing changes.** Every published manifest means what it meant,
