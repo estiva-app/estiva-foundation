@@ -4977,7 +4977,8 @@ const PERSON_KEY = /^[0-9a-f]{64}$/
 /** Why `value` is neither `''` nor a person's key, or undefined when it is one. */
 function personKeyProblem(label: string, value: string): string | undefined {
   if (value === '' || PERSON_KEY.test(value)) return undefined
-  return `"${label}" takes a person's key as 64 lowercase hex characters, and "${value}" is not one.`
+  const shown = value.length > 80 ? `${value.slice(0, 80)}…` : value
+  return `"${label}" takes a person's key as 64 lowercase hex characters, and "${shown}" is not one.`
 }
 
 /** What {@link buildActionEvent} and {@link buildActionEvents} are handed. */

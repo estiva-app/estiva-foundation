@@ -150,4 +150,27 @@ describe('a creation that names a person', () => {
   test('a malformed key on a creation is refused', () => {
     assert.match(create({ title: 'Launch', lead: 'npub1xyz' }), /64 lowercase hex/)
   })
+
+  test('a listed creation names the person on its root, not on the Folder command after it', () => {
+    const listed = {
+      ...manifest,
+      actions: manifest.actions.map((a) => (a.id === 'add-project' ? { ...a, emits: { ...a.emits, listed: true } } : a)),
+    }
+    const built = buildActionEvents({
+      manifest: listed,
+      kind: PROJECT,
+      address: P1,
+      objectAuthor: AUTHOR,
+      folder: FOLDER,
+      actionId: 'add-project',
+      value: { title: 'Launch', lead: PERSON },
+      newId: 'new-1',
+      folderHasState: true,
+      pubkey: ACTOR,
+      createdAtMs: NOW,
+    })
+    assert.equal(built.length, 2)
+    assert.deepEqual(ps(built[0]), [['p', PERSON]])
+    assert.deepEqual(ps(built[1]), [])
+  })
 })

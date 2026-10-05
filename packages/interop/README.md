@@ -191,7 +191,10 @@ and such an action carries `declaredBy`. Build it with
 
 **Check the string.** `buildActionEvent` returns `UnsignedActionEvent | string`,
 and the string is why it refused — an undeclared field, a required one left
-empty, a value outside the declared vocabulary. Treat the result as an event
+empty, a value outside the declared vocabulary, a person (`type: "pubkey"`)
+that is not `''` or 64 lowercase hex. A person it accepts is also written as
+`["p", <key>]`, which is what makes them a member of the file (SPEC §7.3,
+§11.8). Treat the result as an event
 without checking and you will sign the refusal.
 
 Everything it needs is passed in rather than reached for: this package opens no
