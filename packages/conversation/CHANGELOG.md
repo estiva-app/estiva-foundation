@@ -8,8 +8,8 @@ about a conversation.
 
 ## 0.6.2 — 2026-10-05
 
-**The thread rule takes effect** (CON-34): `THREAD_RULE_FROM` is `1791216225`
-(2026-10-05T16:03:45Z), after Peek and Ship both deployed 0.6. A reply after it is read
+**The thread rule takes effect** (CON-34): `THREAD_RULE_FROM` is `1791226800`
+(2026-10-05T19:00:00Z), a second chosen to fall after Peek and Ship both run 0.6.2. A reply after it is read
 only by opening its thread; one before it is still read by reading its
 stream, so nothing read before the cut-over lights up again.
 

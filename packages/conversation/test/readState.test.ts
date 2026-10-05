@@ -111,7 +111,7 @@ describe('merge and hierarchy (§11.3)', () => {
   })
 
   it('cuts over at the second SPEC §11.3 states (CON-34)', () => {
-    assert.equal(THREAD_RULE_FROM, 1791216225)
+    assert.equal(THREAD_RULE_FROM, 1791226800)
     assert.ok(THREAD_RULE_FROM < MAX_TIMESTAMP)
   })
 

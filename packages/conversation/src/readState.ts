@@ -62,12 +62,12 @@ export const READ_STATE_HORIZON_DAYS = 90
  * stream it sits in. A suite constant, stated in SPEC — every app must agree
  * on which replies predate it.
  *
- * 2026-10-05T16:03:45Z, once Peek and Ship both judged by 0.6 (0.6.0 shipped
- * it as `MAX_TIMESTAMP`, the old stream term exactly). Set once: moving it
- * earlier would relight replies read by their stream, later would read ones
- * nobody opened.
+ * 2026-10-05T19:00:00Z, chosen to fall after Peek and Ship both run this
+ * version (0.6.0 shipped it as `MAX_TIMESTAMP`, the old stream term exactly).
+ * Set once. A T0 before every app runs it relights replies read by their
+ * stream in between; a later one only starts the rule later.
  */
-export const THREAD_RULE_FROM = 1791216225
+export const THREAD_RULE_FROM = 1791226800
 
 /**
  * The reserved context of the reply floor (§11.1, §11.6): every reply at or
