@@ -26,6 +26,10 @@ is read only by opening its thread, never by reading the stream it sits in.
   evicts the floor and raises it to the newest `thread:` marker it drops, so
   no reply somebody read lights again. `capContextsToBytes` is unchanged for
   maps that are not read state.
+- Only the cap raises the floor: `advanceContexts` refuses one among its
+  updates. `mergeSlots` keeps it past the 10,000-context cap, raised by the
+  `thread:` markers that cap drops, and takes a slot's floor as at most that
+  slot's `created_at`.
 
 SPEC: §11.1 (the floor's context), §11.3 (the rule and its divergence from
 NIP-RS), §11.6 (eviction raises the floor). A MINOR: an app on 0.5 reads a
