@@ -62,12 +62,12 @@ export const READ_STATE_HORIZON_DAYS = 90
  * stream it sits in. A suite constant, stated in SPEC — every app must agree
  * on which replies predate it.
  *
- * `MAX_TIMESTAMP` keeps today's stream term (`min(stream, MAX)` is the
- * stream); only the reply floor, once the cap has raised it, differs.
- * It is set to a real date only once every app judges by this package, since
- * an app still on the old rule would clear what the others hold.
+ * 2026-10-05T19:00:00Z, chosen to fall after Peek and Ship both run this
+ * version (0.6.0 shipped it as `MAX_TIMESTAMP`, the old stream term exactly).
+ * Set once. A T0 before every app runs it relights replies read by their
+ * stream in between; a later one only starts the rule later.
  */
-export const THREAD_RULE_FROM = MAX_TIMESTAMP
+export const THREAD_RULE_FROM = 1791226800
 
 /**
  * The reserved context of the reply floor (§11.1, §11.6): every reply at or

@@ -110,8 +110,9 @@ describe('merge and hierarchy (§11.3)', () => {
     assert.equal(effectiveReadAt({ [ISSUE]: 40 }, `thread:${ROOT}`, ISSUE), 40)
   })
 
-  it('ships with the cut-over unset, which is the old rule exactly', () => {
-    assert.equal(THREAD_RULE_FROM, MAX_TIMESTAMP)
+  it('cuts over at the second SPEC §11.3 states (CON-34)', () => {
+    assert.equal(THREAD_RULE_FROM, 1791226800)
+    assert.ok(THREAD_RULE_FROM < MAX_TIMESTAMP)
   })
 
   it('after the cut-over, reading the stream does not read a thread (CON-34)', () => {
