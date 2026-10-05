@@ -4899,6 +4899,15 @@ function buildCreationEvent(args: {
     }
   }
 
+  // A person property is checked as a person change is (SPEC §7.3, SHA-28).
+  const people: string[] = []
+  for (const [name, held] of Object.entries(value)) {
+    if (properties[name]?.type !== 'pubkey') continue
+    const problem = personKeyProblem(declared.label, held)
+    if (problem) return problem
+    if (held !== '' && !people.includes(held)) people.push(held)
+  }
+
   if (isAddressableKind(declared.emits.kind) && !newId) {
     return `Creating a kind ${declared.emits.kind} needs an identifier, and none was supplied.`
   }
@@ -4945,6 +4954,9 @@ function buildCreationEvent(args: {
     tags.push([declared.emits.setTag, address])
   }
   tags.push([placement, folder], ...prose)
+  // Each person the new root names, once, where the relay indexes them — the
+  // property's own tag is not indexed (SPEC §11.8, decided 2026-10-05).
+  for (const person of people) tags.push(['p', person])
 
   return {
     pubkey: args.pubkey,
@@ -4953,6 +4965,19 @@ function buildCreationEvent(args: {
     tags,
     content: bodyField ? (value[bodyField] ?? '') : '',
   }
+}
+
+/**
+ * A person's key as an input of `type: "pubkey"` takes it — SPEC §7.3, SHA-28.
+ * The `p` a writer adds must be what `#p` matches, so an npub or upper-case hex
+ * is refused rather than converted: the person picking it saw something else.
+ */
+const PERSON_KEY = /^[0-9a-f]{64}$/
+
+/** Why `value` is neither `''` nor a person's key, or undefined when it is one. */
+function personKeyProblem(label: string, value: string): string | undefined {
+  if (value === '' || PERSON_KEY.test(value)) return undefined
+  return `"${label}" takes a person's key as 64 lowercase hex characters, and "${value}" is not one.`
 }
 
 /** What {@link buildActionEvent} and {@link buildActionEvents} are handed. */
@@ -5183,6 +5208,15 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
     }
   }
 
+  // A change whose input is a person names them (SPEC §7.3's `pubkey`, SHA-28).
+  // `''` clears it and names nobody; anything else that is not a key would fold
+  // as the field's value and make nobody a member, so it is refused here.
+  const namesPerson = !!declared.emits.field && declared.input?.type === 'pubkey'
+  if (namesPerson) {
+    const problem = personKeyProblem(declared.label, value)
+    if (problem) return problem
+  }
+
   // A prose value's `content-format` and `imeta` — a change only, per the
   // refusal above. Ship's order: the tag before `ts`, the files after it.
   const prose = declared.emits.field
@@ -5228,6 +5262,10 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // depending on which app you asked (FRICTION.md A6).
   if (records.order?.includes('ts')) tags.push(['ts', String(args.createdAtMs)])
   tags.push(...files)
+  // The person, where the relay indexes them: `value` is not indexed, so
+  // without this `#p` never finds the change and §11.8 makes nobody a member.
+  // After `ts`, where Ship's own builder has put it since FOL-30.
+  if (namesPerson && value !== '') tags.push(['p', value])
   // A move also names its new parent where a relay indexes it (SPEC §7.2, FOL-45):
   // `value` is not indexed, so without this no read by the new parent finds a
   // child moved in. Only for the field the kind declares as `movedBy`, and only
