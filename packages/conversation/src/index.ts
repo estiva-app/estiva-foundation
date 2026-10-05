@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.6.1'
+export const CONVERSATION_VERSION = '0.6.2'
 
 export {
   KIND_MESSAGE,

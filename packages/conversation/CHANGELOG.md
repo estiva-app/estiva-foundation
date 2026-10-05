@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.6.2 — 2026-10-05
+
+**The thread rule takes effect** (CON-34): `THREAD_RULE_FROM` is `1791216225`
+(2026-10-05T16:03:45Z), after Peek and Ship both deployed 0.6. A reply after it is read
+only by opening its thread; one before it is still read by reading its
+stream, so nothing read before the cut-over lights up again.
+
+SPEC: §11.3's T0 is set to the same second. No rule changed: 0.6.0
+implemented it with T0 unset.
+
 ## 0.6.1 — 2026-10-05
 
 **Typing an issue's ref after `[` finds it** (PEE-21; Miky asked for it on
