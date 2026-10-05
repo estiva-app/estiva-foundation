@@ -17,6 +17,7 @@ import {
   fileReference,
   KIND_CHANGE,
   referenceMatch,
+  refMatch,
   type ReferenceCandidate,
   type ReferenceType,
 } from '@estiva-app/conversation'
@@ -100,7 +101,8 @@ export async function fileCandidates(
       type: typeOf(o.kind)!,
       kind: o.kind,
       title: o.slots.title!.value,
-      caption: parent?.slots.title?.value ?? '',
+      // An issue reads "CON-33 · Conversation standard": the ref first, so a hit by ref shows it (Miky, 2026-10-05).
+      caption: [ref, parent?.slots.title?.value].filter(Boolean).join(' · '),
       tier,
       ...(ref ? { search: ref } : {}),
       ...(isClosedStatus(o.slots.status) ? { closed: true } : {}),
@@ -117,8 +119,12 @@ export interface SearchFileReferencesOptions extends Omit<FileCandidatesOptions,
 
 const tagOf = (event: { tags: string[][] }, name: string) => event.tags.find((t) => t[0] === name)?.[1]
 
-/** The fields of a `kind:1851` the relay indexes for `[` (SPEC §5.2): a title, and an issue's ref. */
-const SEARCHED_FIELDS = new Set(['title', 'ref'])
+/**
+ * The file a `kind:1851` hit names, when it is one the relay indexes for `[`
+ * (SPEC §5.2): a title change on any file, a ref change only on an issue.
+ */
+const searchedChange = (field: string | undefined, address: string | undefined) =>
+  field === 'title' || (field === 'ref' && address?.startsWith(`${KIND_ISSUE}:`)) ? address : undefined
 
 /**
  * The files whose **current** title — or, for an issue, current ref (CON-33)
@@ -153,16 +159,13 @@ export async function searchFileReferences(
   for (const hit of hits) {
     const address =
       hit.kind === KIND_CHANGE
-        ? SEARCHED_FIELDS.has(tagOf(hit, 'field') ?? '')
-          ? tagOf(hit, 'a')
-          : undefined
+        ? searchedChange(tagOf(hit, 'field'), tagOf(hit, 'a'))
         : typeOf(hit.kind) && `${hit.kind}:${hit.pubkey}:${tagOf(hit, 'd') ?? ''}`
     if (!address || !typeOf(Number(address.split(':')[0]))) continue
     at.set(address, Math.max(at.get(address) ?? 0, hit.created_at))
   }
   if (at.size === 0) return []
   const objects = await resolveForeignRoots([...at.keys()], query, options.cache)
-  const holds = (value: string | undefined) => !!value && referenceMatch(value, wanted) > 0
-  const matching = objects.filter((o) => holds(o.slots.title?.value) || holds(refOf(o)))
+  const matching = objects.filter((o) => (o.slots.title && referenceMatch(o.slots.title.value, wanted) > 0) || refMatch(refOf(o), wanted) > 0)
   return fileCandidates(matching, FILE_TIER.search, query, { ...options, at })
 }

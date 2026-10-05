@@ -6,18 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.49.1 — 2026-10-05
+## 0.50.0 — 2026-10-05
 
-**Manifests: nothing changes.** `[` finds an issue by its ref (PEE-21,
-CON-33).
+**Manifests: one declaration is read in a new way.** On an issue (`30851`),
+a `meta` slot whose field is `ref` is now read as the issue's ref (SPEC §6.1),
+which Ship's manifest already declares. That lets `[` find an issue by its ref
+(PEE-21, CON-33). A manifest without such a slot works as before.
 
-- `searchFileReferences` counts a `kind:1851` hit on the `ref` field as well
-  as on `title`, which SPEC §5.2 has the relay index. It keeps a hit when the
-  object's current title *or* current ref holds what was typed, so an old ref
-  still finds nothing.
-- `fileCandidates` sets an issue's `search` to its current ref: the `meta`
-  slot whose field is `ref`, which Ship's manifest already declares. Pair it
-  with conversation 0.6.1, which ranks on it.
+- `searchFileReferences` counts a `kind:1851` hit on `ref` as well as on
+  `title`, but a ref change only when it is aimed at an issue (SPEC §5.2). It
+  keeps a hit when the current title or current ref holds what was typed, so
+  an old ref finds nothing. A ref is matched through conversation's
+  `refMatch`: from its start, and only once a digit or hyphen is typed (Miky,
+  2026-10-05).
+- `fileCandidates` sets an issue's `search` to its current ref, and captions
+  it with the ref and then the project: "CON-33 · Conversation standard"
+  (Miky, 2026-10-05). Before this, the caption was the project alone.
+- Needs conversation ≥ 0.6.1.
 
 ## 0.49.0 — 2026-10-05
 

@@ -109,6 +109,18 @@ export function referenceMatch(text: string, query: string): number {
   return 1
 }
 
+/**
+ * How well an issue's ref (`CON-33`) holds `query`: only from its start, and
+ * only once what was typed has a digit or a hyphen (Miky, 2026-10-05) — so
+ * `con-3` finds it, `con` on the way to "Conversation…" does not fill the list
+ * with every CON issue, and a bare `33` does not pull in every ref ending so.
+ * 0 is no match.
+ */
+export function refMatch(ref: string | undefined, query: string): number {
+  const score = ref && /[\d-]/.test(query) ? referenceMatch(ref, query) : 0
+  return score >= 3 ? score : 0
+}
+
 /** Keeps each id once, at its closest tier. */
 function closest(candidates: readonly ReferenceCandidate[]): ReferenceCandidate[] {
   const best = new Map<string, ReferenceCandidate>()
@@ -145,7 +157,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
 
   const shownFiles = closest(files)
     .filter((f) => !excluded.has(f.id) && (typed || f.tier !== FILE_TIER.search))
-    .map((f) => ({ f, score: typed ? Math.max(referenceMatch(f.title, query), f.search ? referenceMatch(f.search, query) : 0) : 0 }))
+    .map((f) => ({ f, score: typed ? Math.max(referenceMatch(f.title, query), refMatch(f.search, query)) : 0 }))
     .filter(({ score }) => !typed || score > 0)
     .sort(
       (a, b) =>

@@ -115,14 +115,23 @@ describe('searchFileReferences', () => {
     assert.deepEqual(await searchFileReferences('secret', relay.query), [])
   })
 
-  test('finds an issue by its ref, captioned with its project, and carries the ref to match on', async () => {
+  test('finds an issue by its ref, captioned ref then project, and carries the ref to match on', async () => {
     const withRef = event({ kind: ISSUE, tags: [['d', 'r1'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
     const relay = searchingRelay([manifest, project, withRef])
     const found = await searchFileReferences('CON-33', relay.query)
     assert.deepEqual(
       found.map((c) => ({ id: c.id, title: c.title, caption: c.caption, search: c.search })),
-      [{ id: I('r1'), title: 'Relay search', caption: 'Conversation standard', search: 'CON-33' }],
+      [{ id: I('r1'), title: 'Relay search', caption: 'CON-33 · Conversation standard', search: 'CON-33' }],
     )
+  })
+
+  test('a ref matches only from its start, and only once a digit or hyphen is typed', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r3'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    assert.deepEqual(await searchFileReferences('33', relay.query), [])
+    // `con` still finds the project by its title, "Conversation standard" — never the issue by its ref.
+    assert.deepEqual((await searchFileReferences('con', relay.query)).map((c) => c.id), [P1])
+    assert.deepEqual((await searchFileReferences('con-3', relay.query)).map((c) => c.id), [I('r3')])
   })
 
   test('finds an issue by the ref it was given since, and not by the one it had', async () => {
@@ -190,6 +199,17 @@ describe('fileCandidates', () => {
     const rows = await fileCandidates(Object.values(objects), 0, relay.query)
     assert.equal(relay.own().length, before)
     assert.equal(rows.find((r) => r.id === I('i3')).caption, 'Conversation standard')
+  })
+
+  test('a Folder tier issue carries its ref to match on and in its caption; a project carries none', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r4'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    const objects = await resolveForeignObjects([P1, I('r4')], relay.query)
+    const rows = await fileCandidates(Object.values(objects), 0, relay.query)
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]))
+    assert.equal(byId[I('r4')].search, 'CON-33')
+    assert.equal(byId[I('r4')].caption, 'CON-33 · Conversation standard')
+    assert.equal(byId[P1].search, undefined)
   })
 
   test('leaves out what did not resolve', async () => {

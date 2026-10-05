@@ -82,7 +82,10 @@ describe('rankReferences', () => {
   it('an issue’s ref finds it as its title would', () => {
     const withRef = [...files, file('ref', 'Relay search', FILE_TIER.search, { search: 'CON-33' })]
     assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con-33' }).files), ['Relay search'])
-    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con' }).files), ['Relay search'])
+    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con-3' }).files), ['Relay search'])
+    // Only from its start, and only once a digit or hyphen is typed (Miky, 2026-10-05).
+    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con' }).files), [])
+    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: '33' }).files), [])
   })
 
   it('drops what does not match what was typed', () => {
