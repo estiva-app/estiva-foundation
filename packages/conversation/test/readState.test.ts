@@ -11,6 +11,7 @@ import {
   allSlotsFilter,
   buildReadStateEvent,
   capContextsToBytes,
+  capReadStateContexts,
   channelContext,
   effectiveReadAt,
   fetchReadState,
@@ -19,12 +20,17 @@ import {
   loadSlotIdentity,
   MAX_BLOB_BYTES,
   MAX_CONTEXTS_BYTES,
+  MAX_TIMESTAMP,
   mergeSlots,
   parseReadStateBlob,
   publishReadState,
+  REPLY_FLOOR_CONTEXT,
   rotateSlotId,
   serializeReadStateBlob,
   threadContext,
+  threadReadAt,
+  belowReplyFloor,
+  THREAD_RULE_FROM,
   type SlotStorage,
 } from '../dist/index.js'
 
@@ -103,6 +109,116 @@ describe('merge and hierarchy (§11.3)', () => {
     assert.equal(effectiveReadAt(merged, `thread:${ROOT}`, ISSUE), 30)
     assert.equal(effectiveReadAt({ [ISSUE]: 40 }, `thread:${ROOT}`, ISSUE), 40)
   })
+
+  it('ships with the cut-over unset, which is the old rule exactly', () => {
+    assert.equal(THREAD_RULE_FROM, MAX_TIMESTAMP)
+  })
+
+  it('after the cut-over, reading the stream does not read a thread (CON-34)', () => {
+    const T0 = 100
+    const thread = `thread:${ROOT}`
+    // The stream was read at 500: a reply up to T0 is read by it, a later one is not.
+    assert.equal(effectiveReadAt({ [ISSUE]: 500 }, thread, ISSUE, T0), 100)
+    assert.equal(effectiveReadAt({ [ISSUE]: 50 }, thread, ISSUE, T0), 50)
+    // The thread's own marker reads it, whatever the stream says.
+    assert.equal(effectiveReadAt({ [ISSUE]: 500, [thread]: 300 }, thread, ISSUE, T0), 300)
+    assert.equal(effectiveReadAt({ [thread]: 300 }, thread, undefined, T0), 300)
+    // A context that is not a thread keeps NIP-RS's rule.
+    assert.equal(effectiveReadAt({ [ISSUE]: 500 }, `msg:${ROOT}`, ISSUE, T0), 500)
+  })
+
+  it('the reply floor reads every reply at or before it, and nothing else', () => {
+    const thread = `thread:${ROOT}`
+    assert.equal(effectiveReadAt({ [ISSUE]: 500, [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), 400)
+    assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400, [thread]: 450 }, thread, ISSUE, 100), 450)
+    assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, ISSUE), undefined)
+    // Alone it is not a frontier: the caller's absent-marker rule still decides, and belowReplyFloor adds what it reads.
+    assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), undefined)
+    assert.ok(belowReplyFloor(400, 400))
+    assert.ok(!belowReplyFloor(401, 400))
+    assert.ok(!belowReplyFloor(1, undefined))
+  })
+
+  it('threadReadAt is the same rule from loose markers', () => {
+    assert.equal(threadReadAt({ thread: undefined, stream: 500, floor: undefined }, 100), 100)
+    assert.equal(threadReadAt({ thread: 300, stream: 500, floor: 400 }, 100), 400)
+    assert.equal(threadReadAt({ thread: undefined, stream: undefined, floor: undefined }), undefined)
+    assert.equal(threadReadAt({ thread: 10, stream: 500, floor: undefined }), 500)
+  })
+})
+
+describe('the reply floor (§11.6, CON-34)', () => {
+  const thread = (i: number) => `thread:${i.toString(16).padStart(64, '0')}`
+
+  it('is publishable and survives a merge', () => {
+    assert.ok(isPublishableContextId(REPLY_FLOOR_CONTEXT))
+    const slot = (contexts: Record<string, number>) => ({ blob: { v: 1 as const, client_id: 'c', contexts } })
+    assert.deepEqual(mergeSlots([slot({ [REPLY_FLOOR_CONTEXT]: 5 }), slot({ [REPLY_FLOOR_CONTEXT]: 9 })]), { [REPLY_FLOOR_CONTEXT]: 9 })
+    assert.deepEqual(parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'c', contexts: { [REPLY_FLOOR_CONTEXT]: 7 } }))?.contexts, { [REPLY_FLOOR_CONTEXT]: 7 })
+  })
+
+  it('is raised to the newest thread marker the cap drops, so no read reply lights again', () => {
+    const contexts: Record<string, number> = {}
+    for (let i = 0; i < 1200; i++) contexts[thread(i)] = 1_700_000_000 + i
+    const capped = capReadStateContexts(contexts)
+    assert.ok(capped.evicted.length > 0)
+    const newestDropped = Math.max(...capped.evicted.map((k) => contexts[k]))
+    assert.equal(capped.contexts[REPLY_FLOOR_CONTEXT], newestDropped)
+    assert.equal(capped.bytes, Buffer.byteLength(JSON.stringify(capped.contexts)))
+    assert.ok(capped.bytes <= MAX_CONTEXTS_BYTES)
+    // Every dropped thread is still read at the time it was.
+    for (const key of capped.evicted) {
+      assert.ok(belowReplyFloor(contexts[key], capped.contexts[REPLY_FLOOR_CONTEXT]))
+      assert.ok(effectiveReadAt({ ...capped.contexts, [ISSUE]: 1 }, key, ISSUE, 0)! >= contexts[key])
+    }
+    // Idempotent: capping the result changes nothing.
+    assert.deepEqual(capReadStateContexts(capped.contexts), { ...capped, evicted: [] })
+  })
+
+  it('is never evicted, and is not added when no thread marker is dropped', () => {
+    const contexts: Record<string, number> = { [REPLY_FLOOR_CONTEXT]: 1 }
+    for (let i = 0; i < 1200; i++) contexts[thread(i)] = 1_700_000_000 + i
+    const capped = capReadStateContexts(contexts)
+    assert.ok(capped.contexts[REPLY_FLOOR_CONTEXT] > 1)
+    assert.ok(!capped.evicted.includes(REPLY_FLOOR_CONTEXT))
+    assert.deepEqual(capReadStateContexts({ [ISSUE]: 3 }).contexts, { [ISSUE]: 3 })
+    const files: Record<string, number> = {}
+    for (let i = 0; i < 1200; i++) files[`30851:${'a'.repeat(64)}:${i}`] = 1_700_000_000 + i
+    assert.equal(capReadStateContexts(files).contexts[REPLY_FLOOR_CONTEXT], undefined)
+  })
+
+  it('only the cap raises it: an update cannot set it, and what current holds is kept', () => {
+    assert.deepEqual(advanceContexts({}, { [REPLY_FLOOR_CONTEXT]: MAX_TIMESTAMP }).contexts, {})
+    assert.deepEqual(advanceContexts({ [REPLY_FLOOR_CONTEXT]: 5 }, { [REPLY_FLOOR_CONTEXT]: 9, [ISSUE]: 7 }).contexts, { [REPLY_FLOOR_CONTEXT]: 5, [ISSUE]: 7 })
+  })
+
+  it('a reader never takes it past the blob that holds it', () => {
+    const slot = (contexts: Record<string, number>, createdAt: number) => ({ blob: { v: 1 as const, client_id: 'c', contexts }, createdAt })
+    assert.deepEqual(mergeSlots([slot({ [REPLY_FLOOR_CONTEXT]: MAX_TIMESTAMP }, 1000)]), { [REPLY_FLOOR_CONTEXT]: 1000 })
+    assert.deepEqual(mergeSlots([slot({ [REPLY_FLOOR_CONTEXT]: 500 }, 1000)]), { [REPLY_FLOOR_CONTEXT]: 500 })
+  })
+
+  it('survives the merged count cap, raised by the thread markers it drops', () => {
+    const slots = []
+    for (let s = 0; s < 15; s++) {
+      const contexts: Record<string, number> = { [REPLY_FLOOR_CONTEXT]: 10 }
+      for (let i = 0; i < 760; i++) contexts[thread(s * 1000 + i)] = 1_700_000_000 + s * 1000 + i
+      slots.push({ blob: { v: 1 as const, client_id: `c${s}`, contexts } })
+    }
+    const merged = mergeSlots(slots)
+    assert.equal(Object.keys(merged).length, 10_000)
+    assert.ok(merged[REPLY_FLOOR_CONTEXT] > 1_700_000_000)
+    const all = Object.assign({}, ...slots.map((s) => s.blob.contexts)) as Record<string, number>
+    for (const [key, value] of Object.entries(all)) {
+      if (key !== REPLY_FLOOR_CONTEXT && merged[key] === undefined) assert.ok(belowReplyFloor(value, merged[REPLY_FLOOR_CONTEXT]))
+    }
+  })
+
+  it('advanceContexts caps with it', () => {
+    const contexts: Record<string, number> = {}
+    for (let i = 0; i < 1200; i++) contexts[thread(i)] = 1_700_000_000 + i
+    assert.ok(advanceContexts({}, contexts).contexts[REPLY_FLOOR_CONTEXT] !== undefined)
+  })
 })
 
 describe('fetch and publish, injected', () => {
@@ -147,5 +263,17 @@ describe('fetch and publish, injected', () => {
     )
     assert.equal(result.ok, true)
     assert.equal(published?.content, `enc:${JSON.stringify({ v: 1, client_id: identity.clientId, contexts: { [ISSUE]: 2, [FOLDER]: 1 } })}`)
+  })
+
+  it('publish keeps the reply floor the caller already capped in', async () => {
+    let published: SignedEvent | undefined
+    await publishReadState(
+      { nip44, sign: async (u) => ({ ...u, id: '0'.repeat(64), sig: '' }), publish: async (e) => ((published = e), { ok: true }) },
+      ME,
+      identity,
+      { [ISSUE]: 2, [REPLY_FLOOR_CONTEXT]: 1 },
+      5000,
+    )
+    assert.equal(JSON.parse(published!.content.slice(4)).contexts[REPLY_FLOOR_CONTEXT], 1)
   })
 })

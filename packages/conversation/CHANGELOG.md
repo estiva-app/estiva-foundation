@@ -6,6 +6,35 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.6.0 — 2026-10-05
+
+**The thread rule** (CON-34, Miky 2026-10-03/05): a reply after the cut-over
+is read only by opening its thread, never by reading the stream it sits in.
+
+- `effectiveReadAt` for a `thread:` context is
+  `max(merged[thread], merged["reply-floor"], min(merged[stream], THREAD_RULE_FROM))`;
+  any other context keeps NIP-RS's `max(own, stream)`. `isUnread` and
+  `unreadIn` judge by it; `threadReadAt` is the same rule from three loose
+  markers, for an app that does not hold the merged map.
+- `THREAD_RULE_FROM` ships as `MAX_TIMESTAMP`, which keeps the old stream
+  term. A patch sets it to a date once Peek and Ship both run 0.6.
+- The floor alone is not a frontier: with no thread or stream marker,
+  `threadReadAt` is `undefined` and the absent-marker rule still decides;
+  `belowReplyFloor` adds what the floor reads, and `isUnread` applies it.
+- `REPLY_FLOOR_CONTEXT` (`"reply-floor"`) is a publishable context, merged by
+  max. `advanceContexts` now caps through `capReadStateContexts`, which never
+  evicts the floor and raises it to the newest `thread:` marker it drops, so
+  no reply somebody read lights again. `capContextsToBytes` is unchanged for
+  maps that are not read state.
+- Only the cap raises the floor: `advanceContexts` refuses one among its
+  updates. `mergeSlots` keeps it past the 10,000-context cap, raised by the
+  `thread:` markers that cap drops, and takes a slot's floor as at most that
+  slot's `created_at`.
+
+SPEC: §11.1 (the floor's context), §11.3 (the rule and its divergence from
+NIP-RS), §11.6 (eviction raises the floor). A MINOR: an app on 0.5 reads a
+blob holding the floor without it, which is today's rule.
+
 ## 0.5.1 — 2026-10-03
 
 **`[` never offers the file you are writing in** (PEE-21, Miky 2026-10-03):
