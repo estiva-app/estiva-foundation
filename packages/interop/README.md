@@ -630,7 +630,7 @@ for (const event of plan.events) { // publish in order; stop at the first refusa
 
 The planners are SPEC §3.3's operations — `planCreateFolder`,
 `planRenameFolder`, `planArchiveFolder`, `planDeleteFolder`, `planPlaceFile`,
-`planUnlistFile` and `planMoveFile` — and return **unsigned** events in publish
+`planUnlistFile`, `planMoveFile` and `planMoveFromFolders` — and return **unsigned** events in publish
 order. Signing and publishing stay yours.
 
 A move is one `kind:1852 add` in the target naming the file and every file
@@ -639,6 +639,22 @@ the source, so a failure between the two leaves the whole subtree in both
 Folders and never splits it. Into a private Folder it is refused when any moved
 file's `h` is another channel, or absent: a listing never changes who can read
 a file (§3.1).
+
+A file can be listed in more than one Folder. To move it out of all of them,
+use `planMoveFromFolders`, which takes every Folder that lists it and each one's
+listing. It plans **one** add naming everything from all of them, so the add
+lands whole or not at all, and then one remove per source. A file listed nowhere
+is placed instead. Read those listings with `includeArchived`, or an archived
+file beneath the one you move stays behind:
+
+```ts
+const listings = new Map(await Promise.all(sources.map(async (folder) =>
+  [folder.id, (await resolveFolderContents(folder.id, query, noPeople, cache, { includeArchived: true })).files] as const)))
+const plan = planMoveFromFolders(me, Date.now(), { file, from: sources, to, listings }) // sources: FolderSummary[], with addresses
+if (!plan.ok) return plan.reason
+if (plan.add && !(await publish(await sign(plan.add))).ok) return 'nothing moved'
+for (const { folder, event } of plan.removes) await publish(await sign(event)) // a refusal: still listed in `folder` too
+```
 
 No command carries a name: the title is the `kind:39000`'s, so a rename is the
 `kind:9002` alone and `listFolders` reads the title from the channel.
