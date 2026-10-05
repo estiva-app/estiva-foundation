@@ -16,8 +16,11 @@ is read only by opening its thread, never by reading the stream it sits in.
   any other context keeps NIP-RS's `max(own, stream)`. `isUnread` and
   `unreadIn` judge by it; `threadReadAt` is the same rule from three loose
   markers, for an app that does not hold the merged map.
-- `THREAD_RULE_FROM` ships as `MAX_TIMESTAMP`, which is the old rule exactly.
-  A patch sets it to a date once Peek and Ship both run 0.6.
+- `THREAD_RULE_FROM` ships as `MAX_TIMESTAMP`, which keeps the old stream
+  term. A patch sets it to a date once Peek and Ship both run 0.6.
+- The floor alone is not a frontier: with no thread or stream marker,
+  `threadReadAt` is `undefined` and the absent-marker rule still decides;
+  `belowReplyFloor` adds what the floor reads, and `isUnread` applies it.
 - `REPLY_FLOOR_CONTEXT` (`"reply-floor"`) is a publishable context, merged by
   max. `advanceContexts` now caps through `capReadStateContexts`, which never
   evicts the floor and raises it to the newest `thread:` marker it drops, so

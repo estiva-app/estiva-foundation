@@ -29,6 +29,7 @@ import {
   serializeReadStateBlob,
   threadContext,
   threadReadAt,
+  belowReplyFloor,
   THREAD_RULE_FROM,
   type SlotStorage,
 } from '../dist/index.js'
@@ -128,9 +129,14 @@ describe('merge and hierarchy (§11.3)', () => {
 
   it('the reply floor reads every reply at or before it, and nothing else', () => {
     const thread = `thread:${ROOT}`
-    assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), 400)
+    assert.equal(effectiveReadAt({ [ISSUE]: 500, [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), 400)
     assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400, [thread]: 450 }, thread, ISSUE, 100), 450)
     assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, ISSUE), undefined)
+    // Alone it is not a frontier: the caller's absent-marker rule still decides, and belowReplyFloor adds what it reads.
+    assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), undefined)
+    assert.ok(belowReplyFloor(400, 400))
+    assert.ok(!belowReplyFloor(401, 400))
+    assert.ok(!belowReplyFloor(1, undefined))
   })
 
   it('threadReadAt is the same rule from loose markers', () => {
@@ -161,7 +167,10 @@ describe('the reply floor (§11.6, CON-34)', () => {
     assert.equal(capped.bytes, Buffer.byteLength(JSON.stringify(capped.contexts)))
     assert.ok(capped.bytes <= MAX_CONTEXTS_BYTES)
     // Every dropped thread is still read at the time it was.
-    for (const key of capped.evicted) assert.ok(effectiveReadAt(capped.contexts, key, ISSUE, 0)! >= contexts[key])
+    for (const key of capped.evicted) {
+      assert.ok(belowReplyFloor(contexts[key], capped.contexts[REPLY_FLOOR_CONTEXT]))
+      assert.ok(effectiveReadAt({ ...capped.contexts, [ISSUE]: 1 }, key, ISSUE, 0)! >= contexts[key])
+    }
     // Idempotent: capping the result changes nothing.
     assert.deepEqual(capReadStateContexts(capped.contexts), { ...capped, evicted: [] })
   })

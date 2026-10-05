@@ -19,7 +19,7 @@
  * the caller's to decide by not asking.
  */
 import type { SignedEvent } from '@estiva-app/protocol'
-import { effectiveReadAt, threadContext } from './readState.js'
+import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, threadContext } from './readState.js'
 import { peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 
@@ -80,6 +80,7 @@ export function isUnread(message: Message, root: string | undefined, merged: Rea
   const thread = root === undefined ? undefined : threadContext(root)
   const marker = thread === undefined ? merged[judge.stream] : effectiveReadAt(merged, thread, judge.stream)
   if (marker !== undefined) return message.created_at > marker
+  if (thread !== undefined && belowReplyFloor(message.created_at, merged[REPLY_FLOOR_CONTEXT])) return false
   if (judge.since !== undefined) return true
   return judge.floor === undefined || message.created_at >= judge.floor
 }

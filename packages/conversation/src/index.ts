@@ -138,6 +138,7 @@ export {
   classifyOwnSlots,
   effectiveReadAt,
   threadReadAt,
+  belowReplyFloor,
   fetchReadState,
   publishReadState,
   type SlotIdentity,

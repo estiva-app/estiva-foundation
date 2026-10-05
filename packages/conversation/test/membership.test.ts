@@ -150,6 +150,20 @@ describe('C18 — unread for a member', () => {
     assert.deepEqual(unreadIn(stream, merged(), judge(dave, events)), [])
   })
 
+  it('the reply floor reads replies at or before it, and alone never replaces the absent-marker rule (CON-34)', () => {
+    const top = comment(BOB, T0 + 100)
+    const r1 = reply(CAROL, top, T0 + 200)
+    const r2 = reply(CAROL, top, T0 + 300)
+    const events = [root(), top, r1, r2]
+    const stream = streamOf(ISSUE, events)
+    assert.deepEqual(unreadIn(stream, merged({ 'reply-floor': T0 + 200 }), judge(BOB, events)).map((e) => e.id), [r2.id])
+    // A channel with no marker counts from the app's floor; a reply floor below it must not light what that rule leaves quiet.
+    const general = [comment(CAROL, T0 + 50)]
+    const old = reply(BOB, general[0], T0 + 60)
+    const channel = { stream: FOLDER, me: CAROL, member: true, floor: T0 + 80 }
+    assert.deepEqual(unreadIn([...general, old], { 'reply-floor': T0 + 10 }, channel), [])
+  })
+
   it('the channel marker does not reach into a file stream', () => {
     const events = [root(), comment(BOB, T0 + 100), comment(CAROL, T0 + 200)]
     assert.equal(unreadIn(streamOf(ISSUE, events), merged({ [FOLDER]: T0 + 999 }), judge(BOB, events)).length, 1)

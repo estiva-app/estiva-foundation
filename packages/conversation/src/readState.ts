@@ -62,7 +62,8 @@ export const READ_STATE_HORIZON_DAYS = 90
  * stream it sits in. A suite constant, stated in SPEC — every app must agree
  * on which replies predate it.
  *
- * `MAX_TIMESTAMP` is today's rule exactly (`min(stream, MAX)` is the stream).
+ * `MAX_TIMESTAMP` keeps today's stream term (`min(stream, MAX)` is the
+ * stream); only the reply floor, once the cap has raised it, differs.
  * It is set to a real date only once every app judges by this package, since
  * an app still on the old rule would clear what the others hold.
  */
@@ -327,7 +328,7 @@ export function capReadStateContexts(contexts: Readonly<Record<string, number>>,
   // The floor's slot is set aside first, at the widest value it can hold, so raising it never overflows.
   const reserve = utf8(JSON.stringify(REPLY_FLOOR_CONTEXT)) + 1 + String(MAX_TIMESTAMP).length + 1
   const capped = capContextsToBytes(rest, budget - reserve)
-  const raised = Math.max(floor ?? 0, ...capped.evicted.filter(isThreadKey).map((key) => rest[key]))
+  const raised = capped.evicted.reduce((max, key) => (isThreadKey(key) && rest[key] > max ? rest[key] : max), floor ?? 0)
   const kept = { ...capped.contexts, [REPLY_FLOOR_CONTEXT]: raised }
   return { contexts: kept, bytes: utf8(JSON.stringify(kept)), evicted: capped.evicted }
 }
@@ -428,7 +429,8 @@ export function classifyOwnSlots(slots: readonly SlotBlob[], identity: SlotIdent
  * messages, and a reply after the cut-over waits for its thread to be opened
  * (CON-34). This is where Estiva parts from NIP-RS's frontier rule, which
  * lets the stream reach every reply. Any other context is the later of its
- * own marker and its stream's, as NIP-RS has it.
+ * own marker and its stream's, as NIP-RS has it — so a reply's `msg:` is not
+ * judged here: §11.3 makes it `max(msg, effective(thread))`, never the stream.
  *
  * `from` is the cut-over; anything but the default is for a test.
  */
@@ -448,13 +450,25 @@ export function effectiveReadAt(
  * {@link effectiveReadAt} for a thread, from the three markers it is judged by
  * — for an app that holds markers one at a time rather than the merged map.
  * Unix seconds; absent is `undefined`.
+ *
+ * The floor alone is not a frontier: with neither a thread nor a stream marker
+ * this is `undefined`, so the caller's rule for an absent marker still decides
+ * (§11.6, §11.8), and {@link belowReplyFloor} adds what the floor reads. Taking
+ * the floor as the marker there would light a reply the absent rule leaves
+ * quiet.
  */
 export function threadReadAt(
   markers: { thread: number | undefined; stream: number | undefined; floor: number | undefined },
   from: number = THREAD_RULE_FROM,
 ): number | undefined {
   const stream = markers.stream === undefined ? undefined : Math.min(markers.stream, from)
-  return later(later(markers.thread, stream), markers.floor)
+  const frontier = later(markers.thread, stream)
+  return frontier === undefined ? undefined : later(frontier, markers.floor)
+}
+
+/** Whether the reply floor reads a reply created at `createdAt` (§11.6). A root is never read by it. */
+export function belowReplyFloor(createdAt: number, floor: number | undefined): boolean {
+  return floor !== undefined && createdAt <= floor
 }
 
 function later(a: number | undefined, b: number | undefined): number | undefined {
