@@ -51,6 +51,13 @@ const offerable = (object: ForeignObject | null | undefined): object is Addresse
   typeOf(object.kind) !== undefined &&
   !!object.slots.title?.value.trim()
 
+/**
+ * An issue's current ref (`CON-33`, SPEC §6.1) — the manifest slot that folds
+ * the `ref` field — so typing it finds the issue. Only an issue has one.
+ */
+const refOf = (object: ForeignObject): string | undefined =>
+  object.kind === KIND_ISSUE ? object.meta.find((slot) => slot.field === 'ref')?.value.trim() || undefined : undefined
+
 export interface FileCandidatesOptions {
   cache?: ProjectionCache
   /** When each address was last written or read, in seconds — newer first within a tier. */
@@ -86,6 +93,7 @@ export async function fileCandidates(
   }
   return files.map((o) => {
     const parent = o.kind === KIND_ISSUE && o.parentRef ? parents.get(o.parentRef) : undefined
+    const ref = refOf(o)
     return {
       id: o.address,
       uri: fileReference(o.address),
@@ -94,6 +102,7 @@ export async function fileCandidates(
       title: o.slots.title!.value,
       caption: parent?.slots.title?.value ?? '',
       tier,
+      ...(ref ? { search: ref } : {}),
       ...(isClosedStatus(o.slots.status) ? { closed: true } : {}),
       ...(o.archived || parent?.archived ? { archived: true } : {}),
       ...(at?.has(o.address) ? { at: at.get(o.address) } : {}),
@@ -108,15 +117,19 @@ export interface SearchFileReferencesOptions extends Omit<FileCandidatesOptions,
 
 const tagOf = (event: { tags: string[][] }, name: string) => event.tags.find((t) => t[0] === name)?.[1]
 
+/** The fields of a `kind:1851` the relay indexes for `[` (SPEC §5.2): a title, and an issue's ref. */
+const SEARCHED_FIELDS = new Set(['title', 'ref'])
+
 /**
- * The files whose **current** title holds `text`, as the search tier.
+ * The files whose **current** title — or, for an issue, current ref (CON-33)
+ * — holds `text`, as the search tier.
  *
- * The relay indexes a root's `title` and a rename's `value` (relay ticket
- * 6fea004e); neither is the current title on its own — a root keeps the name
- * it was created with, and a rename found by an old word may since have been
- * renamed again. So a hit is only an address: each is read back as its root
- * and changes, folded through its app's manifest, and kept only when what it
- * is called now matches what was typed.
+ * The relay indexes a root's `title` and `ref` and a change's `value` for those
+ * fields (SPEC §5.2); none is the current one on its own — a root keeps the
+ * name it was created with, and a rename found by an old word may since have
+ * been renamed again. So a hit is only an address: each is read back as its
+ * root and changes, folded through its app's manifest, and kept only when what
+ * it is called now matches what was typed.
  *
  * Roots and renames are asked for separately, so a burst of renames cannot
  * crowd every root out of the answer, and with buzz's prefix mode, so the word
@@ -140,7 +153,7 @@ export async function searchFileReferences(
   for (const hit of hits) {
     const address =
       hit.kind === KIND_CHANGE
-        ? tagOf(hit, 'field') === 'title'
+        ? SEARCHED_FIELDS.has(tagOf(hit, 'field') ?? '')
           ? tagOf(hit, 'a')
           : undefined
         : typeOf(hit.kind) && `${hit.kind}:${hit.pubkey}:${tagOf(hit, 'd') ?? ''}`
@@ -149,6 +162,7 @@ export async function searchFileReferences(
   }
   if (at.size === 0) return []
   const objects = await resolveForeignRoots([...at.keys()], query, options.cache)
-  const matching = objects.filter((o) => o.slots.title && referenceMatch(o.slots.title.value, wanted) > 0)
+  const holds = (value: string | undefined) => !!value && referenceMatch(value, wanted) > 0
+  const matching = objects.filter((o) => holds(o.slots.title?.value) || holds(refOf(o)))
   return fileCandidates(matching, FILE_TIER.search, query, { ...options, at })
 }

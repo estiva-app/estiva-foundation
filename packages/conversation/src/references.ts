@@ -36,7 +36,7 @@ export interface ReferenceCandidate {
   title: string
   /** An issue's project title, a message's opening words; `''` when there is none. */
   caption: string
-  /** A message's text, matched beside `title`. Files match on `title` only. */
+  /** Matched beside `title`: a message's text, an issue's ref (`CON-33`). */
   search?: string
   /** 0 is closest: {@link MESSAGE_TIER} or {@link FILE_TIER}. */
   tier: number
@@ -145,7 +145,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
 
   const shownFiles = closest(files)
     .filter((f) => !excluded.has(f.id) && (typed || f.tier !== FILE_TIER.search))
-    .map((f) => ({ f, score: typed ? referenceMatch(f.title, query) : 0 }))
+    .map((f) => ({ f, score: typed ? Math.max(referenceMatch(f.title, query), f.search ? referenceMatch(f.search, query) : 0) : 0 }))
     .filter(({ score }) => !typed || score > 0)
     .sort(
       (a, b) =>

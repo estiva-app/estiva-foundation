@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.49.1 — 2026-10-05
+
+**Manifests: nothing changes.** `[` finds an issue by its ref (PEE-21,
+CON-33).
+
+- `searchFileReferences` counts a `kind:1851` hit on the `ref` field as well
+  as on `title`, which SPEC §5.2 has the relay index. It keeps a hit when the
+  object's current title *or* current ref holds what was typed, so an old ref
+  still finds nothing.
+- `fileCandidates` sets an issue's `search` to its current ref: the `meta`
+  slot whose field is `ref`, which Ship's manifest already declares. Pair it
+  with conversation 0.6.1, which ranks on it.
+
 ## 0.49.0 — 2026-10-05
 
 **Manifests: nothing changes.** This release only adds a planner (SHI-37). It

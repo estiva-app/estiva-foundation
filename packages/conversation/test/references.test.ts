@@ -79,6 +79,12 @@ describe('rankReferences', () => {
     assert.deepEqual(titles(rankReferences({ messages: [], files: again, query: 'sidebar', exclude: [here] }).files), [])
   })
 
+  it('an issue’s ref finds it as its title would', () => {
+    const withRef = [...files, file('ref', 'Relay search', FILE_TIER.search, { search: 'CON-33' })]
+    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con-33' }).files), ['Relay search'])
+    assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: 'con' }).files), ['Relay search'])
+  })
+
   it('drops what does not match what was typed', () => {
     const { files: shown } = rankReferences({ messages: [], files, query: 'rate' })
     assert.deepEqual(titles(shown), ['Relay rate limits'])

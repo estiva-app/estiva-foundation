@@ -43,7 +43,7 @@ function searchingRelay(events) {
     }
     if (f.search) {
       const text = e.tags
-        .filter((t) => t[0] === 'title' || t[0] === 'value')
+        .filter((t) => t[0] === 'title' || t[0] === 'ref' || t[0] === 'value')
         .map((t) => t[1])
         .join(' ')
         .toLowerCase()
@@ -75,7 +75,10 @@ const manifest = event({
         widget: 'card',
         slots: { title: { tag: 'title', fold: 'title' }, list: { children: { kind: ISSUE, via: 'a', movedBy: 'project' } } },
       },
-      [ISSUE]: { widget: 'row', slots: { title: { tag: 'title', fold: 'title' }, status: { tag: 'status', fold: 'status' } } },
+      [ISSUE]: {
+        widget: 'row',
+        slots: { title: { tag: 'title', fold: 'title' }, status: { tag: 'status', fold: 'status' }, meta: [{ fold: 'ref', tag: 'ref' }] },
+      },
     },
   }),
 })
@@ -110,6 +113,30 @@ describe('searchFileReferences', () => {
     // The root is not on this relay for this reader: only its rename came back.
     const relay = searchingRelay([manifest, project, rename(I('hidden'), 'Secret plans')])
     assert.deepEqual(await searchFileReferences('secret', relay.query), [])
+  })
+
+  test('finds an issue by its ref, captioned with its project, and carries the ref to match on', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r1'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    const found = await searchFileReferences('CON-33', relay.query)
+    assert.deepEqual(
+      found.map((c) => ({ id: c.id, title: c.title, caption: c.caption, search: c.search })),
+      [{ id: I('r1'), title: 'Relay search', caption: 'Conversation standard', search: 'CON-33' }],
+    )
+  })
+
+  test('finds an issue by the ref it was given since, and not by the one it had', async () => {
+    const renumbered = event({ kind: ISSUE, tags: [['d', 'r2'], ['title', 'Relay search'], ['ref', 'NEW-1'], ['a', P1], ['h', 'f1']] })
+    const reref = event({ kind: CHANGE, tags: [['a', I('r2')], ['field', 'ref'], ['value', 'CON-34'], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, renumbered, reref])
+    assert.deepEqual((await searchFileReferences('CON-34', relay.query)).map((c) => c.id), [I('r2')])
+    assert.deepEqual(await searchFileReferences('NEW-1', relay.query), [])
+  })
+
+  test('a change to another field is not a hit', async () => {
+    const described = event({ kind: CHANGE, tags: [['a', I('i1')], ['field', 'description'], ['value', 'bracket'], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, issue('i1', 'Old words'), described])
+    assert.deepEqual(await searchFileReferences('bracket', relay.query), [])
   })
 
   test('marks a done issue closed, and finds a project by its root title', async () => {
