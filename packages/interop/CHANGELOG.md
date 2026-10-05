@@ -6,6 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.48.0 — 2026-10-05
+
+**Manifests: how `input.type: "pubkey"` is read changes** (SPEC §7.3, SHA-28).
+It names a person, so the events built from it now carry `["p", <key>]`, which
+is what makes that person a member of the file (§11.8). Ship's published `assign`
+and `set-lead` declare it already: built here, they now carry the `p` that
+Ship's own writer always added. No signature moved; needs protocol 0.24.0 and
+conversation 0.5.0, unchanged.
+
+- **Changed: a change whose input is `pubkey`** adds `["p", value]` after `ts`.
+  `''` (clearing it) adds none.
+- **Changed: a creation** adds one `["p", key]` per distinct non-empty property
+  of `type: "pubkey"`, beside the property's own tag.
+- **New refusal:** a `pubkey` value that is neither `''` nor 64 lowercase hex,
+  such as an npub or upper-case hex, returns a string naming the action instead
+  of being written without the `p`.
+
 ## 0.47.0 — 2026-10-03
 
 **Manifests: nothing changes.** Every published manifest means what it meant.
