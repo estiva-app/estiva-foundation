@@ -28,6 +28,7 @@ import {
   rotateSlotId,
   serializeReadStateBlob,
   threadContext,
+  threadReadAt,
   THREAD_RULE_FROM,
   type SlotStorage,
 } from '../dist/index.js'
@@ -130,6 +131,13 @@ describe('merge and hierarchy (§11.3)', () => {
     assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, thread, ISSUE, 100), 400)
     assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400, [thread]: 450 }, thread, ISSUE, 100), 450)
     assert.equal(effectiveReadAt({ [REPLY_FLOOR_CONTEXT]: 400 }, ISSUE), undefined)
+  })
+
+  it('threadReadAt is the same rule from loose markers', () => {
+    assert.equal(threadReadAt({ thread: undefined, stream: 500, floor: undefined }, 100), 100)
+    assert.equal(threadReadAt({ thread: 300, stream: 500, floor: 400 }, 100), 400)
+    assert.equal(threadReadAt({ thread: undefined, stream: undefined, floor: undefined }), undefined)
+    assert.equal(threadReadAt({ thread: 10, stream: 500, floor: undefined }), 500)
   })
 })
 

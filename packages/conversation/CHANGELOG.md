@@ -14,7 +14,8 @@ is read only by opening its thread, never by reading the stream it sits in.
 - `effectiveReadAt` for a `thread:` context is
   `max(merged[thread], merged["reply-floor"], min(merged[stream], THREAD_RULE_FROM))`;
   any other context keeps NIP-RS's `max(own, stream)`. `isUnread` and
-  `unreadIn` judge by it.
+  `unreadIn` judge by it; `threadReadAt` is the same rule from three loose
+  markers, for an app that does not hold the merged map.
 - `THREAD_RULE_FROM` ships as `MAX_TIMESTAMP`, which is the old rule exactly.
   A patch sets it to a date once Peek and Ship both run 0.6.
 - `REPLY_FLOOR_CONTEXT` (`"reply-floor"`) is a publishable context, merged by

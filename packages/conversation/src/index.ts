@@ -137,6 +137,7 @@ export {
   mergeSlots,
   classifyOwnSlots,
   effectiveReadAt,
+  threadReadAt,
   fetchReadState,
   publishReadState,
   type SlotIdentity,

@@ -439,13 +439,22 @@ export function effectiveReadAt(
   from: number = THREAD_RULE_FROM,
 ): number | undefined {
   const own = merged[context]
-  let parent = stream === undefined ? undefined : merged[stream]
-  let floor: number | undefined
-  if (isThreadKey(context)) {
-    if (parent !== undefined) parent = Math.min(parent, from)
-    floor = merged[REPLY_FLOOR_CONTEXT]
-  }
-  return later(later(own, parent), floor)
+  const parent = stream === undefined ? undefined : merged[stream]
+  if (isThreadKey(context)) return threadReadAt({ thread: own, stream: parent, floor: merged[REPLY_FLOOR_CONTEXT] }, from)
+  return later(own, parent)
+}
+
+/**
+ * {@link effectiveReadAt} for a thread, from the three markers it is judged by
+ * — for an app that holds markers one at a time rather than the merged map.
+ * Unix seconds; absent is `undefined`.
+ */
+export function threadReadAt(
+  markers: { thread: number | undefined; stream: number | undefined; floor: number | undefined },
+  from: number = THREAD_RULE_FROM,
+): number | undefined {
+  const stream = markers.stream === undefined ? undefined : Math.min(markers.stream, from)
+  return later(later(markers.thread, stream), markers.floor)
 }
 
 function later(a: number | undefined, b: number | undefined): number | undefined {
