@@ -97,7 +97,7 @@ describe('a change that names a person', () => {
     for (const bad of [PERSON.toUpperCase(), 'npub1xyz', PERSON.slice(1), ` ${PERSON}`]) {
       const result = change('assign', bad)
       assert.equal(typeof result, 'string', bad)
-      assert.match(result, /64 lowercase hex/)
+      assert.equal(result, '"Assign" needs a person picked from the list, so nothing was changed.')
     }
   })
 
@@ -148,7 +148,7 @@ describe('a creation that names a person', () => {
   })
 
   test('a malformed key on a creation is refused', () => {
-    assert.match(create({ title: 'Launch', lead: 'npub1xyz' }), /64 lowercase hex/)
+    assert.match(create({ title: 'Launch', lead: 'npub1xyz' }), /needs a person picked from the list/)
   })
 
   test('a listed creation names the person on its root, not on the Folder command after it', () => {
