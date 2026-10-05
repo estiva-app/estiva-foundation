@@ -56,6 +56,26 @@ export const MAX_CONTEXTS_BYTES =
 /** A horizon of 90 days: what both apps used. NIP-RS fixes none (§11.6). */
 export const READ_STATE_HORIZON_DAYS = 90
 
+/**
+ * The thread rule's cut-over, unix seconds (§11.3, CON-34): a reply created
+ * after it is read only by its thread's own marker, never by reading the
+ * stream it sits in. A suite constant, stated in SPEC — every app must agree
+ * on which replies predate it.
+ *
+ * `MAX_TIMESTAMP` is today's rule exactly (`min(stream, MAX)` is the stream).
+ * It is set to a real date only once every app judges by this package, since
+ * an app still on the old rule would clear what the others hold.
+ */
+export const THREAD_RULE_FROM = MAX_TIMESTAMP
+
+/**
+ * The reserved context of the reply floor (§11.1, §11.6): every reply at or
+ * before it counts as read. Raised, never lowered, when the byte cap drops a
+ * `thread:` marker — to that marker's value — so a reply somebody read never
+ * lights again; what it costs instead is the oldest replies nobody opened.
+ */
+export const REPLY_FLOOR_CONTEXT = 'reply-floor'
+
 const EVENT_ID_RE = /^[0-9a-f]{64}$/
 const SLOT_ID_RE = /^[0-9a-f]{32}$/
 
@@ -107,10 +127,11 @@ export function toContextSeconds(atMs: number): number {
 
 /**
  * Is this a context id worth putting in a grow-only blob: a channel uuid, a
- * file address, or `thread:`/`msg:` with 64 lowercase hex. The reserved
- * `folder:` is refused until §11.5 specifies it.
+ * file address, `thread:`/`msg:` with 64 lowercase hex, or the reply floor.
+ * The reserved `folder:` is refused until §11.5 specifies it.
  */
 export function isPublishableContextId(id: string): boolean {
+  if (id === REPLY_FLOOR_CONTEXT) return true
   if (id.length === 0 || utf8(id) > MAX_CONTEXT_ID_BYTES) return false
   if (id.startsWith('thread:')) return EVENT_ID_RE.test(id.slice('thread:'.length))
   if (id.startsWith('msg:')) return EVENT_ID_RE.test(id.slice('msg:'.length))
@@ -288,6 +309,29 @@ export function capContextsToBytes(contexts: Readonly<Record<string, number>>, b
   return { contexts: kept, bytes, evicted: [] }
 }
 
+const isThreadKey = (key: string) => key.startsWith('thread:')
+
+/**
+ * {@link capContextsToBytes} for a read-state blob (§11.6): the reply floor
+ * is never evicted, and dropping a `thread:` marker first raises the floor to
+ * its value. Under the thread rule a `thread:` marker is never made redundant
+ * by its stream, so without the floor every eviction would light replies the
+ * person already read. Deterministic and idempotent, like the cap it wraps.
+ */
+export function capReadStateContexts(contexts: Readonly<Record<string, number>>, budget: number = MAX_CONTEXTS_BYTES): CappedContexts {
+  const { [REPLY_FLOOR_CONTEXT]: floor, ...rest } = contexts
+  if (floor === undefined) {
+    const capped = capContextsToBytes(rest, budget)
+    if (!capped.evicted.some(isThreadKey)) return capped
+  }
+  // The floor's slot is set aside first, at the widest value it can hold, so raising it never overflows.
+  const reserve = utf8(JSON.stringify(REPLY_FLOOR_CONTEXT)) + 1 + String(MAX_TIMESTAMP).length + 1
+  const capped = capContextsToBytes(rest, budget - reserve)
+  const raised = Math.max(floor ?? 0, ...capped.evicted.filter(isThreadKey).map((key) => rest[key]))
+  const kept = { ...capped.contexts, [REPLY_FLOOR_CONTEXT]: raised }
+  return { contexts: kept, bytes: utf8(JSON.stringify(kept)), evicted: capped.evicted }
+}
+
 /**
  * Apply markers, taking the later of each (§11.4: never lower one), then cap.
  * Unpublishable ids and out-of-range timestamps are dropped.
@@ -298,7 +342,7 @@ export function advanceContexts(current: Readonly<Record<string, number>>, updat
     if (!isPublishableContextId(id) || !isTimestamp(seconds)) continue
     if (next[id] === undefined || seconds > next[id]) next[id] = seconds
   }
-  return capContextsToBytes(next)
+  return capReadStateContexts(next)
 }
 
 // ── The event ───────────────────────────────────────────────────────────────
@@ -374,17 +418,40 @@ export function classifyOwnSlots(slots: readonly SlotBlob[], identity: SlotIdent
 }
 
 /**
- * The effective marker (§11.3): the later of a context's own and its stream's.
- * For a reply, `context` is `thread:<root>` and `stream` the file address or
- * channel uuid. The channel never reaches into a file's stream — pass the
- * file's address, not the channel, for a file's thread.
+ * The effective marker (§11.3). For a reply, `context` is `thread:<root>` and
+ * `stream` the file address or channel uuid; the channel never reaches into a
+ * file's stream — pass the file's address, not the channel, for a file's
+ * thread.
+ *
+ * A thread is read by its own marker, by the reply floor, and by its stream
+ * only up to {@link THREAD_RULE_FROM}: reading a stream reads its top-level
+ * messages, and a reply after the cut-over waits for its thread to be opened
+ * (CON-34). This is where Estiva parts from NIP-RS's frontier rule, which
+ * lets the stream reach every reply. Any other context is the later of its
+ * own marker and its stream's, as NIP-RS has it.
+ *
+ * `from` is the cut-over; anything but the default is for a test.
  */
-export function effectiveReadAt(merged: Readonly<Record<string, number>>, context: string, stream?: string): number | undefined {
+export function effectiveReadAt(
+  merged: Readonly<Record<string, number>>,
+  context: string,
+  stream?: string,
+  from: number = THREAD_RULE_FROM,
+): number | undefined {
   const own = merged[context]
-  const parent = stream === undefined ? undefined : merged[stream]
-  if (own === undefined) return parent
-  if (parent === undefined) return own
-  return Math.max(own, parent)
+  let parent = stream === undefined ? undefined : merged[stream]
+  let floor: number | undefined
+  if (isThreadKey(context)) {
+    if (parent !== undefined) parent = Math.min(parent, from)
+    floor = merged[REPLY_FLOOR_CONTEXT]
+  }
+  return later(later(own, parent), floor)
+}
+
+function later(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) return b
+  if (b === undefined) return a
+  return Math.max(a, b)
 }
 
 // ── The relay — injected ────────────────────────────────────────────────────
