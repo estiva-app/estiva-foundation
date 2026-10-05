@@ -187,6 +187,33 @@ describe('the reply floor (§11.6, CON-34)', () => {
     assert.equal(capReadStateContexts(files).contexts[REPLY_FLOOR_CONTEXT], undefined)
   })
 
+  it('only the cap raises it: an update cannot set it, and what current holds is kept', () => {
+    assert.deepEqual(advanceContexts({}, { [REPLY_FLOOR_CONTEXT]: MAX_TIMESTAMP }).contexts, {})
+    assert.deepEqual(advanceContexts({ [REPLY_FLOOR_CONTEXT]: 5 }, { [REPLY_FLOOR_CONTEXT]: 9, [ISSUE]: 7 }).contexts, { [REPLY_FLOOR_CONTEXT]: 5, [ISSUE]: 7 })
+  })
+
+  it('a reader never takes it past the blob that holds it', () => {
+    const slot = (contexts: Record<string, number>, createdAt: number) => ({ blob: { v: 1 as const, client_id: 'c', contexts }, createdAt })
+    assert.deepEqual(mergeSlots([slot({ [REPLY_FLOOR_CONTEXT]: MAX_TIMESTAMP }, 1000)]), { [REPLY_FLOOR_CONTEXT]: 1000 })
+    assert.deepEqual(mergeSlots([slot({ [REPLY_FLOOR_CONTEXT]: 500 }, 1000)]), { [REPLY_FLOOR_CONTEXT]: 500 })
+  })
+
+  it('survives the merged count cap, raised by the thread markers it drops', () => {
+    const slots = []
+    for (let s = 0; s < 15; s++) {
+      const contexts: Record<string, number> = { [REPLY_FLOOR_CONTEXT]: 10 }
+      for (let i = 0; i < 760; i++) contexts[thread(s * 1000 + i)] = 1_700_000_000 + s * 1000 + i
+      slots.push({ blob: { v: 1 as const, client_id: `c${s}`, contexts } })
+    }
+    const merged = mergeSlots(slots)
+    assert.equal(Object.keys(merged).length, 10_000)
+    assert.ok(merged[REPLY_FLOOR_CONTEXT] > 1_700_000_000)
+    const all = Object.assign({}, ...slots.map((s) => s.blob.contexts)) as Record<string, number>
+    for (const [key, value] of Object.entries(all)) {
+      if (key !== REPLY_FLOOR_CONTEXT && merged[key] === undefined) assert.ok(belowReplyFloor(value, merged[REPLY_FLOOR_CONTEXT]))
+    }
+  })
+
   it('advanceContexts caps with it', () => {
     const contexts: Record<string, number> = {}
     for (let i = 0; i < 1200; i++) contexts[thread(i)] = 1_700_000_000 + i
@@ -236,5 +263,17 @@ describe('fetch and publish, injected', () => {
     )
     assert.equal(result.ok, true)
     assert.equal(published?.content, `enc:${JSON.stringify({ v: 1, client_id: identity.clientId, contexts: { [ISSUE]: 2, [FOLDER]: 1 } })}`)
+  })
+
+  it('publish keeps the reply floor the caller already capped in', async () => {
+    let published: SignedEvent | undefined
+    await publishReadState(
+      { nip44, sign: async (u) => ({ ...u, id: '0'.repeat(64), sig: '' }), publish: async (e) => ((published = e), { ok: true }) },
+      ME,
+      identity,
+      { [ISSUE]: 2, [REPLY_FLOOR_CONTEXT]: 1 },
+      5000,
+    )
+    assert.equal(JSON.parse(published!.content.slice(4)).contexts[REPLY_FLOOR_CONTEXT], 1)
   })
 })

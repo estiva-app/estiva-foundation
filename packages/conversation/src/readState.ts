@@ -335,12 +335,14 @@ export function capReadStateContexts(contexts: Readonly<Record<string, number>>,
 
 /**
  * Apply markers, taking the later of each (§11.4: never lower one), then cap.
- * Unpublishable ids and out-of-range timestamps are dropped.
+ * Unpublishable ids and out-of-range timestamps are dropped, and so is a reply
+ * floor among the updates: only the cap raises it (§11.6), so a stray value
+ * cannot mark every reply read. The floor `current` already holds is kept.
  */
 export function advanceContexts(current: Readonly<Record<string, number>>, updates: Readonly<Record<string, number>>): CappedContexts {
   const next: Record<string, number> = { ...current }
   for (const [id, seconds] of Object.entries(updates)) {
-    if (!isPublishableContextId(id) || !isTimestamp(seconds)) continue
+    if (id === REPLY_FLOOR_CONTEXT || !isPublishableContextId(id) || !isTimestamp(seconds)) continue
     if (next[id] === undefined || seconds > next[id]) next[id] = seconds
   }
   return capReadStateContexts(next)
@@ -386,18 +388,25 @@ export interface SlotBlob {
 }
 
 /** Every slot merged by the max rule, capped at {@link MAX_CONTEXTS} newest first, ties by key. */
-export function mergeSlots(slots: readonly Pick<SlotBlob, 'blob'>[]): Record<string, number> {
+export function mergeSlots(slots: readonly (Pick<SlotBlob, 'blob'> & { createdAt?: number })[]): Record<string, number> {
   const merged: Record<string, number> = {}
-  for (const { blob } of slots) {
-    for (const [id, seconds] of Object.entries(blob.contexts)) {
-      if (!isPublishableContextId(id) || !isTimestamp(seconds)) continue
+  for (const { blob, createdAt } of slots) {
+    for (const [id, value] of Object.entries(blob.contexts)) {
+      if (!isPublishableContextId(id) || !isTimestamp(value)) continue
+      // A floor is the value of a marker the cap dropped, so never later than the blob that holds it (§11.6).
+      const seconds = id === REPLY_FLOOR_CONTEXT && createdAt !== undefined ? Math.min(value, createdAt) : value
       if (merged[id] === undefined || seconds > merged[id]) merged[id] = seconds
     }
   }
-  const keys = Object.keys(merged)
-  if (keys.length <= MAX_CONTEXTS) return merged
+  const { [REPLY_FLOOR_CONTEXT]: floor, ...rest } = merged
+  const keys = Object.keys(rest)
+  if (keys.length + (floor === undefined ? 0 : 1) <= MAX_CONTEXTS) return merged
+  // Over the count cap, as over the byte cap: the floor stays, and pays for every `thread:` marker dropped.
+  const sorted = keys.sort(byNewestThenKey(rest))
   const kept: Record<string, number> = {}
-  for (const id of keys.sort(byNewestThenKey(merged)).slice(0, MAX_CONTEXTS)) kept[id] = merged[id]
+  for (const id of sorted.slice(0, MAX_CONTEXTS - 1)) kept[id] = rest[id]
+  const raised = sorted.slice(MAX_CONTEXTS - 1).reduce((max, key) => (isThreadKey(key) && rest[key] > max ? rest[key] : max), floor ?? 0)
+  if (floor !== undefined || raised > 0) kept[REPLY_FLOOR_CONTEXT] = raised
   return kept
 }
 
@@ -567,7 +576,10 @@ export async function publishReadState(
   nowMs: number,
 ): Promise<{ ok: boolean; reason?: string }> {
   // Filtered here as well: the blob is grow-only, and a map built outside `advanceContexts` must not put an id into it.
-  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts({}, contexts).contexts })
+  // The floor goes in as `current`, since `advanceContexts` refuses one among the updates.
+  const { [REPLY_FLOOR_CONTEXT]: floor, ...markers } = contexts
+  const held: Record<string, number> = floor !== undefined && isTimestamp(floor) ? { [REPLY_FLOOR_CONTEXT]: floor } : {}
+  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts(held, markers).contexts })
   if (utf8(plaintext) > MAX_BLOB_BYTES) return { ok: false, reason: `read state is ${utf8(plaintext)} bytes, over ${MAX_BLOB_BYTES}` }
   const ciphertext = await deps.nip44.encrypt(plaintext)
   const signed = await deps.sign(buildReadStateEvent(pubkey, nowMs, identity.slotId, ciphertext))
