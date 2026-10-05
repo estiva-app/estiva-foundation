@@ -26,6 +26,7 @@ import {
   archiveImpact,
   isArchived,
   planArchiveFolder,
+  planMoveFromFolders,
   buildActionEvent,
   KIND_BARE_FILE,
   KIND_FOLDER_STATE,
@@ -456,5 +457,30 @@ describe('archiveImpact counts what would be hidden', () => {
       Object.fromEntries(impact.hides.map((h) => [h.kind, h.count])),
       { [HIVE]: 1, [INSPECTION]: 2 },
     )
+  })
+})
+
+describe('a move takes what is archived beneath the file too (SHI-37)', () => {
+  // The apiary lists the hive and its spring inspection; the hive is archived.
+  const archived = archive(addressOf(hive), { folder: HIVE_TALK })
+  const events = [hiveLog, apiary, hive, spring, archived, stateOf(APIARY, 'Apiary', [addressOf(hive), addressOf(spring)])]
+  const file = { ref: addressOf(hive), address: addressOf(hive) }
+  const from = { id: APIARY, hasState: true, addresses: [addressOf(hive), addressOf(spring)] }
+  const to = { id: ORCHARD, hasState: true }
+  const moveWith = (files) => planMoveFromFolders(KEEPER, 1_800_000_000_000, { file, from: [from], to, listings: new Map([[APIARY, files]]) })
+
+  test('read with includeArchived, the inspection moves with its archived hive', async () => {
+    const listing = await resolveFolderContents(APIARY, relay(events), noPeople, undefined, { includeArchived: true })
+    const plan = moveWith(listing.files)
+    assert.ok(plan.ok)
+    assert.deepEqual(plan.moved, [addressOf(hive), addressOf(spring)])
+  })
+
+  test('read with the defaults, it would be left behind: the hive alone moves', async () => {
+    const listing = await resolveFolderContents(APIARY, relay(events), noPeople)
+    assert.deepEqual(listing.files, [])
+    const plan = moveWith(listing.files)
+    assert.ok(plan.ok)
+    assert.deepEqual(plan.moved, [addressOf(hive)])
   })
 })

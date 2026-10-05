@@ -130,11 +130,13 @@ export {
   planPlaceFile,
   planUnlistFile,
   planMoveFile,
+  planMoveFromFolders,
   planArchiveFolder,
   listedBeneath,
   type FolderRef,
   type MovableFile,
   type MovePlan,
+  type MoveFromFoldersPlan,
   type MoveRefusal,
 } from './folders.js'
 

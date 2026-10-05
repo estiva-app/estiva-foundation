@@ -15,6 +15,7 @@ import {
   planCreateFolder,
   planDeleteFolder,
   planMoveFile,
+  planMoveFromFolders,
   planPlaceFile,
   planRenameFolder,
   planUnlistFile,
@@ -218,6 +219,98 @@ describe('planMoveFile', () => {
         moved: [],
       })
     }
+  })
+})
+
+describe('planMoveFromFolders', () => {
+  const PROJECT = `30850:${PUB}:p1`
+  const project = { ref: PROJECT, address: PROJECT }
+  const from = { id: A, hasState: true, addresses: [PROJECT, FILE] }
+  const also = { id: C, hasState: true, addresses: [PROJECT] }
+  const to = { id: B, hasState: true }
+  const plan = (args: Partial<Parameters<typeof planMoveFromFolders>[2]>) =>
+    planMoveFromFolders(PUB, MS, { file: project, from: [from], to, listings: new Map(), ...args })
+
+  it('sends one add naming what every source lists beneath the file, then a remove per source naming its own', () => {
+    const listings = new Map([
+      [A, [file(PROJECT), file(CHILD, PROJECT)]],
+      [C, [file(PROJECT, undefined, C), file(GRANDCHILD, PROJECT, C)]],
+    ])
+    const moved = plan({ from: [from, also], listings })
+    assert.ok(moved.ok)
+    assert.deepEqual(shape([moved.add!]), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT], ['a', CHILD], ['a', GRANDCHILD]] }])
+    assert.deepEqual(
+      moved.removes.map(({ folder, event }) => ({ folder, tags: event.tags })),
+      [
+        { folder: A, tags: [['h', A], ['op', 'remove'], ['a', PROJECT], ['a', CHILD]] },
+        { folder: C, tags: [['h', C], ['op', 'remove'], ['a', PROJECT], ['a', GRANDCHILD]] },
+      ],
+    )
+    assert.deepEqual(moved.moved, [PROJECT, CHILD, GRANDCHILD])
+  })
+
+  it('moves the file a source’s state names even when its row did not resolve, with what is beneath it', () => {
+    const moved = plan({ listings: new Map([[A, [file(OTHER), file(CHILD, PROJECT)]]]) })
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.moved, [PROJECT, CHILD])
+    assert.deepEqual(moved.removes[0].event.tags, [['h', A], ['op', 'remove'], ['a', PROJECT], ['a', CHILD]])
+  })
+
+  it('does not add a file its source’s state does not name — only what is beneath it', () => {
+    const moved = plan({ from: [{ id: A, hasState: true, addresses: [CHILD] }], listings: new Map([[A, [file(CHILD, PROJECT)]]]) })
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.moved, [CHILD])
+  })
+
+  it('moves the file alone from a source with no listing', () => {
+    const moved = plan({})
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.moved, [PROJECT])
+    assert.deepEqual(moved.removes.map(({ folder }) => folder), [A])
+  })
+
+  it('places a file listed nowhere, with no remove', () => {
+    const moved = plan({ from: [] })
+    assert.ok(moved.ok)
+    assert.deepEqual(shape([moved.add!]), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT]] }])
+    assert.deepEqual(moved.removes, [])
+  })
+
+  it('places a file its Folder holds only by containment, with no remove', () => {
+    const moved = plan({ from: [{ id: A, hasState: true, addresses: [] }], listings: new Map([[A, [file(OTHER)]]]) })
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.moved, [PROJECT])
+    assert.deepEqual(moved.removes, [])
+  })
+
+  it('refuses to place a project in a private Folder: its root carries no h', () => {
+    assert.deepEqual(plan({ from: [], to: { ...to, private: true } }), { ok: false, reason: 'target-is-private' })
+  })
+
+  it('places a file in the private Folder its h already names', () => {
+    const moved = plan({ file: file(FILE, undefined, B), from: [], to: { ...to, private: true } })
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.moved, [FILE])
+  })
+
+  it('refuses everything when any source is refused, before planning an add', () => {
+    const listings = new Map([[A, [file(PROJECT)]]])
+    assert.deepEqual(plan({ from: [from, { id: C, hasState: false }], listings }), { ok: false, reason: 'source-has-no-state' })
+    assert.deepEqual(plan({ to: { ...to, private: true }, listings }), { ok: false, reason: 'target-is-private' })
+  })
+
+  it('refuses a target with no state, even when there is nothing to remove', () => {
+    assert.deepEqual(plan({ from: [], to: { id: B, hasState: false } }), { ok: false, reason: 'target-has-no-state' })
+  })
+
+  it('plans nothing for a file already in the target and nowhere else', () => {
+    assert.deepEqual(plan({ from: [{ id: B, hasState: true }] }), { ok: true, removes: [], moved: [] })
+  })
+
+  it('takes the target out of the sources: only the other Folder is removed from', () => {
+    const moved = plan({ from: [{ id: B, hasState: true, addresses: [PROJECT] }, from], listings: new Map([[A, [file(PROJECT)]]]) })
+    assert.ok(moved.ok)
+    assert.deepEqual(moved.removes.map(({ folder }) => folder), [A])
   })
 })
 

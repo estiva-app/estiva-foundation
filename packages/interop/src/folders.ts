@@ -62,6 +62,12 @@ export interface FolderRef {
    * `["private"]`. Only a move *into* the Folder reads it.
    */
   private?: boolean
+  /**
+   * `FolderSummary.addresses`: what its state lists. Only
+   * {@link planMoveFromFolders} reads it, to know a source lists the moved
+   * file even when the file's row did not resolve.
+   */
+  addresses?: readonly string[]
 }
 
 /**
@@ -335,4 +341,92 @@ export function planMoveFile(
     ],
     moved,
   }
+}
+
+export type MoveFromFoldersPlan =
+  | {
+      ok: true
+      /**
+       * The one `kind:1852 add` in the target, naming everything moved. Publish
+       * it first: refused, nothing has changed. Absent when there is nothing to send.
+       */
+      add?: UnsignedEvent
+      /**
+       * A `remove` for each source that lists part of the set, naming what that
+       * source lists. Publish them once the add has landed; a refused one leaves
+       * its Folder listing the set as well, which moving again fixes.
+       */
+      removes: { folder: string; event: UnsignedEvent }[]
+      /** Every address the add names. */
+      moved: string[]
+    }
+  | { ok: false; reason: MoveRefusal }
+
+/**
+ * Move a file out of every Folder that lists it, with everything listed
+ * beneath it in each: one `kind:1852 add` in the target naming the whole set,
+ * then a `remove` in each source — SPEC §3.3.
+ *
+ * {@link planMoveFile} for each source, and what every consumer did around it
+ * (Ship's "Move to Folder…", Peek's Move, the agent's `move-project`), so it is
+ * done once:
+ *
+ * - **One add, not one per source.** A file two Folders list can have a
+ *   different set beneath it in each. One add naming the union lands whole or
+ *   not at all, so a refusal never leaves part of the set in the target.
+ * - **The file is in a source whose state names it** (`from[i].addresses`),
+ *   even when its row is missing from that source's listing. A row that did
+ *   not resolve is still what is being moved.
+ * - **Placed, when no source lists any of it.** The file is listed nowhere, or
+ *   only by containment in a Folder with state, so it is added to the target
+ *   alone, as {@link planPlaceFile} does. Into a private Folder that is
+ *   refused unless the file's `h` is that Folder. A project's root carries no
+ *   `h`, so a project is always refused. A file no Folder should list itself (a
+ *   Ship issue is listed by its project) is then added too, so only call this
+ *   for one when something is listed beneath it.
+ *
+ * `from` is every Folder that lists the file now. The target is ignored if it
+ * is one of them, and a file that is already there and nowhere else plans
+ * nothing. `listings` holds each source's files (`FolderContents.files`). Read
+ * them with `includeArchived`, or an archived file beneath this one stays
+ * behind. A source with no entry moves the file alone.
+ *
+ * Refusals are {@link planMoveFile}'s, and nothing is planned if any source is
+ * refused.
+ */
+export function planMoveFromFolders(
+  pubkey: string,
+  createdAtMs: number,
+  args: { file: MovableFile; from: readonly FolderRef[]; to: FolderRef; listings: ReadonlyMap<string, readonly MovableFile[] | null> },
+): MoveFromFoldersPlan {
+  const { file, to } = args
+  const sources = args.from.filter((folder) => folder.id !== to.id)
+  if (sources.length === 0 && args.from.length > 0) return { ok: true, removes: [], moved: [] }
+  const removes: { folder: string; event: UnsignedEvent }[] = []
+  const moved = new Set<string>()
+  for (const from of sources) {
+    const listing = args.listings.get(from.id) ?? null
+    const unresolved =
+      !!listing && !!file.address && !!from.addresses?.includes(file.address) && !listing.some((candidate) => candidate.address === file.address)
+    const plan = planMoveFile(pubkey, createdAtMs, {
+      file,
+      from,
+      to,
+      // By its address, so the walk finds what the listing draws beneath it.
+      listing: unresolved ? [{ ...file, ref: file.address! }, ...listing] : listing,
+    })
+    if (!plan.ok) return plan
+    for (const address of plan.moved) moved.add(address)
+    const remove = plan.events[1]
+    if (remove) removes.push({ folder: from.id, event: remove })
+  }
+  if (!to.hasState) return { ok: false, reason: 'target-has-no-state' }
+  if (moved.size === 0) {
+    if (to.private && file.folder !== to.id) return { ok: false, reason: 'target-is-private' }
+    if (!file.address) return { ok: true, removes: [], moved: [] }
+    const [add] = planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true })
+    return { ok: true, add, removes: [], moved: [file.address] }
+  }
+  const addresses = [...moved]
+  return { ok: true, add: buildFolderCommand(pubkey, createdAtMs, { folder: to.id, op: 'add', addresses }), removes, moved: addresses }
 }

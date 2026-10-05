@@ -6,6 +6,26 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.49.0 — 2026-10-05
+
+**Manifests: nothing changes.** This release only adds a planner (SHI-37). It
+moves a file out of every Folder that lists it, which Ship, Peek and the agent
+each used to put together themselves around `planMoveFile`.
+
+- **Added: `planMoveFromFolders(pubkey, ms, { file, from, to, listings })`.**
+  It plans one `kind:1852 add` in the target naming everything each source lists
+  beneath the file, so the add lands whole or not at all, then one `remove` per
+  source naming what that source lists. When no source lists anything, the file
+  is placed instead, and a private target is refused unless the file's `h` is
+  that Folder. It returns `{ ok, add?, removes: { folder, event }[], moved }`, or
+  `planMoveFile`'s refusals.
+- **Added: `FolderRef.addresses`** (`FolderSummary.addresses`). From it the
+  planner knows that a source lists the file even when the file's row did not
+  resolve.
+- **Docs:** read a move's listings with `resolveFolderContents(…, { includeArchived: true })`.
+  The defaults hide archived files, so an archived file beneath the moved one
+  stayed behind.
+
 ## 0.48.0 — 2026-10-05
 
 **Manifests: how `input.type: "pubkey"` is read changes** (SPEC §7.3, SHA-28).

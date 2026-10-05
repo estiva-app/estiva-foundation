@@ -5940,7 +5940,9 @@ export async function resolveFolderContents(
     /**
      * Return archived files — and files hidden with an archived parent — each
      * carrying its {@link Archive}, instead of leaving them out. For a view
-     * that lists what was archived; every other list wants the default.
+     * that lists what was archived, and for the listings a move plans from
+     * (`planMoveFromFolders`): what is archived beneath a file moves with it.
+     * Every other list wants the default.
      */
     includeArchived?: boolean
   } = {},
