@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.6.1 — 2026-10-05
+
+**Typing an issue's ref after `[` finds it** (PEE-21; Miky asked for it on
+CON-33). `rankReferences` scores a file on its `search` as well as its title,
+the way it already scored a message on its text; interop 0.50.0 sets an
+issue's `search` to its current ref. New: `refMatch`. A ref matches only from
+its start, and only once what is typed has a digit or a hyphen, so `con` on
+the way to "Conversation…" matches titles only (Miky, 2026-10-05). SPEC: none,
+nothing read or written changed.
+
 ## 0.6.0 — 2026-10-05
 
 **The thread rule** (CON-34, Miky 2026-10-03/05): a reply after the cut-over

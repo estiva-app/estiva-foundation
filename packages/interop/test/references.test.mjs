@@ -43,7 +43,7 @@ function searchingRelay(events) {
     }
     if (f.search) {
       const text = e.tags
-        .filter((t) => t[0] === 'title' || t[0] === 'value')
+        .filter((t) => t[0] === 'title' || t[0] === 'ref' || t[0] === 'value')
         .map((t) => t[1])
         .join(' ')
         .toLowerCase()
@@ -75,7 +75,10 @@ const manifest = event({
         widget: 'card',
         slots: { title: { tag: 'title', fold: 'title' }, list: { children: { kind: ISSUE, via: 'a', movedBy: 'project' } } },
       },
-      [ISSUE]: { widget: 'row', slots: { title: { tag: 'title', fold: 'title' }, status: { tag: 'status', fold: 'status' } } },
+      [ISSUE]: {
+        widget: 'row',
+        slots: { title: { tag: 'title', fold: 'title' }, status: { tag: 'status', fold: 'status' }, meta: [{ fold: 'ref', tag: 'ref' }] },
+      },
     },
   }),
 })
@@ -110,6 +113,39 @@ describe('searchFileReferences', () => {
     // The root is not on this relay for this reader: only its rename came back.
     const relay = searchingRelay([manifest, project, rename(I('hidden'), 'Secret plans')])
     assert.deepEqual(await searchFileReferences('secret', relay.query), [])
+  })
+
+  test('finds an issue by its ref, captioned ref then project, and carries the ref to match on', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r1'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    const found = await searchFileReferences('CON-33', relay.query)
+    assert.deepEqual(
+      found.map((c) => ({ id: c.id, title: c.title, caption: c.caption, search: c.search })),
+      [{ id: I('r1'), title: 'Relay search', caption: 'CON-33 · Conversation standard', search: 'CON-33' }],
+    )
+  })
+
+  test('a ref matches only from its start, and only once a digit or hyphen is typed', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r3'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    assert.deepEqual(await searchFileReferences('33', relay.query), [])
+    // `con` still finds the project by its title, "Conversation standard" — never the issue by its ref.
+    assert.deepEqual((await searchFileReferences('con', relay.query)).map((c) => c.id), [P1])
+    assert.deepEqual((await searchFileReferences('con-3', relay.query)).map((c) => c.id), [I('r3')])
+  })
+
+  test('finds an issue by the ref it was given since, and not by the one it had', async () => {
+    const renumbered = event({ kind: ISSUE, tags: [['d', 'r2'], ['title', 'Relay search'], ['ref', 'NEW-1'], ['a', P1], ['h', 'f1']] })
+    const reref = event({ kind: CHANGE, tags: [['a', I('r2')], ['field', 'ref'], ['value', 'CON-34'], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, renumbered, reref])
+    assert.deepEqual((await searchFileReferences('CON-34', relay.query)).map((c) => c.id), [I('r2')])
+    assert.deepEqual(await searchFileReferences('NEW-1', relay.query), [])
+  })
+
+  test('a change to another field is not a hit', async () => {
+    const described = event({ kind: CHANGE, tags: [['a', I('i1')], ['field', 'description'], ['value', 'bracket'], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, issue('i1', 'Old words'), described])
+    assert.deepEqual(await searchFileReferences('bracket', relay.query), [])
   })
 
   test('marks a done issue closed, and finds a project by its root title', async () => {
@@ -163,6 +199,17 @@ describe('fileCandidates', () => {
     const rows = await fileCandidates(Object.values(objects), 0, relay.query)
     assert.equal(relay.own().length, before)
     assert.equal(rows.find((r) => r.id === I('i3')).caption, 'Conversation standard')
+  })
+
+  test('a Folder tier issue carries its ref to match on and in its caption; a project carries none', async () => {
+    const withRef = event({ kind: ISSUE, tags: [['d', 'r4'], ['title', 'Relay search'], ['ref', 'CON-33'], ['a', P1], ['h', 'f1']] })
+    const relay = searchingRelay([manifest, project, withRef])
+    const objects = await resolveForeignObjects([P1, I('r4')], relay.query)
+    const rows = await fileCandidates(Object.values(objects), 0, relay.query)
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]))
+    assert.equal(byId[I('r4')].search, 'CON-33')
+    assert.equal(byId[I('r4')].caption, 'CON-33 · Conversation standard')
+    assert.equal(byId[P1].search, undefined)
   })
 
   test('leaves out what did not resolve', async () => {
