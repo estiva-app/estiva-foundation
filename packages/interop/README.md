@@ -630,7 +630,7 @@ for (const event of plan.events) { // publish in order; stop at the first refusa
 
 The planners are SPEC §3.3's operations — `planCreateFolder`,
 `planRenameFolder`, `planArchiveFolder`, `planDeleteFolder`, `planPlaceFile`,
-`planUnlistFile` and `planMoveFile` — and return **unsigned** events in publish
+`planUnlistFile`, `planMoveFile` and `planMoveFromFolders` — and return **unsigned** events in publish
 order. Signing and publishing stay yours.
 
 A move is one `kind:1852 add` in the target naming the file and every file
