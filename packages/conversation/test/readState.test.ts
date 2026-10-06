@@ -13,6 +13,7 @@ import {
   capContextsToBytes,
   capReadStateContexts,
   channelContext,
+  createSlotCache,
   effectiveReadAt,
   fetchReadState,
   fileContext,
@@ -251,6 +252,110 @@ describe('fetch and publish, injected', () => {
     const b = await fetchReadState(async () => [taken], ME, nip44, identity, 0)
     assert.equal(b.coordinateConflicted, true)
     assert.equal(b.own, undefined)
+  })
+
+  describe('with a slot cache (Peek 23130326)', () => {
+    const blobOf = (contexts: Record<string, number>, client_id = 'peek-1') => JSON.stringify({ v: 1, client_id, contexts })
+    const counting = (refuse: (c: string) => boolean = () => false) => {
+      const asked: string[] = []
+      return {
+        asked,
+        decrypt: async (c: string) => {
+          asked.push(c)
+          if (refuse(c)) throw new Error('POST /nip44/decrypt failed: 429')
+          return nip44.decrypt(c)
+        },
+      }
+    }
+
+    it('decrypts a slot again only when its content changed', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const b = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 2 }, 'peek-2'))
+      const seam = counting()
+      await fetchReadState(async () => [a, b], ME, seam, identity, 0, 90, cache)
+      assert.equal(seam.asked.length, 2)
+      const again = await fetchReadState(async () => [a, b], ME, seam, identity, 0, 90, cache)
+      assert.equal(seam.asked.length, 2)
+      assert.deepEqual(again.merged, { [FOLDER]: 1, [ISSUE]: 2 })
+      const b2 = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 3 }, 'peek-2'), 2)
+      const changed = await fetchReadState(async () => [a, b2], ME, seam, identity, 0, 90, cache)
+      assert.deepEqual(seam.asked.slice(2), [b2.content])
+      assert.deepEqual(changed.merged, { [FOLDER]: 1, [ISSUE]: 3 })
+    })
+
+    it('a refused slot keeps its last markers, and the round stops asking', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const b = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 2 }, 'peek-2'))
+      await fetchReadState(async () => [a, b], ME, counting(), identity, 0, 90, cache)
+      const a2 = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 5 }), 2)
+      const b2 = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 6 }, 'peek-2'), 2)
+      const seam = counting(() => true)
+      const read = await fetchReadState(async () => [a2, b2], ME, seam, identity, 0, 90, cache)
+      assert.equal(seam.asked.length, 1)
+      assert.deepEqual(read.merged, { [FOLDER]: 1, [ISSUE]: 2 })
+      const later = await fetchReadState(async () => [a2, b2], ME, counting(), identity, 0, 90, cache)
+      assert.deepEqual(later.merged, { [FOLDER]: 5, [ISSUE]: 6 })
+    })
+
+    it('asks for our own slot first, and a refusal there still blocks publishing', async () => {
+      const cache = createSlotCache()
+      const other = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const own = slotEvent(identity.slotId, blobOf({ [ISSUE]: 2 }, identity.clientId))
+      await fetchReadState(async () => [other, own], ME, counting(), identity, 0, 90, cache)
+      const own2 = slotEvent(identity.slotId, blobOf({ [ISSUE]: 4 }, identity.clientId), 2)
+      const other2 = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 3 }), 2)
+      const seam = counting(() => true)
+      const read = await fetchReadState(async () => [other2, own2], ME, seam, identity, 0, 90, cache)
+      assert.deepEqual(seam.asked, [own2.content])
+      assert.equal(read.ownUndecryptable, true)
+      assert.equal(read.own, undefined)
+      assert.deepEqual(read.merged, { [FOLDER]: 1, [ISSUE]: 2 })
+    })
+
+    it('never asks again for a slot that will not decrypt, and resets for another person', async () => {
+      const cache = createSlotCache()
+      const rotated = { ...slotEvent('1'.repeat(32), ''), content: 'garbage' }
+      const seam = counting()
+      await fetchReadState(async () => [rotated], ME, seam, identity, 0, 90, cache)
+      await fetchReadState(async () => [rotated], ME, seam, identity, 0, 90, cache)
+      assert.equal(seam.asked.length, 1)
+      const someoneElse = 'd'.repeat(64)
+      await fetchReadState(async () => [{ ...rotated, pubkey: someoneElse }], someoneElse, seam, identity, 0, 90, cache)
+      assert.equal(seam.asked.length, 2)
+    })
+
+    it('two overlapping calls decrypt a changed slot once', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const seam = counting()
+      const [x, y] = await Promise.all([
+        fetchReadState(async () => [a], ME, seam, identity, 0, 90, cache),
+        fetchReadState(async () => [a], ME, seam, identity, 0, 90, cache),
+      ])
+      assert.equal(seam.asked.length, 1)
+      assert.deepEqual(x.merged, y.merged)
+    })
+
+    it('without a cache, a refused slot is dropped and the round stops asking', async () => {
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const b = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 2 }, 'peek-2'))
+      const seam = counting((c) => c === a.content)
+      const read = await fetchReadState(async () => [a, b], ME, seam, identity, 0)
+      assert.deepEqual(seam.asked, [a.content])
+      assert.deepEqual(read.merged, {})
+      assert.equal(read.reachable, true)
+    })
+
+    it('forgets slots the relay no longer holds', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      await fetchReadState(async () => [a], ME, counting(), identity, 0, 90, cache)
+      const read = await fetchReadState(async () => [], ME, counting(), identity, 0, 90, cache)
+      assert.deepEqual(read.merged, {})
+      assert.equal(cache.slots.size, 0)
+    })
   })
 
   it('publish encrypts the sorted blob and signs the read-state shape', async () => {
