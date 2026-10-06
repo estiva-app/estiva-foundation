@@ -2003,6 +2003,19 @@ describe('counting a conversation without resolving each file', () => {
     assert.deepEqual(found[ADDR_A].map((m) => [m.id, m.root]), [[reply.id, old.id]])
     assert.equal(sent.filter((filters) => filters.some((f) => 'ids' in f)).length, 1, 'one read for the missing roots')
   })
+
+  it("with replies, a comment on another file cannot take a thread's replies, nor a reply land in a file it does not name", async () => {
+    const root = event({ kind: 1111, created_at: 1_700_000_500, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['e', root.id], ['k', '1111']] })
+    // A comment on B whose `E`/`e` name A's root: a root of B, never a key for A's thread.
+    const thief = event({ kind: 1111, created_at: 1_700_000_600, tags: [['A', ADDR_B], ['a', ADDR_B], ['E', root.id], ['e', root.id]] })
+    // A reply on B that claims A's root: B is what it is about, and B's roots do not hold that thread.
+    const claimant = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_B], ['E', root.id], ['e', root.id], ['e', 'd'.repeat(64)]] })
+
+    const found = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay([manifest(), root, reply, thief, claimant]), undefined, { replies: true })
+    assert.deepEqual(found[ADDR_A].map((m) => m.id), [root.id, reply.id])
+    assert.deepEqual(found[ADDR_B].map((m) => m.id), [thief.id])
+  })
 })
 
 

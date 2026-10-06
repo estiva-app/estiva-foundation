@@ -30,7 +30,7 @@ import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
   the copy that lived here — a `kind:9` is never a comment (CON-20 migrated
   them), a reply is never a root, and `ts` is trusted only inside its own second.
 */
-import { byOrder, isCommentOn, isReply, orderingMs } from '@estiva-app/conversation'
+import { anchorsOf, byOrder, isCommentOn, isReply, orderingMs } from '@estiva-app/conversation'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -468,33 +468,38 @@ export async function conversationsOf(
     }
   }
   if (replies.length > 0) {
-    // A root is found by its id, or by the event root it names (NIP-22's `E`).
+    /*
+      Each root by its own id only, never by the event its `E` names: any comment
+      on another file could carry this thread's root there and take its replies
+      (review, foundation#112). The ids are unique, so nothing overwrites.
+    */
     const fileOfRoot = new Map<string, string>()
     for (const [ref, messages] of Object.entries(conversations)) {
-      for (const m of messages) {
-        fileOfRoot.set(m.id, ref)
-        fileOfRoot.set(m.root, ref)
-      }
+      for (const m of messages) if (m.root === m.id) fileOfRoot.set(m.id, ref)
     }
+    const addressOf = new Map(asked.map((a) => [a.ref, a.address]))
+    // A reply in a file's thread names that file in its `A` (§6.4), so one that
+    // does not is not counted there, whatever root it claims.
+    const inList = replies.filter((event) => anchorsOf(event).some((address) => refOf.has(address)))
     /*
       A new reply in an old thread: its root is past the `#a` limit, so this
       read did not find it — on a busy file, exactly the reply the dot exists
-      for. Those roots are asked by id, once, and decide as any root does
-      (C11). Listed for attribution only, not as messages: they are older than
-      the read's window.
+      for. Those roots are asked by id in one request, capped at the limit so
+      replies naming made-up roots cannot multiply the reads, and decide as any
+      root does (C11). Listed for attribution only, not as messages.
     */
-    const missing = [...new Set(replies.map(rootOf).filter((root) => !fileOfRoot.has(root)))]
-    for (let start = 0; start < missing.length; start += CONVERSATION_LIMIT) {
-      const ids = missing.slice(start, start + CONVERSATION_LIMIT)
-      for (const root of await query([{ ids, limit: ids.length }])) {
+    const missing = [...new Set(inList.map(rootOf).filter((root) => !fileOfRoot.has(root)))].slice(0, CONVERSATION_LIMIT)
+    if (missing.length > 0) {
+      for (const root of await query([{ ids: missing, limit: missing.length }])) {
         const ref = commentedFile(root)
-        if (ref !== undefined) fileOfRoot.set(root.id, ref)
+        if (ref !== undefined && !fileOfRoot.has(root.id)) fileOfRoot.set(root.id, ref)
       }
     }
-    for (const event of replies) {
+    for (const event of inList) {
       const root = rootOf(event)
       const ref = fileOfRoot.get(root)
-      if (ref !== undefined) conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root })
+      if (ref === undefined || !anchorsOf(event).includes(addressOf.get(ref) as string)) continue
+      conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root })
     }
   }
   for (const messages of Object.values(conversations)) messages.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))
