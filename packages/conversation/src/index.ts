@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.8.1'
+export const CONVERSATION_VERSION = '0.9.0'
 
 export {
   KIND_MESSAGE,
@@ -164,6 +164,7 @@ export {
   NO_DRAFTS,
   DRAFT_MAX_AGE_MS,
   DRAFT_MAX_CHARS,
+  type Draft,
   type DraftStore,
   type DraftStorage,
 } from './drafts.js'

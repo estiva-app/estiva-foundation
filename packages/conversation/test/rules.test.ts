@@ -20,6 +20,7 @@ import {
   mentionTagsFor,
   mentionText,
   messageReference,
+  NO_DRAFTS,
   parentOf,
   quoteTagsFor,
   reactionEventsOf,
@@ -233,6 +234,27 @@ describe('drafts', () => {
     now += DRAFT_MAX_AGE_MS + 1
     assert.equal(drafts.read(draftKeys.container('c1')), undefined)
     assert.equal(storage.map.size, 0)
+  })
+
+  it('keeps whom a draft names urgently, which its text cannot say (CON-31)', () => {
+    const storage = memory()
+    const drafts = createDraftStore(storage)
+    const bob = 'b'.repeat(64)
+    const text = `nostr:${encodeNpub(bob)} please sign`
+    drafts.write('k', text, [bob, bob, 'not-a-key'])
+    assert.deepEqual(drafts.readDraft('k'), { text, urgent: [bob] })
+    assert.equal(drafts.read('k'), text)
+
+    // No urgent pick, and a draft kept before CON-31, read as text alone.
+    drafts.write('k', text)
+    assert.deepEqual(drafts.readDraft('k'), { text })
+    storage.map.set('estiva.draft.v1:old', JSON.stringify({ text: 'old', at: Date.now() }))
+    assert.deepEqual(drafts.readDraft('old'), { text: 'old' })
+
+    // A malformed list costs the urgency, never the words.
+    storage.map.set('estiva.draft.v1:bad', JSON.stringify({ text: 'words', at: Date.now(), urgent: ['nope', 7, bob] }))
+    assert.deepEqual(drafts.readDraft('bad'), { text: 'words', urgent: [bob] })
+    assert.equal(NO_DRAFTS.readDraft('k'), undefined)
   })
 
   it('treats storage that throws, or none, as no draft', () => {
