@@ -116,16 +116,12 @@ export function buildReply(
 }
 
 /**
- * Whether to offer Edit and Delete on a message — §6.5, decided 2026-09-29
- * (C14). Offered on the viewer's own message, and on one whose author's
- * profile declares `bot: true` (the viewer may be its NIP-OA owner, whom the
- * relay accepts). Not on another human's: the relay refuses that every time.
- *
- * `authorIsBot` is the author's `kind:0` `bot` field: `undefined` when the
- * profile could not be read, which offers the control — never wrong, since
- * the relay adjudicates and the app surfaces a refusal in its words.
+ * Whether to offer Edit and Delete on a message — §6.5, decided 2026-10-06
+ * (SHI-29, C14). Offered only on the viewer's own message: not on another
+ * person's, and not on an agent's, whose NIP-OA owner the relay accepts but
+ * no app can identify — offering it to everyone showed every other viewer a
+ * control the relay refuses. An unknown viewer is offered nothing.
  */
-export function offersEditAndDelete(args: { viewer: string | null | undefined; author: string; authorIsBot: boolean | undefined }): boolean {
-  if (args.viewer && args.viewer === args.author) return true
-  return args.authorIsBot !== false
+export function offersEditAndDelete(args: { viewer: string | null | undefined; author: string }): boolean {
+  return !!args.viewer && args.viewer === args.author
 }
