@@ -211,6 +211,11 @@ export interface ReferenceSearch {
 }
 
 export interface ReferenceSearchOptions {
+  /**
+   * Must find no more for `q + " words"` than for `q` (every word, the last as
+   * a prefix: buzz's prefix mode), since a longer query after an empty answer
+   * is not asked.
+   */
   search: ReferenceSearchFn
   /** The pause after a keystroke before asking. Default 200ms. */
   delayMs?: number
@@ -234,9 +239,26 @@ export interface ReferenceSearchOptions {
  *
  * Only the pause is cancelled by the next keystroke: a query already asked
  * keeps its answer, which is still true of that query.
+ *
+ * Once a query found nothing, adding whole words to it is not asked (08d7f243):
+ * relay search is every word, the last as a prefix, so `see [the fig` cannot
+ * find what `the` did not, and a sentence typed after an unmatched `[` would
+ * otherwise spend the rate limit on every longer version of itself. A failure
+ * is not "nothing", so it never stops a longer query.
  */
 export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLength = 2 }: ReferenceSearchOptions): ReferenceSearch {
   const answered = new Map<string, readonly ReferenceCandidate[]>()
+  const failures = new WeakSet<readonly ReferenceCandidate[]>()
+  const foundNothing = (query: string) => {
+    for (let at = query.indexOf(' '); at >= 0; at = query.indexOf(' ', at + 1)) {
+      const prefix = query.slice(0, at)
+      // `--` searches no word at all, so its empty answer says nothing of `-- budget`.
+      if (!/[\p{L}\p{N}]/u.test(prefix)) continue
+      const shorter = answered.get(prefix)
+      if (shorter && shorter.length === 0 && !failures.has(shorter)) return true
+    }
+    return false
+  }
   const asking = new Set<string>()
   const listeners = new Set<() => void>()
   let paused: { query: string; timer: unknown } | null = null
@@ -256,6 +278,7 @@ export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLeng
           (found) => found,
           () => {
             const failed: readonly ReferenceCandidate[] = []
+            failures.add(failed)
             timers.setTimeout(() => {
               if (answered.get(query) === failed) answered.delete(query)
             }, retryMs)
@@ -282,6 +305,10 @@ export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLeng
       }
       const known = answered.get(query)
       if (known) return known
+      if (foundNothing(query)) {
+        cancel()
+        return []
+      }
       if (paused?.query !== query && !asking.has(query)) ask(query)
       for (let n = query.length - 1; n >= minLength; n--) {
         const shorter = answered.get(query.slice(0, n).trim())
