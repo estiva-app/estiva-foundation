@@ -427,6 +427,12 @@ export async function conversationsOf(
       ? [a.filter, { kinds: [KIND_COMMENT], '#A': [a.address], limit: CONVERSATION_LIMIT }]
       : [a.filter],
   )
+  /** The file in this list an event is a comment on (§6.4), by every `a` it carries. */
+  const commentedFile = (event: SignedEvent): string | undefined =>
+    event.tags
+      .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1], kindsOf.get(t[1])))
+      .map((t) => refOf.get(t[1]))
+      .find((found) => found !== undefined)
   /** Replies, kept until every root is in: which file a reply is in is its root's. */
   const replies: SignedEvent[] = []
   const seen = new Set<string>()
@@ -455,10 +461,7 @@ export async function conversationsOf(
         came back for both; it belongs to the one whose discussion it is, and to
         neither when it merely mentions them. `isCommentOn` is §6.4's rule.
       */
-      const ref = event.tags
-        .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1], kindsOf.get(t[1])))
-        .map((t) => refOf.get(t[1]))
-        .find((found) => found !== undefined)
+      const ref = commentedFile(event)
       if (ref !== undefined) {
         conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root: rootOf(event) })
       }
@@ -471,6 +474,21 @@ export async function conversationsOf(
       for (const m of messages) {
         fileOfRoot.set(m.id, ref)
         fileOfRoot.set(m.root, ref)
+      }
+    }
+    /*
+      A new reply in an old thread: its root is past the `#a` limit, so this
+      read did not find it — on a busy file, exactly the reply the dot exists
+      for. Those roots are asked by id, once, and decide as any root does
+      (C11). Listed for attribution only, not as messages: they are older than
+      the read's window.
+    */
+    const missing = [...new Set(replies.map(rootOf).filter((root) => !fileOfRoot.has(root)))]
+    for (let start = 0; start < missing.length; start += CONVERSATION_LIMIT) {
+      const ids = missing.slice(start, start + CONVERSATION_LIMIT)
+      for (const root of await query([{ ids, limit: ids.length }])) {
+        const ref = commentedFile(root)
+        if (ref !== undefined) fileOfRoot.set(root.id, ref)
       }
     }
     for (const event of replies) {

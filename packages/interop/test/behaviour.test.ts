@@ -178,6 +178,8 @@ function relay(events: SignedEvent[]) {
   const matches = (e: SignedEvent, filter: Filter) => {
     if (filter.kinds && !filter.kinds.includes(e.kind)) return false
     if (filter.authors && !filter.authors.includes(e.pubkey)) return false
+    const ids = (filter as { ids?: string[] }).ids
+    if (ids && !ids.includes(e.id)) return false
     for (const [key, values] of Object.entries(filter)) {
       if (!key.startsWith('#')) continue
       const held = e.tags.filter((t) => t[0] === key.slice(1)).map((t) => t[1])
@@ -1981,6 +1983,25 @@ describe('counting a conversation without resolving each file', () => {
       ],
     )
     assert.equal(withReplies[ADDR_B].length, 1)
+  })
+
+  it('with replies, asks for the root of a reply whose thread is past the #a limit — and the root still decides', async () => {
+    const old = event({ kind: 1111, created_at: 1_600_000_000, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['K', '30840'], ['e', old.id], ['k', '1111']] })
+    // A thread rooted on another file that a reply tags with this file's `A`: not this file's (C11).
+    const elsewhere = event({ kind: 1111, created_at: 1_600_000_100, tags: [['A', ADDR_B], ['a', ADDR_B]] })
+    const misfiled = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_A], ['e', elsewhere.id], ['k', '1111']] })
+    const all = relay([manifest(), old, reply, elsewhere, misfiled])
+    // The relay's limit, as the read meets it: the old roots are not among the newest by `#a`.
+    const sent: Record<string, unknown>[][] = []
+    const query = async (filters: Record<string, unknown>[]) => {
+      sent.push(filters)
+      return (await all(filters)).filter((e) => !(e.id === old.id || e.id === elsewhere.id) || filters.some((f) => 'ids' in f))
+    }
+
+    const found = await conversationsOf([file(ADDR_A)], query, undefined, { replies: true })
+    assert.deepEqual(found[ADDR_A].map((m) => [m.id, m.root]), [[reply.id, old.id]])
+    assert.equal(sent.filter((filters) => filters.some((f) => 'ids' in f)).length, 1, 'one read for the missing roots')
   })
 })
 

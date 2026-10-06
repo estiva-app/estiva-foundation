@@ -15,10 +15,10 @@ manifests already published still mean what they meant.
   come back beside them (`root !== id`), so a list can judge a thread reply by
   its thread (SPEC §11.3, CON-34). A NIP-22 reply names the file only in its
   uppercase `A`, so the `#a` read never brought one, and a file whose only new
-  message was a thread reply never lit its row. A reply whose root this read did
-  not find, under a mention thread or past the limit, is left out: the root
-  decides (C11). Without the option nothing changes, and the count stays
-  comments only.
+  message was a thread reply never lit its row. The root decides (C11): a root
+  past the `#a` limit is asked by id, in one more read only when one is
+  missing, and a reply under a thread rooted elsewhere is left out. Without the
+  option nothing changes, and the count stays comments only.
 
 ## 0.50.0 — 2026-10-05
 
