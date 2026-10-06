@@ -652,47 +652,6 @@
       "id": "ad4d4ff95fe90e8ae169baf558fd37ca6f0bf7bb779bf01fe9582b727911d7d7"
     },
     {
-      "name": "component",
-      "note": "Ship only before SHA-3 (NIP-FC).",
-      "producedBy": [
-        "ship"
-      ],
-      "event": {
-        "pubkey": "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46",
-        "created_at": 1787142018,
-        "kind": 30841,
-        "tags": [
-          [
-            "d",
-            "c1"
-          ],
-          [
-            "a",
-            "30840:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:f1"
-          ],
-          [
-            "type",
-            "nfb/todo"
-          ],
-          [
-            "h",
-            "24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1"
-          ],
-          [
-            "L",
-            "nfb.x"
-          ],
-          [
-            "l",
-            "v",
-            "nfb.x"
-          ]
-        ],
-        "content": "{\"done\":false}"
-      },
-      "id": "36f7c91ba9e1d30191e122c059bf0b14580756b0b3e3a4d68949f0ef1ae24c46"
-    },
-    {
       "name": "highlight",
       "note": "Ship only before SHA-3 (NIP-84).",
       "producedBy": [
