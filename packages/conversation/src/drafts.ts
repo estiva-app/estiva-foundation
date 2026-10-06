@@ -88,6 +88,10 @@ interface StoredDraft {
 
 const HEX_KEY = /^[0-9a-f]{64}$/
 
+/** The keys in a list, once each — what is written, and all that is read back. */
+const keysIn = (list: unknown): string[] =>
+  Array.isArray(list) ? [...new Set(list.filter((k): k is string => typeof k === 'string' && HEX_KEY.test(k)))] : []
+
 export interface DraftStore {
   /** The draft's text for this key, or `undefined` — including when storage is unusable. */
   read(key: string): string | undefined
@@ -136,7 +140,7 @@ export function createDraftStore(storage: DraftStorage | undefined, now: () => n
         return undefined
       }
       // A malformed `urgent` costs the urgency, not the text: the words are what a person would miss.
-      const urgent = Array.isArray(draft.urgent) ? draft.urgent.filter((k): k is string => typeof k === 'string' && HEX_KEY.test(k)) : []
+      const urgent = keysIn(draft.urgent)
       return urgent.length > 0 ? { text: draft.text, urgent } : { text: draft.text }
     } catch {
       return undefined
@@ -152,7 +156,7 @@ export function createDraftStore(storage: DraftStorage | undefined, now: () => n
       if (!text.trim()) return remove(key)
       if (text.length > DRAFT_MAX_CHARS) return remove(key)
       try {
-        const picks = [...new Set(urgent ?? [])]
+        const picks = keysIn(urgent)
         const draft: StoredDraft = picks.length > 0 ? { text, at: now(), urgent: picks } : { text, at: now() }
         storage.setItem(PREFIX + key, JSON.stringify(draft))
       } catch {

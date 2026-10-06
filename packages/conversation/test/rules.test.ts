@@ -241,7 +241,7 @@ describe('drafts', () => {
     const drafts = createDraftStore(storage)
     const bob = 'b'.repeat(64)
     const text = `nostr:${encodeNpub(bob)} please sign`
-    drafts.write('k', text, [bob, bob])
+    drafts.write('k', text, [bob, bob, 'not-a-key'])
     assert.deepEqual(drafts.readDraft('k'), { text, urgent: [bob] })
     assert.equal(drafts.read('k'), text)
 
