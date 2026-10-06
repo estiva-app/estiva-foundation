@@ -326,6 +326,28 @@ describe('fetch and publish, injected', () => {
       assert.equal(seam.asked.length, 2)
     })
 
+    it('two overlapping calls decrypt a changed slot once', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const seam = counting()
+      const [x, y] = await Promise.all([
+        fetchReadState(async () => [a], ME, seam, identity, 0, 90, cache),
+        fetchReadState(async () => [a], ME, seam, identity, 0, 90, cache),
+      ])
+      assert.equal(seam.asked.length, 1)
+      assert.deepEqual(x.merged, y.merged)
+    })
+
+    it('without a cache, a refused slot is dropped and the round stops asking', async () => {
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const b = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 2 }, 'peek-2'))
+      const seam = counting((c) => c === a.content)
+      const read = await fetchReadState(async () => [a, b], ME, seam, identity, 0)
+      assert.deepEqual(seam.asked, [a.content])
+      assert.deepEqual(read.merged, {})
+      assert.equal(read.reachable, true)
+    })
+
     it('forgets slots the relay no longer holds', async () => {
       const cache = createSlotCache()
       const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))

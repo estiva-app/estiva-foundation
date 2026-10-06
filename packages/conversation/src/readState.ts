@@ -514,6 +514,8 @@ export interface SlotCache {
   slots: Map<string, { content: string; slot: SlotBlob }>
   /** Contents that will never decrypt (`undefined`, or not a blob): not asked again. */
   undecryptable: Set<string>
+  /** The call in progress. Calls sharing a cache run one after another, so two refreshes never decrypt the same change twice. */
+  running?: Promise<unknown>
 }
 
 export function createSlotCache(): SlotCache {
@@ -555,6 +557,23 @@ export async function fetchReadState(
   identity: SlotIdentity,
   nowMs: number,
   horizonDays: number = READ_STATE_HORIZON_DAYS,
+  cache?: SlotCache,
+): Promise<FetchedReadState> {
+  if (!cache) return fetchReadStateOnce(query, pubkey, nip44, identity, nowMs, horizonDays)
+  // One at a time per cache: an overlapping call would miss on the same
+  // changed slot and decrypt it again, and prune from an older query.
+  const run = (cache.running ?? Promise.resolve()).then(() => fetchReadStateOnce(query, pubkey, nip44, identity, nowMs, horizonDays, cache))
+  cache.running = run.catch(() => undefined)
+  return run
+}
+
+async function fetchReadStateOnce(
+  query: QueryFn,
+  pubkey: string,
+  nip44: Pick<Nip44, 'decrypt'>,
+  identity: SlotIdentity,
+  nowMs: number,
+  horizonDays: number,
   cache?: SlotCache,
 ): Promise<FetchedReadState> {
   let events: SignedEvent[]
