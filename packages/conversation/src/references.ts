@@ -211,6 +211,11 @@ export interface ReferenceSearch {
 }
 
 export interface ReferenceSearchOptions {
+  /**
+   * Must find no more for `q + " words"` than for `q` (every word, the last as
+   * a prefix: buzz's prefix mode), since a longer query after an empty answer
+   * is not asked.
+   */
   search: ReferenceSearchFn
   /** The pause after a keystroke before asking. Default 200ms. */
   delayMs?: number
@@ -246,7 +251,10 @@ export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLeng
   const failures = new WeakSet<readonly ReferenceCandidate[]>()
   const foundNothing = (query: string) => {
     for (let at = query.indexOf(' '); at >= 0; at = query.indexOf(' ', at + 1)) {
-      const shorter = answered.get(query.slice(0, at))
+      const prefix = query.slice(0, at)
+      // `--` searches no word at all, so its empty answer says nothing of `-- budget`.
+      if (!/[\p{L}\p{N}]/u.test(prefix)) continue
+      const shorter = answered.get(prefix)
       if (shorter && shorter.length === 0 && !failures.has(shorter)) return true
     }
     return false

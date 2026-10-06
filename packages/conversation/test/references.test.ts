@@ -262,6 +262,22 @@ describe('referenceSearch', () => {
     assert.deepEqual(asked, ['the', 'them'], 'a longer word is not a longer sentence: it is still asked')
   })
 
+  it('an empty answer for no word at all does not stop the words after it', async () => {
+    const asked: string[] = []
+    const source = referenceSearch({
+      delayMs: 1,
+      search: async (query) => {
+        asked.push(query)
+        return []
+      },
+    })
+    source.hits('--')
+    await tick(10)
+    source.hits('-- budget')
+    await tick(10)
+    assert.deepEqual(asked, ['--', '-- budget'])
+  })
+
   it('a failure does not stop a longer query', async () => {
     const asked: string[] = []
     const source = referenceSearch({
