@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.9.0 — 2026-10-06
+
+**A restored draft keeps an urgent mention urgent** (CON-31): a draft now
+keeps whom it names urgently beside its text — `write(key, text, urgent?)`
+and `readDraft(key)` → `{ text, urgent? }`. The text cannot say it: an urgent
+mention of somebody with a key is the same `nostr:npub…` as an ordinary one,
+so a restored draft was sent without its `urgent` tag. `read` still returns
+the text; a draft kept before this reads as text alone, and a malformed
+`urgent` list costs the urgency, never the words.
+
+SPEC: none. Drafts are local and never on the relay; the send writes §13.1's
+existing `["urgent", <pubkey>]`, now also for a restored draft.
+
 ## 0.8.1 — 2026-10-06
 
 **A sentence after an unmatched `[` stops asking the relay** (08d7f243):
