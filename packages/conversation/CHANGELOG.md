@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.8.0 — 2026-10-06
+
+**A refresh decrypts only the slots that changed** (Peek 23130326):
+`fetchReadState` takes an optional caller-owned `SlotCache`
+(`createSlotCache()`). A slot whose content is unchanged is not decrypted
+again; one that will never decrypt is not asked again; one whose decrypt is
+refused keeps the markers it last decrypted to. Our own slot is asked first,
+and the first refusal ends the round's asking. `Nip44.decrypt` now means
+something by how it fails: `undefined` for never, a throw for not this time.
+
+SPEC: none. §11.3's merge is unchanged; an older blob of a slot is a subset
+of what the slot now holds, so merging it is never wrong, only behind.
+
 ## 0.7.0 — 2026-10-05
 
 **The thread rule takes effect** (CON-34): `THREAD_RULE_FROM` is `1791226800`

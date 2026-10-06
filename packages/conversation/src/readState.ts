@@ -491,8 +491,33 @@ function later(a: number | undefined, b: number | undefined): number | undefined
 /** NIP-44 to self. Estiva apps hold no key, so this is a round trip to the identity service. */
 export interface Nip44 {
   encrypt(plaintext: string): Promise<string>
-  /** Undefined, or a throw, when it will not decrypt. */
+  /**
+   * `undefined` when it will never decrypt — a blob under a rotated key. A
+   * throw when it was refused this time — a `429` from `/nip44/decrypt`, a
+   * network failure — and asking again later may succeed.
+   */
   decrypt(ciphertext: string): Promise<string | undefined>
+}
+
+/**
+ * What {@link fetchReadState} remembers between calls, so a refresh decrypts
+ * only the slots that changed. Caller-owned: one per tab, kept across
+ * refreshes. It resets itself when the pubkey changes.
+ *
+ * Without it every refresh decrypts every slot, and `/nip44/decrypt` allows
+ * 120 a minute per person per app: a person with 141 slots got 429 on most of
+ * them, and each refused slot dropped out of the merge (Peek 23130326).
+ */
+export interface SlotCache {
+  pubkey?: string
+  /** d tag → the newest content that decrypted there, and the blob it held. */
+  slots: Map<string, { content: string; slot: SlotBlob }>
+  /** Contents that will never decrypt (`undefined`, or not a blob): not asked again. */
+  undecryptable: Set<string>
+}
+
+export function createSlotCache(): SlotCache {
+  return { slots: new Map(), undecryptable: new Set() }
 }
 
 /** Read state as far as the relay can tell. */
@@ -513,7 +538,16 @@ export interface FetchedReadState {
   coordinateConflicted: boolean
 }
 
-/** Fetch every slot within the horizon, decrypt what decrypts, merge. */
+/**
+ * Fetch every slot within the horizon, decrypt what decrypts, merge.
+ *
+ * With a {@link SlotCache}, a slot whose content has not changed is not
+ * decrypted again, and a slot whose decrypt is refused keeps the markers it
+ * last decrypted to — the merge is grow-only, so an older blob of a slot is
+ * never wrong, only behind. After the first refusal the rest of the round
+ * asks nothing more: a burst that drew one 429 draws more, and every refused
+ * decrypt spends quota the next publish's encrypt needs.
+ */
 export async function fetchReadState(
   query: QueryFn,
   pubkey: string,
@@ -521,6 +555,7 @@ export async function fetchReadState(
   identity: SlotIdentity,
   nowMs: number,
   horizonDays: number = READ_STATE_HORIZON_DAYS,
+  cache?: SlotCache,
 ): Promise<FetchedReadState> {
   let events: SignedEvent[]
   try {
@@ -528,28 +563,67 @@ export async function fetchReadState(
   } catch {
     return { reachable: false, merged: {}, slots: [], ownUndecryptable: false, coordinateConflicted: false }
   }
+  if (cache && cache.pubkey !== pubkey) {
+    cache.pubkey = pubkey
+    cache.slots.clear()
+    cache.undecryptable.clear()
+  }
   const ownDTag = readStateDTag(identity.slotId)
-  const slots: SlotBlob[] = []
-  let ownUndecryptable = false
+  const candidates: { event: SignedEvent; dTag: string }[] = []
   for (const event of events) {
     if (event.pubkey !== pubkey || event.kind !== KIND_APP_DATA) continue
     const dTag = event.tags.find((t) => t[0] === 'd')?.[1]
-    if (!dTag?.startsWith(READ_STATE_D_PREFIX)) continue
-    let plaintext: string | undefined
-    // One at a time on purpose: `/nip44/decrypt` answers 429 to a burst, and
-    // a 429 on our own slot reads as undecryptable and blocks publishing.
-    try {
-      plaintext = await nip44.decrypt(event.content)
-    } catch {
-      plaintext = undefined
+    if (dTag?.startsWith(READ_STATE_D_PREFIX)) candidates.push({ event, dTag })
+  }
+  // Our own slot first: it is the one whose refusal blocks publishing.
+  candidates.sort((a, b) => Number(b.dTag === ownDTag) - Number(a.dTag === ownDTag))
+  const slots: SlotBlob[] = []
+  let ownUndecryptable = false
+  let refused = false
+  for (const { event, dTag } of candidates) {
+    const cached = cache?.slots.get(dTag)
+    if (cached?.content === event.content) {
+      slots.push(cached.slot)
+      continue
     }
-    const blob = parseReadStateBlob(plaintext)
-    if (!blob) {
-      // Another slot that will not decrypt belongs to a rotated key: skipped.
+    if (cache?.undecryptable.has(event.content)) {
       if (dTag === ownDTag) ownUndecryptable = true
       continue
     }
-    slots.push({ dTag, eventId: event.id, createdAt: event.created_at, blob })
+    let plaintext: string | undefined
+    if (!refused) {
+      // One at a time on purpose: `/nip44/decrypt` answers 429 to a burst.
+      try {
+        plaintext = await nip44.decrypt(event.content)
+      } catch {
+        refused = true
+      }
+    }
+    if (refused) {
+      // Refused this time, not unreadable: the last blob we decrypted here
+      // still counts. Our own coordinate stays unpublishable — what is there
+      // now may hold markers that blob does not.
+      if (dTag === ownDTag) ownUndecryptable = true
+      if (cached) slots.push(cached.slot)
+      continue
+    }
+    const blob = parseReadStateBlob(plaintext)
+    if (!blob) {
+      // A slot that will not decrypt belongs to a rotated key: skipped.
+      cache?.undecryptable.add(event.content)
+      if (dTag === ownDTag) ownUndecryptable = true
+      continue
+    }
+    const slot = { dTag, eventId: event.id, createdAt: event.created_at, blob }
+    cache?.slots.set(dTag, { content: event.content, slot })
+    slots.push(slot)
+  }
+  if (cache) {
+    // Forget what the relay no longer holds, so the cache is bounded by the slots.
+    const live = new Set(candidates.map((c) => c.dTag))
+    const contents = new Set(candidates.map((c) => c.event.content))
+    for (const dTag of cache.slots.keys()) if (!live.has(dTag)) cache.slots.delete(dTag)
+    for (const content of cache.undecryptable) if (!contents.has(content)) cache.undecryptable.delete(content)
   }
   const atOwn = slots.find((s) => s.dTag === ownDTag)
   const coordinateConflicted = atOwn !== undefined && atOwn.blob.client_id !== identity.clientId
@@ -557,7 +631,7 @@ export async function fetchReadState(
     reachable: true,
     merged: mergeSlots(slots),
     slots,
-    own: atOwn && !coordinateConflicted ? atOwn.blob : undefined,
+    own: atOwn && !coordinateConflicted && !ownUndecryptable ? atOwn.blob : undefined,
     ownUndecryptable,
     coordinateConflicted,
   }
