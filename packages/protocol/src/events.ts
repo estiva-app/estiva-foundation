@@ -119,8 +119,7 @@ export const KIND = {
   APP_DATA: 30078,
   /** NIP-FC File — see docs/buzz-compat/nips/NIP-FC.md in the Peek repo. */
   FILE: 30840,
-  /** NIP-FC Component. */
-  COMPONENT: 30841,
+  // 30841 (NIP-FC Component) is retired — never reallocate it (COM-3, KINDS.md).
   /**
    * NIP-42 relay auth — the challenge response that turns a connected socket
    * into an authenticated one (`Kind::Authentication`, PEE-5).
@@ -972,54 +971,6 @@ export function buildBareFile(
     kind: KIND.FILE,
     tags,
     content: args.document ? serializeBlockDocument(args.document) : '',
-  }
-}
-
-/**
- * kind:30841 Component — NIP-FC.
- *
- * `type` must be namespaced `<namespace>/<name>`. The protocol defines the
- * container; the payload shape belongs to the type.
- *
- * @deprecated Nothing publishes one and nothing reads one: blocks carry their
- * own ids (SPEC §13.3), attachments are blocks (RFC 0.6 §3), and the bare file
- * above needs no component list. Kept until COM-3 decides whether `30841` is
- * retired or repurposed; do not build on it.
- */
-export function buildComponent(
-  pubkey: string,
-  createdAtMs: number,
-  args: {
-    componentId: string
-    /** Parent File's `d` tag. */
-    fileId: string
-    /** Namespaced, e.g. `nfb/todo`. */
-    type: string
-    payload: Record<string, unknown>
-    channelUuid?: string
-    labels?: Label[]
-  },
-): UnsignedEvent {
-  assertHex64(pubkey, 'pubkey')
-  if (!args.type.includes('/')) {
-    throw new Error(`component type must be namespaced "<namespace>/<name>", got "${args.type}"`)
-  }
-  const tags: NostrTag[] = [
-    ['d', args.componentId],
-    ['a', addr(KIND.FILE, pubkey, args.fileId)],
-    ['type', args.type],
-  ]
-  if (args.channelUuid) tags.push(['h', args.channelUuid])
-  for (const label of args.labels ?? []) {
-    tags.push(['L', label.namespace])
-    tags.push(['l', label.value, label.namespace])
-  }
-  return {
-    pubkey,
-    created_at: toNostrSeconds(createdAtMs),
-    kind: KIND.COMPONENT,
-    tags,
-    content: JSON.stringify(args.payload),
   }
 }
 

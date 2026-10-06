@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.27.0 — 2026-10-06
+
+**Wire behaviour: no builder's bytes changed.** One builder removed (COM-3).
+
+- **Breaking:** `buildComponent` and `KIND.COMPONENT` are gone. Kind 30841
+  (NIP-FC Component) is retired: production never held one, no app published or
+  read one, Estiva ID grants it to no app, and the relay refuses it. Never
+  reallocate the number (KINDS.md).
+
 ## 0.26.2 — 2026-10-03
 
 **Wire behaviour: unchanged.** One error message (MAN-17).
