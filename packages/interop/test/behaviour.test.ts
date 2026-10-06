@@ -178,6 +178,8 @@ function relay(events: SignedEvent[]) {
   const matches = (e: SignedEvent, filter: Filter) => {
     if (filter.kinds && !filter.kinds.includes(e.kind)) return false
     if (filter.authors && !filter.authors.includes(e.pubkey)) return false
+    const ids = (filter as { ids?: string[] }).ids
+    if (ids && !ids.includes(e.id)) return false
     for (const [key, values] of Object.entries(filter)) {
       if (!key.startsWith('#')) continue
       const held = e.tags.filter((t) => t[0] === key.slice(1)).map((t) => t[1])
@@ -1952,6 +1954,67 @@ describe('counting a conversation without resolving each file', () => {
     const reply = event({ kind: 1111, tags: [['a', ADDR_A], ['E', 'f'.repeat(64)], ['e', 'e'.repeat(64)]] })
     const conversations = await conversationsOf([file(ADDR_A)], relay([manifest(), withRoot, reply]))
     assert.deepEqual(conversations[ADDR_A].map((m) => [m.id, m.root]), [[withRoot.id, 'f'.repeat(64)]])
+  })
+
+  /*
+    CON-34: a dot judges a reply by its thread, and the reply has to be in the
+    read for that. As NIP-22 writes it, the file is only in its uppercase `A` —
+    the lowercase tags name the parent comment — so `#a` never brings it, and
+    the sidebar row of a file whose only new message was a thread reply stayed
+    dark on production (2026-10-06).
+  */
+  it('with replies, brings each comment thread by #A — and keeps a reply only under a root it found', async () => {
+    const root = event({ kind: 1111, created_at: 1_700_000_500, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    // The shape Peek wrote on production: the scope in `A`, the parent comment in `e`, no `E` or `a`.
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['K', '30840'], ['e', root.id], ['k', '1111']] })
+    // Its root is not a comment on the file this read found: the root decides (C11).
+    const stray = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_A], ['e', 'c'.repeat(64)], ['k', '1111']] })
+    const events = [manifest(), root, reply, stray, comment(ADDR_B)]
+
+    const plain = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay(events))
+    assert.deepEqual(plain[ADDR_A].map((m) => m.id), [root.id], 'without the option, roots only, as before')
+
+    const withReplies = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay(events), undefined, { replies: true })
+    assert.deepEqual(
+      withReplies[ADDR_A].map((m) => [m.id, m.root]),
+      [
+        [root.id, root.id],
+        [reply.id, root.id],
+      ],
+    )
+    assert.equal(withReplies[ADDR_B].length, 1)
+  })
+
+  it('with replies, asks for the root of a reply whose thread is past the #a limit — and the root still decides', async () => {
+    const old = event({ kind: 1111, created_at: 1_600_000_000, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['K', '30840'], ['e', old.id], ['k', '1111']] })
+    // A thread rooted on another file that a reply tags with this file's `A`: not this file's (C11).
+    const elsewhere = event({ kind: 1111, created_at: 1_600_000_100, tags: [['A', ADDR_B], ['a', ADDR_B]] })
+    const misfiled = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_A], ['e', elsewhere.id], ['k', '1111']] })
+    const all = relay([manifest(), old, reply, elsewhere, misfiled])
+    // The relay's limit, as the read meets it: the old roots are not among the newest by `#a`.
+    const sent: Record<string, unknown>[][] = []
+    const query = async (filters: Record<string, unknown>[]) => {
+      sent.push(filters)
+      return (await all(filters)).filter((e) => !(e.id === old.id || e.id === elsewhere.id) || filters.some((f) => 'ids' in f))
+    }
+
+    const found = await conversationsOf([file(ADDR_A)], query, undefined, { replies: true })
+    assert.deepEqual(found[ADDR_A].map((m) => [m.id, m.root]), [[reply.id, old.id]])
+    assert.equal(sent.filter((filters) => filters.some((f) => 'ids' in f)).length, 1, 'one read for the missing roots')
+  })
+
+  it("with replies, a comment on another file cannot take a thread's replies, nor a reply land in a file it does not name", async () => {
+    const root = event({ kind: 1111, created_at: 1_700_000_500, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['e', root.id], ['k', '1111']] })
+    // A comment on B whose `E`/`e` name A's root: a root of B, never a key for A's thread.
+    const thief = event({ kind: 1111, created_at: 1_700_000_600, tags: [['A', ADDR_B], ['a', ADDR_B], ['E', root.id], ['e', root.id]] })
+    // A reply on B that claims A's root: B is what it is about, and B's roots do not hold that thread.
+    const claimant = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_B], ['E', root.id], ['e', root.id], ['e', 'd'.repeat(64)]] })
+
+    const found = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay([manifest(), root, reply, thief, claimant]), undefined, { replies: true })
+    assert.deepEqual(found[ADDR_A].map((m) => m.id), [root.id, reply.id])
+    assert.deepEqual(found[ADDR_B].map((m) => m.id), [thief.id])
   })
 })
 

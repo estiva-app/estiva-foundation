@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.51.0 — 2026-10-06
+
+**Manifests: nothing changes.** No declaration is read differently.
+
+- `conversationsOf` takes `{ replies: true }` as a fourth argument: each file
+  also gets a filter by `#A`, and the replies under the comments the read found
+  come back beside them (`root !== id`), so a list can judge a thread reply by
+  its thread (SPEC §11.3, CON-34). A NIP-22 reply names the file only in its
+  uppercase `A`, so the `#a` read never brought one, and a file whose only new
+  message was a thread reply never lit its row. The root decides (C11): a root
+  past the `#a` limit is asked by id, in one more read only when one is
+  missing, and a reply under a thread rooted elsewhere is left out. Without the
+  option nothing changes, and the count stays comments only.
+
 ## 0.50.0 — 2026-10-05
 
 **Manifests: one declaration is read in a new way.** On an issue (`30851`),

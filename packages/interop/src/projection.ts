@@ -30,7 +30,7 @@ import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
   the copy that lived here — a `kind:9` is never a comment (CON-20 migrated
   them), a reply is never a root, and `ts` is trusted only inside its own second.
 */
-import { byOrder, isCommentOn, orderingMs } from '@estiva-app/conversation'
+import { anchorsOf, byOrder, isCommentOn, isReply, orderingMs } from '@estiva-app/conversation'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -357,12 +357,24 @@ function rootOf(event: SignedEvent): string {
  * discussion. A badge counting them said "3" beside an issue with one comment.
  * See `@estiva-app/conversation`'s `isCommentOn` for the per-kind rule, which
  * this passes the owner's declared comment kinds (§7.3).
+ *
+ * ## `replies`: the threads under those comments too (CON-34)
+ *
+ * A dot judges replies by their thread (SPEC §11.3), and a reply never comes
+ * back for `#a`: its lowercase tags name its parent comment, and the file is
+ * only in its uppercase `A` (§6.4). Asked with `replies`, each file gets a
+ * second filter by `#A`, and a reply is kept when its root is one of the
+ * comments this read found for the file — the root decides (C11), so a reply
+ * in a thread that only mentions the file, or under a root older than the
+ * limit, is not here. The messages are then roots and replies, told apart by
+ * `root === id`; a consumer that counts comments must not ask for them.
  */
 export async function conversationsOf(
   files: ForeignObject[],
   query: QueryFn,
   /** Warm from the read that produced these files; see {@link ProjectionCache}. */
   cache?: ProjectionCache,
+  options: { replies?: boolean } = {},
 ): Promise<Record<string, ConversationMessage[]>> {
   const addressed = files.flatMap((file) => {
     if (!file.address) return []
@@ -410,16 +422,31 @@ export async function conversationsOf(
   const conversations: Record<string, ConversationMessage[]> = {}
   for (const a of asked) conversations[a.ref] = []
 
+  const filters: Record<string, unknown>[] = asked.flatMap((a) =>
+    options.replies
+      ? [a.filter, { kinds: [KIND_COMMENT], '#A': [a.address], limit: CONVERSATION_LIMIT }]
+      : [a.filter],
+  )
+  /** The file in this list an event is a comment on (§6.4), by every `a` it carries. */
+  const commentedFile = (event: SignedEvent): string | undefined =>
+    event.tags
+      .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1], kindsOf.get(t[1])))
+      .map((t) => refOf.get(t[1]))
+      .find((found) => found !== undefined)
+  /** Replies, kept until every root is in: which file a reply is in is its root's. */
+  const replies: SignedEvent[] = []
   const seen = new Set<string>()
-  for (let start = 0; start < asked.length; start += MAX_FILTERS_PER_QUERY) {
-    const events = await query(
-      asked.slice(start, start + MAX_FILTERS_PER_QUERY).map((a) => a.filter),
-    )
+  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
+    const events = await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))
     for (const event of events) {
       // A relay may answer one event under two filters; counting it twice would
       // inflate the badge above what the panel then shows.
       if (seen.has(event.id)) continue
       seen.add(event.id)
+      if (options.replies && isReply(event)) {
+        replies.push(event)
+        continue
+      }
       /*
         Every `a` tag, not the first one.
 
@@ -434,13 +461,45 @@ export async function conversationsOf(
         came back for both; it belongs to the one whose discussion it is, and to
         neither when it merely mentions them. `isCommentOn` is §6.4's rule.
       */
-      const ref = event.tags
-        .filter((t) => t[0] === 'a' && t[1] && refOf.has(t[1]) && isCommentOn(event, t[1], kindsOf.get(t[1])))
-        .map((t) => refOf.get(t[1]))
-        .find((found) => found !== undefined)
+      const ref = commentedFile(event)
       if (ref !== undefined) {
         conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root: rootOf(event) })
       }
+    }
+  }
+  if (replies.length > 0) {
+    /*
+      Each root by its own id only, never by the event its `E` names: any comment
+      on another file could carry this thread's root there and take its replies
+      (review, foundation#112). The ids are unique, so nothing overwrites.
+    */
+    const fileOfRoot = new Map<string, string>()
+    for (const [ref, messages] of Object.entries(conversations)) {
+      for (const m of messages) if (m.root === m.id) fileOfRoot.set(m.id, ref)
+    }
+    const addressOf = new Map(asked.map((a) => [a.ref, a.address]))
+    // A reply in a file's thread names that file in its `A` (§6.4), so one that
+    // does not is not counted there, whatever root it claims.
+    const inList = replies.filter((event) => anchorsOf(event).some((address) => refOf.has(address)))
+    /*
+      A new reply in an old thread: its root is past the `#a` limit, so this
+      read did not find it — on a busy file, exactly the reply the dot exists
+      for. Those roots are asked by id in one request, capped at the limit so
+      replies naming made-up roots cannot multiply the reads, and decide as any
+      root does (C11). Listed for attribution only, not as messages.
+    */
+    const missing = [...new Set(inList.map(rootOf).filter((root) => !fileOfRoot.has(root)))].slice(0, CONVERSATION_LIMIT)
+    if (missing.length > 0) {
+      for (const root of await query([{ ids: missing, limit: missing.length }])) {
+        const ref = commentedFile(root)
+        if (ref !== undefined && !fileOfRoot.has(root.id)) fileOfRoot.set(root.id, ref)
+      }
+    }
+    for (const event of inList) {
+      const root = rootOf(event)
+      const ref = fileOfRoot.get(root)
+      if (ref === undefined || !anchorsOf(event).includes(addressOf.get(ref) as string)) continue
+      conversations[ref].push({ id: event.id, at: event.created_at, by: event.pubkey, root })
     }
   }
   for (const messages of Object.values(conversations)) messages.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))
