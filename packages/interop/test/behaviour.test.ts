@@ -1953,6 +1953,35 @@ describe('counting a conversation without resolving each file', () => {
     const conversations = await conversationsOf([file(ADDR_A)], relay([manifest(), withRoot, reply]))
     assert.deepEqual(conversations[ADDR_A].map((m) => [m.id, m.root]), [[withRoot.id, 'f'.repeat(64)]])
   })
+
+  /*
+    CON-34: a dot judges a reply by its thread, and the reply has to be in the
+    read for that. As NIP-22 writes it, the file is only in its uppercase `A` —
+    the lowercase tags name the parent comment — so `#a` never brings it, and
+    the sidebar row of a file whose only new message was a thread reply stayed
+    dark on production (2026-10-06).
+  */
+  it('with replies, brings each comment thread by #A — and keeps a reply only under a root it found', async () => {
+    const root = event({ kind: 1111, created_at: 1_700_000_500, tags: [['A', ADDR_A], ['a', ADDR_A]] })
+    // The shape Peek wrote on production: the scope in `A`, the parent comment in `e`, no `E` or `a`.
+    const reply = event({ kind: 1111, created_at: 1_700_000_900, tags: [['A', ADDR_A], ['K', '30840'], ['e', root.id], ['k', '1111']] })
+    // Its root is not a comment on the file this read found: the root decides (C11).
+    const stray = event({ kind: 1111, created_at: 1_700_000_950, tags: [['A', ADDR_A], ['e', 'c'.repeat(64)], ['k', '1111']] })
+    const events = [manifest(), root, reply, stray, comment(ADDR_B)]
+
+    const plain = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay(events))
+    assert.deepEqual(plain[ADDR_A].map((m) => m.id), [root.id], 'without the option, roots only, as before')
+
+    const withReplies = await conversationsOf([file(ADDR_A), file(ADDR_B)], relay(events), undefined, { replies: true })
+    assert.deepEqual(
+      withReplies[ADDR_A].map((m) => [m.id, m.root]),
+      [
+        [root.id, root.id],
+        [reply.id, root.id],
+      ],
+    )
+    assert.equal(withReplies[ADDR_B].length, 1)
+  })
 })
 
 
