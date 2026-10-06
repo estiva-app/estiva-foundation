@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.8.1 — 2026-10-06
+
+**A sentence after an unmatched `[` stops asking the relay** (08d7f243):
+once `referenceSearch` has an empty answer for a query, a longer query that
+only adds whole words to it answers no hits without asking. Relay search is
+every word with the last as a prefix, so it could not find anything. A failed
+query is not an empty answer and never stops a longer one.
+
+SPEC: none. Nothing is read or written differently; fewer searches are asked.
+
 ## 0.8.0 — 2026-10-06
 
 **A refresh decrypts only the slots that changed** (Peek 23130326):

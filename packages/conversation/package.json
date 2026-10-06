@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/conversation",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "The conversation rules of the Estiva SPEC (§6.2–§6.8, §11): comment and mention strengths, threading, the edit, reaction and attachment folds, NIP-22 comment and reply builders, drafts, NIP-RS read state, membership and unread. A convenience an app adopts, never a requirement.",
   "license": "MIT",
   "type": "module",

@@ -240,4 +240,42 @@ describe('referenceSearch', () => {
     await tick(30)
     assert.deepEqual(asked, ['unre'])
   })
+
+  it('a sentence after a query that found nothing asks nothing more', async () => {
+    const asked: string[] = []
+    const source = referenceSearch({
+      delayMs: 1,
+      search: async (query) => {
+        asked.push(query)
+        return []
+      },
+    })
+    source.hits('the')
+    await tick(10)
+    for (const typed of ['the ', 'the f', 'the figures', 'the figures from', 'The  figures from last week']) {
+      assert.deepEqual(source.hits(typed), [])
+      await tick(10)
+    }
+    assert.deepEqual(asked, ['the'], 'one query for the first word, none for the sentence')
+    source.hits('them')
+    await tick(10)
+    assert.deepEqual(asked, ['the', 'them'], 'a longer word is not a longer sentence: it is still asked')
+  })
+
+  it('a failure does not stop a longer query', async () => {
+    const asked: string[] = []
+    const source = referenceSearch({
+      delayMs: 1,
+      search: async (query) => {
+        asked.push(query)
+        if (query === 'the') throw new Error('rate limited')
+        return []
+      },
+    })
+    source.hits('the')
+    await tick(10)
+    source.hits('the figures')
+    await tick(10)
+    assert.deepEqual(asked, ['the', 'the figures'])
+  })
 })
