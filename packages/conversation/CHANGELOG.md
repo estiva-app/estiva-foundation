@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.10.0 — 2026-10-06
+
+**Edit and Delete only on your own message** (SHI-29):
+`offersEditAndDelete({ viewer, author })` is now viewer equals author, and
+`authorIsBot` is gone. An agent's message no longer offers the controls to
+every viewer: the relay accepts them only from the agent's NIP-OA owner, whom
+no app can identify, so everybody else saw a control that always failed. An
+unknown viewer is offered nothing.
+
+SPEC: §6.5's 2026-09-29 rule and C14, amended 2026-10-06 — an app SHOULD NOT
+offer Edit or Delete on a message the viewer did not write, an agent's
+included. Nothing on the wire changes; the relay still adjudicates.
+
 ## 0.9.0 — 2026-10-06
 
 **A restored draft keeps an urgent mention urgent** (CON-31): a draft now

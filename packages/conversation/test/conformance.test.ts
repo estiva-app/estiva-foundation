@@ -268,12 +268,13 @@ describe('C14 — deletion left to the relay; which controls are offered', () =>
     assert.deepEqual(threaded.replies[gone].map((r) => r.id), [reply.id])
   })
 
-  it("Edit and Delete are offered on the viewer's own message and a bot's, not on another human's", () => {
-    assert.equal(offersEditAndDelete({ viewer: ALICE, author: ALICE, authorIsBot: false }), true)
-    assert.equal(offersEditAndDelete({ viewer: ALICE, author: BOB, authorIsBot: true }), true)
-    assert.equal(offersEditAndDelete({ viewer: ALICE, author: BOB, authorIsBot: false }), false)
-    // A profile that could not be read offers the control; the relay adjudicates.
-    assert.equal(offersEditAndDelete({ viewer: ALICE, author: BOB, authorIsBot: undefined }), true)
+  it("Edit and Delete are offered only on the viewer's own message", () => {
+    assert.equal(offersEditAndDelete({ viewer: ALICE, author: ALICE }), true)
+    // Another person's or an agent's: the author is not the viewer either way.
+    assert.equal(offersEditAndDelete({ viewer: ALICE, author: BOB }), false)
+    // Nobody signed in is offered nothing.
+    assert.equal(offersEditAndDelete({ viewer: null, author: BOB }), false)
+    assert.equal(offersEditAndDelete({ viewer: undefined, author: '' }), false)
   })
 })
 
