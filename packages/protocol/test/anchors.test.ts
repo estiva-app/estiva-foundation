@@ -150,6 +150,12 @@ describe('a message pointing at a block of another object — §13.6.1', () => {
     assert.deepEqual(partsOf({ tags: [[PART_TAG, issue], [PART_TAG, issue, ''], [PART_TAG, 'issue-1', 'p1']] }), [])
   })
 
+  it('drops a block id that is not safe in a fragment or a selector', () => {
+    assert.deepEqual(partsOf({ tags: [partTag(issue, '<img>'), partTag(issue, 'a#b'), partTag(issue, '8373a025427f')] }), [
+      { address: issue, block: '8373a025427f' },
+    ])
+  })
+
   it('is not an anchor: a block tag and a part tag do not read as each other', () => {
     const event = { kind: 1111, tags: [[BLOCK_ANCHOR_TAG, 'mine'], partTag(issue, 'theirs')] }
     assert.equal(blockAnchorOf(event), 'mine')
@@ -189,8 +195,12 @@ describe('why a read by address came back empty', () => {
     assert.equal(absenceOf(issue, []), 'unreadable')
   })
 
-  it("ignores a stranger's deletion — NIP-09", () => {
-    assert.equal(absenceOf(issue, [deletion(other, [['a', issue]])]), 'unreadable')
+  it("counts a deletion signed by the author's owner — §6.5, the relay adjudicates", () => {
+    assert.equal(absenceOf(issue, [deletion(other, [['a', issue]])]), 'deleted')
+  })
+
+  it('ignores a kind that is not a deletion', () => {
+    assert.equal(absenceOf(issue, [{ kind: 1, pubkey: pk, tags: [['a', issue]] }]), 'unreadable')
   })
 
   it('ignores a deletion of another address', () => {

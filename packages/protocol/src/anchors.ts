@@ -131,12 +131,20 @@ export function partsOf(event: { tags: string[][] }): PartPointer[] {
   for (const tag of event.tags) {
     if (tag[0] !== PART_TAG) continue
     const [, address, block] = tag
-    if (!address || !block || !isAddress(address) || seen.has(address)) continue
+    if (!address || !block || !isAddress(address) || !BLOCK_ID.test(block) || seen.has(address)) continue
     seen.add(address)
     out.push({ address, block })
   }
   return out
 }
+
+/**
+ * The block ids a part may name. §13.3 fixes no grammar (`newBlockId` writes 12
+ * hex; SPEC's examples say `b1`), but a part's id arrives from a stranger's tag
+ * or a pasted URL and ends up in a fragment and, in an app, a selector — so a
+ * reader takes only ids that are safe in both and drops the rest.
+ */
+const BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /** `kind:pubkey:d` with a numeric kind and a 64-hex pubkey. */
 function isAddress(value: string): boolean {
@@ -184,20 +192,23 @@ export function resolvePart(block: string, source: PartSource): Part {
 }
 
 /**
- * Why a read by address came back empty: `deleted` when the object's author
- * deleted it by address (a `kind:5` with that `a`, NIP-09), else `unreadable`.
+ * Why a read by address came back empty: `deleted` when the relay holds a
+ * deletion of it by address (a `kind:5` with that `a`), else `unreadable`.
  *
- * `deletions` is what `{kinds: [5], "#a": [address]}` returned. A deletion
- * signed by anybody but the address's author is ignored, as NIP-09 requires:
- * otherwise a stranger could make any object you cannot read look deleted.
+ * `deletions` is what `{kinds: [5], "#a": [address]}` returned. **The signer is
+ * not compared with the address's author**, because a client cannot make that
+ * comparison correctly (SPEC §6.5, corrected 2026-09-06): the relay accepts a
+ * deletion from the author *or the author's owner*, and ownership is visible
+ * only to the relay. Most objects here are written by an agent and deleted by
+ * the person who owns it; an author-only check would call every one of those
+ * "not available to you". A relay that stores deletions it did not adjudicate
+ * can at worst make an object you cannot read say "deleted" — less than you
+ * were told before, never more.
  */
 export function absenceOf(
   address: string,
-  deletions: readonly { kind: number; pubkey: string; tags: string[][] }[],
+  deletions: readonly { kind: number; tags: string[][] }[],
 ): 'deleted' | 'unreadable' {
-  const author = address.split(':')[1]
-  const deleted = deletions.some(
-    (event) => event.kind === 5 && event.pubkey === author && event.tags.some((t) => t[0] === 'a' && t[1] === address),
-  )
+  const deleted = deletions.some((event) => event.kind === 5 && event.tags.some((t) => t[0] === 'a' && t[1] === address))
   return deleted ? 'deleted' : 'unreadable'
 }

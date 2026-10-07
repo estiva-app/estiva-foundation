@@ -287,11 +287,15 @@ function readBlock(pattern: string, value: string): string | undefined {
     return undefined
   }
   try {
-    return decodeURIComponent(value.slice(before.length, value.length - after.length)) || undefined
+    const block = decodeURIComponent(value.slice(before.length, value.length - after.length))
+    return BLOCK_ID.test(block) ? block : undefined
   } catch {
     return undefined
   }
 }
+
+/** The ids a reader takes from a URL — protocol's `partsOf` takes the same. */
+const BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /**
  * The link that opens one block of an object, built from the app's own `urls`
@@ -307,6 +311,9 @@ export function blockUrlOf(
   patterns: UrlPattern[],
   target: { kind: number; d: string; title?: string; block: string },
 ): string | undefined {
+  // A `d` that is not a clean identifier would be spliced into the path raw
+  // (`../settings`), and `matchObjectUrl` could never read the link back.
+  if (identifierFromRef(target.d) !== target.d || !BLOCK_ID.test(target.block)) return undefined
   for (const { pattern, kind } of patterns) {
     if (kind !== target.kind) continue
     const hashAt = pattern.indexOf('#')

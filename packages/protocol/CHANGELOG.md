@@ -13,7 +13,11 @@ more narrowly** (COM-2, SPEC §13.6.1).
   `["part", <address>, <block id>]`. `partTag`, `partsOf` (one per address,
   first wins), `resolvePart` (five states: `resolved`, `unaddressable`,
   `detached`, `deleted`, `unreadable`) and `absenceOf`, which tells a deleted
-  object from one you cannot read by its author's `kind:5` naming the address.
+  object from one you cannot read by a `kind:5` naming the address. The signer
+  is not compared with the author: the relay accepts the author's owner too
+  (§6.5), which no client can check. A part's block id must match
+  `[A-Za-z0-9_-]{1,64}`; any other is dropped, because it ends up in a URL
+  fragment and a selector.
 - **Narrower:** `blockAnchorOf` returns `undefined` for an event whose `kind`
   is given and is not 1111. A `kind:9` has no `A` to say whose block it names;
   Ship read one against the page it was drawn on. Callers that pass only
