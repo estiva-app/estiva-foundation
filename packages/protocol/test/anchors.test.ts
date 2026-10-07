@@ -195,12 +195,22 @@ describe('why a read by address came back empty', () => {
     assert.equal(absenceOf(issue, []), 'unreadable')
   })
 
-  it("counts a deletion signed by the author's owner — §6.5, the relay adjudicates", () => {
+  it("counts the author's owner in the shape the relay checks — no e, the address first — §6.5", () => {
     assert.equal(absenceOf(issue, [deletion(other, [['a', issue]])]), 'deleted')
   })
 
+  it('ignores an address a stranger rode in on an unchecked tag', () => {
+    const own = `30851:${other}:x`
+    assert.equal(absenceOf(issue, [deletion(other, [['a', own], ['a', issue]])]), 'unreadable')
+    assert.equal(absenceOf(issue, [deletion(other, [['e', 'f'.repeat(64)], ['a', issue]])]), 'unreadable')
+  })
+
+  it("still counts the author's own deletion in any shape — NIP-09", () => {
+    assert.equal(absenceOf(issue, [deletion(pk, [['e', 'f'.repeat(64)], ['a', `30851:${pk}:y`], ['a', issue]])]), 'deleted')
+  })
+
   it('ignores a kind that is not a deletion', () => {
-    assert.equal(absenceOf(issue, [{ kind: 1, tags: [['a', issue]] }]), 'unreadable')
+    assert.equal(absenceOf(issue, [{ kind: 1, pubkey: pk, tags: [['a', issue]] }]), 'unreadable')
   })
 
   it('ignores a deletion of another address', () => {
