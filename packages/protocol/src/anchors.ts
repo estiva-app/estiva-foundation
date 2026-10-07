@@ -44,8 +44,18 @@ export type BlockAnchor =
   /** The tag names a block that is no longer in the document. */
   | { state: 'detached'; id: string }
 
-/** The block id a comment anchors to, or `undefined` when it anchors to none. */
-export function blockAnchorOf(event: { tags: string[][] }): string | undefined {
+/**
+ * The block id a comment anchors to, or `undefined` when it anchors to none.
+ *
+ * Only a `kind:1111` anchors (§13.6): its `A` says which object the block is
+ * in. A `kind:9` has no `A`, so a `block` tag on one names a part of nothing in
+ * particular, and a reader that resolved it against the page it happened to be
+ * drawn on would report a confident "deleted" about the wrong document. Pass
+ * the event's kind and that case is refused; a message pointing at a block of
+ * another object says so with a `part` tag instead ({@link partsOf}).
+ */
+export function blockAnchorOf(event: { kind?: number; tags: string[][] }): string | undefined {
+  if (event.kind !== undefined && event.kind !== 1111) return undefined
   const id = event.tags.find((t) => t[0] === BLOCK_ANCHOR_TAG)?.[1]
   return id === undefined || id === '' ? undefined : id
 }
@@ -73,4 +83,121 @@ export function resolveBlockAnchor(
   }
   const block = findBlock(document, id)
   return block ? { state: 'resolved', id, block } : { state: 'detached', id }
+}
+
+/**
+ * A message pointing at one block of another object — SPEC §13.6.1 (COM-2).
+ *
+ * `["part", <address>, <block id>]`, beside the `a` for the same address and a
+ * body that names it. The same `(object, block)` pair as an anchor, but a
+ * different relation: an anchor is what a comment is *about* (like a reply's
+ * `e`), a part is what a message *shows* (like a `q`). They are separate tags
+ * so that one comment can be both anchored and pointing, and so that a reader
+ * which knows neither draws an ordinary reference to the object.
+ *
+ * Index 3 is left free for an extent (a section, a range), which is not built.
+ */
+export const PART_TAG = 'part'
+
+/** One `part` tag, read. */
+export interface PartPointer {
+  /** `kind:pubkey:d` — the object the block is in. */
+  address: string
+  /** §13.3's block id within that object's body. */
+  block: string
+}
+
+/** The `part` tag for one block of one object. */
+export function partTag(address: string, block: string): string[] {
+  return [PART_TAG, address, block]
+}
+
+/**
+ * The blocks a message points at, one per address, in tag order.
+ *
+ * The first tag for an address wins: a message shows one block of a given
+ * object, and a second tag for it would be a second card nobody can tell
+ * apart from the first by its reference in the text.
+ *
+ * **This is the tags only.** A reader draws a part only while the body still
+ * names its address — by `nostr:naddr…` or an app URL (§7.7) — because an edit
+ * carries no `part` (§6.8) and a person who removed the reference meant the
+ * card to go too. Which addresses the body names is the reader's own
+ * reference set; this function does not guess it.
+ */
+export function partsOf(event: { tags: string[][] }): PartPointer[] {
+  const out: PartPointer[] = []
+  const seen = new Set<string>()
+  for (const tag of event.tags) {
+    if (tag[0] !== PART_TAG) continue
+    const [, address, block] = tag
+    if (!address || !block || !isAddress(address) || seen.has(address)) continue
+    seen.add(address)
+    out.push({ address, block })
+  }
+  return out
+}
+
+/** `kind:pubkey:d` with a numeric kind and a 64-hex pubkey. */
+function isAddress(value: string): boolean {
+  return /^\d+:[0-9a-f]{64}:/.test(value)
+}
+
+/**
+ * What a part resolved to. Five states, and like {@link BlockAnchor} none of
+ * them is a degree of another:
+ *
+ * - `resolved` — the block is there; draw it.
+ * - `unaddressable` — the object's body is not a block document, so it has no
+ *   parts. Permanent for that body, and nothing was deleted.
+ * - `detached` — the object is readable and the block is gone from it.
+ * - `deleted` — the whole object was deleted: its author's `kind:5` names it.
+ * - `unreadable` — nothing came back and no deletion did either. **Not
+ *   "exists but forbidden"**: an address that never existed reads exactly the
+ *   same, and saying more would confirm a hidden object to anyone holding its
+ *   address. A reader says it is not available to them, and shows no title and
+ *   no text.
+ *
+ * `deleted` and `unreadable` must not render alike. That is the rule this
+ * union is shaped to make hard to break.
+ */
+export type Part =
+  | { state: 'resolved'; block: Block }
+  | { state: 'unaddressable' }
+  | { state: 'detached' }
+  | { state: 'deleted' }
+  | { state: 'unreadable' }
+
+/**
+ * What a reader holds for the object a part points at: its body, or the reason
+ * it has none — from {@link absenceOf}.
+ */
+export type PartSource = { value: string; format: ContentFormat } | 'deleted' | 'unreadable'
+
+/** Which of the five states a part is in, against its object as it is now. */
+export function resolvePart(block: string, source: PartSource): Part {
+  if (source === 'deleted' || source === 'unreadable') return { state: source }
+  const anchor = resolveBlockAnchor(block, source.value, source.format)
+  if (anchor.state === 'resolved') return { state: 'resolved', block: anchor.block }
+  if (anchor.state === 'detached') return { state: 'detached' }
+  return { state: 'unaddressable' }
+}
+
+/**
+ * Why a read by address came back empty: `deleted` when the object's author
+ * deleted it by address (a `kind:5` with that `a`, NIP-09), else `unreadable`.
+ *
+ * `deletions` is what `{kinds: [5], "#a": [address]}` returned. A deletion
+ * signed by anybody but the address's author is ignored, as NIP-09 requires:
+ * otherwise a stranger could make any object you cannot read look deleted.
+ */
+export function absenceOf(
+  address: string,
+  deletions: readonly { kind: number; pubkey: string; tags: string[][] }[],
+): 'deleted' | 'unreadable' {
+  const author = address.split(':')[1]
+  const deleted = deletions.some(
+    (event) => event.kind === 5 && event.pubkey === author && event.tags.some((t) => t[0] === 'a' && t[1] === address),
+  )
+  return deleted ? 'deleted' : 'unreadable'
 }

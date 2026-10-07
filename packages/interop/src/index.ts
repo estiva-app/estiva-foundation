@@ -155,6 +155,7 @@ export {
   eventIdFromRef,
   urlPatternsOf,
   matchObjectUrl,
+  blockUrlOf,
   type UrlPattern,
   type MatchedObjectUrl,
 } from './objectUrl.js'

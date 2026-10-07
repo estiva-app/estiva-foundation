@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.28.0 — 2026-10-07
+
+**Wire behaviour: no builder's bytes changed; one tag is new and one is read
+more narrowly** (COM-2, SPEC §13.6.1).
+
+- New: a message points at one block of another object with
+  `["part", <address>, <block id>]`. `partTag`, `partsOf` (one per address,
+  first wins), `resolvePart` (five states: `resolved`, `unaddressable`,
+  `detached`, `deleted`, `unreadable`) and `absenceOf`, which tells a deleted
+  object from one you cannot read by its author's `kind:5` naming the address.
+- **Narrower:** `blockAnchorOf` returns `undefined` for an event whose `kind`
+  is given and is not 1111. A `kind:9` has no `A` to say whose block it names;
+  Ship read one against the page it was drawn on. Callers that pass only
+  `{ tags }` behave as before.
+
 ## 0.27.0 — 2026-10-06
 
 **Wire behaviour: no builder's bytes changed.** One builder removed (COM-3).

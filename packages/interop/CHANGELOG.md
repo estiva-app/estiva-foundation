@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.52.0 — 2026-10-07
+
+**Manifest: a `urls` pattern may declare a `<block>` in its fragment** (COM-2,
+SPEC §7.7). Manifests already published mean what they meant: a pattern with
+no `<block>` ignores the fragment exactly as before, and a consumer on an older
+version reads a pattern with one as the same shape without the block.
+
+- `matchObjectUrl` returns `block` when the pattern declares
+  `#…<block>…` and the URL fills it; the block is optional, so the pattern
+  still claims the URL without it.
+- New: `blockUrlOf(patterns, { kind, d, title, block })` builds the link that
+  opens one block, from the same shape — not from `web`, whose NIP-89 template
+  has only `<bech32>`.
+
 ## 0.51.0 — 2026-10-06
 
 **Manifests: nothing changes.** No declaration is read differently.

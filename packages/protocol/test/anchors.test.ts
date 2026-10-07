@@ -9,10 +9,15 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BLOCK_ANCHOR_TAG,
+  PART_TAG,
+  absenceOf,
   blockAnchorOf,
   blockIds,
   markerTextToBlockDocument,
+  partTag,
+  partsOf,
   resolveBlockAnchor,
+  resolvePart,
   serializeBlockDocument,
 } from '../dist/index.js'
 
@@ -113,5 +118,82 @@ describe('nested blocks are addressable too', () => {
     const anchor = resolveBlockAnchor(ids[2], serializeBlockDocument(listDoc), 'blocks')
     assert.equal(anchor.state, 'resolved')
     if (anchor.state === 'resolved') assert.equal(anchor.block.type, 'listItem')
+  })
+})
+
+describe('only a kind:1111 anchors — §13.6, narrowed by COM-2', () => {
+  it('reads the block tag on a comment', () => {
+    assert.equal(blockAnchorOf({ kind: 1111, tags: [[BLOCK_ANCHOR_TAG, 'abc']] }), 'abc')
+  })
+
+  it('refuses it on a kind:9, which has no A to say whose block it is', () => {
+    assert.equal(blockAnchorOf({ kind: 9, tags: [[BLOCK_ANCHOR_TAG, 'abc']] }), undefined)
+  })
+})
+
+const pk = 'a'.repeat(64)
+const other = 'b'.repeat(64)
+const issue = `30851:${pk}:issue-1`
+
+describe('a message pointing at a block of another object — §13.6.1', () => {
+  it('reads one part per address, the first winning', () => {
+    const event = {
+      tags: [['a', issue], partTag(issue, 'p1'), partTag(issue, 'p2'), [PART_TAG, `30850:${pk}:proj`, 'p3']],
+    }
+    assert.deepEqual(partsOf(event), [
+      { address: issue, block: 'p1' },
+      { address: `30850:${pk}:proj`, block: 'p3' },
+    ])
+  })
+
+  it('ignores a part with no block, or an address that is not one', () => {
+    assert.deepEqual(partsOf({ tags: [[PART_TAG, issue], [PART_TAG, issue, ''], [PART_TAG, 'issue-1', 'p1']] }), [])
+  })
+
+  it('is not an anchor: a block tag and a part tag do not read as each other', () => {
+    const event = { kind: 1111, tags: [[BLOCK_ANCHOR_TAG, 'mine'], partTag(issue, 'theirs')] }
+    assert.equal(blockAnchorOf(event), 'mine')
+    assert.deepEqual(partsOf(event), [{ address: issue, block: 'theirs' }])
+  })
+})
+
+describe('the five states of a part, none collapsed', () => {
+  it('resolved', () => {
+    const part = resolvePart(firstId, { value: body, format: 'blocks' })
+    assert.equal(part.state, 'resolved')
+    if (part.state === 'resolved') assert.equal(part.block.id, firstId)
+  })
+
+  it('detached — the object is readable and the block is gone', () => {
+    assert.deepEqual(resolvePart('gone', { value: body, format: 'blocks' }), { state: 'detached' })
+  })
+
+  it('unaddressable — the body has no parts', () => {
+    assert.deepEqual(resolvePart(firstId, { value: 'plain', format: 'marker' }), { state: 'unaddressable' })
+  })
+
+  it('deleted and unreadable stay apart', () => {
+    assert.deepEqual(resolvePart(firstId, 'deleted'), { state: 'deleted' })
+    assert.deepEqual(resolvePart(firstId, 'unreadable'), { state: 'unreadable' })
+  })
+})
+
+describe('why a read by address came back empty', () => {
+  const deletion = (pubkey: string, tags: string[][]) => ({ kind: 5, pubkey, tags })
+
+  it('deleted, when its author deleted it by address', () => {
+    assert.equal(absenceOf(issue, [deletion(pk, [['a', issue]])]), 'deleted')
+  })
+
+  it('unreadable, when nothing says it was deleted', () => {
+    assert.equal(absenceOf(issue, []), 'unreadable')
+  })
+
+  it("ignores a stranger's deletion — NIP-09", () => {
+    assert.equal(absenceOf(issue, [deletion(other, [['a', issue]])]), 'unreadable')
+  })
+
+  it('ignores a deletion of another address', () => {
+    assert.equal(absenceOf(issue, [deletion(pk, [['a', `30851:${pk}:issue-2`]])]), 'unreadable')
   })
 })
