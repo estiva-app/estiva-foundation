@@ -200,7 +200,7 @@ describe('why a read by address came back empty', () => {
   })
 
   it('ignores a kind that is not a deletion', () => {
-    assert.equal(absenceOf(issue, [{ kind: 1, pubkey: pk, tags: [['a', issue]] }]), 'unreadable')
+    assert.equal(absenceOf(issue, [{ kind: 1, tags: [['a', issue]] }]), 'unreadable')
   })
 
   it('ignores a deletion of another address', () => {
