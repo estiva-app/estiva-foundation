@@ -4,6 +4,17 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.28.1 — 2026-10-07
+
+**Wire behaviour: no builder's bytes changed.** `absenceOf` was too trusting
+(COM-2 security review).
+
+- A `kind:5` now counts only when its signer is the address's author (NIP-09),
+  or when it is the shape Buzz checks: no `e` tag, and the address is its first
+  `a`. Buzz validates only the `e` targets, or only the first `a`, and stores
+  every tag; a member could add somebody's address as an extra `a` and make a
+  hidden object read "deleted". `deletions` items need `pubkey` again.
+
 ## 0.28.0 — 2026-10-07
 
 **Wire behaviour: no builder's bytes changed; one tag is new and one is read

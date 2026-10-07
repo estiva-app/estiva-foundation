@@ -195,20 +195,30 @@ export function resolvePart(block: string, source: PartSource): Part {
  * Why a read by address came back empty: `deleted` when the relay holds a
  * deletion of it by address (a `kind:5` with that `a`), else `unreadable`.
  *
- * `deletions` is what `{kinds: [5], "#a": [address]}` returned. **The signer is
- * not compared with the address's author**, because a client cannot make that
- * comparison correctly (SPEC §6.5, corrected 2026-09-06): the relay accepts a
- * deletion from the author *or the author's owner*, and ownership is visible
- * only to the relay. Most objects here are written by an agent and deleted by
- * the person who owns it; an author-only check would call every one of those
- * "not available to you". A relay that stores deletions it did not adjudicate
- * can at worst make an object you cannot read say "deleted" — less than you
- * were told before, never more.
+ * `deletions` is what `{kinds: [5], "#a": [address]}` returned. A deletion
+ * counts when either holds:
+ *
+ * - **its signer is the address's author** — NIP-09, true on any relay; or
+ * - **it is the shape the relay checked**: no `e` tag, and the address is its
+ *   *first* `a`. Buzz accepts that shape from the author or the author's owner
+ *   (SPEC §6.5), and ownership is visible only to the relay — most objects here
+ *   are written by an agent and deleted by the person who owns it.
+ *
+ * Anything else is unchecked. Buzz validates only the `e` targets when there
+ * are any, and only the first `a` when there are none, yet stores every tag; a
+ * member could otherwise add somebody's address as a second `a` and make their
+ * hidden object read "deleted" to everyone who cannot see it.
  */
 export function absenceOf(
   address: string,
-  deletions: readonly { kind: number; tags: string[][] }[],
+  deletions: readonly { kind: number; pubkey: string; tags: string[][] }[],
 ): 'deleted' | 'unreadable' {
-  const deleted = deletions.some((event) => event.kind === 5 && event.tags.some((t) => t[0] === 'a' && t[1] === address))
+  const author = address.split(':')[1]
+  const deleted = deletions.some((event) => {
+    if (event.kind !== 5) return false
+    if (event.pubkey === author) return event.tags.some((t) => t[0] === 'a' && t[1] === address)
+    if (event.tags.some((t) => t[0] === 'e')) return false
+    return event.tags.find((t) => t[0] === 'a')?.[1] === address
+  })
   return deleted ? 'deleted' : 'unreadable'
 }
