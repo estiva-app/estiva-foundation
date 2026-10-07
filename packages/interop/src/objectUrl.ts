@@ -264,7 +264,10 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
       ...(kind === undefined ? {} : { kind }),
       ...(block === undefined ? {} : { block }),
     }
-    if (!best || declared.length > best.specificity) best = { specificity: declared.length, match }
+    // A filled `<block>` breaks a tie, so an app that declares the block shape
+    // beside its older shape loses no block to declaration order.
+    const specificity = declared.length * 2 + (block === undefined ? 0 : 1)
+    if (!best || specificity > best.specificity) best = { specificity, match }
   }
   return best?.match ?? null
 }
@@ -312,9 +315,13 @@ export function blockUrlOf(
     const hash = pattern.slice(hashAt + 1)
     // A fragment route (`/#/issue/<d>`) is the legacy shape, never written.
     if (hash.startsWith('/') || !hash.includes(BLOCK_PLACEHOLDER) || !path.includes('<d>')) continue
+    // Only `<d>` and `<block>` are known here; a shape with any other
+    // placeholder (`?thread=<id>`) would be emitted half-filled.
+    if (/<(?!slug>|d>)[^>]*>/.test(path)) continue
     const ref = path.includes('<slug>-<d>') ? objectRef(target.d, target.title) : target.d
-    const base = path.replace(/<slug>-<d>|<d>/, ref)
-    return `${base}#${hash.replace(BLOCK_PLACEHOLDER, encodeURIComponent(target.block))}`
+    // Replacer functions, so a `$&` in an identifier is not a replacement pattern.
+    const base = path.replace(/<slug>-<d>|<d>/, () => ref)
+    return `${base}#${hash.replace(BLOCK_PLACEHOLDER, () => encodeURIComponent(target.block))}`
   }
   return undefined
 }

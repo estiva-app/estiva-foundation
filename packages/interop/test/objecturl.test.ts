@@ -329,6 +329,18 @@ describe('a block in the fragment — §7.7, COM-2', () => {
     assert.equal(matchObjectUrl(url!, BLOCKED)?.block, 'a/b')
   })
 
+  it('keeps the block when the block-less shape is declared first', () => {
+    const both = [{ pattern: 'https://ship.estiva.app/issue/<slug>-<d>', kind: 30851 }, BLOCKED[0]]
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}#block-p1`, both)?.block, 'p1')
+  })
+
+  it('does not read $ patterns out of an identifier, nor half-fill a query shape', () => {
+    const plain = [{ pattern: 'https://x.estiva.app/o/<d>#block-<block>', kind: 1 }]
+    assert.equal(blockUrlOf(plain, { kind: 1, d: 'a$&b', block: 'x' }), 'https://x.estiva.app/o/a$&b#block-x')
+    const threaded = [{ pattern: 'https://x.estiva.app/t/<slug>-<d>?thread=<id>#block-<block>', kind: 1 }]
+    assert.equal(blockUrlOf(threaded, { kind: 1, d: UUID, block: 'x' }), undefined)
+  })
+
   it('builds nothing when the app declares no block shape for that kind', () => {
     assert.equal(blockUrlOf(SHIP, { kind: 30851, d: UUID, block: 'x' }), undefined)
     assert.equal(blockUrlOf(BLOCKED, { kind: 30850, d: UUID, block: 'x' }), undefined)
