@@ -172,7 +172,18 @@ export interface MatchedObjectUrl {
    * only `identifier`; this is for one that wants to say where it is.
    */
   within?: { identifier: string; by: 'd' | 'id' }
+  /**
+   * One block of the object, when the pattern declares a `<block>` in its
+   * fragment and the URL carries one (SPEC §7.7, COM-2): Ship's block menu
+   * copies `…/issue/<slug>-<d>#block-<id>`. The block is optional — the same
+   * pattern still claims the URL without its fragment — so an app adds it to a
+   * shape it already declares rather than declaring a second one.
+   */
+  block?: string
 }
+
+/** The placeholder a pattern's fragment uses for a block id. */
+const BLOCK_PLACEHOLDER = '<block>'
 
 /**
  * Match a pasted URL against one app's declared shapes.
@@ -247,12 +258,79 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
     }
     if (!satisfied) continue
 
-    const match: MatchedObjectUrl = query
-      ? { ...query, ...(kind === undefined ? {} : { kind }), within: path }
-      : { ...path, ...(kind === undefined ? {} : { kind }) }
-    if (!best || declared.length > best.specificity) best = { specificity: declared.length, match }
+    const block = readBlock(shape.hash, target.hash)
+    const match: MatchedObjectUrl = {
+      ...(query ? { ...query, within: path } : path),
+      ...(kind === undefined ? {} : { kind }),
+      ...(block === undefined ? {} : { block }),
+    }
+    // A filled `<block>` breaks a tie, so an app that declares the block shape
+    // beside its older shape loses no block to declaration order.
+    const specificity = declared.length * 2 + (block === undefined ? 0 : 1)
+    if (!best || specificity > best.specificity) best = { specificity, match }
   }
   return best?.match ?? null
+}
+
+/**
+ * The block a URL's fragment names, by the pattern's `#…<block>…`; undefined
+ * when the pattern declares none, the URL has no fragment, or it does not fit.
+ * A fragment cut mid-escape names no block rather than throwing — the object
+ * still resolves, which is what the link was mostly for.
+ */
+function readBlock(pattern: string, value: string): string | undefined {
+  const at = pattern.indexOf(BLOCK_PLACEHOLDER)
+  if (at === -1) return undefined
+  const before = pattern.slice(0, at)
+  const after = pattern.slice(at + BLOCK_PLACEHOLDER.length)
+  if (value.length <= before.length + after.length || !value.startsWith(before) || !value.endsWith(after)) {
+    return undefined
+  }
+  try {
+    const block = decodeURIComponent(value.slice(before.length, value.length - after.length))
+    return BLOCK_ID.test(block) ? block : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The ids a reader takes from a URL — protocol's `partsOf` takes the same. */
+const BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * The link that opens one block of an object, built from the app's own `urls`
+ * shape for its kind — the outbound half of {@link matchObjectUrl}'s `block`.
+ *
+ * Built from `urls` rather than `web` because NIP-89's `web` template has one
+ * placeholder, `<bech32>`, and an app's `/o/<naddr>` redirect is not obliged to
+ * carry a fragment through. Returns undefined when the app declares no path
+ * shape for that kind with a `<block>` fragment; the caller then opens the
+ * object without the block, which is still the right object.
+ */
+export function blockUrlOf(
+  patterns: UrlPattern[],
+  target: { kind: number; d: string; title?: string; block: string },
+): string | undefined {
+  // A `d` that is not a clean identifier would be spliced into the path raw
+  // (`../settings`), and `matchObjectUrl` could never read the link back.
+  if (identifierFromRef(target.d) !== target.d || !BLOCK_ID.test(target.block)) return undefined
+  for (const { pattern, kind } of patterns) {
+    if (kind !== target.kind) continue
+    const hashAt = pattern.indexOf('#')
+    if (hashAt === -1) continue
+    const path = pattern.slice(0, hashAt)
+    const hash = pattern.slice(hashAt + 1)
+    // A fragment route (`/#/issue/<d>`) is the legacy shape, never written.
+    if (hash.startsWith('/') || !hash.includes(BLOCK_PLACEHOLDER) || !path.includes('<d>')) continue
+    // Only `<d>` and `<block>` are known here; a shape with any other
+    // placeholder (`?thread=<id>`) would be emitted half-filled.
+    if (/<(?!slug>|d>)[^>]*>/.test(path)) continue
+    const ref = path.includes('<slug>-<d>') ? objectRef(target.d, target.title) : target.d
+    // Replacer functions, so a `$&` in an identifier is not a replacement pattern.
+    const base = path.replace(/<slug>-<d>|<d>/, () => ref)
+    return `${base}#${hash.replace(BLOCK_PLACEHOLDER, () => encodeURIComponent(target.block))}`
+  }
+  return undefined
 }
 
 /** The identity a placeholder declares, read off the value in that position. */
@@ -286,6 +364,8 @@ function splitUrl(raw: string): {
   segments: string[]
   fragmented: boolean
   query: Record<string, string>
+  /** A fragment that is not a route — `block-<id>` — as written; '' when none. */
+  hash: string
 } | null {
   const match = /^(https?):\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i.exec(raw.trim())
   if (!match) return null
@@ -316,6 +396,7 @@ function splitUrl(raw: string): {
     segments: [...(path ?? '').split('/'), ...fragmentPath.split('/')].filter(Boolean),
     fragmented: fragmentPath !== '',
     query: parseQuery(search ?? ''),
+    hash: fragmentPath === '' ? (fragment ?? '') : '',
   }
 }
 

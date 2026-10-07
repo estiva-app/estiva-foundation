@@ -14,7 +14,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { slugify, objectRef, identifierFromRef, matchObjectUrl, urlPatternsOf } from '../dist/index.js'
+import { slugify, objectRef, identifierFromRef, matchObjectUrl, urlPatternsOf, blockUrlOf } from '../dist/index.js'
 
 const UUID = '9c69f247-be6a-4ae7-9703-71cb971f5f93'
 const SHIP = [
@@ -289,5 +289,63 @@ describe('an event id in the query string', () => {
       by: 'd',
       kind: 30851,
     })
+  })
+})
+
+describe('a block in the fragment — §7.7, COM-2', () => {
+  const BLOCKED = [
+    { pattern: 'https://ship.estiva.app/issue/<slug>-<d>#block-<block>', kind: 30851 },
+    { pattern: 'https://ship.estiva.app/#/issue/<d>', kind: 30851 },
+  ]
+
+  it("reads the block off Ship's Copy link", () => {
+    assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}#block-8373a025427f`, BLOCKED), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30851,
+      block: '8373a025427f',
+    })
+  })
+
+  it('still claims the URL with no fragment, or one that is not a block', () => {
+    for (const url of [`https://ship.estiva.app/issue/fix-it-${UUID}`, `https://ship.estiva.app/issue/fix-it-${UUID}#top`]) {
+      assert.deepEqual(matchObjectUrl(url, BLOCKED), { identifier: UUID, by: 'd', kind: 30851 })
+    }
+  })
+
+  it('names no block for an empty id or a fragment cut mid-escape', () => {
+    for (const hash of ['#block-', '#block-%E0%A4%A']) {
+      assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}${hash}`, BLOCKED)?.block, undefined)
+    }
+  })
+
+  it('a pattern with no <block> ignores the fragment, as before', () => {
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}#block-x`, SHIP)?.block, undefined)
+  })
+
+  it('builds the link back from the same shape, and round-trips', () => {
+    const url = blockUrlOf(BLOCKED, { kind: 30851, d: UUID, title: 'Fix it', block: 'b1_x-2' })
+    assert.equal(url, `https://ship.estiva.app/issue/fix-it-${UUID}#block-b1_x-2`)
+    assert.equal(matchObjectUrl(url!, BLOCKED)?.block, 'b1_x-2')
+  })
+
+  it('keeps the block when the block-less shape is declared first', () => {
+    const both = [{ pattern: 'https://ship.estiva.app/issue/<slug>-<d>', kind: 30851 }, BLOCKED[0]]
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}#block-p1`, both)?.block, 'p1')
+  })
+
+  it('refuses an identifier or block it cannot write safely, and a half-filled query shape', () => {
+    for (const d of ['a$&b', '../../settings', `${UUID}/x`]) {
+      assert.equal(blockUrlOf(BLOCKED, { kind: 30851, d, block: 'x' }), undefined, d)
+    }
+    assert.equal(blockUrlOf(BLOCKED, { kind: 30851, d: UUID, block: '<img>' }), undefined)
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/issue/fix-it-${UUID}#block-%3Cimg%3E`, BLOCKED)?.block, undefined)
+    const threaded = [{ pattern: 'https://x.estiva.app/t/<slug>-<d>?thread=<id>#block-<block>', kind: 1 }]
+    assert.equal(blockUrlOf(threaded, { kind: 1, d: UUID, block: 'x' }), undefined)
+  })
+
+  it('builds nothing when the app declares no block shape for that kind', () => {
+    assert.equal(blockUrlOf(SHIP, { kind: 30851, d: UUID, block: 'x' }), undefined)
+    assert.equal(blockUrlOf(BLOCKED, { kind: 30850, d: UUID, block: 'x' }), undefined)
   })
 })

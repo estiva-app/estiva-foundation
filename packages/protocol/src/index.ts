@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.27.0'
+export const PROTOCOL_VERSION = '0.28.0'
 
 export {
   // types
@@ -240,9 +240,17 @@ export {
 
 export {
   type BlockAnchor,
+  type Part,
+  type PartPointer,
+  type PartSource,
   BLOCK_ANCHOR_TAG,
+  PART_TAG,
+  absenceOf,
   blockAnchorOf,
+  partTag,
+  partsOf,
   resolveBlockAnchor,
+  resolvePart,
 } from './anchors.js'
 export {
   type BlossomVerb,
