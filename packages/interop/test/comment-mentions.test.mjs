@@ -46,6 +46,13 @@ describe('a comment that mentions people', () => {
     assert.deepEqual(ps(event), [AUTHOR, PERSON])
   })
 
+  test('no more p in all than a message may carry, the author’s included', () => {
+    const many = Array.from({ length: 60 }, (_, i) => i.toString(16).padStart(64, '0'))
+    const event = build('comment', many.map(named).join(' '))
+    assert.equal(ps(event).length, 50)
+    assert.equal(ps(event)[0], AUTHOR)
+  })
+
   test('a body that names nobody is the comment it always was', () => {
     const event = build('comment', 'Plain words, @Miky as text.')
     assert.deepEqual(ps(event), [AUTHOR])

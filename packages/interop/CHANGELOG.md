@@ -16,6 +16,10 @@ manifests already published still mean what they meant.
   callers already add with `mentionTagsFor`. Before, only the object's author
   was tagged, so a mention written through the runtime (the agent's) drew a
   chip and notified nobody (§11.8 reads `#p`). A change's value earns none.
+  At most `MAX_MENTIONED_PEOPLE` `p` in all, the author's included.
+- **A caller that appended `mentionTagsFor(body)` itself must stop** when it
+  upgrades, or every mention is tagged twice: Peek's `commentAsViewer`
+  transform does today.
 
 ## 0.52.0 — 2026-10-07
 
