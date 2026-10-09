@@ -24,6 +24,7 @@ const manifest = {
   records: { changeKind: 1851, targetTag: 'a', fieldTag: 'field', valueTag: 'value', order: ['ts', 'created_at', 'id'] },
   actions: [
     { id: 'comment', label: 'Comment', appliesTo: String(ISSUE), emits: { kind: 1111, scope: 'address' } },
+    { id: 'note', label: 'Note', appliesTo: String(ISSUE), emits: { kind: 1111, scope: 'address' } },
     { id: 'retitle', label: 'Rename', appliesTo: String(ISSUE), emits: { kind: 1851, field: 'title' }, input: { type: 'string' } },
   ],
 }
@@ -61,6 +62,10 @@ describe('a comment that mentions people', () => {
   test('a reply names its parent’s author, then the people it mentions', () => {
     const event = build('comment', `${named(PERSON)} yes`, { replyTo: { id: 'e'.repeat(64), kind: 1111, author: OTHER } })
     assert.deepEqual(ps(event), [OTHER, PERSON])
+  })
+
+  test('another fieldless action is not a comment, and its body earns no p', () => {
+    assert.deepEqual(ps(build('note', named(PERSON))), [AUTHOR])
   })
 
   test('a change whose value names somebody earns no p — only a comment body is a mention', () => {

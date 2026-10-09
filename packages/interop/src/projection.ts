@@ -5332,8 +5332,9 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // Peek add. Without them the body draws a mention chip and nobody is told:
   // `#p` is how a reader finds that it was named (§11.8). Once each, after the
   // `p` the comment already carries for its object or parent, and no more `p`
-  // in all than a message may carry (Buzz's cap).
-  if (!declared.emits.field) {
+  // in all than a message may carry (Buzz's cap). Only for `comment` itself: an
+  // action with no field that declared some other kind is not a mention.
+  if (!declared.emits.field && declared.id === 'comment') {
     for (const [, person] of mentionTagsFor(value)) {
       const ps = tags.filter((t) => t[0] === 'p')
       if (ps.length >= MAX_MENTIONED_PEOPLE) break
