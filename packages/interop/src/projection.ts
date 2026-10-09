@@ -30,7 +30,7 @@ import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
   the copy that lived here — a `kind:9` is never a comment (CON-20 migrated
   them), a reply is never a root, and `ts` is trusted only inside its own second.
 */
-import { anchorsOf, byOrder, isCommentOn, isReply, orderingMs } from '@estiva-app/conversation'
+import { anchorsOf, byOrder, isCommentOn, isReply, MAX_MENTIONED_PEOPLE, mentionTagsFor, orderingMs } from '@estiva-app/conversation'
 
 /** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
@@ -5327,6 +5327,20 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // without this `#p` never finds the change and §11.8 makes nobody a member.
   // After `ts`, where Ship's own builder has put it since FOL-30.
   if (namesPerson && value !== '') tags.push(['p', value])
+  // A comment names, where the relay indexes them, the people its body mentions
+  // by `nostr:npub…` (SPEC §13.1) — what `buildComment`'s callers in Ship and
+  // Peek add. Without them the body draws a mention chip and nobody is told:
+  // `#p` is how a reader finds that it was named (§11.8). Once each, after the
+  // `p` the comment already carries for its object or parent, and no more `p`
+  // in all than a message may carry (Buzz's cap). Only for `comment` itself: an
+  // action with no field that declared some other kind is not a mention.
+  if (!declared.emits.field && declared.id === 'comment') {
+    for (const [, person] of mentionTagsFor(value)) {
+      const ps = tags.filter((t) => t[0] === 'p')
+      if (ps.length >= MAX_MENTIONED_PEOPLE) break
+      if (!ps.some((t) => t[1] === person)) tags.push(['p', person])
+    }
+  }
   // A move also names its new parent where a relay indexes it (SPEC §7.2, FOL-45):
   // `value` is not indexed, so without this no read by the new parent finds a
   // child moved in. Only for the field the kind declares as `movedBy`, and only
