@@ -14,6 +14,7 @@ import {
   BARE_FILE_MANIFEST_ADDRESS,
   KIND_BARE_FILE,
   buildActionEvent,
+  buildActionEvents,
   commentKindsOf,
   createProjectionCache,
   isArchived,
@@ -564,9 +565,22 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
   })
 
   it('deletes with a NIP-09 request naming the address, for the relay to adjudicate', () => {
-    const built = build('delete')
+    // `listed` since INT-12, so it is built with every Folder that lists it.
+    const built = buildActionEvents({
+      manifest: BARE_MANIFEST,
+      kind: KIND_BARE_FILE,
+      address: TOPIC,
+      objectAuthor: AUTHOR,
+      folder: TEAM,
+      actionId: 'delete',
+      value: '',
+      pubkey: OTHER,
+      createdAtMs: 1_700_000_000_000,
+      listedIn: [],
+    })
     assert.notEqual(typeof built, 'string', String(built))
-    const request = built as Exclude<typeof built, string>
+    const [request, ...rest] = built as Exclude<typeof built, string>
+    assert.equal(rest.length, 0, 'listed in no Folder, so nothing to remove')
     assert.equal(request.kind, 5)
     assert.deepEqual(request.tags, [['a', TOPIC], ['k', String(KIND_BARE_FILE)]])
     assert.equal(request.content, '')
