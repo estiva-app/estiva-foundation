@@ -280,8 +280,8 @@ export function listItemDepths(items: readonly Block[]): number[] {
   return out
 }
 
-/** The deepest a list item is drawn or edited; deeper is drawn here. No person indents a list this far. */
-export const MAX_LIST_DEPTH = 16
+/** The deepest a list item is drawn or edited; deeper is drawn here. §13.3's MUST (Miky, 2026-10-12). */
+export const MAX_LIST_DEPTH = 8
 
 /**
  * A block's text, including its children's.

@@ -16,8 +16,9 @@ all; it now writes it.
 - `listItemDepths(items)` is how a reader must read it: anything but a whole
   number ≥ 0 is 0, and no item sits more than one level below the item before
   it, so the first is at 0 and the children of a deleted parent hang from the
-  item above. None is deeper than `MAX_LIST_DEPTH` (16): a list one level
-  deeper per item fits ~4,300 levels in 256 KiB and overflowed the stack on save.
+  item above. None is deeper than `MAX_LIST_DEPTH` (8, SPEC's MUST; Miky,
+  2026-10-12): a list one level deeper per item fits ~4,300 levels in 256 KiB
+  and overflowed the stack on save.
 - `toEditorDocument` nests indented items the way ProseMirror's Tab does, each
   inner list taking the outer list's type and no id; `fromEditorDocument` flattens
   them back, keeping every item's id. An inner list of the other type saves as
