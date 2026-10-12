@@ -37,7 +37,7 @@ import {
   inlineNodesToMarkers,
   parseBodySegments,
 } from './content.js'
-import { type Block, type BlockDocument, newBlockId } from './blocks.js'
+import { type Block, type BlockDocument, newBlockId, listItemDepths } from './blocks.js'
 
 const isInlineRun = (content: unknown): content is InlineTextNode[] =>
   Array.isArray(content) &&
@@ -180,11 +180,25 @@ export function blockDocumentToMarkerText(doc: BlockDocument): string {
         break
       }
       case 'bulletList':
-        for (const item of (block.content as Block[]) ?? []) lines.push(`- ${itemText(item)}`)
-        break
       case 'orderedList': {
+        /*
+          An indented item (MAN-13) is spelled two spaces a level, as Markdown
+          does. §13.2 has no nesting, so it reads back level — still every
+          item, which is why the agent's text edit treats such a list as one it
+          cannot spell and keeps it whole.
+        */
+        const items = (block.content as Block[]) ?? []
+        const depths = listItemDepths(items)
         const start = typeof block.attrs?.start === 'number' ? block.attrs.start : 1
-        ;((block.content as Block[]) ?? []).forEach((item, i) => lines.push(`${start + i}. ${itemText(item)}`))
+        // The next number at each depth; a shallower item restarts the ones below it.
+        const next: number[] = []
+        items.forEach((item, i) => {
+          const depth = depths[i]
+          next.length = depth + 1
+          next[depth] ??= depth === 0 ? start : 1
+          const marker = block.type === 'bulletList' ? '-' : `${next[depth]++}.`
+          lines.push(`${'  '.repeat(depth)}${marker} ${itemText(item)}`)
+        })
         break
       }
       case 'blockquote':

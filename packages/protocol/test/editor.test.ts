@@ -13,8 +13,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  blockDocumentToMarkerText,
   documentForEditing,
   fromEditorDocument,
+  toRenderTree,
   parseBlockDocument,
   publishableFromEditor,
   toEditorDocument,
@@ -498,5 +500,98 @@ describe('a file in a document', () => {
     }
     const back = fromEditorDocument(toEditorDocument(doc))
     assert.deepEqual(back.content.map((b) => b.type), ['paragraph', 'attachment', 'paragraph'])
+  })
+})
+
+describe('an indented list item — MAN-13', () => {
+  /** What ProseMirror holds after Tab on "after": a list inside the item above. */
+  const item = (id: string, text: string, ...lists: EditorDocument['content']) => ({
+    type: 'listItem',
+    attrs: { blockId: id },
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }, ...lists],
+  })
+  const TABBED: EditorDocument = {
+    type: 'doc',
+    content: [
+      {
+        type: 'bulletList',
+        attrs: { blockId: 'l1' },
+        content: [
+          item('i1', 'intro', { type: 'bulletList', attrs: { blockId: 'minted' }, content: [item('i2', 'after', { type: 'orderedList', content: [item('i3', 'deeper')] })] }),
+          item('i4', 'back'),
+        ],
+      },
+    ],
+  }
+  const items = (doc: BlockDocument) => (doc.content[0].content as Block[]).map((b) => [b.id, (b.content as { text: string }[])[0]?.text, b.attrs?.indent])
+
+  it('keeps an indented item and its text, flat with its depth — the save used to drop it', () => {
+    const saved = fromEditorDocument(TABBED)
+    assert.deepEqual(items(saved), [
+      ['i1', 'intro', undefined],
+      ['i2', 'after', 1],
+      ['i3', 'deeper', 2],
+      ['i4', 'back', undefined],
+    ])
+  })
+
+  it('gives the editor\'s inner lists no block, and keeps the outer list\'s type for them', () => {
+    const saved = fromEditorDocument(TABBED)
+    assert.equal(saved.content.length, 1)
+    assert.equal(saved.content[0].id, 'l1')
+    assert.ok(!JSON.stringify(saved).includes('minted'))
+    assert.ok(!JSON.stringify(saved).includes('orderedList'))
+  })
+
+  it('opens it nested again, and a save after that is the same document', () => {
+    const saved = fromEditorDocument(TABBED)
+    const opened = toEditorDocument(saved)
+    const outer = opened.content[0].content!
+    assert.deepEqual(outer.map((n) => n.attrs?.blockId), ['i1', 'i4'])
+    const inner = outer[0].content![1]
+    assert.equal(inner.type, 'bulletList')
+    assert.equal(inner.attrs?.blockId, undefined)
+    assert.equal(inner.content![0].content![1].content![0].attrs?.blockId, 'i3')
+    assert.ok(!JSON.stringify(opened).includes('indent'))
+    assert.deepEqual(fromEditorDocument(opened), saved)
+  })
+
+  it('hangs an item deeper than the one above from it, and starts a list at the left', () => {
+    const doc: BlockDocument = {
+      type: 'doc',
+      content: [
+        {
+          type: 'bulletList',
+          id: 'l1',
+          content: [
+            { type: 'listItem', id: 'a', attrs: { indent: 2 }, content: [{ type: 'text', text: 'first' }] },
+            { type: 'listItem', id: 'b', attrs: { indent: 3 }, content: [{ type: 'text', text: 'orphan' }] },
+            { type: 'listItem', id: 'c', attrs: { indent: -1 }, content: [{ type: 'text', text: 'odd' }] },
+          ],
+        },
+      ],
+    }
+    assert.deepEqual(items(fromEditorDocument(toEditorDocument(doc))), [
+      ['a', 'first', undefined],
+      ['b', 'orphan', 1],
+      ['c', 'odd', undefined],
+    ])
+    assert.deepEqual(
+      toRenderTree(JSON.stringify(doc), 'blocks')[0].children!.map((c) => c.indent),
+      [undefined, 1, undefined],
+    )
+  })
+
+  it('draws every item for a reader that knows nothing of indent', () => {
+    const tree = toRenderTree(JSON.stringify(fromEditorDocument(TABBED)), 'blocks')
+    assert.deepEqual(tree[0].children!.map((c) => c.inline?.[0].text), ['intro', 'after', 'deeper', 'back'])
+    assert.deepEqual(tree[0].children!.map((c) => c.indent), [undefined, 1, 2, undefined])
+  })
+
+  it('spells an indented item two spaces a level, numbering each level from 1', () => {
+    const doc = fromEditorDocument(TABBED)
+    assert.equal(blockDocumentToMarkerText(doc), '- intro\n  - after\n    - deeper\n- back')
+    const ordered = { ...doc, content: [{ ...doc.content[0], type: 'orderedList', attrs: { start: 3 } }] }
+    assert.equal(blockDocumentToMarkerText(ordered), '3. intro\n  1. after\n    1. deeper\n4. back')
   })
 })

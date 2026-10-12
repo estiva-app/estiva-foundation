@@ -36,7 +36,7 @@ import {
   parseBodySegments,
   parseInlineMarks,
 } from './content.js'
-import { type Block, type BlockDocument, parseBlockDocument, inlineTextOf } from './blocks.js'
+import { type Block, type BlockDocument, parseBlockDocument, inlineTextOf, listItemDepths } from './blocks.js'
 import type { SignedEvent } from './events.js'
 
 /** A run of text and the marks on it. Nothing here needs escaping; it is text. */
@@ -72,6 +72,13 @@ export interface RenderBlock {
   language?: string
   /** An ordered list's first number, when the author did not start at 1. */
   start?: number
+  /**
+   * How far a list item is indented, when it is (§13.3, MAN-13): its
+   * `attrs.indent` as `listItemDepths` reads it, so it is never more than one
+   * below the item before. A list's items stay its flat `children`; drawing
+   * them nested, and numbering each level from 1, is the reader's.
+   */
+  indent?: number
   attrs?: Record<string, unknown>
   /** What the document actually called it, when `type` is `'unknown'`. */
   typeName?: string
@@ -219,7 +226,16 @@ function blockFromDocument(block: Block): RenderBlock {
         }
       })
     } else {
-      out.children = (block.content as Block[]).map(blockFromDocument)
+      const children = block.content as Block[]
+      out.children = children.map(blockFromDocument)
+      if (block.type === 'bulletList' || block.type === 'orderedList') {
+        // Flat on the wire and flat here, so a reader that draws only `inline`
+        // still shows every item; `indent` is the depth it may nest them by.
+        const depths = listItemDepths(children)
+        out.children.forEach((child, i) => {
+          if (child.type === 'listItem' && depths[i] > 0) child.indent = depths[i]
+        })
+      }
     }
   }
   /*

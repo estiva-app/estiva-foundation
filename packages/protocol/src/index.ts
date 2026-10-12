@@ -203,6 +203,7 @@ export {
   assignMissingBlockIds,
   blockIds,
   findBlock,
+  listItemDepths,
   inlineTextOf,
   documentText,
 } from './blocks.js'

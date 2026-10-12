@@ -1,4 +1,12 @@
-import { newBlockId, parseBlockDocument, serializeBlockDocument, inlineTextOf, type Block, type BlockDocument } from './blocks.js'
+import {
+  newBlockId,
+  parseBlockDocument,
+  serializeBlockDocument,
+  inlineTextOf,
+  listItemDepths,
+  type Block,
+  type BlockDocument,
+} from './blocks.js'
 import { markerTextToBlockDocument } from './bridge-content.js'
 import type { InlineMarkNode, InlineTextNode } from './content.js'
 import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
@@ -124,6 +132,9 @@ export const EDITOR_BLOCK_TYPES: ReadonlySet<string> = new Set([
  */
 const BLOCK_CONTAINERS = new Set(['bulletList', 'orderedList', 'table', 'tableRow', 'tableHeader', 'tableCell'])
 
+/** The two lists — flat on the wire, nested in the editor (MAN-13). */
+const LISTS = new Set(['bulletList', 'orderedList'])
+
 /** The node type an unknown block is parked in — `@estiva-app/ui/editor`'s `UnknownBlock`. */
 export const UNKNOWN_BLOCK_NODE = 'unknownBlock'
 /** The node type a `nostr:` reference is drawn as — `@estiva-app/ui/editor`'s `ReferenceNode`. */
@@ -183,7 +194,7 @@ function blockToEditor(block: Block): EditorNode {
     // shows it needs nothing from this package.
     return { type: UNKNOWN_BLOCK_NODE, attrs: { blockId: block.id, source: block, text: inlineTextOf(block) } }
   }
-  const attrs = { ...(block.attrs ?? {}), blockId: block.id }
+  const attrs: Record<string, unknown> = { ...(block.attrs ?? {}), blockId: block.id }
 
   if (block.type === 'codeBlock') {
     // A fence is literal: its newlines are text, not breaks.
@@ -208,16 +219,55 @@ function blockToEditor(block: Block): EditorNode {
       paragraph is that wrapper and nothing else — see `RichText`, which draws
       a list item's *inline* content, so a list item that held anything but one
       paragraph would render empty there.
+
+      Its `indent` is spent by `listToEditor`, which nests the item instead.
     */
+    const { indent: _depth, ...itemAttrs } = attrs
     const inline = isInlineRun(block.content) ? inlineToEditor(block.content) : []
-    return { type: 'listItem', attrs, content: [{ type: 'paragraph', content: inline }] }
+    return { type: 'listItem', attrs: itemAttrs, content: [{ type: 'paragraph', content: inline }] }
   }
+
+  if (LISTS.has(block.type)) return listToEditor(block, attrs)
 
   if (block.content === undefined) return { type: block.type, attrs }
   const content = isInlineRun(block.content)
     ? inlineToEditor(block.content)
     : (block.content as Block[]).map(blockToEditor)
   return { type: block.type, attrs, ...(content.length ? { content } : {}) }
+}
+
+/**
+ * A flat list, nested the way an editor holds it (MAN-13).
+ *
+ * §13.3 keeps a list flat and says how deep each item is (`attrs.indent`, read
+ * by `listItemDepths`); ProseMirror puts a deeper item in a list inside the
+ * item above, which is what its Tab does. The lists built here are the
+ * editor's alone: they have no id because the wire has no such block, and
+ * each takes the type of the list it sits in (Miky, 2026-10-12).
+ */
+function listToEditor(block: Block, attrs: Record<string, unknown>): EditorNode {
+  const items = Array.isArray(block.content) && !isInlineRun(block.content) ? (block.content as Block[]) : []
+  const depths = listItemDepths(items)
+  const root: EditorNode = { type: block.type, attrs, content: [] }
+  // The list each depth is filling. A depth one deeper than the last opens a
+  // list inside the last item; a shallower one closes the lists below it.
+  const open: EditorNode[] = [root]
+  items.forEach((item, i) => {
+    let depth = depths[i]
+    open.length = Math.min(open.length, depth + 1)
+    // Only a list item can hold a list: under a block this version does not
+    // know, the item stays at that block's depth.
+    if (open.length === depth && open[depth - 1].content!.at(-1)!.type !== 'listItem') depth -= 1
+    if (open.length === depth) {
+      const parent = open[depth - 1].content!.at(-1)!
+      const nested: EditorNode = { type: block.type, content: [] }
+      parent.content = [...(parent.content ?? []), nested]
+      open.push(nested)
+    }
+    open[depth].content!.push(blockToEditor(item))
+  })
+  if (root.content!.length === 0) delete root.content
+  return root
 }
 
 /**
@@ -298,6 +348,9 @@ function claimIds(nodes: readonly EditorNode[], owners: Map<string, Owner>): voi
       if (!owner || (!owner.fixed && !owner.holdsText && holds)) owners.set(claimed, { node, holdsText: holds, fixed: false })
     }
     if (BLOCK_CONTAINERS.has(node.type)) claimIds(node.content ?? [], owners)
+    // A list inside a list item is the editor's, and has no id to claim; its
+    // items are the outer list's, one level in (MAN-13).
+    if (node.type === 'listItem') for (const list of nestedLists(node)) claimIds(list.content ?? [], owners)
   }
 }
 
@@ -352,6 +405,28 @@ function sameMarks(a: readonly InlineMarkNode[], b: readonly InlineMarkNode[]): 
   return a.every((m, i) => m.type === b[i].type)
 }
 
+const nestedLists = (item: EditorNode): EditorNode[] => (item.content ?? []).filter((child) => LISTS.has(child.type))
+
+/**
+ * A list's items, flattened back onto the wire: an item in a list inside an
+ * item comes right after it, one `indent` deeper (MAN-13). Whatever type that
+ * inner list was, its items are now the outer list's (Miky, 2026-10-12).
+ */
+function listItemsFromEditor(list: EditorNode, depth: number, claims: IdClaims): Block[] {
+  const out: Block[] = []
+  for (const child of list.content ?? []) {
+    const block = blockFromEditor(child, claims)
+    if (block === null) continue
+    if (child.type !== 'listItem') {
+      out.push(block)
+      continue
+    }
+    out.push(depth > 0 ? { ...block, attrs: { ...block.attrs, indent: depth } } : block)
+    for (const inner of nestedLists(child)) out.push(...listItemsFromEditor(inner, depth + 1, claims))
+  }
+  return out
+}
+
 function blockFromEditor(node: EditorNode, claims: IdClaims): Block | null {
   if (node.type === UNKNOWN_BLOCK_NODE) {
     /*
@@ -394,10 +469,17 @@ function blockFromEditor(node: EditorNode, claims: IdClaims): Block | null {
 
   if (node.type === 'listItem') {
     // Back out of the paragraph wrapper. A list item carries inline runs on
-    // the wire — see `blockToEditor`.
-    const inline = (node.content ?? []).flatMap((child) => inlineFromEditor(child.content ?? []))
-    return { ...base, content: inline }
+    // the wire — see `blockToEditor`. A list inside it is the caller's: its
+    // items follow this one (`listItemsFromEditor`), and its depth is the
+    // caller's to set, never one an attribute claims.
+    const { indent: _depth, ...itemAttrs } = attrs
+    const inline = (node.content ?? [])
+      .filter((child) => !LISTS.has(child.type))
+      .flatMap((child) => inlineFromEditor(child.content ?? []))
+    return { type: node.type, id, ...(Object.keys(itemAttrs).length ? { attrs: itemAttrs } : {}), content: inline }
   }
+
+  if (LISTS.has(node.type)) return { ...base, content: listItemsFromEditor(node, 0, claims) }
 
   if (BLOCK_CONTAINERS.has(node.type)) {
     const children = (node.content ?? [])
