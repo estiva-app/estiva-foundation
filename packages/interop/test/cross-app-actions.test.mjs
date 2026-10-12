@@ -342,6 +342,9 @@ test('a refused sweep costs the borrowed rows, not the object, and is asked agai
 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
   await assert.rejects(resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query, cache), /rate-limited/, 'acting says so')
+  // What is offered without the sweep can be acted with without it.
+  const builtIn = await resolveActingManifest(pointer, FOLDER_ACTIONS_ADDRESS, query, cache)
+  assert.equal(builtIn.address, FOLDER_ACTIONS_ADDRESS)
 
   refuse = false
   const recovered = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)

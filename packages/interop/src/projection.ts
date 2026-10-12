@@ -1558,7 +1558,6 @@ const FOLDER_CREATOR: ResolvedManifest = {
   manifest: {
     name: 'Folder',
     about: 'What every app may do in a Folder, whichever app made it.',
-    records: BARE_FILE_MANIFEST.records,
     projections: { [String(KIND_BARE_FILE)]: BARE_FILE_MANIFEST.projections![String(KIND_BARE_FILE)] },
     actions: [
       {
@@ -1573,7 +1572,6 @@ const FOLDER_CREATOR: ResolvedManifest = {
         input: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
       },
     ],
-    vocabularies: {},
   },
   address: FOLDER_ACTIONS_ADDRESS,
   viaRecommendation: false,
@@ -2029,6 +2027,8 @@ export async function resolveActingManifest(
 ): Promise<ResolvedManifest | null> {
   const owner = await resolveManifest(pointer, query, cache)
   if (!owner || !declaredBy || declaredBy === owner.address) return owner
+  // A Folder's built-in needs no sweep, so a refused one must not cost it (INT-12).
+  if (pointer.kind === KIND_CHANNEL_METADATA && declaredBy === FOLDER_ACTIONS_ADDRESS) return FOLDER_CREATOR
   const creators = await creatorsOn(pointer.kind, query, cache)
   return borrowedFrom(pointer.kind, owner, creators).find((creator) => creator.address === declaredBy) ?? null
 }
