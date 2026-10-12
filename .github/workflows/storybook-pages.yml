@@ -1,0 +1,90 @@
+name: storybook pages
+
+# Build a repository's Storybook and publish it to Cloudflare Pages, so a pushed
+# concept is a link rather than a checkout (Peek "AI & Other Building Tips",
+# 2026-10-09: Miky and Katerina). One Pages project per Storybook; main is the
+# project's production deployment, any other branch its own preview at
+# <branch>.<project>.pages.dev. Cloudflare Access, not this file, decides who may
+# open either.
+#
+# The apps call it from a workflow of their own, pinned to a tag like the
+# install action:
+#
+#   jobs:
+#     storybook:
+#       uses: estiva-app/estiva-foundation/.github/workflows/storybook-pages.yml@ci-v2
+#       with:
+#         project: peek-storybook
+#       secrets: inherit
+#
+# CLOUDFLARE_API_TOKEN (Account → Cloudflare Pages → Edit, nothing else) and
+# CLOUDFLARE_ACCOUNT_ID are organisation secrets. Without them — a fork's pull
+# request, or before they exist — the Storybook is still built, so a broken
+# story fails the check, and the upload is skipped with a notice.
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: The Cloudflare Pages project, created on the first upload if it does not exist.
+        type: string
+        required: true
+      directories:
+        description: Passed to the install action — the directories to install, one per line.
+        type: string
+        default: .
+      working-directory:
+        description: Where the Storybook builds from.
+        type: string
+        default: .
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: estiva-app/estiva-foundation/.github/actions/install@ci-v1
+        with:
+          directories: ${{ inputs.directories }}
+
+      - name: Build the Storybook
+        run: npx storybook build -o storybook-static --quiet
+
+      - name: Publish to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ inputs.project }}
+          # The pull request's own branch, not refs/pull/<n>/merge.
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Built, not published: CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not available to this run."
+            exit 0
+          fi
+          # Pinned, and run with npx rather than a third-party action: one tool,
+          # one version, nothing else holding the token.
+          wrangler="npx --yes wrangler@4.141.0"
+          if ! $wrangler pages project list --json | grep -q "\"$PROJECT\""; then
+            $wrangler pages project create "$PROJECT" --production-branch main
+          fi
+          $wrangler pages deploy storybook-static --project-name "$PROJECT" \
+            --branch "$BRANCH" --commit-hash "$SHA" --commit-dirty=true | tee deploy.out
+          {
+            echo "### Storybook — \`$BRANCH\`"
+            grep -oE 'https://[^ ]+\.pages\.dev' deploy.out | sort -u | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"

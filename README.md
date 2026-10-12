@@ -94,6 +94,14 @@ ignores them.
 git tag ci-v2 && git push origin ci-v2
 ```
 
+### The shared Storybook workflow
+
+`.github/workflows/storybook-pages.yml` builds an app's Storybook and publishes
+it to Cloudflare Pages: `main` to the project's production URL, any other branch
+to `<branch>.<project>.pages.dev`. An app calls it with its Pages project name
+and `secrets: inherit`; it is tagged with the install action (`ci-v2` onwards).
+Who may open the result is a Cloudflare Access policy, not this repository.
+
 Semver per package. Packages start at `0.x` and stay there until two apps consume
 them in production; within `0.x`, MINOR carries the break.
 
