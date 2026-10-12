@@ -4,6 +4,30 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.29.0 — 2026-10-12
+
+**Wire behaviour: a block document can hold an indented list item** (MAN-13,
+SPEC §13.3). An editor's save used to drop an item indented with Tab, text and
+all; it now writes it.
+
+- A list stays flat on the wire, and an indented `listItem` carries
+  `attrs.indent` (a whole number, absent means 0). A reader on 0.28 still draws
+  every item, level, and its editor's save drops the depth but no text and no id.
+- `listItemDepths(items)` is how a reader must read it: anything but a whole
+  number ≥ 0 is 0, and no item sits more than one level below the item before
+  it, so the first is at 0 and the children of a deleted parent hang from the
+  item above. None is deeper than `MAX_LIST_DEPTH` (8, SPEC's MUST; Miky,
+  2026-10-12): a list one level deeper per item fits ~4,300 levels in 256 KiB
+  and overflowed the stack on save.
+- `toEditorDocument` nests indented items the way ProseMirror's Tab does, each
+  inner list taking the outer list's type and no id; `fromEditorDocument` flattens
+  them back, keeping every item's id. An inner list of the other type saves as
+  the outer list's (Miky, 2026-10-12).
+- `RenderBlock.indent` on a list item, from `listItemDepths`; a list's items stay
+  its flat `children`.
+- `blockDocumentToMarkerText` spells an indented item two spaces a level, each
+  level numbered from 1. §13.2 has no nesting, so it reads back level.
+
 ## 0.28.1 — 2026-10-07
 
 **Wire behaviour: no builder's bytes changed.** `absenceOf` was too trusting

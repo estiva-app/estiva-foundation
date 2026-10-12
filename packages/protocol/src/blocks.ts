@@ -254,6 +254,36 @@ export function findBlock(doc: BlockDocument, id: string): Block | undefined {
 }
 
 /**
+ * How deep each item of a list sits — §13.3's `attrs.indent`, as a reader must
+ * read it (MAN-13).
+ *
+ * A list is flat on the wire and an item says how far it is indented, so a
+ * reader that does not know `indent` still draws every item, just level. That
+ * leaves two shapes the editor never writes and a reader still has to place:
+ * a first item that is indented, and an item more than one level deeper than
+ * the one above — the children of a parent that was deleted. Each sits at most
+ * one level below the item before it, so the first item is at 0 and an orphan
+ * hangs from the item above. Anything that is not a whole number ≥ 0 is 0.
+ *
+ * And none deeper than {@link MAX_LIST_DEPTH}: a list whose every item is one
+ * deeper than the last fits ~4,300 levels in §12.3's 256 KiB, and an editor
+ * walking that tree runs out of stack (review of MAN-13).
+ */
+export function listItemDepths(items: readonly Block[]): number[] {
+  const out: number[] = []
+  for (const item of items) {
+    const raw = item.attrs?.indent
+    const asked = typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : 0
+    const ceiling = out.length === 0 ? 0 : out[out.length - 1] + 1
+    out.push(Math.min(asked, ceiling, MAX_LIST_DEPTH))
+  }
+  return out
+}
+
+/** The deepest a list item is drawn or edited; deeper is drawn here. §13.3's MUST (Miky, 2026-10-12). */
+export const MAX_LIST_DEPTH = 8
+
+/**
  * A block's text, including its children's.
  *
  * This is what §13.3 requires a reader to draw for a block type it does not
