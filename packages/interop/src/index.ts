@@ -49,6 +49,7 @@ export {
   KIND_BARE_FILE,
   MOVED_TO_TAG,
   BARE_FILE_MANIFEST_ADDRESS,
+  FOLDER_ACTIONS_ADDRESS,
   ASPECTS,
   type Aspect,
   commentKindsOf,

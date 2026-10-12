@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.54.0 — 2026-10-12
+
+**Manifests: a Folder offers actions no manifest declares, and the bare file's
+`delete` is `listed`** (INT-12, SPEC §3.2). Published manifests mean what they
+meant; what changes is what a Folder and a bare file offer beside them.
+
+- **A Folder's built-in `create-file`** puts a bare file in it: `kind:30840`
+  with the Folder in `h` (§6.7, never `buzz-channel`), then the `kind:1852`
+  `add` when the Folder has state, because it is `listed`. It is on every
+  `kind:39000` with no `kind:31990` declaring it, carries `declaredBy.address`
+  `FOLDER_ACTIONS_ADDRESS` (`spec:3.2`, exported), and
+  `resolveActingManifest` hands its manifest back by that address. A refused
+  manifest sweep does not cost it. A Folder's actions are now the owner's, then
+  this one, then other apps' creations; an app declaring a `30840` on a Folder
+  is dropped in its favour rather than drawn as a second row. A consumer offers
+  it only if it may sign `30840` and `1852` (§3.3) — **Ship and Leaf, which may
+  not sign `30840`, must filter `create-file` out** when they upgrade.
+- **The bare file's `delete` is `listed`**, so a consumer following it removes
+  the file from every Folder whose state lists it, as Ship's `delete-project`
+  does. `buildActionEvent` (one event) now refuses it; build it with
+  `buildActionEvents` and `listedIn`, as Peek's delete already does.
+
 ## 0.53.0 — 2026-10-09
 
 **Manifests: nothing changes.** No declaration is read differently.

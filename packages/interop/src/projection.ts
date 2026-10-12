@@ -1506,7 +1506,13 @@ const BARE_FILE_MANIFEST: Manifest = {
         'an agent that wrote it, may — and its comments stay as separate events.',
       effect: 'destructive',
       appliesTo: [String(KIND_BARE_FILE)],
-      emits: { kind: KIND_DELETION },
+      /*
+        `listed`, as `create-file` on a Folder is (INT-12): a file put in a
+        Folder's state by a declaration is taken out of it by one. Without it a
+        consumer following declarations deleted the file and left its row in
+        every Folder that listed it — FOL-48's failure.
+      */
+      emits: { kind: KIND_DELETION, listed: true },
     },
   ],
   vocabularies: {
@@ -1520,6 +1526,55 @@ const BARE_FILE_MANIFEST: Manifest = {
 
 function bareFileManifest(): ResolvedManifest {
   return { manifest: BARE_FILE_MANIFEST, address: BARE_FILE_MANIFEST_ADDRESS, viaRecommendation: false }
+}
+
+/**
+ * What a Folder's built-in actions are declared by — SPEC §3.2, as
+ * {@link BARE_FILE_MANIFEST_ADDRESS} is for the bare file. The
+ * `declaredBy.address` of an action no app declared.
+ */
+export const FOLDER_ACTIONS_ADDRESS = 'spec:3.2'
+
+/**
+ * A Folder's built-in actions, offered beside the ones apps declare on it
+ * (INT-12).
+ *
+ * A Folder is owned by no app (SPEC §3.2), so what every app may do to one
+ * cannot sit on any `kind:31990` — a manifest claiming `39000` is what §3.2
+ * forbids, and a creation declared there reaches a consumer only through that
+ * claim. Putting a new file in a Folder is the first: a bare file with the
+ * Folder in `h` (§6.7 — never `buzz-channel`, so a private Folder's titles stay
+ * its own), then the `kind:1852` `add` that lists it (§3.3), which `listed`
+ * makes the runtime's job as it is for Ship's `add-project`.
+ *
+ * It travels the cross-app path ({@link borrowedFrom}) rather than the owner's,
+ * so it carries `declaredBy` naming this section, and
+ * {@link resolveActingManifest} hands it back by that address. The projection
+ * is the bare file's own, so the created object is drawn the way every other
+ * bare file is. Each consumer offers it only if it may sign `30840` and `1852`
+ * (§3.3).
+ */
+const FOLDER_CREATOR: ResolvedManifest = {
+  manifest: {
+    name: 'Folder',
+    about: 'What every app may do in a Folder, whichever app made it.',
+    projections: { [String(KIND_BARE_FILE)]: BARE_FILE_MANIFEST.projections![String(KIND_BARE_FILE)] },
+    actions: [
+      {
+        id: 'create-file',
+        label: 'New file',
+        description:
+          'Put a new file in this Folder: a title, and nothing else yet. Everyone who can read the Folder can read ' +
+          'it, and the Folder lists it straight away. The app opening files calls it by its own word — Peek says topic.',
+        effect: 'writes',
+        appliesTo: String(KIND_CHANNEL_METADATA),
+        emits: { kind: KIND_BARE_FILE, listed: true },
+        input: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
+      },
+    ],
+  },
+  address: FOLDER_ACTIONS_ADDRESS,
+  viaRecommendation: false,
 }
 
 /**
@@ -1917,18 +1972,30 @@ function creatorsOrNone(kind: number, query: QueryFn, cache?: ProjectionCache): 
  * creates here is the owner's to offer, so another manifest's claim to create
  * it — a staging copy of the same app, most likely — is dropped rather than
  * drawn as a second row.
+ *
+ * **A Folder's built-in creations come first and are never dropped**
+ * ({@link FOLDER_CREATOR}, INT-12): no app owns a Folder (SPEC §3.2), so no
+ * app's claim to create the same kind there outranks the specification's —
+ * a manifest declaring a bare file on a Folder is the second row, not this.
  */
 function borrowedFrom(kind: number, owner: ResolvedManifest, creators: readonly ResolvedManifest[]): ResolvedManifest[] {
+  const builtIn = kind === KIND_CHANNEL_METADATA ? [FOLDER_CREATOR] : []
+  const builtInMakes = new Set(builtIn.flatMap((creator) => (creator.manifest.actions ?? []).map((a) => a.emits.kind)))
   const ownerMakes = new Set(
     (owner.manifest.actions ?? [])
       .filter((action) => isCreationAction(action) && asArray(action.appliesTo).includes(String(kind)))
       .map((action) => action.emits.kind),
   )
-  return creators.flatMap((creator) => {
-    if (creator.address === owner.address) return []
-    const actions = (creator.manifest.actions ?? []).filter((action) => !ownerMakes.has(action.emits.kind))
-    return actions.length ? [{ ...creator, manifest: { ...creator.manifest, actions } }] : []
-  })
+  return [
+    ...builtIn,
+    ...creators.flatMap((creator) => {
+      if (creator.address === owner.address) return []
+      const actions = (creator.manifest.actions ?? []).filter(
+        (action) => !ownerMakes.has(action.emits.kind) && !builtInMakes.has(action.emits.kind),
+      )
+      return actions.length ? [{ ...creator, manifest: { ...creator.manifest, actions } }] : []
+    }),
+  ]
 }
 
 /** Every borrowed creation, resolved as the owner's actions are, with its declaring app named. */
@@ -1960,6 +2027,8 @@ export async function resolveActingManifest(
 ): Promise<ResolvedManifest | null> {
   const owner = await resolveManifest(pointer, query, cache)
   if (!owner || !declaredBy || declaredBy === owner.address) return owner
+  // A Folder's built-in needs no sweep, so a refused one must not cost it (INT-12).
+  if (pointer.kind === KIND_CHANNEL_METADATA && declaredBy === FOLDER_ACTIONS_ADDRESS) return FOLDER_CREATOR
   const creators = await creatorsOn(pointer.kind, query, cache)
   return borrowedFrom(pointer.kind, owner, creators).find((creator) => creator.address === declaredBy) ?? null
 }
