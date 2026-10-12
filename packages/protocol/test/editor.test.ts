@@ -16,6 +16,7 @@ import {
   blockDocumentToMarkerText,
   documentForEditing,
   fromEditorDocument,
+  MAX_LIST_DEPTH,
   toRenderTree,
   parseBlockDocument,
   publishableFromEditor,
@@ -593,5 +594,23 @@ describe('an indented list item — MAN-13', () => {
     assert.equal(blockDocumentToMarkerText(doc), '- intro\n  - after\n    - deeper\n- back')
     const ordered = { ...doc, content: [{ ...doc.content[0], type: 'orderedList', attrs: { start: 3 } }] }
     assert.equal(blockDocumentToMarkerText(ordered), '3. intro\n  1. after\n    1. deeper\n4. back')
+  })
+
+  it('keeps an item under a block it does not know at that block\'s depth, and the ones after it', () => {
+    const at = (id: string, indent: number) => ({ type: 'listItem', id, attrs: { indent }, content: [{ type: 'text' as const, text: id }] })
+    const doc: BlockDocument = {
+      type: 'doc',
+      content: [{ type: 'bulletList', id: 'l', content: [{ type: 'widget', id: 'w', content: [{ type: 'text', text: 'w' }] }, at('a', 1), at('b', 2), at('c', 1)] }],
+    }
+    const saved = fromEditorDocument(toEditorDocument(doc))
+    assert.deepEqual(items(saved).map(([id, , indent]) => [id, indent]), [['w', undefined], ['a', undefined], ['b', 1], ['c', 1]])
+  })
+
+  it('draws no item deeper than MAX_LIST_DEPTH, so a hostile list cannot exhaust the stack', () => {
+    const deep: Block[] = Array.from({ length: 4400 }, (_, i) => ({ type: 'listItem', id: `i${i}`, attrs: { indent: i }, content: [] }))
+    const doc: BlockDocument = { type: 'doc', content: [{ type: 'bulletList', id: 'l', content: deep }] }
+    const saved = fromEditorDocument(toEditorDocument(doc))
+    assert.equal(saved.content[0].content!.length, 4400)
+    assert.equal(Math.max(...(saved.content[0].content as Block[]).map((b) => (b.attrs?.indent as number) ?? 0)), MAX_LIST_DEPTH)
   })
 })

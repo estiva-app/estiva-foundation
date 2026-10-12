@@ -253,16 +253,21 @@ function listToEditor(block: Block, attrs: Record<string, unknown>): EditorNode 
   // list inside the last item; a shallower one closes the lists below it.
   const open: EditorNode[] = [root]
   items.forEach((item, i) => {
-    let depth = depths[i]
+    // At most one below the deepest list open: an item that could not nest
+    // (below) leaves the ones after it a level short of what they say.
+    let depth = Math.min(depths[i], open.length)
     open.length = Math.min(open.length, depth + 1)
-    // Only a list item can hold a list: under a block this version does not
-    // know, the item stays at that block's depth.
-    if (open.length === depth && open[depth - 1].content!.at(-1)!.type !== 'listItem') depth -= 1
     if (open.length === depth) {
       const parent = open[depth - 1].content!.at(-1)!
-      const nested: EditorNode = { type: block.type, content: [] }
-      parent.content = [...(parent.content ?? []), nested]
-      open.push(nested)
+      if (parent.type === 'listItem') {
+        const nested: EditorNode = { type: block.type, content: [] }
+        parent.content = [...(parent.content ?? []), nested]
+        open.push(nested)
+      } else {
+        // Only a list item can hold a list: under a block this version does
+        // not know, the item stays at that block's depth.
+        depth -= 1
+      }
     }
     open[depth].content!.push(blockToEditor(item))
   })

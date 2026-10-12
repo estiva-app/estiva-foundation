@@ -264,6 +264,10 @@ export function findBlock(doc: BlockDocument, id: string): Block | undefined {
  * the one above — the children of a parent that was deleted. Each sits at most
  * one level below the item before it, so the first item is at 0 and an orphan
  * hangs from the item above. Anything that is not a whole number ≥ 0 is 0.
+ *
+ * And none deeper than {@link MAX_LIST_DEPTH}: a list whose every item is one
+ * deeper than the last fits ~4,300 levels in §12.3's 256 KiB, and an editor
+ * walking that tree runs out of stack (review of MAN-13).
  */
 export function listItemDepths(items: readonly Block[]): number[] {
   const out: number[] = []
@@ -271,10 +275,13 @@ export function listItemDepths(items: readonly Block[]): number[] {
     const raw = item.attrs?.indent
     const asked = typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : 0
     const ceiling = out.length === 0 ? 0 : out[out.length - 1] + 1
-    out.push(Math.min(asked, ceiling))
+    out.push(Math.min(asked, ceiling, MAX_LIST_DEPTH))
   }
   return out
 }
+
+/** The deepest a list item is drawn or edited; deeper is drawn here. No person indents a list this far. */
+export const MAX_LIST_DEPTH = 16
 
 /**
  * A block's text, including its children's.
