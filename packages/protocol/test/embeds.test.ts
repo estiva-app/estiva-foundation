@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, toRenderTree } from '../dist/index.js'
+import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, linksAsReferences, toRenderTree } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
 const ISSUE = `30851:${PK}:f78c3b96-2a3b-4d92-910a-ac25aba672cd`
@@ -101,5 +101,72 @@ describe('which cards a message draws', () => {
 
   it('does not count a reference inside a code span', () => {
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`example: \`${issueRef}\``)), [])
+  })
+})
+
+describe('linksAsReferences', () => {
+  const url = 'https://ship.estiva.app/issue/opt-18-probe-issue-f78c3b96-2a3b-4d92-910a-ac25aba672cd'
+  const messageUrl = 'https://peek.estiva.app/message/d064ad5a'
+  const resolve = (u: string) => (u === url ? ISSUE : u === messageUrl ? MESSAGE : undefined)
+  const runs = (text: string) => linksAsReferences(body(text), resolve)[0].inline!.map((r) => (r.reference ? { ref: r.reference, text: r.text } : r.text))
+
+  it('turns a link alone on its line into the reference it names', () => {
+    assert.deepEqual(runs(url), [{ ref: issueRef, text: url }])
+  })
+
+  it('turns a link in a sentence too, and leaves the sentence its punctuation', () => {
+    assert.deepEqual(runs(`see ${url}, then ship`), ['see ', { ref: issueRef, text: url }, ', then ship'])
+  })
+
+  it('names a message by its nevent', () => {
+    assert.deepEqual(runs(messageUrl), [{ ref: messageRef, text: messageUrl }])
+  })
+
+  it('leaves a link on words alone — target and words', () => {
+    assert.deepEqual(runs(`the [plan](${url}) for now`), [`the [plan](${url}) for now`])
+    assert.deepEqual(runs(`[${url}](https://elsewhere.example/x)`), [`[${url}](https://elsewhere.example/x)`])
+  })
+
+  it('leaves the target of a link on words whose words carry a mark', () => {
+    const got = linksAsReferences(body(`[**the plan**](${url})`), resolve)
+    assert.ok(got[0].inline!.every((r) => !r.reference))
+  })
+
+  it('leaves a link nothing claims, and one in code', () => {
+    assert.deepEqual(runs('https://example.com/a'), ['https://example.com/a'])
+    const code = linksAsReferences(body(`\`${url}\``), resolve)[0].inline!
+    assert.ok(code.every((r) => !r.reference))
+    const block = linksAsReferences(body('```\n' + url + '\n```'), resolve)
+    assert.ok(JSON.stringify(block).indexOf('reference') === -1)
+  })
+
+  it('keeps the marks around a link', () => {
+    const got = linksAsReferences(body(`**${url}**`), resolve)[0].inline!
+    assert.deepEqual(got.map((r) => [r.reference ?? null, r.marks]), [[issueRef, ['bold']]])
+  })
+
+  it('leaves a link whose answer no naddr can hold (a d over 255 bytes) as a link, without throwing', () => {
+    const long = `30851:${PK}:${'x'.repeat(300)}`
+    const got = linksAsReferences(body(url), () => long)[0].inline!
+    assert.deepEqual(got.map((r) => r.reference ?? null), [null])
+  })
+
+  it('stays linear on a hostile run of unclosed links (256 KB)', () => {
+    const hostile = '[a](https://x'.repeat(19700)
+    const t0 = performance.now()
+    linksAsReferences(body(hostile), resolve)
+    linksAsReferences(body('[a](https://x) https://y '.repeat(10000)), resolve)
+    assert.ok(performance.now() - t0 < 500, `took ${Math.round(performance.now() - t0)} ms`)
+  })
+
+  it('returns a block with nothing to turn as the same object', () => {
+    const tree = body('just words, and https://example.com/a')
+    assert.equal(linksAsReferences(tree, resolve)[0], tree[0])
+    assert.notEqual(linksAsReferences(body(url), resolve)[0], body(url)[0])
+  })
+
+  it('agrees with cardsIn about which card a link names', () => {
+    const tree = linksAsReferences(body(url), resolve)
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], tree), [{ value: ISSUE, layout: 'compact' }])
   })
 })

@@ -327,6 +327,11 @@ export function renderTreeText(blocks: readonly RenderBlock[]): string {
  * Whitespace around the reference does not change the answer — a pointer alone
  * on its line is alone on its line whether or not somebody left a space after
  * it.
+ *
+ * **For a block document (a description) only, since OPT-18.** In a message a
+ * reference reads as its chip wherever it sits, and a card comes only from the
+ * author's `embed` (§13.6.2). A description has no `embed` yet, so its readers
+ * still draw a reference alone on its line as a card until it can choose one.
  */
 export function standaloneReference(block: RenderBlock): string | undefined {
   if (block.type !== 'paragraph' || block.children?.length) return undefined
