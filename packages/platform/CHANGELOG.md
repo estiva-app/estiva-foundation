@@ -1,5 +1,27 @@
 # @estiva-app/platform
 
+## 0.6.0
+
+The copy answers a pooled list it has seen every value of (PEE-4, Peek opens
+instantly). Additive; a copy written by 0.5 is read as before.
+
+Apps pool a set into one list — `'#e': [the newest messages]`,
+`'#a': [25 addresses]`, `authors: [everyone named]` — and the list changes
+whenever the set does, so after a reload a read asked a list the relay never
+saw, though it had answered every value in it. Such a filter is now answered
+when, for one of its list fields, filters the same in every other field
+(`limit` aside) were answered **whole** and their lists hold every value it
+asks. Whole means not cut by its `limit`: under it, or past the most events
+the filter can match (one version of each replaceable event per author, of each
+addressable one per author and `d`, one event per id).
+
+- `answer` and the corrections a relay answer makes look only at the held
+  events of the filter's `ids`, else its `kinds`, not the whole copy: on a
+  reload at Peek's Topics, about a hundred reads spent 64 ms scanning it.
+- `SnapshotRecord.whole` and `SnapshotChange.whole`: the keys of filters whose
+  last answer was whole. Both storages keep them; a record without them covers
+  nothing until its filters are answered again.
+
 ## 0.5.0
 
 A copy on the device a reload draws from (PEE-2, Peek opens instantly). Additive.
