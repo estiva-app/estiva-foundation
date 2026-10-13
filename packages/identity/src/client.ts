@@ -211,6 +211,9 @@ export interface StoredToken {
  */
 const MAX_TIMER_MS = 2_147_483_647
 
+/** How long renewal keeps the cross-tab lock after writing, for the write to reach the other tabs (PEE-3). */
+const RENEWAL_SETTLE_MS = 250
+
 export class SignInError extends Error {}
 
 /** What a scheduled renewal reports back. Both optional; neither is required to be useful. */
@@ -266,7 +269,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   /** In-flight credentials, which may live somewhere shorter than the session. */
   /** The session, shared by every tab unless the app says otherwise (PEE-3). */
   const session = config.storage ?? (() => webStore('local'))
-  const pending = config.pendingStore ?? (config.storage ? config.storage : () => webStore('session'))
+  const pending = config.pendingStore ?? config.storage ?? (() => webStore('session'))
   const lock = config.lock ?? webLock
   const send = () => config.fetch ?? fetch
   const go = (url: string) => {
@@ -526,9 +529,20 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   const refreshAccessToken = (): Promise<StoredToken | null> => {
     if (refreshing) return refreshing
     const spending = storedToken()?.refreshToken
-    refreshing = lock(`${config.keyPrefix}.renewal`, () =>
-      storedToken()?.refreshToken === spending ? performRefresh() : Promise.resolve(validToken()),
-    ).finally(() => {
+    refreshing = new Promise<StoredToken | null>((answer, fail) => {
+      lock(`${config.keyPrefix}.renewal`, async () => {
+        if (storedToken()?.refreshToken !== spending) return answer(validToken())
+        answer(await performRefresh())
+        /*
+          Held a little longer than the renewal, though the caller already has
+          its answer. A browser does not order one tab's `localStorage` write
+          with another tab's lock grant — the write reaches the other process's
+          copy shortly after — so a tab granted the lock at once could still
+          read the spent token and present it again.
+        */
+        await new Promise<void>((settle) => setTimeout(settle, RENEWAL_SETTLE_MS))
+      }).catch(fail)
+    }).finally(() => {
       refreshing = null
     })
     return refreshing
