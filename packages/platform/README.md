@@ -140,9 +140,46 @@ await relayBudget.whenClear()
 Nothing here gates a read. A read somebody asked for by clicking still goes out
 at once; only the cadence backs off.
 
+### A copy on the device, so a reload draws at once
+
+`createEventSnapshot` keeps what the relay told one person — signed events,
+never a folded view — and answers the same filters from it on the next load.
+Fold its answer as you fold the relay's, then send the relay the read as
+before and fold again: the relay's answer replaces the copy's.
+
+```ts
+import { createEventSnapshot, indexedDbSnapshotStorage, snapshotScope } from '@estiva-app/platform'
+
+const storage = indexedDbSnapshotStorage(indexedDB, 'my-app-copy')
+const copy = createEventSnapshot({
+  storage,
+  scope: snapshotScope(relayUrl, pubkey),
+  version: 1, // bump when what you fold from it changes meaning
+})
+
+// In the transport, on every answer the relay gives:
+copy.absorb(filters, events)
+
+// Before the relay answers: null means the copy never saw this read answered.
+await copy.ready
+const drawnFirst = copy.answer(filters)
+
+// Signing out: every copy goes, and one still open — in this tab or another —
+// can never write the person's data back (the storage counts sign-outs).
+copy.discard()
+await storage.clear()
+```
+
+Every answer is also a correction: an event the copy holds that matches a
+filter the relay just answered, and is not in that answer, is dropped — a
+deletion, or a Folder the person lost. A `kind:5` drops what its author
+signed. `keepPlaintext` keeps the plaintext of the person's own blob beside
+the event, so an unchanged blob needs no decrypt on the next load. Never
+publish over something drawn from the copy: it may be older than the relay.
+
 ## What this deliberately does not know
 
-Where anything is stored. Peek's version took a `LiveProjectionApi`, and
+Where anything is stored, beyond the copy's storage you hand it. Peek's version took a `LiveProjectionApi`, and
 extracting that as-is would have baked a Convex assumption into a package two
 apps depend on. This delivers frames and connection state and nothing else, so
 it bets on neither outcome of "do we need Convex": if Convex stays nothing here
