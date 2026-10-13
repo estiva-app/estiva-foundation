@@ -90,14 +90,18 @@ function normalise(value: string): string | undefined {
 export type LinkResolver = (url: string) => string | undefined
 
 const TRAILING = new Set(['.', ',', ';', ':', '!', '?', ')', ']'])
+const URL_RUN = /https?:\/\/[^\s<>"'`]+/g
 
-/** The http(s) links in a text. Trailing punctuation is the sentence's, not the link's; stripped by a loop, which stays linear on a hostile run of dots. */
+/** A URL run without the sentence's trailing punctuation; stripped by a loop, which stays linear on a hostile run of dots. */
+function trimUrl(url: string): string {
+  let end = url.length
+  while (end > 0 && TRAILING.has(url[end - 1])) end--
+  return url.slice(0, end)
+}
+
+/** The http(s) links in a text. Trailing punctuation is the sentence's, not the link's. */
 function urlsIn(text: string): string[] {
-  return (text.match(/https?:\/\/[^\s<>"'`]+/g) ?? []).map((url) => {
-    let end = url.length
-    while (end > 0 && TRAILING.has(url[end - 1])) end--
-    return url.slice(0, end)
-  })
+  return (text.match(URL_RUN) ?? []).map(trimUrl)
 }
 
 /** The address or event id a `nostr:` reference names, or undefined for a person or something unreadable. */
@@ -199,7 +203,12 @@ export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: L
   const referenceOf = (url: string): string | undefined => {
     const value = normalise(resolveLink(url) ?? '')
     if (!value) return undefined
-    return `nostr:${EVENT_ID.test(value) ? encodeNevent({ id: value, relays: [] }) : addrToNaddr(value)}`
+    // An address no naddr can hold (a `d` over 255 bytes) stays a link rather than taking the message down with it.
+    try {
+      return `nostr:${EVENT_ID.test(value) ? encodeNevent({ id: value, relays: [] }) : addrToNaddr(value)}`
+    } catch {
+      return undefined
+    }
   }
   const split = (run: RenderInline): RenderInline[] => {
     if (run.reference || run.marks.includes('code') || !run.text.includes('://')) return [run]
@@ -208,13 +217,13 @@ export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: L
     for (const m of run.text.matchAll(LINK_ON_WORDS)) covered.push([m.index, m.index + m[0].length])
     const out: RenderInline[] = []
     let at = 0
-    for (const m of run.text.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+    for (const m of run.text.matchAll(URL_RUN)) {
       const start = m.index
       if (covered.some(([s, e]) => start >= s && start < e)) continue
-      // A link on words whose words carry a mark arrives split across runs: its target follows `](`.
-      if (run.text.slice(Math.max(0, start - 2), start) === '](') continue
-      const [url] = urlsIn(m[0])
-      const reference = url ? referenceOf(url) : undefined
+      // A link on words whose words carry a mark arrives split across runs: its target follows `](`, and a URL as its words follows `[`.
+      if (run.text.slice(Math.max(0, start - 2), start) === '](' || run.text[start - 1] === '[') continue
+      const url = trimUrl(m[0])
+      const reference = referenceOf(url)
       if (!reference) continue
       if (start > at) out.push({ ...run, text: run.text.slice(at, start) })
       out.push({ text: url, marks: run.marks, reference })
@@ -224,12 +233,16 @@ export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: L
     if (at < run.text.length) out.push({ ...run, text: run.text.slice(at) })
     return out
   }
+  // A block with nothing to turn is returned as it was, so a body without app links costs no copies.
   const walk = (bs: readonly RenderBlock[]): RenderBlock[] =>
     bs.map((block) => {
       if (block.type === 'codeBlock') return block
       const inline = block.inline?.flatMap(split)
       const children = block.children && walk(block.children)
-      return { ...block, ...(inline ? { inline } : {}), ...(children ? { children } : {}) }
+      const unchanged = <T,>(next: readonly T[] | undefined, was: readonly T[] | undefined) =>
+        !next || (next.length === was?.length && next.every((x, i) => x === was[i]))
+      const same = unchanged(inline, block.inline) && unchanged(children, block.children)
+      return same ? block : { ...block, ...(inline ? { inline } : {}), ...(children ? { children } : {}) }
     })
   return walk(blocks)
 }

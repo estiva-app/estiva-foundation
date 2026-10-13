@@ -145,6 +145,18 @@ describe('linksAsReferences', () => {
     assert.deepEqual(got.map((r) => [r.reference ?? null, r.marks]), [[issueRef, ['bold']]])
   })
 
+  it('leaves a link whose answer no naddr can hold (a d over 255 bytes) as a link, without throwing', () => {
+    const long = `30851:${PK}:${'x'.repeat(300)}`
+    const got = linksAsReferences(body(url), () => long)[0].inline!
+    assert.deepEqual(got.map((r) => r.reference ?? null), [null])
+  })
+
+  it('returns a block with nothing to turn as the same object', () => {
+    const tree = body('just words, and https://example.com/a')
+    assert.equal(linksAsReferences(tree, resolve)[0], tree[0])
+    assert.notEqual(linksAsReferences(body(url), resolve)[0], body(url)[0])
+  })
+
   it('agrees with cardsIn about which card a link names', () => {
     const tree = linksAsReferences(body(url), resolve)
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], tree), [{ value: ISSUE, layout: 'compact' }])
