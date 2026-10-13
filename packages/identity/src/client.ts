@@ -38,14 +38,14 @@
  *   `app_credentials` with separate `redirectUris` and separate kind ceilings.
  * - **`redirectUri`** — Peek registers a fixed `/auth/callback`; Ship routes on
  *   `location.hash` and registers its current pathname. Neither is more correct.
- * - **`storage`** and **`pendingStore`** — two stores, because Ship needs two.
- *   Peek keeps everything in `sessionStorage`, which dies with the tab and keeps
- *   a bearer token off a shared machine's disk. Ship keeps its *session* in
- *   `localStorage` so it outlives a tab, and its *in-flight PKCE credentials* in
- *   `sessionStorage` because the flow starts and ends in one tab. The package
- *   assumed one store until the second consumer was wired — see `pendingStore`.
- *   **Do not unify them**: NIP-RS slots (CRO-4) must survive a restart and belong
- *   in `localStorage`, while an access token does not.
+ * - **`storage`** and **`pendingStore`** — two stores, because the flow needs
+ *   two. The *session* lives in `localStorage` so every tab shares it and it
+ *   outlives a tab; the *in-flight PKCE credentials* live in `sessionStorage`
+ *   because the flow starts and ends in one tab. That is the default since
+ *   PEE-3, when Peek gave up its per-tab session (a new tab paid a ~0.5 s
+ *   `/authorize` bounce) and all three apps came to choose the same. Both stay
+ *   injectable — a test, a script or a future "public computer" mode may differ.
+ *   A shared session is why renewal takes a cross-tab {@link EstivaIdConfig.lock}.
  * - **`keyPrefix`** — so two apps on one origin cannot read each other's keys.
  * - **`navigate`** — the one genuinely untestable act. Injected so a test can
  *   observe where the flow *would* go.
@@ -96,6 +96,32 @@ export type FetchLike = (
 
 declare const fetch: FetchLike
 
+/**
+ * The defaults for `storage`, `pendingStore` and `lock`. Read through `typeof`
+ * inside functions, so a runtime without them — Node, a worker — gets null or
+ * the unguarded path rather than a ReferenceError.
+ */
+declare const localStorage: KeyValueStore | undefined
+declare const sessionStorage: KeyValueStore | undefined
+declare const navigator:
+  | { locks?: { request<T>(name: string, run: () => Promise<T>): Promise<T> } }
+  | undefined
+
+/** A browser store, or null where there is none or reading it throws (a sandboxed frame). */
+function webStore(which: 'local' | 'session'): KeyValueStore | null {
+  try {
+    if (which === 'local') return typeof localStorage === 'undefined' ? null : (localStorage ?? null)
+    return typeof sessionStorage === 'undefined' ? null : (sessionStorage ?? null)
+  } catch {
+    return null
+  }
+}
+
+function webLock<T>(name: string, run: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator?.locks
+  return locks ? locks.request(name, run) : run()
+}
+
 export interface EstivaIdConfig {
   /** Origin of the identity service, e.g. `https://id.estiva.app`. */
   base: string
@@ -109,21 +135,22 @@ export interface EstivaIdConfig {
   /**
    * Where the **session** lives — the token and nothing else.
    *
-   * Peek uses `sessionStorage`: it dies with the tab, which keeps a bearer token
-   * off a shared machine's disk. Ship uses `localStorage` so a session survives
-   * a tab close. Returns null outside a browser.
+   * Defaults to `localStorage`: every tab shares one session and it survives a
+   * tab close (PEE-3). Returns null outside a browser.
    */
-  storage: () => KeyValueStore | null
+  storage?: () => KeyValueStore | null
   /**
    * Where an **in-flight sign-in's** single-use credentials live — the verifier,
    * the state, the returnTo, the shell reason and the silent-attempt guard.
    *
-   * Defaults to {@link storage}, which is what Peek wants: one store for both.
+   * Defaults to `sessionStorage` when {@link storage} is defaulted too, and to
+   * {@link storage} when it is given — so a caller passing one store keeps
+   * exactly the behaviour it had before the defaults existed.
    *
-   * **Ship needs them separated, and that is why this exists.** Its session
-   * belongs in `localStorage` so it outlives a tab, while the PKCE credentials
-   * are per-tab by nature — the flow starts and ends in one tab, and the guard's
-   * whole point is that a genuinely new tab is entitled to a fresh attempt.
+   * **The two are separate because the flow needs it.** The session belongs in
+   * `localStorage` so it outlives a tab, while the PKCE credentials are per-tab
+   * by nature — the flow starts and ends in one tab, and the guard's whole point
+   * is that a genuinely new tab is entitled to a fresh attempt.
    *
    * This parameter was added by wiring the second consumer. The package had
    * assumed one store because it was extracted from Peek, which uses one: the
@@ -145,6 +172,18 @@ export interface EstivaIdConfig {
    */
   setTimer?: (run: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
+  /**
+   * Runs `run` while holding the lock `name` against every other tab of this
+   * origin (PEE-3). Renewal holds it, because a shared session means every
+   * tab's timer fires at the same moment, and Estiva ID revokes the whole chain
+   * when one refresh token is presented twice — two tabs renewing together
+   * would sign the person out of all of them.
+   *
+   * Defaults to the Web Locks API (`navigator.locks.request`), and to running
+   * `run` unguarded where there is none — a single-page runtime has no other
+   * tab to race.
+   */
+  lock?: <T>(name: string, run: () => Promise<T>) => Promise<T>
 }
 
 export interface StoredToken {
@@ -171,6 +210,9 @@ export interface StoredToken {
  * int32 and the timer fires immediately.
  */
 const MAX_TIMER_MS = 2_147_483_647
+
+/** How long renewal keeps the cross-tab lock after writing, for the write to reach the other tabs (PEE-3). */
+const RENEWAL_SETTLE_MS = 250
 
 export class SignInError extends Error {}
 
@@ -225,7 +267,10 @@ export interface EstivaIdClient {
 export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   const now = config.now ?? (() => Date.now())
   /** In-flight credentials, which may live somewhere shorter than the session. */
-  const pending = config.pendingStore ?? config.storage
+  /** The session, shared by every tab unless the app says otherwise (PEE-3). */
+  const session = config.storage ?? (() => webStore('local'))
+  const pending = config.pendingStore ?? config.storage ?? (() => webStore('session'))
+  const lock = config.lock ?? webLock
   const send = () => config.fetch ?? fetch
   const go = (url: string) => {
     if (!config.navigate) throw new Error('createEstivaId: navigate is required to leave for Estiva ID')
@@ -316,7 +361,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
   }
 
   const storedToken = (): StoredToken | null => {
-    const raw = config.storage()?.getItem(TOKEN_KEY)
+    const raw = session()?.getItem(TOKEN_KEY)
     if (!raw) return null
     try {
       const parsed = JSON.parse(raw) as StoredToken
@@ -353,7 +398,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * Anything that wants both says so, and only `beginSignOut` does.
    */
   const clearSession = (): void => {
-    config.storage()?.removeItem(TOKEN_KEY)
+    session()?.removeItem(TOKEN_KEY)
     // The reason lives with the in-flight credentials, which may be a different
     // store — see `pendingStore`. Still cleared here: a reason outliving the
     // session it described is a lie, and that was true before the split.
@@ -414,7 +459,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * never presented twice — a replay is what Estiva ID treats as theft.
    */
   const performRefresh = async (): Promise<StoredToken | null> => {
-    const s = config.storage()
+    const s = session()
     const current = storedToken()
     if (!s || !current?.refreshToken) return null
 
@@ -436,12 +481,22 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       return null
     }
 
+    /*
+      The session is shared by every tab (PEE-3), and signing out takes no lock:
+      while `/token` was answering, another tab may have signed out — or in.
+      Then this answer belongs to a session that is gone, and writing it would
+      put a live token back after the sign-out, for its whole lifetime. Only
+      the session this renewal spent is replaced or cleared.
+    */
+    const stillOurs = () => storedToken()?.refreshToken === current.refreshToken
+
     if (!response.ok) {
-      clearSession()
+      if (stillOurs()) clearSession()
       return null
     }
 
     const body = (await response.json()) as TokenResponse
+    if (!stillOurs()) return validToken()
     if (!body.access_token) {
       clearSession()
       return null
@@ -470,12 +525,34 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    *
    * Coalescing rather than caching: the promise is dropped the moment it
    * settles, so the *next* expiry renews again.
+   *
+   * **And never across tabs either (PEE-3).** The promise guards one page; a
+   * session in `localStorage` is shared by every tab, and each tab's timer
+   * fires at the same moment, for the same expiry. So the renewal runs under
+   * {@link EstivaIdConfig.lock}, and a tab that waited for it compares the
+   * stored refresh token with the one it set out to spend: if another tab
+   * renewed (or signed out, or in) meanwhile, that tab's answer is taken and
+   * `/token` is not called — presenting the spent token would be the replay.
    */
   let refreshing: Promise<StoredToken | null> | null = null
 
   const refreshAccessToken = (): Promise<StoredToken | null> => {
     if (refreshing) return refreshing
-    refreshing = performRefresh().finally(() => {
+    const spending = storedToken()?.refreshToken
+    refreshing = new Promise<StoredToken | null>((answer, fail) => {
+      lock(`${config.keyPrefix}.renewal`, async () => {
+        if (storedToken()?.refreshToken !== spending) return answer(validToken())
+        answer(await performRefresh())
+        /*
+          Held a little longer than the renewal, though the caller already has
+          its answer. A browser does not order one tab's `localStorage` write
+          with another tab's lock grant — the write reaches the other process's
+          copy shortly after — so a tab granted the lock at once could still
+          read the spent token and present it again.
+        */
+        await new Promise<void>((settle) => setTimeout(settle, RENEWAL_SETTLE_MS))
+      }).catch(fail)
+    }).finally(() => {
       refreshing = null
     })
     return refreshing
@@ -586,7 +663,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
      */
     async completeSignIn(search: string): Promise<{ token: StoredToken; returnTo: string }> {
       const s = pending()
-      const sessionStore = config.storage()
+      const sessionStore = session()
       if (!s || !sessionStore) throw new SignInError('sign-in requires a browser')
 
       const params = new URLSearchParams(search)
@@ -707,6 +784,14 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
 
         handle = setTimer(() => {
           handle = null
+          // Another tab sharing the session renewed first (PEE-3): follow its
+          // token rather than spend a grant this tab no longer needs.
+          const shared = storedToken()
+          if (shared && shared.expiresAt > token.expiresAt) {
+            handlers.onRenewed?.(shared)
+            arm()
+            return
+          }
           void refreshAccessToken().then((next) => {
             if (cancelled) return
             if (!next) {

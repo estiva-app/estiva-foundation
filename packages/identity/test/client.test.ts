@@ -582,6 +582,129 @@ describe('two renewals are never in the air at once', () => {
   })
 })
 
+describe('one session shared by every tab (PEE-3)', () => {
+  /*
+    A session in localStorage is read by every tab, and every tab's timer fires
+    for the same expiry. The promise guard above covers one page; a second tab is
+    a second client with its own promise. Estiva ID revokes the whole chain when
+    one refresh token is presented twice, so without the lock two open tabs sign
+    the person out of everything once every ten minutes.
+  */
+
+  /** The Web Locks API's one property that matters here: holders run one at a time. */
+  const mutex = () => {
+    let tail: Promise<unknown> = Promise.resolve()
+    return <T>(_name: string, run: () => Promise<T>): Promise<T> => {
+      const next = tail.then(run)
+      tail = next.catch(() => undefined)
+      return next
+    }
+  }
+
+  const tabs = () => {
+    const h = harness()
+    const lock = mutex()
+    const a = harness({ storage: () => h.store, lock })
+    const b = harness({ storage: () => h.store, lock })
+    for (const tab of [a, b]) tab.reply({ access_token: `new-${tab === a ? 'a' : 'b'}`, expires_in: 3600, refresh_token: tab === a ? 'rt2' : 'rt3' })
+    seedSession(h)
+    return { store: h.store, a, b }
+  }
+
+  it('two tabs renewing at once spend the refresh token ONCE', async () => {
+    const { a, b } = tabs()
+
+    const [fromA, fromB] = await Promise.all([a.client.refreshAccessToken(), b.client.refreshAccessToken()])
+
+    assert.equal(a.requests.length + b.requests.length, 1, 'a replayed refresh token is read as theft')
+    assert.equal(fromA?.accessToken, 'new-a')
+    assert.equal(fromB?.accessToken, 'new-a', 'the tab that waited takes the other tab’s token')
+  })
+
+  it('a later renewal in the other tab spends the NEW refresh token', async () => {
+    // The control: the lock must not turn into "never renew after somebody else did".
+    const { a, b } = tabs()
+    await a.client.refreshAccessToken()
+    const next = await b.client.refreshAccessToken()
+
+    assert.equal(b.requests.length, 1)
+    assert.equal((b.requests[0].body as { refreshToken: string }).refreshToken, 'rt2')
+    assert.equal(next?.accessToken, 'new-b')
+  })
+
+  it('a renewal answered after another tab signed out does not sign this one back in', async () => {
+    const h = harness()
+    seedSession(h)
+    let answer: (value: unknown) => void = () => {}
+    const fetched = new Promise((resolve) => (answer = resolve))
+    const client = createEstivaId({
+      base: 'https://id.estiva.app',
+      clientId: 'estiva-peek',
+      redirectUri: () => 'https://peek.estiva.app/auth/callback',
+      storage: () => h.store,
+      keyPrefix: 'peek.estivaId',
+      navigate: () => {},
+      now: () => NOW,
+      fetch: async () => {
+        // The other tab signs out while /token is answering.
+        h.store.removeItem(KEYS.token)
+        await fetched
+        return { ok: true, status: 200, json: async () => ({ access_token: 'late', expires_in: 3600, refresh_token: 'rt2' }) }
+      },
+    })
+    const renewal = client.refreshAccessToken()
+    answer(undefined)
+
+    assert.equal(await renewal, null)
+    assert.equal(h.store.getItem(KEYS.token), null, 'the sign-out stands')
+  })
+
+  it('a timer that fires after another tab renewed follows its token instead of renewing', async () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })
+    seedSession(h)
+    const renewed: unknown[] = []
+    h.client.scheduleRenewal({ onRenewed: (token) => void renewed.push(token) })
+
+    // The other tab's renewal, written into the shared store.
+    seedSession(h, { accessToken: 'theirs', expiresAt: EXPIRES_AT + 600_000, refreshToken: 'rt2' })
+    t.fire()
+
+    assert.equal(h.requests.length, 0)
+    assert.equal(renewed.length, 1)
+    assert.equal(t.armed.length, 2)
+    assert.equal(t.armed[1].ms, EXPIRES_AT + 600_000 - NOW, 're-armed from the shared token’s expiry')
+  })
+
+  it('defaults to localStorage for the session and sessionStorage for a sign-in in flight', async () => {
+    const local = memoryStore()
+    const session = memoryStore()
+    const g = globalThis as Record<string, unknown>
+    const saved = ['localStorage', 'sessionStorage'].map((k) => [k, Object.getOwnPropertyDescriptor(g, k)] as const)
+    Object.defineProperty(g, 'localStorage', { value: local, configurable: true, writable: true })
+    Object.defineProperty(g, 'sessionStorage', { value: session, configurable: true, writable: true })
+    try {
+      const client = createEstivaId({
+        base: 'https://id.estiva.app',
+        clientId: 'estiva-peek',
+        redirectUri: () => 'https://peek.estiva.app/auth/callback',
+        keyPrefix: 'peek.estivaId',
+        navigate: () => {},
+        fetch: async () => ({ ok: true, status: 200, json: async () => ({ access_token: 'at', pubkey: 'b3'.repeat(32), expires_in: 3600 }) }),
+      })
+      await client.beginSignIn('/app/desk')
+      const state = session.getItem(KEYS.state)
+      assert.ok(session.getItem(KEYS.verifier) && state, 'the PKCE values are per tab')
+      await client.completeSignIn(`?code=c&state=${state}`)
+
+      assert.ok(local.getItem(KEYS.token), 'the session is shared by every tab')
+      assert.equal(session.getItem(KEYS.token), null)
+    } finally {
+      for (const [k, d] of saved) d ? Object.defineProperty(g, k, d) : delete g[k]
+    }
+  })
+})
+
 describe('renewing before expiry rather than reacting to it', () => {
   it('arms a timer for the moment the token expires', () => {
     const t = fakeTimers()

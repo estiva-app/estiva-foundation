@@ -24,10 +24,12 @@
  *
  * ## Every difference between the two consumers is a parameter
  *
- * `clientId`, `redirectUri`, `storage`, `keyPrefix` and `navigate` are all
- * injected, because Peek and Ship genuinely differ on every one of them and
- * hardcoding any would have made the package come out Peek-shaped. See
- * `client.ts` for what each difference actually is.
+ * `clientId`, `redirectUri`, `keyPrefix` and `navigate` are all injected,
+ * because Peek and Ship genuinely differ on every one of them and hardcoding
+ * any would have made the package come out Peek-shaped. `storage` and
+ * `pendingStore` are injectable too, but since PEE-3 every app takes the same
+ * defaults (`localStorage` for the session, `sessionStorage` for a sign-in in
+ * flight). See `client.ts` for what each difference actually is.
  *
  * ## The globals prediction this package falsified
  *
