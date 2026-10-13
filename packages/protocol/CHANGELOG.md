@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.32.0 — 2026-10-13
+
+**Wire behaviour: none.** A reader reads a message's links as references (OPT-18,
+SPEC §13.6.2). New `linksAsReferences(blocks, resolveLink)` returns a message's
+render tree with each bare app link that the caller's `LinkResolver` resolves (§7.7)
+turned into a `reference` run for what it names. The run's text stays the URL.
+A reader then draws it as that object's chip, the same as a `nostr:` reference.
+These are left as they are: a link on words (`[words](url)`), a URL in code, and a link
+nothing resolves. `cardsIn` names the same card for the tree before and after.
+`standaloneReference` is now documented as for block documents only. In a
+message, every reference is a chip and a card comes only from `embed`.
+
 ## 0.31.0 — 2026-10-13
 
 **Wire behaviour: a message can ask for a reference's card** (OPT-16, SPEC

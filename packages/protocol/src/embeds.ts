@@ -18,9 +18,9 @@
  * in an edit can still carry a card (Miky, 2026-10-13, OPT-16 kickoff).
  * {@link cardsIn} applies that rule; {@link embedsOf} reads the tags alone.
  */
-import { bech32Decode, convertBits, decodeNevent, naddrToAddr } from './nip19.js'
+import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
-import type { RenderBlock } from './render.js'
+import type { RenderBlock, RenderInline } from './render.js'
 
 export const EMBED_TAG = 'embed'
 
@@ -129,10 +129,8 @@ function valueOfReference(reference: string): string | undefined {
  * a code span names nothing (§13.1). Without `resolveLink` a link names nothing:
  * resolving one needs the manifests and the relay, which this package does not hold.
  *
- * `none` entries are kept: they draw no card, but they still override the
- * reader's own default for that value (as of 2026-10-13 Ship and Peek draw a
- * reference alone on its line as its card; an `embed` replaces that). Filter
- * them out to get the cards to draw.
+ * `none` entries are kept: they draw no card, but they still override any
+ * default a reader has for that value. Filter them out to get the cards to draw.
  */
 export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[], parts: readonly PartPointer[] = [], resolveLink?: LinkResolver): Embed[] {
   if (embeds.length === 0) return []
@@ -173,4 +171,65 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
   }
   walk(blocks)
   return out
+}
+
+/** A link on words, `[words](https://…)`, as the marker format writes it — its URL is the target of words the author chose. */
+const LINK_ON_WORDS = /\[[^[\]\n]+\]\((?:https?:\/\/|mailto:)[^\s)]+\)/g
+
+/**
+ * A message's tree with each bare app link turned into the reference it names,
+ * so a reader draws it as that object's chip (SPEC §13.6.2, OPT-18).
+ *
+ * A reference reads as a chip wherever it sits (§13.1), and a link some app
+ * claims (§7.7) is a reference written as a URL — the form a message has when
+ * it was written before the composer turned pasted links into chips, or by a
+ * client that does not. Without this, the two would read differently for no
+ * reason the reader can see.
+ *
+ * Left alone: a link on words (the author chose the words, and they stay a
+ * link; its card is the author's `embed`), a URL in code (§13.1: literal), and
+ * a link `resolveLink` does not answer — no app claims it, or the answer has
+ * not come back yet — which stays a link. The run keeps the URL as its text,
+ * so a reader that draws references as text shows what was written.
+ *
+ * Messages only: a description is a block document, whose links are not this
+ * function's business (§13.3).
+ */
+export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: LinkResolver): RenderBlock[] {
+  const referenceOf = (url: string): string | undefined => {
+    const value = normalise(resolveLink(url) ?? '')
+    if (!value) return undefined
+    return `nostr:${EVENT_ID.test(value) ? encodeNevent({ id: value, relays: [] }) : addrToNaddr(value)}`
+  }
+  const split = (run: RenderInline): RenderInline[] => {
+    if (run.reference || run.marks.includes('code') || !run.text.includes('://')) return [run]
+    // The spans a link on words covers, so neither its target nor a URL in its words is taken.
+    const covered: [number, number][] = []
+    for (const m of run.text.matchAll(LINK_ON_WORDS)) covered.push([m.index, m.index + m[0].length])
+    const out: RenderInline[] = []
+    let at = 0
+    for (const m of run.text.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+      const start = m.index
+      if (covered.some(([s, e]) => start >= s && start < e)) continue
+      // A link on words whose words carry a mark arrives split across runs: its target follows `](`.
+      if (run.text.slice(Math.max(0, start - 2), start) === '](') continue
+      const [url] = urlsIn(m[0])
+      const reference = url ? referenceOf(url) : undefined
+      if (!reference) continue
+      if (start > at) out.push({ ...run, text: run.text.slice(at, start) })
+      out.push({ text: url, marks: run.marks, reference })
+      at = start + url.length
+    }
+    if (at === 0) return [run]
+    if (at < run.text.length) out.push({ ...run, text: run.text.slice(at) })
+    return out
+  }
+  const walk = (bs: readonly RenderBlock[]): RenderBlock[] =>
+    bs.map((block) => {
+      if (block.type === 'codeBlock') return block
+      const inline = block.inline?.flatMap(split)
+      const children = block.children && walk(block.children)
+      return { ...block, ...(inline ? { inline } : {}), ...(children ? { children } : {}) }
+    })
+  return walk(blocks)
 }
