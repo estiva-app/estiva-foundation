@@ -37,7 +37,7 @@ import {
   inlineNodesToMarkers,
   parseBodySegments,
 } from './content.js'
-import { type Block, type BlockDocument, newBlockId, listItemDepths } from './blocks.js'
+import { type Block, type BlockDocument, newBlockId, listItemDepths, listItemChecked } from './blocks.js'
 
 const isInlineRun = (content: unknown): content is InlineTextNode[] =>
   Array.isArray(content) &&
@@ -63,7 +63,41 @@ function textOf(block: Block): string {
 */
 const keyOf = (block: Block) => `${block.type}\u0000${textOf(block)}`
 
-function blockFromSegment(seg: BodySegment): Block {
+/**
+ * How a description's text spells what §13.2 has no marker for (RIC-19):
+ * a checklist item as `- [ ] ` / `- [x] `, GFM's task list, and a callout as a
+ * quote whose first line is `[!NOTE]`, GitHub's alert. **Descriptions only**
+ * (Miky, 2026-10-13): a message stays §13.2's dialect, where `[x]` is text.
+ */
+export interface DescriptionTextOptions {
+  description?: boolean
+}
+
+const TASK = /^\[( |x|X)\] /
+const ALERT = /^\[!([A-Za-z]+)\]$/
+
+function itemFromText(item: string, description: boolean): Block {
+  const task = description ? TASK.exec(item) : null
+  if (!task) return { type: 'listItem', id: '', content: markersToInlineNodes(item) }
+  return {
+    type: 'listItem',
+    id: '',
+    attrs: { checked: task[1] !== ' ' },
+    content: markersToInlineNodes(item.slice(task[0].length)),
+  }
+}
+
+function quoteFromLines(lines: string[], description: boolean): Block {
+  const alert = description && lines.length > 0 ? ALERT.exec(lines[0].trim()) : null
+  if (!alert) return { type: 'blockquote', id: '', content: markersToInlineNodes(lines.join('\n')) }
+  /*
+    The kind is kept as written, lowercased: a tone this version does not know
+    is still a callout, and the next save must not turn it into a `note`.
+  */
+  return { type: 'blockquote', id: '', attrs: { tone: alert[1].toLowerCase() }, content: markersToInlineNodes(lines.slice(1).join('\n')) }
+}
+
+function blockFromSegment(seg: BodySegment, description: boolean): Block {
   switch (seg.type) {
     case 'heading':
       return { type: 'heading', id: '', attrs: { level: seg.level }, content: markersToInlineNodes(seg.text) }
@@ -71,17 +105,17 @@ function blockFromSegment(seg: BodySegment): Block {
       return {
         type: 'bulletList',
         id: '',
-        content: seg.items.map((item) => ({ type: 'listItem', id: '', content: markersToInlineNodes(item) })),
+        content: seg.items.map((item) => itemFromText(item, description)),
       }
     case 'numbered':
       return {
         type: 'orderedList',
         id: '',
         ...(seg.start ? { attrs: { start: seg.start } } : {}),
-        content: seg.items.map((item) => ({ type: 'listItem', id: '', content: markersToInlineNodes(item) })),
+        content: seg.items.map((item) => itemFromText(item, description)),
       }
     case 'quote':
-      return { type: 'blockquote', id: '', content: markersToInlineNodes(seg.lines.join('\n')) }
+      return quoteFromLines(seg.lines, description)
     case 'code':
       return {
         type: 'codeBlock',
@@ -99,8 +133,8 @@ function blockFromSegment(seg: BodySegment): Block {
  * Marker text as a block document, keeping `previous`'s ids wherever a block
  * still corresponds. The matching rule is in this module's header.
  */
-export function markerTextToBlockDocument(text: string, previous?: BlockDocument): BlockDocument {
-  const fresh = parseBodySegments(text).map(blockFromSegment)
+export function markerTextToBlockDocument(text: string, previous?: BlockDocument, options: DescriptionTextOptions = {}): BlockDocument {
+  const fresh = parseBodySegments(text).map((seg) => blockFromSegment(seg, options.description === true))
   const old = previous?.content ?? []
   const takenIds = new Set<string>()
   const usedOld = new Set<number>()
@@ -168,8 +202,13 @@ const itemText = (item: Block): string =>
  * written by a *block* editor may hold a table or a nested list, and §13.2 has
  * no marker for either — those degrade to their text rather than vanishing,
  * which is the rule §13.3 already gives a reader for an unknown block.
+ *
+ * With `{ description: true }` a checklist item and a callout are spelled too
+ * ({@link DescriptionTextOptions}); without it they read as a plain item and a
+ * plain quote, as §13.2 has them.
  */
-export function blockDocumentToMarkerText(doc: BlockDocument): string {
+export function blockDocumentToMarkerText(doc: BlockDocument, options: DescriptionTextOptions = {}): string {
+  const description = options.description === true
   const lines: string[] = []
   for (const block of doc.content) {
     const inline = isInlineRun(block.content) ? inlineNodesToMarkers(block.content) : ''
@@ -197,13 +236,19 @@ export function blockDocumentToMarkerText(doc: BlockDocument): string {
           next.length = depth + 1
           next[depth] ??= depth === 0 ? start : 1
           const marker = block.type === 'bulletList' ? '-' : `${next[depth]++}.`
-          lines.push(`${'  '.repeat(depth)}${marker} ${itemText(item)}`)
+          const checked = description ? listItemChecked(item) : undefined
+          const task = checked === undefined ? '' : checked ? '[x] ' : '[ ] '
+          lines.push(`${'  '.repeat(depth)}${marker} ${task}${itemText(item)}`)
         })
         break
       }
-      case 'blockquote':
+      case 'blockquote': {
+        // The tone as written, not as `calloutTone` reads it: the next save reads back what this spelled.
+        const tone = description && typeof block.attrs?.tone === 'string' && /^[A-Za-z]+$/.test(block.attrs.tone) ? block.attrs.tone : ''
+        if (tone) lines.push(`> [!${tone.toUpperCase()}]`)
         for (const line of inline.split('\n')) lines.push(`> ${line}`)
         break
+      }
       case 'codeBlock': {
         const language = typeof block.attrs?.language === 'string' ? block.attrs.language : ''
         lines.push('```' + language, inline, '```')

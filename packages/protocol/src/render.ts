@@ -36,7 +36,7 @@ import {
   parseBodySegments,
   parseInlineMarks,
 } from './content.js'
-import { type Block, type BlockDocument, parseBlockDocument, inlineTextOf, listItemDepths } from './blocks.js'
+import { type Block, type BlockDocument, type CalloutTone, parseBlockDocument, inlineTextOf, listItemDepths, listItemChecked, calloutTone } from './blocks.js'
 import type { SignedEvent } from './events.js'
 
 /** A run of text and the marks on it. Nothing here needs escaping; it is text. */
@@ -79,6 +79,16 @@ export interface RenderBlock {
    * them nested, and numbering each level from 1, is the reader's.
    */
   indent?: number
+  /**
+   * A checklist item's tick (§13.3, RIC-19): `true` or `false` on a checklist
+   * item, absent on a plain one — `attrs.checked` as `listItemChecked` reads it.
+   */
+  checked?: boolean
+  /**
+   * A callout's tone (§13.3, RIC-19), absent on a plain quote — `attrs.tone` as
+   * `calloutTone` reads it, so an unknown tone is already `note` here.
+   */
+  tone?: CalloutTone
   attrs?: Record<string, unknown>
   /** What the document actually called it, when `type` is `'unknown'`. */
   typeName?: string
@@ -213,6 +223,10 @@ function blockFromDocument(block: Block): RenderBlock {
   if (block.type === 'codeBlock' && typeof language === 'string') out.language = language
   const start = block.attrs?.start
   if (block.type === 'orderedList' && typeof start === 'number' && start > 1) out.start = start
+  const checked = block.type === 'listItem' ? listItemChecked(block) : undefined
+  if (checked !== undefined) out.checked = checked
+  const tone = block.type === 'blockquote' ? calloutTone(block) : undefined
+  if (tone) out.tone = tone
 
   if (Array.isArray(block.content)) {
     if (isInlineRun(block.content)) {
