@@ -305,12 +305,14 @@ export type CalloutTone = (typeof CALLOUT_TONES)[number]
 /**
  * Which callout a quote is, if it is one. Absent, or not a string, is a plain
  * quote; a string this list does not know is still a callout — the author
- * meant it to stand out — and is drawn as a `note`.
+ * meant it to stand out — and is drawn as a `note`. Read without regard to
+ * case, as the description text reads `> [!WARNING]`.
  */
 export function calloutTone(block: Block): CalloutTone | undefined {
   const raw = block.attrs?.tone
   if (typeof raw !== 'string') return undefined
-  return (CALLOUT_TONES as readonly string[]).includes(raw) ? (raw as CalloutTone) : 'note'
+  const tone = raw.toLowerCase()
+  return (CALLOUT_TONES as readonly string[]).includes(tone) ? (tone as CalloutTone) : 'note'
 }
 
 /**

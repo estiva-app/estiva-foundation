@@ -641,7 +641,8 @@ describe('a checklist item and a callout — RIC-19', () => {
   it('keeps every tick, untick and tone through the editor and back', () => {
     const saved = parseBlockDocument(reopen(json, 'blocks').value)
     const list = saved.content[0].content as Block[]
-    assert.deepEqual(list.map((b) => [b.id, b.attrs?.checked]), [['i1', true], ['i2', false], ['i3', undefined], ['i4', undefined]])
+    // A `checked` that is not a boolean is a plain item, and is handed back as another app wrote it.
+    assert.deepEqual(list.map((b) => [b.id, b.attrs?.checked]), [['i1', true], ['i2', false], ['i3', undefined], ['i4', 'true']])
     assert.equal(list[1].attrs?.indent, 1)
     assert.deepEqual(saved.content.slice(1).map((b) => [b.id, b.attrs?.tone]), [['q1', 'warning'], ['q2', 'danger'], ['q3', undefined]])
   })
@@ -666,6 +667,15 @@ describe('a checklist item and a callout — RIC-19', () => {
     assert.deepEqual(back.content.slice(1).map((b) => [inlineTextOf(b), b.attrs?.tone]), [
       ['blocked on X', 'warning'], ['unknown tone', 'danger'], ['a plain quote', undefined],
     ])
+  })
+
+  it('keeps an empty checklist item one through a description\'s text', () => {
+    const empty: BlockDocument = { type: 'doc', content: [{ type: 'bulletList', id: 'l1', content: [{ type: 'listItem', id: 'e1', attrs: { checked: false }, content: [] }] }] }
+    const text = blockDocumentToMarkerText(empty, { description: true })
+    assert.equal(text, '- [ ] ')
+    const item = (markerTextToBlockDocument(text, empty, { description: true }).content[0].content as Block[])[0]
+    assert.equal(item.attrs?.checked, false)
+    assert.equal(inlineTextOf(item), '')
   })
 
   it('leaves a message\'s text as §13.2 has it: no tick, no alert', () => {
