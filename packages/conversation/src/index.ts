@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.10.0'
+export const CONVERSATION_VERSION = '0.11.0'
 
 export {
   KIND_MESSAGE,
@@ -44,7 +44,7 @@ export {
 
 export { parentOf, groupThreads, type Threaded } from './threads.js'
 
-export { editTargetOf, editsByTarget, foldEdits, foldAttachments, type EditFold } from './edits.js'
+export { editTargetOf, editsByTarget, foldEdits, foldAttachments, foldEmbeds, type EditFold } from './edits.js'
 
 export {
   REACTION_HORIZON,

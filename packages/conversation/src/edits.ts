@@ -7,9 +7,10 @@
  * is held, not dropped: the target may arrive later, and the caller looks
  * edits up by id.
  *
- * An edit changes the body and the attachments, and nothing else. Attachments
- * fold separately: the set is the `imeta` of the latest edit carrying at least
- * one, and a set replaces rather than appends. The "edited" mark is about the
+ * An edit changes the body, the attachments and the cards, and nothing else.
+ * Attachments fold separately: the set is the `imeta` of the latest edit
+ * carrying at least one, and a set replaces rather than appends. Cards
+ * (`embed`, §13.6.2) fold the same way ({@link foldEmbeds}). The "edited" mark is about the
  * **body**: an edit byte-identical to the body it replaces, judged against the
  * body as it then stood, does not mark the message edited.
  *
@@ -17,7 +18,7 @@
  * relay adjudicates writes; a `40003` it stored is one it accepted — **for
  * the `e` it checked**, which is why an edit lands only on {@link editTargetOf}.
  */
-import { imetaOf, type Imeta, type SignedEvent } from '@estiva-app/protocol'
+import { embedsOf, imetaOf, type Embed, type Imeta, type SignedEvent } from '@estiva-app/protocol'
 import { isConversationKind, isEventId, KIND_EDIT } from './kinds.js'
 import { byOrder, orderingMs } from './order.js'
 
@@ -132,6 +133,31 @@ export function foldAttachments(events: readonly SignedEvent[]): Record<string, 
       const files = imetaOf(list[i])
       if (files.length === 0) continue
       out[target] = files
+      break
+    }
+  }
+  return out
+}
+
+/**
+ * Every message's current card set: its own `embed` tags, replaced by the
+ * latest edit carrying any (§6.8, §13.6.2, C20) — the same fold as
+ * {@link foldAttachments}. An edit with none leaves the set; `none` is how an
+ * edit removes a card. Which of these the body still names is
+ * `cardsIn`'s question, asked of the folded body. Messages with none are absent.
+ */
+export function foldEmbeds(events: readonly SignedEvent[]): Record<string, Embed[]> {
+  const out: Record<string, Embed[]> = {}
+  for (const event of events) {
+    if (!isConversationKind(event.kind)) continue
+    const embeds = embedsOf(event)
+    if (embeds.length > 0) out[event.id.toLowerCase()] = embeds
+  }
+  for (const [target, list] of editsByTarget(events)) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const embeds = embedsOf(list[i])
+      if (embeds.length === 0) continue
+      out[target] = embeds
       break
     }
   }

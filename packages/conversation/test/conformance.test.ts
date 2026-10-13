@@ -1,5 +1,5 @@
 /*
-  SPEC §9's conversation checks, C10–C16, as fixtures.
+  SPEC §9's conversation checks, C10–C16 and C20, as fixtures.
 
   Each block is one row of the table, stated so an app that does not use this
   package can run the same fixture against its own code. If one of these fails,
@@ -8,11 +8,12 @@
 */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { encodeNaddr, imetaTag, type SignedEvent } from '@estiva-app/protocol'
+import { cardsIn, embedTag, encodeNaddr, imetaTag, toRenderTree, type SignedEvent } from '@estiva-app/protocol'
 import {
   buildReply,
   decorationsOf,
   foldEdits,
+  foldEmbeds,
   foldReactions,
   isCommentOn,
   offersEditAndDelete,
@@ -339,5 +340,41 @@ describe('C16 — reply shape', () => {
     })
     assert.deepEqual(reply.tags.filter((t) => t[0] === 'a'), [['a', OTHER]])
     assert.equal(reply.tags.some((t) => t[0] === 'p'), false, 'no p when the comment is outside the read')
+  })
+})
+
+describe('C20 — card fold (§13.6.2)', () => {
+  const body = `the plan is in ${naddrOf(ISSUE)} for now`
+  const edit = (target: string, createdAt: number, embeds: string[][], content = body) =>
+    event({ kind: 40003, content, created_at: createdAt, tags: [['h', FOLDER], ['e', target], ...embeds] })
+  const cards = (events: SignedEvent[], id: string) => {
+    const folded = foldEdits(events)[id]?.body ?? events.find((e) => e.id === id)!.content
+    return cardsIn(foldEmbeds(events)[id] ?? [], toRenderTree(folded, 'marker'))
+  }
+
+  it('compact draws a row; an edit with none removes it and is not marked edited; a later edit with none leaves it', () => {
+    const message = event({ kind: 1111, content: body, tags: [['A', ISSUE], ['h', FOLDER], ['a', ISSUE], embedTag(ISSUE, 'compact')] })
+    assert.deepEqual(cards([message], message.id), [{ value: ISSUE, layout: 'compact' }])
+
+    const removed = edit(message.id, message.created_at + 1, [embedTag(ISSUE, 'none')])
+    assert.deepEqual(cards([message, removed], message.id), [{ value: ISSUE, layout: 'none' }])
+    assert.equal(foldEdits([message, removed])[message.id].edited, false)
+
+    const later = edit(message.id, message.created_at + 2, [])
+    assert.deepEqual(cards([message, removed, later], message.id), [{ value: ISSUE, layout: 'none' }])
+  })
+
+  it('an embed for a value the folded body does not name draws nothing, and needs no a on an edit', () => {
+    const message = event({ kind: 9, content: body, tags: [['h', FOLDER], ['a', ISSUE]] })
+    const named = edit(message.id, message.created_at + 1, [embedTag(OTHER, 'detailed')], `${body} and ${naddrOf(OTHER)}`)
+    assert.deepEqual(cards([message, named], message.id), [{ value: OTHER, layout: 'detailed' }])
+    const dropped = edit(message.id, message.created_at + 2, [], 'nothing named now')
+    assert.deepEqual(cards([message, named, dropped], message.id), [])
+  })
+
+  it('a part wins over an embed for the same address; an unknown layout draws compact', () => {
+    const message = event({ kind: 9, content: body, tags: [['h', FOLDER], ['a', ISSUE], ['embed', ISSUE, 'huge']] })
+    assert.deepEqual(cards([message], message.id), [{ value: ISSUE, layout: 'compact' }])
+    assert.deepEqual(cardsIn(foldEmbeds([message])[message.id], toRenderTree(body, 'marker'), [{ address: ISSUE, block: 'b1' }]), [])
   })
 })
