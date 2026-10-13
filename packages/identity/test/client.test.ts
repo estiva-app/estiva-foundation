@@ -632,6 +632,33 @@ describe('one session shared by every tab (PEE-3)', () => {
     assert.equal(next?.accessToken, 'new-b')
   })
 
+  it('a renewal answered after another tab signed out does not sign this one back in', async () => {
+    const h = harness()
+    seedSession(h)
+    let answer: (value: unknown) => void = () => {}
+    const fetched = new Promise((resolve) => (answer = resolve))
+    const client = createEstivaId({
+      base: 'https://id.estiva.app',
+      clientId: 'estiva-peek',
+      redirectUri: () => 'https://peek.estiva.app/auth/callback',
+      storage: () => h.store,
+      keyPrefix: 'peek.estivaId',
+      navigate: () => {},
+      now: () => NOW,
+      fetch: async () => {
+        // The other tab signs out while /token is answering.
+        h.store.removeItem(KEYS.token)
+        await fetched
+        return { ok: true, status: 200, json: async () => ({ access_token: 'late', expires_in: 3600, refresh_token: 'rt2' }) }
+      },
+    })
+    const renewal = client.refreshAccessToken()
+    answer(undefined)
+
+    assert.equal(await renewal, null)
+    assert.equal(h.store.getItem(KEYS.token), null, 'the sign-out stands')
+  })
+
   it('a timer that fires after another tab renewed follows its token instead of renewing', async () => {
     const t = fakeTimers()
     const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer })

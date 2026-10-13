@@ -481,12 +481,22 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       return null
     }
 
+    /*
+      The session is shared by every tab (PEE-3), and signing out takes no lock:
+      while `/token` was answering, another tab may have signed out — or in.
+      Then this answer belongs to a session that is gone, and writing it would
+      put a live token back after the sign-out, for its whole lifetime. Only
+      the session this renewal spent is replaced or cleared.
+    */
+    const stillOurs = () => storedToken()?.refreshToken === current.refreshToken
+
     if (!response.ok) {
-      clearSession()
+      if (stillOurs()) clearSession()
       return null
     }
 
     const body = (await response.json()) as TokenResponse
+    if (!stillOurs()) return validToken()
     if (!body.access_token) {
       clearSession()
       return null
