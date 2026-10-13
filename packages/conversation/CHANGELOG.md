@@ -6,6 +6,18 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.11.0 — 2026-10-13
+
+**Cards fold like attachments** (OPT-16): `foldEmbeds(events)` is every
+message's `embed` set, replaced by the latest edit carrying any, as
+`foldAttachments` does for `imeta`. An edit with none leaves the set, and
+`["embed", v, "none"]` removes a card. An edit that changes only the cards,
+with a byte-identical body, is still not marked edited. Needs
+`@estiva-app/protocol` 0.31.0 for `embedsOf`.
+
+SPEC: §6.8 (an edit changes the body, the attachments and the cards) and
+§13.6.2, with conformance row C20. Nothing this package writes changes.
+
 ## 0.10.0 — 2026-10-06
 
 **Edit and Delete only on your own message** (SHI-29):
