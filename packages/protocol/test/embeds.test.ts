@@ -82,6 +82,12 @@ describe('which cards a message draws', () => {
     assert.deepEqual(got, [])
   })
 
+  it('finds a link a mark splits across runs, and an address with an empty d', () => {
+    const url = 'https://ship.estiva.app/issue/opt-16-probe-issue-f78c3b96-2a3b-4d92-910a-ac25aba672cd'
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${url.slice(0, 30)}**${url.slice(30, 40)}**${url.slice(40)}`)), [{ value: ISSUE, layout: 'compact' }])
+    assert.deepEqual(embedsOf({ tags: [['embed', `30023:${PK}:`, 'detailed']] }), [{ value: `30023:${PK}:`, layout: 'detailed' }])
+  })
+
   it('does not count a reference inside a code span', () => {
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`example: \`${issueRef}\``)), [])
   })

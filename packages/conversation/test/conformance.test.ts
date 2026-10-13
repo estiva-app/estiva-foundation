@@ -372,6 +372,11 @@ describe('C20 — card fold (§13.6.2)', () => {
     assert.deepEqual(cards([message, named, dropped], message.id), [])
   })
 
+  it('an embed on anything but a message or a comment is not read', () => {
+    const description = event({ kind: 30851, content: body, tags: [['d', 'x'], ['a', ISSUE], embedTag(ISSUE, 'detailed')] })
+    assert.equal(foldEmbeds([description])[description.id], undefined)
+  })
+
   it('a part wins over an embed for the same address; an unknown layout draws compact', () => {
     const message = event({ kind: 9, content: body, tags: [['h', FOLDER], ['a', ISSUE], ['embed', ISSUE, 'huge']] })
     assert.deepEqual(cards([message], message.id), [{ value: ISSUE, layout: 'compact' }])

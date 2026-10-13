@@ -39,7 +39,8 @@ export function embedTag(value: string, layout: EmbedLayout): string[] {
   return [EMBED_TAG, value, layout]
 }
 
-const ADDRESS = /^\d+:[0-9a-f]{64}:./
+// `partsOf`'s shape: an empty `d` is a valid address (NIP-01).
+const ADDRESS = /^\d+:[0-9a-f]{64}:/
 const EVENT_ID = /^[0-9a-f]{64}$/
 
 /**
@@ -80,7 +81,8 @@ function normalise(value: string): string | undefined {
 }
 
 /**
- * Whether an app link names this address: its path ends in the address's `d`
+ * Whether an app link names this address, read the way Peek and Ship read a
+ * pasted block link for a `part` (§13.6.1) — offline, with no manifest: its path ends in the address's `d`
  * (§7.2 puts the identity last, `…/<slug>-<d>`), and that `d` is long enough to
  * be one. A `d` comes from somebody's tag, so a short one would otherwise match
  * half the links in a body.
@@ -144,13 +146,22 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
     seen.add(value)
     out.push(embed)
   }
+  // Adjacent plain runs are read as one text, so a link a mark splits in two is still one link.
+  const scan = (text: string) => {
+    for (const url of urlsIn(text)) for (const a of addresses) if (urlNamesAddress(url, a)) take(a)
+  }
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.type !== 'codeBlock') {
+        let text = ''
         for (const run of block.inline ?? []) {
-          if (run.reference) take(valueOfReference(run.reference))
-          else if (!run.marks.includes('code')) for (const url of urlsIn(run.text)) for (const a of addresses) if (urlNamesAddress(url, a)) take(a)
+          if (run.reference || run.marks.includes('code')) {
+            scan(text)
+            text = ''
+            if (run.reference) take(valueOfReference(run.reference))
+          } else text += run.text
         }
+        scan(text)
       }
       if (block.children) walk(block.children)
     }
