@@ -205,6 +205,10 @@ export {
   findBlock,
   listItemDepths,
   MAX_LIST_DEPTH,
+  listItemChecked,
+  CALLOUT_TONES,
+  type CalloutTone,
+  calloutTone,
   inlineTextOf,
   documentText,
 } from './blocks.js'
@@ -226,6 +230,7 @@ export {
 export {
   markerTextToBlockDocument,
   blockDocumentToMarkerText,
+  type DescriptionTextOptions,
 } from './bridge-content.js'
 
 export {

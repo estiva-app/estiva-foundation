@@ -284,6 +284,36 @@ export function listItemDepths(items: readonly Block[]): number[] {
 export const MAX_LIST_DEPTH = 8
 
 /**
+ * Whether a list item is a checklist item, and ticked — §13.3's
+ * `attrs.checked` (RIC-19). `true` or `false` makes it one; absent, or any other
+ * value (`"true"`, `1`), leaves it a plain item, and is never a reason to
+ * reject the document. Per item, on either list type, and independent of
+ * `indent`: an indented item does not take its parent's tick.
+ */
+export function listItemChecked(item: Block): boolean | undefined {
+  const raw = item.attrs?.checked
+  return typeof raw === 'boolean' ? raw : undefined
+}
+
+/**
+ * A callout's tones — §13.3's `attrs.tone` on a `blockquote` (RIC-19): GitHub's
+ * alert names, so `> [!NOTE]` and its kind map one to one (Miky, 2026-10-13).
+ */
+export const CALLOUT_TONES = ['note', 'tip', 'important', 'warning', 'caution'] as const
+export type CalloutTone = (typeof CALLOUT_TONES)[number]
+
+/**
+ * Which callout a quote is, if it is one. Absent, or not a string, is a plain
+ * quote; a string this list does not know is still a callout — the author
+ * meant it to stand out — and is drawn as a `note`.
+ */
+export function calloutTone(block: Block): CalloutTone | undefined {
+  const raw = block.attrs?.tone
+  if (typeof raw !== 'string') return undefined
+  return (CALLOUT_TONES as readonly string[]).includes(raw) ? (raw as CalloutTone) : 'note'
+}
+
+/**
  * A block's text, including its children's.
  *
  * This is what §13.3 requires a reader to draw for a block type it does not

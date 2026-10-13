@@ -4,6 +4,28 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.30.0 — 2026-10-13
+
+**Wire behaviour: a block document can hold a checklist item and a callout**
+(RIC-19, SPEC §13.3). Both are an attribute on a block that already exists, so a
+reader on 0.29 still draws a plain list item and a plain quote with all their
+text; its editor's save drops the attribute but no text and no id.
+
+- A `listItem`'s `attrs.checked` is `true` or `false` on a checklist item —
+  per item, on either list type, independent of `indent`. Absent, or any other
+  value, is a plain item and never a reason to reject the document.
+  `listItemChecked(item)` reads it; `toEditorDocument` drops a non-boolean one.
+- A `blockquote`'s `attrs.tone` makes it a callout. `CALLOUT_TONES` are
+  GitHub's alert names — `note`, `tip`, `important`, `warning`, `caution` (Miky,
+  2026-10-13). `calloutTone(block)` reads it: not a string is a plain quote, and
+  a string it does not know is a `note`; an editor keeps the string as written.
+- `RenderBlock.checked` and `RenderBlock.tone`, from those two readers.
+- `blockDocumentToMarkerText(doc, { description: true })` spells a checklist
+  item `- [ ] ` / `- [x] ` and a callout as a quote whose first line is
+  `[!WARNING]`; `markerTextToBlockDocument(text, previous, { description: true })`
+  reads them back. Without the option nothing changes: a message stays §13.2's
+  dialect, where `[x]` is text (Miky, 2026-10-13).
+
 ## 0.29.0 — 2026-10-12
 
 **Wire behaviour: a block document can hold an indented list item** (MAN-13,

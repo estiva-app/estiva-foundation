@@ -221,8 +221,11 @@ function blockToEditor(block: Block): EditorNode {
       paragraph would render empty there.
 
       Its `indent` is spent by `listToEditor`, which nests the item instead.
+      A `checked` that is not a boolean is not a checklist item (§13.3,
+      RIC-19), so the editor never sees one it would have to guess at.
     */
-    const { indent: _depth, ...itemAttrs } = attrs
+    const { indent: _depth, checked, ...itemAttrs } = attrs
+    if (typeof checked === 'boolean') itemAttrs.checked = checked
     const inline = isInlineRun(block.content) ? inlineToEditor(block.content) : []
     return { type: 'listItem', attrs: itemAttrs, content: [{ type: 'paragraph', content: inline }] }
   }

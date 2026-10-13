@@ -15,6 +15,8 @@ import assert from 'node:assert/strict'
 import {
   blockDocumentToMarkerText,
   documentForEditing,
+  inlineTextOf,
+  markerTextToBlockDocument,
   fromEditorDocument,
   MAX_LIST_DEPTH,
   toRenderTree,
@@ -612,5 +614,65 @@ describe('an indented list item — MAN-13', () => {
     const saved = fromEditorDocument(toEditorDocument(doc))
     assert.equal(saved.content[0].content!.length, 4400)
     assert.equal(Math.max(...(saved.content[0].content as Block[]).map((b) => (b.attrs?.indent as number) ?? 0)), MAX_LIST_DEPTH)
+  })
+})
+
+describe('a checklist item and a callout — RIC-19', () => {
+  const DOC: BlockDocument = {
+    type: 'doc',
+    content: [
+      {
+        type: 'bulletList',
+        id: 'l1',
+        content: [
+          { type: 'listItem', id: 'i1', attrs: { checked: true }, content: [{ type: 'text', text: 'ship it' }] },
+          { type: 'listItem', id: 'i2', attrs: { checked: false, indent: 1 }, content: [{ type: 'text', text: 'verify it' }] },
+          { type: 'listItem', id: 'i3', content: [{ type: 'text', text: 'a plain item' }] },
+          { type: 'listItem', id: 'i4', attrs: { checked: 'true' }, content: [{ type: 'text', text: 'not a tick' }] },
+        ],
+      },
+      { type: 'blockquote', id: 'q1', attrs: { tone: 'warning' }, content: [{ type: 'text', text: 'blocked on X' }] },
+      { type: 'blockquote', id: 'q2', attrs: { tone: 'danger' }, content: [{ type: 'text', text: 'unknown tone' }] },
+      { type: 'blockquote', id: 'q3', content: [{ type: 'text', text: 'a plain quote' }] },
+    ],
+  }
+  const json = JSON.stringify(DOC)
+
+  it('keeps every tick, untick and tone through the editor and back', () => {
+    const saved = parseBlockDocument(reopen(json, 'blocks').value)
+    const list = saved.content[0].content as Block[]
+    assert.deepEqual(list.map((b) => [b.id, b.attrs?.checked]), [['i1', true], ['i2', false], ['i3', undefined], ['i4', undefined]])
+    assert.equal(list[1].attrs?.indent, 1)
+    assert.deepEqual(saved.content.slice(1).map((b) => [b.id, b.attrs?.tone]), [['q1', 'warning'], ['q2', 'danger'], ['q3', undefined]])
+  })
+
+  it('reads them once for every app: a boolean tick only, and an unknown tone as a note', () => {
+    const tree = toRenderTree(json, 'blocks')
+    assert.deepEqual(tree[0].children?.map((b) => b.checked), [true, false, undefined, undefined])
+    assert.deepEqual(tree.slice(1).map((b) => b.tone), ['warning', 'note', undefined])
+  })
+
+  it('spells them in a description\'s text and reads the same attributes back', () => {
+    assert.match(blockDocumentToMarkerText(DOC, { description: true }), /^- \[x\] ship it\n {2}- \[ \] verify it\n/)
+    // §13.2 has no nesting, so an indented list reads back level (MAN-13) and the agent keeps it whole; the tick is what is under test.
+    const level = JSON.parse(json.replace(',"indent":1', '')) as BlockDocument
+    const text = blockDocumentToMarkerText(level, { description: true })
+    assert.match(text, /^- \[x\] ship it\n- \[ \] verify it\n- a plain item\n- not a tick/)
+    assert.match(text, /> \[!WARNING\]\n> blocked on X\n\n> \[!DANGER\]\n> unknown tone\n\n> a plain quote$/)
+    const back = markerTextToBlockDocument(text, level, { description: true })
+    assert.deepEqual((back.content[0].content as Block[]).map((b) => [inlineTextOf(b), b.attrs?.checked]), [
+      ['ship it', true], ['verify it', false], ['a plain item', undefined], ['not a tick', undefined],
+    ])
+    assert.deepEqual(back.content.slice(1).map((b) => [inlineTextOf(b), b.attrs?.tone]), [
+      ['blocked on X', 'warning'], ['unknown tone', 'danger'], ['a plain quote', undefined],
+    ])
+  })
+
+  it('leaves a message\'s text as §13.2 has it: no tick, no alert', () => {
+    const text = blockDocumentToMarkerText(DOC)
+    assert.doesNotMatch(text, /\[x\]|\[!/)
+    const back = markerTextToBlockDocument('- [x] done\n\n> [!NOTE]\n> hi')
+    assert.equal((back.content[0].content as Block[])[0].attrs, undefined)
+    assert.equal(back.content[1].attrs, undefined)
   })
 })
