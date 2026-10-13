@@ -63,3 +63,22 @@ export {
   type SchedulerClock,
   type VisibilityTarget,
 } from './refresh.js'
+export {
+  SNAPSHOT_MAX_EVENTS,
+  SNAPSHOT_SAVE_AFTER_MS,
+  createEventSnapshot,
+  indexedDbSnapshotStorage,
+  matchesSnapshotFilter,
+  memorySnapshotStorage,
+  snapshotFilterKey,
+  snapshotScope,
+  type EventSnapshot,
+  type EventSnapshotOptions,
+  type IdbFactoryLike,
+  type SnapshotChange,
+  type SnapshotFilter,
+  type SnapshotRecord,
+  type SnapshotStorage,
+  type SnapshotTimers,
+  type StoredSnapshotEvent,
+} from './event-snapshot.js'

@@ -1,5 +1,32 @@
 # @estiva-app/platform
 
+## 0.5.0
+
+A copy on the device a reload draws from (PEE-2, Peek opens instantly). Additive.
+
+`createEventSnapshot` keeps one person's signed events from one relay —
+never a folded view — and answers the same filters from them on the next
+load, before the relay has. Every relay answer it takes in is also a
+correction, since the relay has no sequence number to replay: what matches a
+filter the relay just answered and is not in that answer is dropped (a
+deletion, a lost Folder); a cut answer judges only the window it covers; a
+`kind:5` drops what its own author signed; a replaceable event keeps its
+newest. A filter it never saw answered is not answered (`null`), and `since`
+and `until` are not part of a filter's key. It keeps the plaintext of a
+person's own blob beside its event, so the same ciphertext is never
+decrypted twice.
+
+- `createEventSnapshot({ storage, scope, version, maxEvents?, saveAfterMs?, now?, timers? })`
+  → `{ ready, answer(filters), absorb(filters, events), plaintextOf, keepPlaintext, size, flush, close }`.
+  A copy written under another `version` is dropped unread; past `maxEvents`
+  (10,000) the least recently seen go.
+- `indexedDbSnapshotStorage(indexedDB, name?)` — the browser's storage, the
+  factory passed in (the package compiles without `lib: dom`);
+  `memorySnapshotStorage()` for tests and browsers without it; `clear()` is
+  sign-out.
+- `snapshotScope(relayUrl, pubkey)`, `snapshotFilterKey(filter)`,
+  `matchesSnapshotFilter(filter, event)`.
+
 ## 0.4.0
 
 One read a tab holds on to, and reads again when it fails (FOL-5). Additive.
