@@ -47,9 +47,41 @@ test('answers as the relay would: matched, newest first, cut at limit, across fi
   const b = ev(9, 20, [['h', 'g1']])
   const c = ev(9, 30, [['h', 'g2']])
   snap.absorb([{ kinds: [9], '#h': ['g1', 'g2'], limit: 10 }], [a, b, c])
-  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1'], limit: 1 }]), null, 'a narrower question was never asked')
-  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1', 'g2'], limit: 2 }]), null, 'the limit is part of the question')
+  // The answer was whole (3 under a limit of 10), so a narrower list or a smaller limit is answered from it.
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'], limit: 1 }])?.map((e) => e.created_at), [20])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1', 'g2'], limit: 2 }])?.map((e) => e.created_at), [30, 20])
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1', 'g3'], limit: 10 }]), null, 'a value never asked')
   assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1', 'g2'], limit: 10, since: 15 }])?.map((e) => e.created_at), [30, 20])
+})
+
+test('a filter by kinds or ids sees only what is held now: a dropped or replaced event is gone from both', async () => {
+  const { snap } = await fresh()
+  const older = ev(30078, 10, [['d', 'list']])
+  const message = ev(9, 20, [['h', 'g1']])
+  const gone = ev(9, 30, [['h', 'g1']])
+  snap.absorb([{ kinds: [30078], authors: ['a'.repeat(64)] }, { kinds: [9], '#h': ['g1'] }], [older, message, gone])
+  snap.absorb([{ ids: [message.id, gone.id] }], [message, gone])
+  // The relay no longer has `gone`, and the list has a newer version.
+  const newer = ev(30078, 40, [['d', 'list']])
+  snap.absorb([{ kinds: [9], '#h': ['g1'] }, { kinds: [30078], authors: ['a'.repeat(64)] }], [message, newer])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'] }])?.map((e) => e.id), [message.id])
+  assert.deepEqual(snap.answer([{ ids: [message.id, gone.id] }])?.map((e) => e.id), [message.id])
+  assert.deepEqual(snap.answer([{ kinds: [30078], authors: ['a'.repeat(64)] }])?.map((e) => e.id), [newer.id])
+  assert.deepEqual(snap.answer([{ kinds: [9, 30078], '#h': ['g1'] }]), null, 'a filter never asked')
+})
+
+test('a tag value other kinds carry too is judged by the whole filter, whichever list it is looked up by', async () => {
+  const { snap } = await fresh()
+  const message = ev(9, 10, [['h', 'g1'], ['p', 'b'.repeat(64)]])
+  const edit = ev(40003, 20, [['h', 'g1'], ['p', 'b'.repeat(64)]])
+  const other = ev(9, 30, [['h', 'g2'], ['p', 'b'.repeat(64)]])
+  snap.absorb([{ kinds: [9, 40003], '#h': ['g1', 'g2'] }, { kinds: [9], '#p': ['b'.repeat(64)] }], [message, edit, other])
+  // Covered by its kinds, the `#h` list as asked: the edit carries g1 and g2's tag too, and is left out by kind.
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1', 'g2'] }])?.map((e) => e.id), [other.id, message.id])
+  // Covered by its `#h` list: the message in g2 is left out by tag.
+  assert.deepEqual(snap.answer([{ kinds: [9, 40003], '#h': ['g1'] }])?.map((e) => e.id), [edit.id, message.id])
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1'] }]), null, 'two lists differ from any answered filter: not covered')
+  assert.deepEqual(snap.answer([{ kinds: [9], '#p': ['b'.repeat(64)] }])?.map((e) => e.id), [other.id, message.id])
 })
 
 test('what the relay no longer sends is dropped: a deletion, a lost Folder', async () => {
@@ -240,6 +272,105 @@ test('a cut answer does not judge events at its oldest second, which the relay m
   snap.absorb([{ kinds: [9], '#h': ['g'] }], [tie, top, atCut])
   snap.absorb([{ kinds: [9], '#h': ['g'], limit: 2 }], [top, tie])
   assert.equal(snap.answer([{ kinds: [9], '#h': ['g'] }])?.length, 3)
+})
+
+/** A change naming each address, as a set's archive read asks for them in groups. */
+function changes(addresses: string[]) {
+  return addresses.map((address, i) => ev(1851, 100 + i, [['a', address]]))
+}
+const addr = (i: number) => `30851:${'b'.repeat(64)}:${i}`
+
+test('a pooled list is answered when whole answers already held every value in it (Miky, 13 Oct)', async () => {
+  const { snap } = await fresh()
+  const all = [0, 1, 2, 3, 4, 5].map(addr)
+  const events = changes(all)
+  // The first visit asked its set in two groups; the reload's set is regrouped and one shorter.
+  snap.absorb([{ kinds: [1851], '#a': all.slice(0, 3), limit: 1000 }], events.slice(0, 3))
+  snap.absorb([{ kinds: [1851], '#a': all.slice(3), limit: 1000 }], events.slice(3))
+  const asked = [{ kinds: [1851], '#a': [all[1], all[2], all[4]], limit: 1000 }]
+  assert.deepEqual(snap.answer(asked)?.map((e) => e.id).sort(), [events[1], events[2], events[4]].map((e) => e.id).sort())
+  assert.deepEqual(snap.answer([{ kinds: [1851], '#a': [all[5]], limit: 1000 }])?.map((e) => e.id), [events[5].id])
+  assert.equal(snap.answer([{ kinds: [1851], '#a': [all[1], addr(9)], limit: 1000 }]), null, 'a value never answered')
+  assert.equal(snap.answer([{ kinds: [1111], '#a': [all[1]], limit: 1000 }]), null, 'another field differs')
+})
+
+test('a cut answer covers nothing beyond its own key', async () => {
+  const { snap } = await fresh()
+  const all = [0, 1, 2].map(addr)
+  const events = changes(all)
+  // Three matches asked with limit 2: the relay held back the rest, so a value with none sent may still have some.
+  snap.absorb([{ kinds: [1851], '#a': all, limit: 2 }], events.slice(1))
+  assert.notEqual(snap.answer([{ kinds: [1851], '#a': all, limit: 2 }]), null, 'its own key still answers')
+  assert.equal(snap.answer([{ kinds: [1851], '#a': [all[0]], limit: 2 }]), null)
+})
+
+test('a limit past the most a filter can match never cuts it: a set of roots, a set of profiles', async () => {
+  const { snap } = await fresh()
+  const alice = ev(0, 10, [], '1'.repeat(64))
+  const bob = ev(0, 11, [], '2'.repeat(64))
+  // Interop asks profiles with limit = the number of people: every one found is not a cut.
+  snap.absorb([{ kinds: [0], authors: [alice.pubkey, bob.pubkey], limit: 2 }], [alice, bob])
+  assert.deepEqual(snap.answer([{ kinds: [0], authors: [bob.pubkey], limit: 1 }])?.map((e) => e.id), [bob.id])
+  const one = ev(30851, 20, [['d', 'x']], '3'.repeat(64))
+  const two = ev(30851, 21, [['d', 'y']], '3'.repeat(64))
+  snap.absorb([{ kinds: [30851], authors: [one.pubkey], '#d': ['x', 'y'], limit: 2 }], [one, two])
+  assert.deepEqual(snap.answer([{ kinds: [30851], authors: [one.pubkey], '#d': ['y'], limit: 1 }])?.map((e) => e.id), [two.id])
+  // Two versions of one replaceable event: the relay keeps history, so the bound does not hold.
+  const old = ev(0, 5, [], '4'.repeat(64))
+  const newer = ev(0, 6, [], '4'.repeat(64))
+  snap.absorb([{ kinds: [0], authors: ['4'.repeat(64), '5'.repeat(64)], limit: 2 }], [newer, old])
+  assert.equal(snap.answer([{ kinds: [0], authors: ['5'.repeat(64)], limit: 1 }]), null)
+})
+
+test('an answer from `since` on, or one whose events carry two `d` tags, covers nothing (#129 review)', async () => {
+  const { snap } = await fresh()
+  const a = ev(1111, 10, [['a', 'x']])
+  // A catch-up: whole from its cursor, silent about what came before it.
+  snap.absorb([{ kinds: [1111], '#a': ['x', 'y'], since: 5 }], [a])
+  assert.equal(snap.answer([{ kinds: [1111], '#a': ['x'] }]), null)
+  // Two files that both also name d1 fill a limit of two: the relay may have cut d2's file.
+  const z = ev(30851, 20, [['d', 'z'], ['d', 'd1']], 'b'.repeat(64))
+  const y = ev(30851, 30, [['d', 'y'], ['d', 'd1']], 'b'.repeat(64))
+  snap.absorb([{ kinds: [30851], authors: ['b'.repeat(64)], '#d': ['d1', 'd2'], limit: 2 }], [z, y])
+  assert.equal(snap.answer([{ kinds: [30851], authors: ['b'.repeat(64)], '#d': ['d2'], limit: 1 }]), null)
+})
+
+test('a read before the stored copy is in does not leave its covers empty for the page load', async () => {
+  const storage = memorySnapshotStorage()
+  const first = await fresh(storage)
+  const a = ev(9, 10, [['h', 'g1']])
+  first.snap.absorb([{ kinds: [9], '#h': ['g1', 'g2'] }], [a])
+  await first.snap.flush()
+  const snap = createEventSnapshot({ storage, scope: `wss://r|${'a'.repeat(64)}`, version: 1, timers: still })
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1'] }]), null, 'not loaded yet')
+  await snap.ready
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'] }])?.map((e) => e.id), [a.id])
+})
+
+test('an id held again with other tags is looked up by what is held now', async () => {
+  const { snap } = await fresh()
+  const a = ev(9, 10, [['h', 'g1']])
+  snap.absorb([{ kinds: [9], '#h': ['g1'] }], [a])
+  snap.absorb([{ kinds: [9], '#h': ['g2'] }], [{ ...a, tags: [['h', 'g2']] }])
+  snap.absorb([{ kinds: [9], '#h': ['g2'] }], [])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'] }]), [])
+})
+
+test('what was answered whole survives a reload; a copy written before it covers nothing until asked again', async () => {
+  const storage = memorySnapshotStorage()
+  const { snap } = await fresh(storage)
+  const all = [0, 1].map(addr)
+  snap.absorb([{ kinds: [1851], '#a': all, limit: 1000 }], changes(all))
+  await snap.flush()
+  const asked = [{ kinds: [1851], '#a': [all[1]], limit: 1000 }]
+  const { snap: next } = await fresh(storage)
+  assert.equal(next.answer(asked)?.length, 1)
+
+  const record = storage.records.get(`wss://r|${'a'.repeat(64)}`)!
+  storage.records.set(`wss://r|${'a'.repeat(64)}`, { ...record, whole: undefined })
+  const { snap: older } = await fresh(storage)
+  assert.equal(older.answer(asked), null)
+  assert.notEqual(older.answer([{ kinds: [1851], '#a': all, limit: 1000 }]), null, 'its exact keys still answer')
 })
 
 test('a scope is one person on one relay', () => {

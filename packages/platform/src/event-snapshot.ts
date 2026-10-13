@@ -17,6 +17,17 @@
  * a copy that simply never saw the question would draw "nothing here", which
  * is a claim, where no answer draws today's placeholder.
  *
+ * A filter asked about a different set is answered too, when the relay has
+ * answered every value in it whole. Apps pool a set of files into lists —
+ * `'#a': [25 addresses]`, `authors: [everyone named]` — and the list changes
+ * whenever the set does, so a reload asked lists the relay never saw, though
+ * it had answered each file in them (Miky's Screener, 13 Oct). A filter is
+ * covered when, for one of its list fields, filters the same in every other
+ * field (`limit` aside) were answered whole and their lists hold every value
+ * it asks. Whole means not cut by a `limit`: below it, or past the most events
+ * the filter can match — one version of each replaceable event per author, of
+ * each addressable one per author and `d`, one event per id.
+ *
  * ## Keeping it honest without a sequence number
  *
  * The relay has no change feed to replay, so every answer it gives is also a
@@ -53,6 +64,8 @@ export interface SnapshotRecord {
   events: StoredSnapshotEvent[]
   /** The keys of every filter the relay has answered (see {@link snapshotFilterKey}). */
   filters: string[]
+  /** Those of them whose last answer was whole, not cut by its `limit`; absent in a copy written before 0.6. */
+  whole?: string[]
 }
 
 /** What changed since the last save. */
@@ -63,6 +76,7 @@ export interface SnapshotChange {
   put: StoredSnapshotEvent[]
   remove: string[]
   filters: string[]
+  whole: string[]
 }
 
 /** Where a copy lives between page loads. {@link indexedDbSnapshotStorage} is the browser's. */
@@ -166,10 +180,67 @@ export function matchesSnapshotFilter(filter: SnapshotFilter, event: SignedEvent
   return true
 }
 
+/**
+ * {@link matchesSnapshotFilter} for one filter and many events, the same rule:
+ * its lists are made sets once, since a pooled `'#a'` or `'#e'` holds hundreds
+ * of values and every candidate is judged against it.
+ */
+function snapshotMatcher(filter: SnapshotFilter): (event: SignedEvent) => boolean {
+  const checks: ((event: SignedEvent) => boolean)[] = []
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === 'limit') continue
+    if (key === 'ids' || key === 'kinds' || key === 'authors') {
+      const wanted = new Set(value as unknown[])
+      const field = key === 'ids' ? 'id' : key === 'kinds' ? 'kind' : 'pubkey'
+      checks.push((event) => wanted.has(event[field]))
+    } else if (key === 'since') {
+      checks.push((event) => event.created_at >= (value as number))
+    } else if (key === 'until') {
+      checks.push((event) => event.created_at <= (value as number))
+    } else if (key.startsWith('#') && key.length === 2) {
+      const name = key.slice(1)
+      const wanted = new Set(value as string[])
+      checks.push((event) => event.tags.some((tag) => tag[0] === name && tag[1] !== undefined && wanted.has(tag[1])))
+    } else {
+      // `search`, or anything this rule does not know: not something a copy can judge.
+      return () => false
+    }
+  }
+  return (event) => checks.every((check) => check(event))
+}
+
 function answerable(filter: SnapshotFilter): boolean {
   return Object.keys(filter).every(
     (key) => ['ids', 'kinds', 'authors', 'since', 'until', 'limit'].includes(key) || (key.startsWith('#') && key.length === 2),
   )
+}
+
+const isReplaceableKind = (kind: number) => kind === 0 || kind === 3 || (kind >= 10_000 && kind < 20_000)
+const isAddressableKind = (kind: number) => kind >= 30_000 && kind < 40_000
+
+/**
+ * The most events a filter can match on a relay that keeps one version of each
+ * replaceable event, or `Infinity`: a `limit` at least this big cannot cut.
+ * Interop asks a set's roots and profiles with `limit` = the list's length.
+ */
+function mostMatches(filter: SnapshotFilter): number {
+  const length = (key: string) => (Array.isArray(filter[key]) ? (filter[key] as unknown[]).length : undefined)
+  const kinds = filter.kinds as number[] | undefined
+  const authors = length('authors')
+  const d = length('#d')
+  let most = length('ids') ?? Infinity
+  if (kinds && authors !== undefined) {
+    if (kinds.every(isReplaceableKind)) most = Math.min(most, kinds.length * authors)
+    if (d !== undefined && kinds.every(isAddressableKind)) most = Math.min(most, kinds.length * authors * d)
+  }
+  return most
+}
+
+/** Where a filter's `field` list sits among answered lists: the filter without that field or its `limit`. */
+function coverShape(filter: SnapshotFilter, field: string): string {
+  const rest: SnapshotFilter = {}
+  for (const [key, value] of Object.entries(filter)) if (key !== field && key !== 'limit') rest[key] = value
+  return `${field}|${snapshotFilterKey(rest)}`
 }
 
 /** Newest first, then by id: the order a relay answers in. */
@@ -199,11 +270,21 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   const timers = () => options.timers ?? host
 
   const events = new Map<string, StoredSnapshotEvent>()
+  /** The ids held of each kind: a filter is matched against its own kinds, not the whole copy. */
+  const byKind = new Map<number, Set<string>>()
+  /** The ids held carrying each single-letter tag value, by `<letter>:<value>`: what a `#x` filter can match. */
+  const byTag = new Map<string, Set<string>>()
+  const tagKeys = (event: SignedEvent) =>
+    event.tags.filter((tag) => tag[0]?.length === 1 && tag[1] !== undefined).map((tag) => `${tag[0]}:${tag[1]}`)
   const byCoordinate = new Map<string, string>()
   const byContent = new Map<string, string>()
   /** Plaintexts for a ciphertext no held event carries: this page load only. */
   const looseText = new Map<string, string>()
   const filters = new Set<string>()
+  /** The keys of filters whose last answer was whole — the ones a pooled list may be covered by. */
+  const whole = new Set<string>()
+  /** Every value answered whole, by {@link coverShape}; built when first asked, dropped when `whole` changes. */
+  let covers: Map<string, Set<string>> | undefined
   const dirty = new Set<string>()
   const removed = new Set<string>()
   let filtersDirty = false
@@ -214,6 +295,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     const held = events.get(id)
     if (!held) return
     events.delete(id)
+    byKind.get(held.event.kind)?.delete(id)
+    for (const key of tagKeys(held.event)) byTag.get(key)?.delete(id)
     const coordinate = replaceableKey(held.event)
     if (coordinate) {
       if (byCoordinate.get(coordinate) === id) byCoordinate.delete(coordinate)
@@ -236,11 +319,24 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       byCoordinate.set(coordinate, event.id)
     }
     const previous = events.get(event.id)
+    // The same id again is the same event; if what arrived differs, the indexes follow what is held now.
+    if (previous) {
+      byKind.get(previous.event.kind)?.delete(event.id)
+      for (const key of tagKeys(previous.event)) byTag.get(key)?.delete(event.id)
+    }
     // A plaintext belongs to the person's own blob — a replaceable event they signed — and
     // never to somebody else's event that happens to carry the same ciphertext.
     const own = coordinate !== null && event.pubkey === owner
     const plaintext = own ? (stored.plaintext ?? previous?.plaintext ?? looseText.get(event.content)) : undefined
     events.set(event.id, { event, seenAt: stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
+    let ofKind = byKind.get(event.kind)
+    if (!ofKind) byKind.set(event.kind, (ofKind = new Set()))
+    ofKind.add(event.id)
+    for (const key of tagKeys(event)) {
+      let carrying = byTag.get(key)
+      if (!carrying) byTag.set(key, (carrying = new Set()))
+      carrying.add(event.id)
+    }
     if (own && event.content) byContent.set(event.content, event.id)
     if (mark) {
       dirty.add(event.id)
@@ -271,6 +367,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       }),
       remove: [...removed],
       filters: [...filters],
+      whole: [...whole],
     }
     dirty.clear()
     removed.clear()
@@ -300,6 +397,9 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (record && record.version === version) {
         for (const stored of record.events) hold(stored, false)
         for (const key of record.filters) filters.add(key)
+        for (const key of record.whole ?? []) if (filters.has(key)) whole.add(key)
+        // An answer asked before the stored copy was read built what is covered without it.
+        covers = undefined
       }
     } catch {
       // Unreadable (a private window, storage refused, a corrupt record): no copy.
@@ -320,17 +420,35 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         filters.add(key)
         filtersDirty = true
       }
-      const sent = answer.filter((event) => matchesSnapshotFilter(filter, event))
+      const matches = snapshotMatcher(filter)
+      const sent = answer.filter(matches)
       // Cut by its limit — counted on the whole answer too when it is the only filter, so an
       // event the relay matched and this rule does not cannot make a cut answer look whole.
+      // Not when the limit is past the most the filter can match, unless the relay sent two
+      // versions of one replaceable event, which that bound assumes it never keeps.
       const limit = typeof filter.limit === 'number' ? filter.limit : Infinity
-      const cut = sent.length >= limit || (asked.length === 1 && answer.length >= limit)
+      // An event with two `d` tags matches two coordinates' worth of `#d`, so the bound holds only for one each.
+      const bounded =
+        limit >= mostMatches(filter) &&
+        new Set(sent.map((event) => replaceableKey(event) ?? event.id)).size === sent.length &&
+        sent.every((event) => event.tags.filter((tag) => tag[0] === 'd').length <= 1)
+      const cut = !bounded && (sent.length >= limit || (asked.length === 1 && answer.length >= limit))
+      // Whole only for all time: an answer from `since` on says nothing about what came before it.
+      const isWhole = !cut && filter.since === undefined && filter.until === undefined
+      const wasWhole = whole.has(key)
+      if (isWhole) whole.add(key)
+      else whole.delete(key)
+      if (wasWhole !== isWhole) {
+        // Newly whole: its values join what is covered; no longer whole: what is covered is worked out again.
+        if (!isWhole) covers = undefined
+        else if (covers) addCovers(covers, key)
+        filtersDirty = true
+      }
       const floor = cut && sent.length ? Math.min(...sent.map((event) => event.created_at)) : cut ? Infinity : -Infinity
-      for (const stored of [...events.values()]) {
-        const { event } = stored
+      for (const event of candidates(filter)) {
         // At the cut's own second the relay may have held back events it still has: not judged.
         if (returned.has(event.id) || (cut && event.created_at <= floor)) continue
-        if (matchesSnapshotFilter(filter, event)) drop(event.id)
+        if (matches(event)) drop(event.id)
       }
     }
     for (const event of answer) {
@@ -356,16 +474,70 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     for (const stored of oldest.slice(0, events.size - maxEvents)) drop(stored.event.id)
   }
 
+  /**
+   * The held events a filter could match — by its `ids`, else by the
+   * smallest of its `#x` lists and its `kinds`, else all of them — for its
+   * matcher to judge. A copy of the list, so a caller may drop events while it
+   * walks it.
+   */
+  function candidates(filter: SnapshotFilter): SignedEvent[] {
+    if (Array.isArray(filter.ids)) {
+      const out: SignedEvent[] = []
+      for (const id of filter.ids as string[]) {
+        const held = events.get(id)
+        if (held) out.push(held.event)
+      }
+      return out
+    }
+    let smallest: Set<string> | undefined
+    const consider = (ids: Set<string>) => {
+      if (!smallest || ids.size < smallest.size) smallest = ids
+    }
+    for (const [key, value] of Object.entries(filter)) {
+      if (!Array.isArray(value)) continue
+      const ids = new Set<string>()
+      if (key === 'kinds') for (const kind of value as number[]) for (const id of byKind.get(kind) ?? []) ids.add(id)
+      else if (key.startsWith('#') && key.length === 2) for (const v of value) for (const id of byTag.get(`${key[1]}:${String(v)}`) ?? []) ids.add(id)
+      else continue
+      consider(ids)
+    }
+    if (!smallest) return [...events.values()].map((stored) => stored.event)
+    return [...smallest].map((id) => events.get(id)!.event)
+  }
+
+  /** Add one whole answer's list values to what is covered. */
+  function addCovers(into: Map<string, Set<string>>, key: string): void {
+    const answered = Object.fromEntries(JSON.parse(key) as [string, unknown][]) as SnapshotFilter
+    for (const [field, value] of Object.entries(answered)) {
+      if (!Array.isArray(value)) continue
+      const shape = coverShape(answered, field)
+      const values = into.get(shape) ?? new Set<string>()
+      for (const v of value) values.add(String(v))
+      into.set(shape, values)
+    }
+  }
+
+  function covered(filter: SnapshotFilter): boolean {
+    if (!covers) {
+      covers = new Map()
+      for (const key of whole) addCovers(covers, key)
+    }
+    return Object.entries(filter).some(([field, value]) => {
+      if (!Array.isArray(value) || field === 'since' || field === 'until') return false
+      const values = covers!.get(coverShape(filter, field))
+      return !!values && value.every((v) => values.has(String(v)))
+    })
+  }
+
   return {
     ready,
     answer(asked) {
       if (!asked.length) return null
-      if (!asked.every((f) => answerable(f) && filters.has(snapshotFilterKey(f)))) return null
+      if (!asked.every((f) => answerable(f) && (filters.has(snapshotFilterKey(f)) || covered(f)))) return null
       const out = new Map<string, SignedEvent>()
       for (const filter of asked) {
-        const matched = [...events.values()]
-          .map((stored) => stored.event)
-          .filter((event) => matchesSnapshotFilter(filter, event))
+        const matched = candidates(filter)
+          .filter(snapshotMatcher(filter))
           .sort(byRelayOrder)
         const limit = typeof filter.limit === 'number' ? filter.limit : matched.length
         for (const event of matched.slice(0, limit)) out.set(event.id, event)
@@ -420,7 +592,12 @@ export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string
     records,
     async load(scope) {
       const record = records.get(scope)
-      return { epoch, record: record ? { ...record, events: [...record.events], filters: [...record.filters] } : null }
+      return {
+        epoch,
+        record: record
+          ? { ...record, events: [...record.events], filters: [...record.filters], whole: [...(record.whole ?? [])] }
+          : null,
+      }
     },
     async save(scope, change) {
       if (change.epoch !== epoch) return
@@ -428,7 +605,12 @@ export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string
       const held = new Map(record && record.version === change.version ? record.events.map((s) => [s.event.id, s]) : [])
       for (const id of change.remove) held.delete(id)
       for (const stored of change.put) held.set(stored.event.id, stored)
-      records.set(scope, { version: change.version, events: [...held.values()], filters: [...change.filters] })
+      records.set(scope, {
+        version: change.version,
+        events: [...held.values()],
+        filters: [...change.filters],
+        whole: [...change.whole],
+      })
     },
     async clear() {
       records.clear()
@@ -534,7 +716,7 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
       const tx = database.transaction([EVENTS, META], 'readonly')
       const [epoch, meta, rows] = await Promise.all([
         epochOf(tx.objectStore(META)),
-        request(tx.objectStore(META).get(scope)) as Promise<{ version: number; filters: string[] } | undefined>,
+        request(tx.objectStore(META).get(scope)) as Promise<{ version: number; filters: string[]; whole?: string[] } | undefined>,
         request(tx.objectStore(EVENTS).index('scope').getAll(scope)) as Promise<(StoredSnapshotEvent & { scope: string; id: string })[]>,
       ])
       if (!meta) return { epoch, record: null }
@@ -543,6 +725,7 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
         record: {
           version: meta.version,
           filters: meta.filters,
+          whole: meta.whole ?? [],
           events: rows.map(({ event, plaintext, seenAt }) => ({ event, seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })),
         },
       }
@@ -565,7 +748,7 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
         }
         for (const id of change.remove) events.delete([scope, id])
         for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
-        metaStore.put({ scope, version: change.version, filters: change.filters })
+        metaStore.put({ scope, version: change.version, filters: change.filters, whole: change.whole })
       }
       await done(tx)
     },

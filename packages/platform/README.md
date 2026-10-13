@@ -160,7 +160,7 @@ const copy = createEventSnapshot({
 // In the transport, on every answer the relay gives:
 copy.absorb(filters, events)
 
-// Before the relay answers: null means the copy never saw this read answered.
+// Before the relay answers: null means the copy cannot answer this read whole.
 await copy.ready
 const drawnFirst = copy.answer(filters)
 
@@ -169,6 +169,11 @@ const drawnFirst = copy.answer(filters)
 copy.discard()
 await storage.clear()
 ```
+
+It answers a read it has seen answered, and a pooled list it has not, when
+reads the same in every other field (`limit` aside) were answered whole and
+together named every value in it — `'#e': [the newest messages]` after the
+newest changed. `since` and `until` are the clock and not part of the question.
 
 Every answer is also a correction: an event the copy holds that matches a
 filter the relay just answered, and is not in that answer, is dropped — a
