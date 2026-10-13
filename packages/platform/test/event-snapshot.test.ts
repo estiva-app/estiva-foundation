@@ -146,6 +146,66 @@ test('an unreadable store is no copy, not a failure', async () => {
   assert.equal(snap.answer([{ kinds: [1] }]), null)
 })
 
+test('an answer taken in before the stored copy is read is applied over it, not under it', async () => {
+  const storage = memorySnapshotStorage()
+  const filter = { kinds: [9], '#h': ['g'] }
+  const kept = ev(9, 10, [['h', 'g']])
+  const deleted = ev(9, 20, [['h', 'g']])
+  const first = createEventSnapshot({ storage, scope: 's', version: 1, timers: still })
+  await first.ready
+  first.absorb([filter], [kept, deleted])
+  await first.flush()
+
+  const next = createEventSnapshot({ storage, scope: 's', version: 1, timers: still })
+  next.absorb([filter], [kept]) // before `ready`
+  await next.ready
+  assert.deepEqual(next.answer([filter])?.map((e) => e.id), [kept.id])
+})
+
+test('a save that fails is asked again, removals included', async () => {
+  const storage = memorySnapshotStorage()
+  let refuse = false
+  const flaky = { ...storage, save: (scope: string, change: Parameters<typeof storage.save>[1]) => (refuse ? Promise.reject(new Error('quota')) : storage.save(scope, change)) }
+  const snap = createEventSnapshot({ storage: flaky, scope: 's', version: 1, timers: still })
+  await snap.ready
+  const filter = { kinds: [9], '#h': ['g'] }
+  const gone = ev(9, 20, [['h', 'g']])
+  snap.absorb([filter], [gone])
+  await snap.flush()
+  refuse = true
+  snap.absorb([filter], [])
+  await snap.flush()
+  refuse = false
+  await snap.flush()
+  assert.deepEqual(storage.records.get('s')?.events, [])
+})
+
+test('a kind:5 naming an address drops that file, if its author signed it', async () => {
+  const { snap } = await fresh()
+  const author = 'b'.repeat(64)
+  const file = ev(30840, 10, [['d', 'topic']], author)
+  snap.absorb([{ kinds: [30840] }], [file])
+  snap.absorb([{ kinds: [5] }], [ev(5, 11, [['a', `30840:${author}:topic`]], 'c'.repeat(64))])
+  assert.equal(snap.answer([{ kinds: [30840] }])?.length, 1, 'somebody else cannot delete it')
+  snap.absorb([{ kinds: [5], authors: [author] }], [ev(5, 12, [['a', `30840:${author}:topic`]], author)])
+  assert.deepEqual(snap.answer([{ kinds: [30840] }]), [])
+})
+
+test('close writes what changed; discard writes nothing', async () => {
+  const storage = memorySnapshotStorage()
+  const closing = createEventSnapshot({ storage, scope: 'a', version: 1, timers: still })
+  await closing.ready
+  closing.absorb([{ kinds: [1] }], [ev(1, 1)])
+  closing.close()
+  const discarding = createEventSnapshot({ storage, scope: 'b', version: 1, timers: still })
+  await discarding.ready
+  discarding.absorb([{ kinds: [1] }], [ev(1, 1)])
+  discarding.discard()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(storage.records.get('a')?.events.length, 1)
+  assert.equal(storage.records.has('b'), false)
+})
+
 test('a scope is one person on one relay', () => {
   assert.equal(snapshotScope('wss://relay/', 'pk'), 'wss://relay|pk')
 })

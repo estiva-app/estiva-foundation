@@ -17,7 +17,10 @@ person's own blob beside its event, so the same ciphertext is never
 decrypted twice.
 
 - `createEventSnapshot({ storage, scope, version, maxEvents?, saveAfterMs?, now?, timers? })`
-  → `{ ready, answer(filters), absorb(filters, events), plaintextOf, keepPlaintext, size, flush, close }`.
+  → `{ ready, answer(filters), absorb(filters, events), plaintextOf, keepPlaintext, size, flush, close, discard }`.
+  An answer absorbed before `ready` is applied over the stored copy; a failed
+  save is asked again; `close` writes what changed, `discard` (sign-out) does not.
+  A `kind:5` drops `e` targets and `a` coordinates its own author signed.
   A copy written under another `version` is dropped unread; past `maxEvents`
   (10,000) the least recently seen go.
 - `indexedDbSnapshotStorage(indexedDB, name?)` — the browser's storage, the

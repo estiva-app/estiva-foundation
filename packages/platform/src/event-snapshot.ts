@@ -105,8 +105,10 @@ export interface EventSnapshot {
   size(): number
   /** Write what changed now, rather than after `saveAfterMs`. */
   flush(): Promise<void>
-  /** Stop: nothing more is written. */
+  /** Stop, writing what changed first; nothing more is written after. */
   close(): void
+  /** Stop and write nothing: the copy is about to be cleared (sign-out). */
+  discard(): void
 }
 
 export const SNAPSHOT_MAX_EVENTS = 10_000
@@ -201,8 +203,10 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     if (!held) return
     events.delete(id)
     const coordinate = replaceableKey(held.event)
-    if (coordinate && byCoordinate.get(coordinate) === id) byCoordinate.delete(coordinate)
-    if (byContent.get(held.event.content) === id) byContent.delete(held.event.content)
+    if (coordinate) {
+      if (byCoordinate.get(coordinate) === id) byCoordinate.delete(coordinate)
+      if (byContent.get(held.event.content) === id) byContent.delete(held.event.content)
+    }
     dirty.delete(id)
     removed.add(id)
   }
@@ -222,7 +226,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     const previous = events.get(event.id)
     const plaintext = stored.plaintext ?? previous?.plaintext ?? looseText.get(event.content)
     events.set(event.id, { event, seenAt: stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
-    if (event.content) byContent.set(event.content, event.id)
+    // A person's own blob is a replaceable event: only those carry a plaintext worth keeping.
+    if (coordinate && event.content) byContent.set(event.content, event.id)
     if (mark) {
       dirty.add(event.id)
       removed.delete(event.id)
@@ -258,20 +263,74 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     try {
       await storage.save(scope, change)
     } catch {
-      // A copy that could not be written is a slower next load, not a failure.
+      // A copy that could not be written is a slower next load, not a failure —
+      // but what it carried is asked again next time, removals above all: a
+      // deletion that never reached storage would be drawn on every reload.
+      for (const stored of change.put) if (events.has(stored.event.id) && !removed.has(stored.event.id)) dirty.add(stored.event.id)
+      for (const id of change.remove) if (!events.has(id)) removed.add(id)
+      filtersDirty = true
+      schedule()
     }
   }
+
+  /** Answers taken in before the stored copy was read: applied over it, never under it. */
+  const early: [SnapshotFilter[], SignedEvent[]][] = []
+  let loaded = false
 
   const ready = (async () => {
     try {
       const record = await storage.load(scope)
-      if (!record || record.version !== version) return
-      for (const stored of record.events) hold(stored, false)
-      for (const key of record.filters) filters.add(key)
+      if (record && record.version === version) {
+        for (const stored of record.events) hold(stored, false)
+        for (const key of record.filters) filters.add(key)
+      }
     } catch {
       // Unreadable (a private window, storage refused, a corrupt record): no copy.
     }
+    loaded = true
+    for (const [asked, answer] of early.splice(0)) take(asked, answer)
   })()
+
+  function take(asked: SnapshotFilter[], answer: SignedEvent[]) {
+    if (closed) return
+    const seenAt = now()
+    for (const event of answer) hold({ event, seenAt }, true)
+    const returned = new Set(answer.map((event) => event.id))
+    for (const filter of asked) {
+      if (!answerable(filter)) continue
+      const key = snapshotFilterKey(filter)
+      if (!filters.has(key)) {
+        filters.add(key)
+        filtersDirty = true
+      }
+      const sent = answer.filter((event) => matchesSnapshotFilter(filter, event))
+      // Cut by its limit — counted on the whole answer too when it is the only filter, so an
+      // event the relay matched and this rule does not cannot make a cut answer look whole.
+      const limit = typeof filter.limit === 'number' ? filter.limit : Infinity
+      const cut = sent.length >= limit || (asked.length === 1 && answer.length >= limit)
+      const floor = cut && sent.length ? Math.min(...sent.map((event) => event.created_at)) : cut ? Infinity : -Infinity
+      for (const stored of [...events.values()]) {
+        const { event } = stored
+        if (returned.has(event.id) || event.created_at < floor) continue
+        if (matchesSnapshotFilter(filter, event)) drop(event.id)
+      }
+    }
+    for (const event of answer) {
+      if (event.kind !== 5) continue
+      for (const tag of event.tags) {
+        if (!tag[1]) continue
+        if (tag[0] === 'e' && events.get(tag[1])?.event.pubkey === event.pubkey) drop(tag[1])
+        // An addressable file deleted by its coordinate: what its author wrote up to the deletion.
+        if (tag[0] === 'a' && tag[1].split(':')[1] === event.pubkey) {
+          const id = byCoordinate.get(tag[1])
+          const target = id ? events.get(id)?.event : undefined
+          if (target && target.created_at <= event.created_at) drop(target.id)
+        }
+      }
+    }
+    trim()
+    schedule()
+  }
 
   function trim() {
     if (events.size <= maxEvents) return
@@ -297,34 +356,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     },
     absorb(asked, answer) {
       if (closed) return
-      const seenAt = now()
-      for (const event of answer) hold({ event, seenAt }, true)
-      const returned = new Set(answer.map((event) => event.id))
-      for (const filter of asked) {
-        if (!answerable(filter)) continue
-        const key = snapshotFilterKey(filter)
-        if (!filters.has(key)) {
-          filters.add(key)
-          filtersDirty = true
-        }
-        const sent = answer.filter((event) => matchesSnapshotFilter(filter, event))
-        const cut = typeof filter.limit === 'number' && sent.length >= filter.limit
-        const floor = cut ? Math.min(...sent.map((event) => event.created_at)) : -Infinity
-        for (const stored of [...events.values()]) {
-          const { event } = stored
-          if (returned.has(event.id) || event.created_at < floor) continue
-          if (matchesSnapshotFilter(filter, event)) drop(event.id)
-        }
-      }
-      for (const event of answer) {
-        if (event.kind !== 5) continue
-        for (const tag of event.tags) {
-          if (tag[0] !== 'e' || !tag[1]) continue
-          if (events.get(tag[1])?.event.pubkey === event.pubkey) drop(tag[1])
-        }
-      }
-      trim()
-      schedule()
+      if (!loaded) early.push([asked, answer])
+      else take(asked, answer)
     },
     plaintextOf(content) {
       const id = byContent.get(content)
@@ -346,6 +379,11 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     size: () => events.size,
     flush,
     close() {
+      // What changed is written first: a deletion taken in a moment ago must not come back next load.
+      void flush()
+      closed = true
+    },
+    discard() {
       if (timer !== undefined) timers().clearTimeout(timer)
       timer = undefined
       closed = true
@@ -464,6 +502,25 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
     return opened
   }
 
+  /** Saves in flight: a sign-out's `clear` waits for them, or one could write the copy back after it. */
+  const saving = new Set<Promise<void>>()
+
+  async function write(scope: string, change: SnapshotChange): Promise<void> {
+    const database = await db()
+    const read = database.transaction([META], 'readonly')
+    const meta = (await request(read.objectStore(META).get(scope))) as { version: number } | undefined
+    const tx = database.transaction([EVENTS, META], 'readwrite')
+    const events = tx.objectStore(EVENTS)
+    if (meta && meta.version !== change.version) {
+      const keys = await request(events.index('scope').getAllKeys(scope))
+      for (const key of keys) events.delete(key)
+    }
+    for (const id of change.remove) events.delete([scope, id])
+    for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
+    tx.objectStore(META).put({ scope, version: change.version, filters: change.filters })
+    await done(tx)
+  }
+
   return {
     async load(scope) {
       const database = await db()
@@ -479,22 +536,14 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
         events: rows.map(({ event, plaintext, seenAt }) => ({ event, seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })),
       }
     },
-    async save(scope, change) {
-      const database = await db()
-      const read = database.transaction([META], 'readonly')
-      const meta = (await request(read.objectStore(META).get(scope))) as { version: number } | undefined
-      const tx = database.transaction([EVENTS, META], 'readwrite')
-      const events = tx.objectStore(EVENTS)
-      if (meta && meta.version !== change.version) {
-        const keys = await request(events.index('scope').getAllKeys(scope))
-        for (const key of keys) events.delete(key)
-      }
-      for (const id of change.remove) events.delete([scope, id])
-      for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
-      tx.objectStore(META).put({ scope, version: change.version, filters: change.filters })
-      await done(tx)
+    save(scope, change) {
+      const run = write(scope, change)
+      saving.add(run)
+      void run.catch(() => {}).finally(() => saving.delete(run))
+      return run
     },
     async clear() {
+      await Promise.allSettled([...saving])
       const database = await db()
       const tx = database.transaction([EVENTS, META], 'readwrite')
       tx.objectStore(EVENTS).clear()
