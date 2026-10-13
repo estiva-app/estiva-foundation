@@ -177,8 +177,16 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
   return out
 }
 
-/** A link on words, `[words](https://…)`, as the marker format writes it — its URL is the target of words the author chose. */
-const LINK_ON_WORDS = /\[[^[\]\n]+\]\((?:https?:\/\/|mailto:)[^\s)]+\)/g
+/**
+ * One pass over a run: a link on words, `[words](https://…)` as the marker
+ * format writes it (group 1 — its URL is the target of words the author chose),
+ * or a bare URL (group 2). The same alternation the ui package's `RichText`
+ * draws links by, so what is skipped here is what it draws as a link. Alone,
+ * the first alternative is quadratic on a run of `[a](https://x` with no space
+ * or `)`; the bare-URL alternative after it swallows the rest, so this stays
+ * linear (OPT-18's security review).
+ */
+const LINK_OR_URL = /(\[[^[\]\n]+\]\((?:https?:\/\/|mailto:)[^\s)]+\))|(https?:\/\/[^\s<>"'`]+)/g
 
 /**
  * A message's tree with each bare app link turned into the reference it names,
@@ -212,14 +220,12 @@ export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: L
   }
   const split = (run: RenderInline): RenderInline[] => {
     if (run.reference || run.marks.includes('code') || !run.text.includes('://')) return [run]
-    // The spans a link on words covers, so neither its target nor a URL in its words is taken.
-    const covered: [number, number][] = []
-    for (const m of run.text.matchAll(LINK_ON_WORDS)) covered.push([m.index, m.index + m[0].length])
     const out: RenderInline[] = []
     let at = 0
-    for (const m of run.text.matchAll(URL_RUN)) {
+    for (const m of run.text.matchAll(LINK_OR_URL)) {
+      // A link on words: neither its target nor a URL in its words is taken.
+      if (m[1]) continue
       const start = m.index
-      if (covered.some(([s, e]) => start >= s && start < e)) continue
       // A link on words whose words carry a mark arrives split across runs: its target follows `](`, and a URL as its words follows `[`.
       if (run.text.slice(Math.max(0, start - 2), start) === '](' || run.text[start - 1] === '[') continue
       const url = trimUrl(m[0])

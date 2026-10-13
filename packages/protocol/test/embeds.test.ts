@@ -151,6 +151,14 @@ describe('linksAsReferences', () => {
     assert.deepEqual(got.map((r) => r.reference ?? null), [null])
   })
 
+  it('stays linear on a hostile run of unclosed links (256 KB)', () => {
+    const hostile = '[a](https://x'.repeat(19700)
+    const t0 = performance.now()
+    linksAsReferences(body(hostile), resolve)
+    linksAsReferences(body('[a](https://x) https://y '.repeat(10000)), resolve)
+    assert.ok(performance.now() - t0 < 500, `took ${Math.round(performance.now() - t0)} ms`)
+  })
+
   it('returns a block with nothing to turn as the same object', () => {
     const tree = body('just words, and https://example.com/a')
     assert.equal(linksAsReferences(tree, resolve)[0], tree[0])
