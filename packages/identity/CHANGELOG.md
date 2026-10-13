@@ -1,5 +1,28 @@
 # @estiva-app/identity
 
+## 0.2.3 — 2026-10-13
+
+**Additive.** A caller that passes `storage` behaves exactly as before, apart
+from renewal now being locked across tabs.
+
+- **Renewal is locked across tabs (PEE-3).** A session in `localStorage` is read
+  by every tab, and every tab's renewal timer fires for the same expiry; the
+  per-page guard from 0.2.0 does not see the other tabs. Estiva ID revokes the
+  whole refresh chain when one refresh token is presented twice, so two open
+  tabs could sign the person out of everything. Ship and Leaf have shared their
+  session since they adopted the package and were exposed to this.
+
+  `refreshAccessToken` now runs under `lock` (new, optional; the Web Locks API
+  by default, unguarded where there is none). A tab that waited for the lock and
+  finds a different refresh token stored takes that token instead of calling
+  `/token`. A `scheduleRenewal` timer that fires after another tab renewed
+  re-arms from the shared token's expiry rather than renewing again.
+
+- **`storage` is optional, and defaults to `localStorage`; `pendingStore` then
+  defaults to `sessionStorage`.** Every app keeps its session the same way:
+  shared by its tabs, the in-flight PKCE values per tab. Peek moves to it with
+  PEE-3. Passing `storage` alone still uses it for both.
+
 ## 0.2.2 — 2026-09-08
 
 **Additive.** `token` gains a function form; a string behaves exactly as before,

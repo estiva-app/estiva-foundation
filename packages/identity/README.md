@@ -39,15 +39,21 @@ package come out Peek-shaped, which is the whole risk SHA-4 names.
 | --- | --- | --- |
 | `clientId` | `estiva-peek` | `estiva-ship` |
 | `redirectUri` | a fixed `/auth/callback` | its current pathname — Ship routes on `location.hash` |
-| `storage` — the session | `sessionStorage`, dies with the tab | `localStorage`, outlives a tab |
-| `pendingStore` — in-flight PKCE credentials | defaults to `storage` | `sessionStorage`, because the flow starts and ends in one tab |
 | `keyPrefix` | `peek.estivaId` | `ship.estiva-id` |
 | `navigate` | the one genuinely untestable act, so it is observable |  |
 | `setTimer` / `clearTimer` | the timers `scheduleRenewal` runs on, injected for the same reason |  |
 
-**Do not unify the two stores.** NIP-RS read-state slots (CRO-4) must survive a
-restart and belong in `localStorage`; an access token does not. Different
-lifetimes, different homes.
+**Where the session lives is the same for every app (PEE-3).** `storage` defaults
+to `localStorage` — one session shared by every tab, surviving a tab close — and
+`pendingStore` to `sessionStorage`, because a sign-in starts and ends in one tab.
+Peek kept a per-tab session until PEE-3, and every new tab paid a ~0.5 s silent
+`/authorize` bounce for it. Both stay injectable (a test, a script); a caller
+that passes only `storage` gets it for both, as before.
+
+**A shared session needs a cross-tab lock on renewal.** Every tab's timer fires
+for the same expiry, and Estiva ID revokes the whole chain when a refresh token
+is presented twice. `lock` defaults to the Web Locks API; a tab that waited for
+it takes the token another tab just renewed instead of spending the old one.
 
 `pendingStore` exists because wiring the second consumer found the package
 assuming one store — it was extracted from Peek, which uses one. That is the "a
@@ -62,7 +68,6 @@ const client = createEstivaId({
   base: ESTIVA_ID_ORIGIN,
   clientId: 'estiva-peek',
   redirectUri: () => `${window.location.origin}/auth/callback`,
-  storage: () => (typeof window === 'undefined' ? null : window.sessionStorage),
   keyPrefix: 'peek.estivaId',
   navigate: (url) => window.location.assign(url),
 })
