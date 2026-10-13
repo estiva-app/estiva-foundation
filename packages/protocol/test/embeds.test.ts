@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, toRenderTree, urlNamesAddress } from '../dist/index.js'
+import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, toRenderTree } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
 const ISSUE = `30851:${PK}:f78c3b96-2a3b-4d92-910a-ac25aba672cd`
@@ -63,10 +63,20 @@ describe('which cards a message draws', () => {
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], body(`added later: ${issueRef}`)), [{ value: ISSUE, layout: 'detailed' }])
   })
 
-  it('names an address by an app link whose path ends in its d', () => {
+  it('names an address by an app link only as the reader resolves it (§7.7), never by its trailing d', () => {
     const url = 'https://ship.estiva.app/issue/opt-16-probe-issue-f78c3b96-2a3b-4d92-910a-ac25aba672cd'
-    assert.equal(urlNamesAddress(url, ISSUE), true)
-    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${url}.`)), [{ value: ISSUE, layout: 'compact' }])
+    const lookalike = 'https://evil.example/issue/x-f78c3b96-2a3b-4d92-910a-ac25aba672cd'
+    const resolve = (u: string) => (u === url ? ISSUE : undefined)
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${url}.`), [], resolve), [{ value: ISSUE, layout: 'compact' }])
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${lookalike}.`), [], resolve), [])
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${url}.`)), [], 'no resolver, no link')
+  })
+
+  it('strips a hostile run of trailing dots in linear time', () => {
+    const text = `https://x.example/${'.'.repeat(200_000)}y ${'.'.repeat(200_000)}`
+    const started = Date.now()
+    cardsIn([{ value: ISSUE, layout: 'compact' }], body(text), [], () => undefined)
+    assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`)
   })
 
   it('names a message by nevent', () => {
@@ -82,9 +92,10 @@ describe('which cards a message draws', () => {
     assert.deepEqual(got, [])
   })
 
-  it('finds a link a mark splits across runs, and an address with an empty d', () => {
+  it('finds a link inside a mark, and an address with an empty d', () => {
     const url = 'https://ship.estiva.app/issue/opt-16-probe-issue-f78c3b96-2a3b-4d92-910a-ac25aba672cd'
-    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`the plan: ${url.slice(0, 30)}**${url.slice(30, 40)}**${url.slice(40)}`)), [{ value: ISSUE, layout: 'compact' }])
+    const resolve = (u: string) => (u === url ? ISSUE : undefined)
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`**the plan: ${url}**`), [], resolve), [{ value: ISSUE, layout: 'compact' }])
     assert.deepEqual(embedsOf({ tags: [['embed', `30023:${PK}:`, 'detailed']] }), [{ value: `30023:${PK}:`, layout: 'detailed' }])
   })
 

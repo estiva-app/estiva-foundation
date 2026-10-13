@@ -81,22 +81,23 @@ function normalise(value: string): string | undefined {
 }
 
 /**
- * Whether an app link names this address, read the way Peek and Ship read a
- * pasted block link for a `part` (§13.6.1) — offline, with no manifest: its path ends in the address's `d`
- * (§7.2 puts the identity last, `…/<slug>-<d>`), and that `d` is long enough to
- * be one. A `d` comes from somebody's tag, so a short one would otherwise match
- * half the links in a body.
+ * What an app link names, as the reader resolved it by §7.7 — the host and the
+ * `<type>` segment against a published `urls` pattern, then the one author who
+ * holds that `d` — or undefined. Never a match on the link's trailing
+ * identifier alone: that resolves any site's URL as somebody's object, and puts
+ * a real issue's card under a link that does not open it (§7.7).
  */
-export function urlNamesAddress(url: string, address: string): boolean {
-  const d = address.split(':').slice(2).join(':')
-  if (d.length < 8) return false
-  const path = url.split(/[?#]/)[0].replace(/\/+$/, '')
-  return path.endsWith(`-${d}`) || path.endsWith(`/${d}`)
-}
+export type LinkResolver = (url: string) => string | undefined
 
-/** The http(s) links in a run of text. Trailing punctuation is the sentence's, not the link's. */
+const TRAILING = new Set(['.', ',', ';', ':', '!', '?', ')', ']'])
+
+/** The http(s) links in a text. Trailing punctuation is the sentence's, not the link's; stripped by a loop, which stays linear on a hostile run of dots. */
 function urlsIn(text: string): string[] {
-  return (text.match(/https?:\/\/[^\s<>"'`]+/g) ?? []).map((url) => url.replace(/[.,;:!?)\]]+$/, ''))
+  return (text.match(/https?:\/\/[^\s<>"'`]+/g) ?? []).map((url) => {
+    let end = url.length
+    while (end > 0 && TRAILING.has(url[end - 1])) end--
+    return url.slice(0, end)
+  })
 }
 
 /** The address or event id a `nostr:` reference names, or undefined for a person or something unreadable. */
@@ -122,20 +123,20 @@ function valueOfReference(reference: string): string | undefined {
  *
  * `embeds` is the message's folded set; `blocks` its folded body as a render
  * tree; `parts` its `part` pointers (§13.6.1). A value appears here only while
- * the body names it — by a `nostr:` reference, or for an address by an app
- * link whose path ends in its `d` (§7.7) — and only when no `part` names the
+ * the body names it — by a `nostr:` reference, or by an app link that
+ * `resolveLink` resolves to it (§7.7) — and only when no `part` names the
  * same address, because the live block already stands for that object. Text in
- * a code span names nothing (§13.1).
+ * a code span names nothing (§13.1). Without `resolveLink` a link names nothing:
+ * resolving one needs the manifests and the relay, which this package does not hold.
  *
  * `none` entries are kept: they draw no card, but they still override the
- * reader's own default for that value (until milestone 2, Ship and Peek draw a
+ * reader's own default for that value (as of 2026-10-13 Ship and Peek draw a
  * reference alone on its line as its card; an `embed` replaces that). Filter
  * them out to get the cards to draw.
  */
-export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[], parts: readonly PartPointer[] = []): Embed[] {
+export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[], parts: readonly PartPointer[] = [], resolveLink?: LinkResolver): Embed[] {
   if (embeds.length === 0) return []
   const byValue = new Map(embeds.map((e) => [e.value, e]))
-  const addresses = embeds.filter((e) => ADDRESS.test(e.value)).map((e) => e.value)
   const withPart = new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v))
   const out: Embed[] = []
   const seen = new Set<string>()
@@ -148,7 +149,11 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
   }
   // Adjacent plain runs are read as one text, so a link a mark splits in two is still one link.
   const scan = (text: string) => {
-    for (const url of urlsIn(text)) for (const a of addresses) if (urlNamesAddress(url, a)) take(a)
+    if (!resolveLink || !text.includes('://')) return
+    for (const url of urlsIn(text)) {
+      const value = resolveLink(url)
+      if (value) take(normalise(value))
+    }
   }
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {

@@ -11,8 +11,9 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 "none"]` on a `kind:9`, a `kind:1111` and their `40003` edits. `embedsOf` reads
 it (first per value, an unknown layout as `compact`), `embedTag` writes it, and
 `cardsIn` says which cards a message draws: the values its folded body still
-names — by `nostr:` reference, or an app link whose path ends in the address's
-`d` (`urlNamesAddress`) — in body order, with a `part` winning over an `embed`.
+names — by `nostr:` reference, or by an app link the caller's `LinkResolver`
+resolves by §7.7 (without one, a link names nothing) — in body order, with a
+`part` winning over an `embed`.
 There is no `a`/`q` match, so an edit can give a card to a reference it added.
 Nothing this package publishes changes: nothing writes `embed` yet, and a
 reader on 0.30 ignores the tag and draws the reference as before.
