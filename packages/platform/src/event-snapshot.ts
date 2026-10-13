@@ -156,13 +156,34 @@ export function snapshotFilterKey(filter: SnapshotFilter): string {
 
 /** Whether an event matches a filter, `limit` aside — NIP-01's rule. */
 export function matchesSnapshotFilter(filter: SnapshotFilter, event: SignedEvent): boolean {
-  return snapshotMatcher(filter)(event)
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === 'limit') continue
+    if (key === 'ids') {
+      if (!(value as string[]).includes(event.id)) return false
+    } else if (key === 'kinds') {
+      if (!(value as number[]).includes(event.kind)) return false
+    } else if (key === 'authors') {
+      if (!(value as string[]).includes(event.pubkey)) return false
+    } else if (key === 'since') {
+      if (event.created_at < (value as number)) return false
+    } else if (key === 'until') {
+      if (event.created_at > (value as number)) return false
+    } else if (key.startsWith('#') && key.length === 2) {
+      const name = key.slice(1)
+      const wanted = value as string[]
+      if (!event.tags.some((tag) => tag[0] === name && tag[1] !== undefined && wanted.includes(tag[1]))) return false
+    } else {
+      // `search`, or anything this rule does not know: not something a copy can judge.
+      return false
+    }
+  }
+  return true
 }
 
 /**
- * {@link matchesSnapshotFilter} for one filter and many events: its lists are
- * made sets once, since a pooled `'#a'` or `'#e'` holds hundreds of values and
- * every held event is judged against it.
+ * {@link matchesSnapshotFilter} for one filter and many events, the same rule:
+ * its lists are made sets once, since a pooled `'#a'` or `'#e'` holds hundreds
+ * of values and every candidate is judged against it.
  */
 function snapshotMatcher(filter: SnapshotFilter): (event: SignedEvent) => boolean {
   const checks: ((event: SignedEvent) => boolean)[] = []
@@ -406,7 +427,9 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (cut) whole.delete(key)
       else whole.add(key)
       if (wasWhole === cut) {
-        covers = undefined
+        // Newly whole: its values join what is covered; no longer whole: what is covered is worked out again.
+        if (cut) covers = undefined
+        else if (covers) addCovers(covers, key)
         filtersDirty = true
       }
       const floor = cut && sent.length ? Math.min(...sent.map((event) => event.created_at)) : cut ? Infinity : -Infinity
@@ -440,48 +463,52 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   }
 
   /**
-   * The held events a filter could match — by its `ids`, else by one `#x`
-   * list, else by its `kinds`, else all of them — for its matcher to judge. A
-   * copy of the list, so a caller may drop events while it walks it.
+   * The held events a filter could match — by its `ids`, else by the
+   * smallest of its `#x` lists and its `kinds`, else all of them — for its
+   * matcher to judge. A copy of the list, so a caller may drop events while it
+   * walks it.
    */
   function candidates(filter: SnapshotFilter): SignedEvent[] {
-    const out: SignedEvent[] = []
     if (Array.isArray(filter.ids)) {
+      const out: SignedEvent[] = []
       for (const id of filter.ids as string[]) {
         const held = events.get(id)
         if (held) out.push(held.event)
       }
       return out
     }
-    const tag = Object.keys(filter).find((key) => key.startsWith('#') && key.length === 2 && Array.isArray(filter[key]))
-    if (tag) {
+    let smallest: Set<string> | undefined
+    const consider = (ids: Set<string>) => {
+      if (!smallest || ids.size < smallest.size) smallest = ids
+    }
+    for (const [key, value] of Object.entries(filter)) {
+      if (!Array.isArray(value)) continue
       const ids = new Set<string>()
-      for (const value of filter[tag] as unknown[]) for (const id of byTag.get(`${tag[1]}:${String(value)}`) ?? []) ids.add(id)
-      for (const id of ids) out.push(events.get(id)!.event)
-      return out
+      if (key === 'kinds') for (const kind of value as number[]) for (const id of byKind.get(kind) ?? []) ids.add(id)
+      else if (key.startsWith('#') && key.length === 2) for (const v of value) for (const id of byTag.get(`${key[1]}:${String(v)}`) ?? []) ids.add(id)
+      else continue
+      consider(ids)
     }
-    if (Array.isArray(filter.kinds)) {
-      for (const kind of new Set(filter.kinds as number[]))
-        for (const id of byKind.get(kind) ?? []) out.push(events.get(id)!.event)
-      return out
+    if (!smallest) return [...events.values()].map((stored) => stored.event)
+    return [...smallest].map((id) => events.get(id)!.event)
+  }
+
+  /** Add one whole answer's list values to what is covered. */
+  function addCovers(into: Map<string, Set<string>>, key: string): void {
+    const answered = Object.fromEntries(JSON.parse(key) as [string, unknown][]) as SnapshotFilter
+    for (const [field, value] of Object.entries(answered)) {
+      if (!Array.isArray(value)) continue
+      const shape = coverShape(answered, field)
+      const values = into.get(shape) ?? new Set<string>()
+      for (const v of value) values.add(String(v))
+      into.set(shape, values)
     }
-    for (const stored of events.values()) out.push(stored.event)
-    return out
   }
 
   function covered(filter: SnapshotFilter): boolean {
     if (!covers) {
       covers = new Map()
-      for (const key of whole) {
-        const answered = Object.fromEntries(JSON.parse(key) as [string, unknown][]) as SnapshotFilter
-        for (const [field, value] of Object.entries(answered)) {
-          if (!Array.isArray(value)) continue
-          const shape = coverShape(answered, field)
-          const values = covers.get(shape) ?? new Set<string>()
-          for (const v of value) values.add(String(v))
-          covers.set(shape, values)
-        }
-      }
+      for (const key of whole) addCovers(covers, key)
     }
     return Object.entries(filter).some(([field, value]) => {
       if (!Array.isArray(value) || field === 'since' || field === 'until') return false

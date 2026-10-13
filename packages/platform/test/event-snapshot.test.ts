@@ -70,6 +70,20 @@ test('a filter by kinds or ids sees only what is held now: a dropped or replaced
   assert.deepEqual(snap.answer([{ kinds: [9, 30078], '#h': ['g1'] }]), null, 'a filter never asked')
 })
 
+test('a tag value other kinds carry too is judged by the whole filter, whichever list it is looked up by', async () => {
+  const { snap } = await fresh()
+  const message = ev(9, 10, [['h', 'g1'], ['p', 'b'.repeat(64)]])
+  const edit = ev(40003, 20, [['h', 'g1'], ['p', 'b'.repeat(64)]])
+  const other = ev(9, 30, [['h', 'g2'], ['p', 'b'.repeat(64)]])
+  snap.absorb([{ kinds: [9, 40003], '#h': ['g1', 'g2'] }, { kinds: [9], '#p': ['b'.repeat(64)] }], [message, edit, other])
+  // Covered by its kinds, the `#h` list as asked: the edit carries g1 and g2's tag too, and is left out by kind.
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1', 'g2'] }])?.map((e) => e.id), [other.id, message.id])
+  // Covered by its `#h` list: the message in g2 is left out by tag.
+  assert.deepEqual(snap.answer([{ kinds: [9, 40003], '#h': ['g1'] }])?.map((e) => e.id), [edit.id, message.id])
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1'] }]), null, 'two lists differ from any answered filter: not covered')
+  assert.deepEqual(snap.answer([{ kinds: [9], '#p': ['b'.repeat(64)] }])?.map((e) => e.id), [other.id, message.id])
+})
+
 test('what the relay no longer sends is dropped: a deletion, a lost Folder', async () => {
   const { snap } = await fresh()
   const kept = ev(9, 10, [['h', 'g1']])
