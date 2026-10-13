@@ -150,8 +150,9 @@ before and fold again: the relay's answer replaces the copy's.
 ```ts
 import { createEventSnapshot, indexedDbSnapshotStorage, snapshotScope } from '@estiva-app/platform'
 
+const storage = indexedDbSnapshotStorage(indexedDB, 'my-app-copy')
 const copy = createEventSnapshot({
-  storage: indexedDbSnapshotStorage(indexedDB, 'my-app-copy'),
+  storage,
   scope: snapshotScope(relayUrl, pubkey),
   version: 1, // bump when what you fold from it changes meaning
 })
@@ -163,8 +164,10 @@ copy.absorb(filters, events)
 await copy.ready
 const drawnFirst = copy.answer(filters)
 
-// Signing out:
-await indexedDbSnapshotStorage(indexedDB, 'my-app-copy').clear()
+// Signing out: every copy goes, and one still open — in this tab or another —
+// can never write the person's data back (the storage counts sign-outs).
+copy.discard()
+await storage.clear()
 ```
 
 Every answer is also a correction: an event the copy holds that matches a

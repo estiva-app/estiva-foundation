@@ -58,6 +58,8 @@ export interface SnapshotRecord {
 /** What changed since the last save. */
 export interface SnapshotChange {
   version: number
+  /** The storage's sign-out count when the copy was read: a save from before a sign-out is refused. */
+  epoch: number
   put: StoredSnapshotEvent[]
   remove: string[]
   filters: string[]
@@ -65,9 +67,14 @@ export interface SnapshotChange {
 
 /** Where a copy lives between page loads. {@link indexedDbSnapshotStorage} is the browser's. */
 export interface SnapshotStorage {
-  load(scope: string): Promise<SnapshotRecord | null>
+  /** A scope's record, or null; and the storage's sign-out count, which every save names. */
+  load(scope: string): Promise<{ epoch: number; record: SnapshotRecord | null }>
+  /** Writes nothing when `change.epoch` is not the current count: somebody signed out since. */
   save(scope: string, change: SnapshotChange): Promise<void>
-  /** Remove every scope: the person signed out. */
+  /**
+   * Remove every scope and count a sign-out, so a copy still open — in this
+   * tab or another — can never write the person's data back afterwards.
+   */
   clear(): Promise<void>
 }
 
@@ -80,6 +87,8 @@ const host = globalThis as unknown as SnapshotTimers
 
 export interface EventSnapshotOptions {
   storage: SnapshotStorage
+  /** Whose blobs' plaintexts are kept; defaults to the pubkey in `scope`. */
+  owner?: string
   /** One person on one relay: {@link snapshotScope}. */
   scope: string
   /** The app's schema version. A copy written under another one is dropped unread. */
@@ -181,6 +190,9 @@ function replaceableKey(event: SignedEvent): string | null {
 
 export function createEventSnapshot(options: EventSnapshotOptions): EventSnapshot {
   const { storage, scope, version } = options
+  const owner = options.owner ?? scope.slice(scope.lastIndexOf('|') + 1)
+  /** The storage's sign-out count when this copy was read; no read, no write. */
+  let epoch: number | undefined
   const maxEvents = options.maxEvents ?? SNAPSHOT_MAX_EVENTS
   const saveAfterMs = options.saveAfterMs ?? SNAPSHOT_SAVE_AFTER_MS
   const now = options.now ?? (() => Date.now())
@@ -224,10 +236,12 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       byCoordinate.set(coordinate, event.id)
     }
     const previous = events.get(event.id)
-    const plaintext = stored.plaintext ?? previous?.plaintext ?? looseText.get(event.content)
+    // A plaintext belongs to the person's own blob — a replaceable event they signed — and
+    // never to somebody else's event that happens to carry the same ciphertext.
+    const own = coordinate !== null && event.pubkey === owner
+    const plaintext = own ? (stored.plaintext ?? previous?.plaintext ?? looseText.get(event.content)) : undefined
     events.set(event.id, { event, seenAt: stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
-    // A person's own blob is a replaceable event: only those carry a plaintext worth keeping.
-    if (coordinate && event.content) byContent.set(event.content, event.id)
+    if (own && event.content) byContent.set(event.content, event.id)
     if (mark) {
       dirty.add(event.id)
       removed.delete(event.id)
@@ -247,9 +261,10 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       timers().clearTimeout(timer)
       timer = undefined
     }
-    if (closed || (!dirty.size && !removed.size && !filtersDirty)) return
+    if (closed || epoch === undefined || (!dirty.size && !removed.size && !filtersDirty)) return
     const change: SnapshotChange = {
       version,
+      epoch,
       put: [...dirty].flatMap((id) => {
         const held = events.get(id)
         return held ? [held] : []
@@ -279,7 +294,9 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
 
   const ready = (async () => {
     try {
-      const record = await storage.load(scope)
+      const read = await storage.load(scope)
+      epoch = read.epoch
+      const record = read.record
       if (record && record.version === version) {
         for (const stored of record.events) hold(stored, false)
         for (const key of record.filters) filters.add(key)
@@ -311,7 +328,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       const floor = cut && sent.length ? Math.min(...sent.map((event) => event.created_at)) : cut ? Infinity : -Infinity
       for (const stored of [...events.values()]) {
         const { event } = stored
-        if (returned.has(event.id) || event.created_at < floor) continue
+        // At the cut's own second the relay may have held back events it still has: not judged.
+        if (returned.has(event.id) || (cut && event.created_at <= floor)) continue
         if (matchesSnapshotFilter(filter, event)) drop(event.id)
       }
     }
@@ -397,13 +415,15 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
  */
 export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string, SnapshotRecord> } {
   const records = new Map<string, SnapshotRecord>()
+  let epoch = 0
   return {
     records,
     async load(scope) {
       const record = records.get(scope)
-      return record ? { ...record, events: [...record.events], filters: [...record.filters] } : null
+      return { epoch, record: record ? { ...record, events: [...record.events], filters: [...record.filters] } : null }
     },
     async save(scope, change) {
+      if (change.epoch !== epoch) return
       const record = records.get(scope)
       const held = new Map(record && record.version === change.version ? record.events.map((s) => [s.event.id, s]) : [])
       for (const id of change.remove) held.delete(id)
@@ -412,6 +432,7 @@ export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string
     },
     async clear() {
       records.clear()
+      epoch += 1
     },
   }
 }
@@ -462,6 +483,8 @@ export interface IdbFactoryLike {
 
 const EVENTS = 'events'
 const META = 'meta'
+/** The `meta` row counting sign-outs: no scope can be named this (`snapshotScope` has a `|`). */
+const SIGN_OUTS = '\u0000sign-outs'
 
 function request<T>(req: IdbRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -502,52 +525,58 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
     return opened
   }
 
-  /** Saves in flight: a sign-out's `clear` waits for them, or one could write the copy back after it. */
-  const saving = new Set<Promise<void>>()
-
-  async function write(scope: string, change: SnapshotChange): Promise<void> {
-    const database = await db()
-    const read = database.transaction([META], 'readonly')
-    const meta = (await request(read.objectStore(META).get(scope))) as { version: number } | undefined
-    const tx = database.transaction([EVENTS, META], 'readwrite')
-    const events = tx.objectStore(EVENTS)
-    if (meta && meta.version !== change.version) {
-      const keys = await request(events.index('scope').getAllKeys(scope))
-      for (const key of keys) events.delete(key)
-    }
-    for (const id of change.remove) events.delete([scope, id])
-    for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
-    tx.objectStore(META).put({ scope, version: change.version, filters: change.filters })
-    await done(tx)
-  }
+  const epochOf = async (meta: IdbObjectStore) =>
+    ((await request(meta.get(SIGN_OUTS))) as { epoch: number } | undefined)?.epoch ?? 0
 
   return {
     async load(scope) {
       const database = await db()
       const tx = database.transaction([EVENTS, META], 'readonly')
-      const [meta, rows] = await Promise.all([
+      const [epoch, meta, rows] = await Promise.all([
+        epochOf(tx.objectStore(META)),
         request(tx.objectStore(META).get(scope)) as Promise<{ version: number; filters: string[] } | undefined>,
         request(tx.objectStore(EVENTS).index('scope').getAll(scope)) as Promise<(StoredSnapshotEvent & { scope: string; id: string })[]>,
       ])
-      if (!meta) return null
+      if (!meta) return { epoch, record: null }
       return {
-        version: meta.version,
-        filters: meta.filters,
-        events: rows.map(({ event, plaintext, seenAt }) => ({ event, seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })),
+        epoch,
+        record: {
+          version: meta.version,
+          filters: meta.filters,
+          events: rows.map(({ event, plaintext, seenAt }) => ({ event, seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })),
+        },
       }
     },
-    save(scope, change) {
-      const run = write(scope, change)
-      saving.add(run)
-      void run.catch(() => {}).finally(() => saving.delete(run))
-      return run
+    async save(scope, change) {
+      const database = await db()
+      // One transaction from the check to the last write: a sign-out in this tab or another
+      // is either wholly before it (and refuses it) or wholly after it (and clears it).
+      const tx = database.transaction([EVENTS, META], 'readwrite')
+      const metaStore = tx.objectStore(META)
+      const events = tx.objectStore(EVENTS)
+      const [epoch, meta] = await Promise.all([
+        epochOf(metaStore),
+        request(metaStore.get(scope)) as Promise<{ version: number } | undefined>,
+      ])
+      if (epoch === change.epoch) {
+        if (meta && meta.version !== change.version) {
+          const keys = await request(events.index('scope').getAllKeys(scope))
+          for (const key of keys) events.delete(key)
+        }
+        for (const id of change.remove) events.delete([scope, id])
+        for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
+        metaStore.put({ scope, version: change.version, filters: change.filters })
+      }
+      await done(tx)
     },
     async clear() {
-      await Promise.allSettled([...saving])
       const database = await db()
       const tx = database.transaction([EVENTS, META], 'readwrite')
+      const epoch = await epochOf(tx.objectStore(META))
       tx.objectStore(EVENTS).clear()
       tx.objectStore(META).clear()
+      // Counted, so every copy opened before now — in any tab — writes nothing again.
+      tx.objectStore(META).put({ scope: SIGN_OUTS, epoch: epoch + 1 })
       await done(tx)
     },
   }

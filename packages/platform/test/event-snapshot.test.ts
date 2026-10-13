@@ -22,7 +22,7 @@ function ev(kind: number, created_at: number, tags: string[][] = [], pubkey = 'a
 const still: SnapshotTimers = { setTimeout: () => 1, clearTimeout: () => {} }
 
 async function fresh(storage = memorySnapshotStorage(), version = 1) {
-  const snap = createEventSnapshot({ storage, scope: 'wss://r|me', version, timers: still })
+  const snap = createEventSnapshot({ storage, scope: `wss://r|${'a'.repeat(64)}`, version, timers: still })
   await snap.ready
   return { snap, storage }
 }
@@ -204,6 +204,42 @@ test('close writes what changed; discard writes nothing', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(storage.records.get('a')?.events.length, 1)
   assert.equal(storage.records.has('b'), false)
+})
+
+test('after a sign-out, a copy opened before it writes nothing back — whichever tab it is in', async () => {
+  const storage = memorySnapshotStorage()
+  const before = createEventSnapshot({ storage, scope: 's', version: 1, timers: still })
+  await before.ready
+  before.absorb([{ kinds: [1] }], [ev(1, 1)])
+  await storage.clear() // another tab signed out; this one never heard
+  await before.flush()
+  assert.equal(storage.records.size, 0)
+
+  const after = createEventSnapshot({ storage, scope: 's', version: 1, timers: still })
+  await after.ready
+  after.absorb([{ kinds: [1] }], [ev(1, 2)])
+  await after.flush()
+  assert.equal(storage.records.get('s')?.events.length, 1, 'the next sign-in keeps a copy again')
+})
+
+test('a plaintext is kept only for the person’s own blob, never for someone else’s with the same ciphertext', async () => {
+  const { snap, storage } = await fresh()
+  snap.keepPlaintext('cipher', 'mine')
+  const theirs = ev(30078, 5, [['d', 'x']], 'c'.repeat(64), 'cipher')
+  snap.absorb([{ kinds: [30078], '#d': ['x'] }], [theirs])
+  await snap.flush()
+  const saved = [...storage.records.values()][0].events.find((s) => s.event.id === theirs.id)
+  assert.equal(saved?.plaintext, undefined)
+})
+
+test('a cut answer does not judge events at its oldest second, which the relay may have held back', async () => {
+  const { snap } = await fresh()
+  const tie = ev(9, 10, [['h', 'g']])
+  const top = ev(9, 20, [['h', 'g']])
+  const atCut = ev(9, 10, [['h', 'g']])
+  snap.absorb([{ kinds: [9], '#h': ['g'] }], [tie, top, atCut])
+  snap.absorb([{ kinds: [9], '#h': ['g'], limit: 2 }], [top, tie])
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g'] }])?.length, 3)
 })
 
 test('a scope is one person on one relay', () => {
