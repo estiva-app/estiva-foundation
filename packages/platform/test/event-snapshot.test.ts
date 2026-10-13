@@ -322,6 +322,40 @@ test('a limit past the most a filter can match never cuts it: a set of roots, a 
   assert.equal(snap.answer([{ kinds: [0], authors: ['5'.repeat(64)], limit: 1 }]), null)
 })
 
+test('an answer from `since` on, or one whose events carry two `d` tags, covers nothing (#129 review)', async () => {
+  const { snap } = await fresh()
+  const a = ev(1111, 10, [['a', 'x']])
+  // A catch-up: whole from its cursor, silent about what came before it.
+  snap.absorb([{ kinds: [1111], '#a': ['x', 'y'], since: 5 }], [a])
+  assert.equal(snap.answer([{ kinds: [1111], '#a': ['x'] }]), null)
+  // Two files that both also name d1 fill a limit of two: the relay may have cut d2's file.
+  const z = ev(30851, 20, [['d', 'z'], ['d', 'd1']], 'b'.repeat(64))
+  const y = ev(30851, 30, [['d', 'y'], ['d', 'd1']], 'b'.repeat(64))
+  snap.absorb([{ kinds: [30851], authors: ['b'.repeat(64)], '#d': ['d1', 'd2'], limit: 2 }], [z, y])
+  assert.equal(snap.answer([{ kinds: [30851], authors: ['b'.repeat(64)], '#d': ['d2'], limit: 1 }]), null)
+})
+
+test('a read before the stored copy is in does not leave its covers empty for the page load', async () => {
+  const storage = memorySnapshotStorage()
+  const first = await fresh(storage)
+  const a = ev(9, 10, [['h', 'g1']])
+  first.snap.absorb([{ kinds: [9], '#h': ['g1', 'g2'] }], [a])
+  await first.snap.flush()
+  const snap = createEventSnapshot({ storage, scope: `wss://r|${'a'.repeat(64)}`, version: 1, timers: still })
+  assert.equal(snap.answer([{ kinds: [9], '#h': ['g1'] }]), null, 'not loaded yet')
+  await snap.ready
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'] }])?.map((e) => e.id), [a.id])
+})
+
+test('an id held again with other tags is looked up by what is held now', async () => {
+  const { snap } = await fresh()
+  const a = ev(9, 10, [['h', 'g1']])
+  snap.absorb([{ kinds: [9], '#h': ['g1'] }], [a])
+  snap.absorb([{ kinds: [9], '#h': ['g2'] }], [{ ...a, tags: [['h', 'g2']] }])
+  snap.absorb([{ kinds: [9], '#h': ['g2'] }], [])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['g1'] }]), [])
+})
+
 test('what was answered whole survives a reload; a copy written before it covers nothing until asked again', async () => {
   const storage = memorySnapshotStorage()
   const { snap } = await fresh(storage)

@@ -319,6 +319,11 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       byCoordinate.set(coordinate, event.id)
     }
     const previous = events.get(event.id)
+    // The same id again is the same event; if what arrived differs, the indexes follow what is held now.
+    if (previous) {
+      byKind.get(previous.event.kind)?.delete(event.id)
+      for (const key of tagKeys(previous.event)) byTag.get(key)?.delete(event.id)
+    }
     // A plaintext belongs to the person's own blob — a replaceable event they signed — and
     // never to somebody else's event that happens to carry the same ciphertext.
     const own = coordinate !== null && event.pubkey === owner
@@ -393,6 +398,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         for (const stored of record.events) hold(stored, false)
         for (const key of record.filters) filters.add(key)
         for (const key of record.whole ?? []) if (filters.has(key)) whole.add(key)
+        // An answer asked before the stored copy was read built what is covered without it.
+        covers = undefined
       }
     } catch {
       // Unreadable (a private window, storage refused, a corrupt record): no copy.
@@ -420,15 +427,20 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       // Not when the limit is past the most the filter can match, unless the relay sent two
       // versions of one replaceable event, which that bound assumes it never keeps.
       const limit = typeof filter.limit === 'number' ? filter.limit : Infinity
+      // An event with two `d` tags matches two coordinates' worth of `#d`, so the bound holds only for one each.
       const bounded =
-        limit >= mostMatches(filter) && new Set(sent.map((event) => replaceableKey(event) ?? event.id)).size === sent.length
+        limit >= mostMatches(filter) &&
+        new Set(sent.map((event) => replaceableKey(event) ?? event.id)).size === sent.length &&
+        sent.every((event) => event.tags.filter((tag) => tag[0] === 'd').length <= 1)
       const cut = !bounded && (sent.length >= limit || (asked.length === 1 && answer.length >= limit))
+      // Whole only for all time: an answer from `since` on says nothing about what came before it.
+      const isWhole = !cut && filter.since === undefined && filter.until === undefined
       const wasWhole = whole.has(key)
-      if (cut) whole.delete(key)
-      else whole.add(key)
-      if (wasWhole === cut) {
+      if (isWhole) whole.add(key)
+      else whole.delete(key)
+      if (wasWhole !== isWhole) {
         // Newly whole: its values join what is covered; no longer whole: what is covered is worked out again.
-        if (cut) covers = undefined
+        if (!isWhole) covers = undefined
         else if (covers) addCovers(covers, key)
         filtersDirty = true
       }
