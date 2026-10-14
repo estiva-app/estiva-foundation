@@ -121,6 +121,13 @@ export const KIND = {
   FILE: 30840,
   // 30841 (NIP-FC Component) is retired — never reallocate it (COM-3, KINDS.md).
   /**
+   * The document — a file type an app owns through its `kind:31990`, as Ship
+   * owns an issue; Leaf is the first owner. The bare file's shape, but owned:
+   * a document is written and opened in its owner's app, where a topic
+   * (`FILE`) is a conversation nobody owns (SPEC, Miky 2026-10-14).
+   */
+  DOCUMENT: 30842,
+  /**
    * NIP-42 relay auth — the challenge response that turns a connected socket
    * into an authenticated one (`Kind::Authentication`, PEE-5).
    *
@@ -972,6 +979,24 @@ export function buildBareFile(
     tags,
     content: args.document ? serializeBlockDocument(args.document) : '',
   }
+}
+
+/**
+ * kind:30842 — the document (SPEC, decided by Miky 2026-10-14).
+ *
+ * The bare file's shape and tag order — `d`, `title`, `h` (REQUIRED, and the
+ * relay refuses one without it), then `a` if it sits under another file of any
+ * kind — under a kind an app owns through its manifest. Leaf's "New document"
+ * writes it. Its text is then the `description` field like every file's, so
+ * the author saves through a change too and `document` is only the first text.
+ */
+export function buildDocument(
+  pubkey: string,
+  createdAtMs: number,
+  args: Parameters<typeof buildBareFile>[2],
+): UnsignedEvent {
+  if (!args.channelUuid) throw new Error('a document must name the Folder it lives in (h)')
+  return { ...buildBareFile(pubkey, createdAtMs, args), kind: KIND.DOCUMENT }
 }
 
 /**
