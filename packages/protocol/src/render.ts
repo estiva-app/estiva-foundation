@@ -372,7 +372,8 @@ export function standaloneReference(block: RenderBlock): string | undefined {
  * tag (§13.6.2). `none`, a non-string and absence are all no card.
  */
 export function cardLayout(raw: unknown): 'compact' | 'detailed' | undefined {
-  if (typeof raw !== 'string' || raw === 'none') return undefined
+  // An empty string names no layout: no card, as an editor saves it.
+  if (typeof raw !== 'string' || raw === '' || raw === 'none') return undefined
   return raw === 'detailed' ? 'detailed' : 'compact'
 }
 

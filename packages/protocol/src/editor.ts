@@ -160,6 +160,17 @@ function textNodes(text: string, marks: EditorNode['marks']): EditorNode[] {
   return out
 }
 
+/**
+ * A mark's `embed` as the editor node holds it: a layout string goes on the
+ * node, and anything else a later version may have put there rides in `extra`
+ * with the other unknown keys, so a save writes it back untouched. `none` and
+ * `""` are no card, which a writer omits (§13.3).
+ */
+function cardAndExtra(embed: unknown, rest: Record<string, unknown>): { card: { embed?: string }; extra: Record<string, unknown> } {
+  if (typeof embed === 'string') return { card: embed && embed !== 'none' ? { embed } : {}, extra: rest }
+  return { card: {}, extra: embed === undefined ? rest : { ...rest, embed } }
+}
+
 function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
   return runs.flatMap((run) => {
     const marks = run.marks ?? []
@@ -179,14 +190,15 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         rides in `extra`: a mark has no id, so a key dropped on save would be
         lost with nothing to say so.
       */
-      const { uri, embed, ...extra } = reference
+      const { uri, embed, ...rest } = reference
+      const { card, extra } = cardAndExtra(embed, rest)
       return [
         {
           type: REFERENCE_NODE,
           attrs: {
             uri,
             marks: carried,
-            ...(typeof embed === 'string' && embed !== 'none' ? { embed } : {}),
+            ...card,
             ...(Object.keys(extra).length ? { extra } : {}),
           },
         },
@@ -199,18 +211,17 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         keeps the URL in `href` and writes it back as the same run. `uri` is
         what it names, filled in by the editor's `LinkChips` once the app has
         resolved it; until then the chip draws as the URL.
+
+        `extra` is always an object here, empty or not: it says the URL came
+        with a `link` mark, so a save writes the mark back even with no card,
+        and a description somebody else wrote that way saves the same bytes.
       */
-      const { href, embed, ...extra } = link
+      const { href, embed, ...rest } = link
+      const { card, extra } = cardAndExtra(embed, rest)
       return [
         {
           type: REFERENCE_NODE,
-          attrs: {
-            uri: '',
-            href,
-            marks: carried,
-            ...(typeof embed === 'string' && embed !== 'none' ? { embed } : {}),
-            ...(Object.keys(extra).length ? { extra } : {}),
-          },
+          attrs: { uri: '', href, marks: carried, ...card, extra },
         },
       ]
     }
@@ -404,24 +415,26 @@ function idFor(node: EditorNode, claims: IdClaims): string {
 
 function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
   const out: InlineTextNode[] = []
-  for (const node of nodes) {
+  for (const [i, node] of nodes.entries()) {
     if (node.type === REFERENCE_NODE && typeof node.attrs?.href === 'string' && node.attrs.href) {
       /*
         A URL chip is its URL on the wire, never rewritten into the reference
         it names (§13.3). With no card it is plain text, merged with the text
         around it, so a description an editor only opened saves the same bytes.
-        With one, the run carries a `link` mark to hold it.
+        A `link` mark holds it when it has a card, when it came with one
+        (`extra` set), or when what follows would read as more of the URL — a
+        word typed right after the chip, or another URL chip — so its end stays
+        where it was.
       */
       const href = node.attrs.href
       const carried = Array.isArray(node.attrs.marks) ? (node.attrs.marks as string[]) : []
       const embed = node.attrs.embed
-      const extra = node.attrs.extra
+      const extra = node.attrs.extra && typeof node.attrs.extra === 'object' && !Array.isArray(node.attrs.extra) ? (node.attrs.extra as Record<string, unknown>) : undefined
+      const card = typeof embed === 'string' && embed !== '' && embed !== 'none'
       const marks: InlineMarkNode[] = carried.map((type) => ({ type }) as InlineMarkNode)
-      if (typeof embed === 'string' && embed !== '' && embed !== 'none') {
-        marks.push({
-          type: 'link',
-          attrs: { ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}), href, embed },
-        })
+      if (card || extra || continuesUrl(nodes[i + 1])) {
+        // `href` first, as writers put it, so an untouched mark keeps its bytes; `extra` never holds it.
+        marks.push({ type: 'link', attrs: { href, ...extra, ...(card ? { embed } : {}) } })
       }
       const last = out[out.length - 1]
       if (last && sameMarks(last.marks ?? [], marks)) last.text += href
@@ -470,6 +483,18 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
     else out.push({ type: 'text', text: node.text, ...(marks.length ? { marks } : {}) })
   }
   return out
+}
+
+/**
+ * Whether this node, written right after a URL as plain text, would be read
+ * as more of the URL: another chip (its text is a URL or a `nostr:` URI), or
+ * text that does not start with a space or a sentence's closing punctuation.
+ */
+function continuesUrl(next: EditorNode | undefined): boolean {
+  if (!next) return false
+  if (next.type === REFERENCE_NODE) return true
+  if (next.type !== 'text' || !next.text) return false
+  return !/^(\s|[.,;:!?)\]]+(\s|$))/.test(next.text) && !/^[<>"'`]/.test(next.text)
 }
 
 /** A run that points somewhere is its own run: its text is what it points at, never merged into the next. */

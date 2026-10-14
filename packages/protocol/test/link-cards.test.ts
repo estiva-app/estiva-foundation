@@ -107,6 +107,38 @@ describe('a URL in a document, edited (C24)', () => {
     }
     assert.deepEqual(fromEditorDocument(editor).content[0].content, [link(URL_, { embed: 'compact' })])
   })
+  it('a URL chip followed by a typed word keeps its end, with a link mark', () => {
+    const editor: EditorDocument = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        attrs: { blockId: 'p1' },
+        content: [
+          { type: 'reference', attrs: { uri: V, href: URL_, marks: [], embed: null } },
+          { type: 'text', text: 'abc. ' },
+          { type: 'reference', attrs: { uri: V, href: URL_, marks: [], embed: null } },
+          { type: 'reference', attrs: { uri: V, href: URL_, marks: [], embed: null } },
+          { type: 'text', text: '. Done' },
+        ],
+      }],
+    }
+    assert.deepEqual(fromEditorDocument(editor).content[0].content, [
+      link(URL_),
+      text('abc. '),
+      link(URL_),
+      text(`${URL_}. Done`),
+    ])
+  })
+  it('a URL somebody wrote with a link mark and no card saves the same bytes', () => {
+    const d = doc({ type: 'paragraph', id: 'p1', content: [text('See '), link(URL_, { target: '_blank' }), text(' now')] })
+    assert.equal(serializeBlockDocument(roundTrip(d)), serializeBlockDocument(d))
+  })
+  it('keeps an embed it cannot read, and reads an empty one as no card', () => {
+    const odd = doc({ type: 'paragraph', id: 'p1', content: [link(URL_, { embed: { layout: 'x' } })] })
+    assert.deepEqual(roundTrip(odd), odd)
+    const [p] = render(doc({ type: 'paragraph', id: 'p1', content: [link(URL_, { embed: '' })] }))
+    assert.equal(p.inline?.[0].embed, undefined)
+  })
   it('a link on words keeps its words', () => {
     const d = doc({ type: 'paragraph', id: 'p1', content: [text('the issue', [{ type: 'link', attrs: { href: URL_ } }])] })
     assert.deepEqual(roundTrip(d).content[0].content, [text('the issue')])

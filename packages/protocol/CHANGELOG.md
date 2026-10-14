@@ -36,7 +36,11 @@ into a `nostr:` reference.
 - The editor translation turns a `link` run whose text is its `href` into the
   `reference` node with `href` (a URL chip, `uri` empty until the editor
   resolves it) and writes it back as the same run; a URL chip with no card is
-  plain text, merged with its neighbours. A link on other words keeps its words
+  plain text, merged with its neighbours — unless it came with a `link` mark
+  (kept, so the bytes stay), or what follows would read as more of the URL (a
+  word typed right after it, another URL chip), when a `link` mark keeps its
+  end. An `embed` that is not a string rides through a save in `extra`, and
+  `""` reads as no card, in the reader and the editor alike. A link on other words keeps its words
   and loses the link, as before.
 - A `reference` or `link` mark whose `attrs` is not an object holding its
   string target (`uri`, `href`) is read as no mark, by `toRenderTree` and by
