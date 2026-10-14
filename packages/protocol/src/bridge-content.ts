@@ -88,14 +88,17 @@ const ESCAPED_ALERT = /^\\*\[![A-Za-z]+\]$/
 /** One `\` more in front of text that would otherwise read as `pattern`, after `lead` whitespace. */
 function escaped(text: string, pattern: RegExp): string {
   const lead = text.length - text.trimStart().length
-  return pattern.test(text.slice(lead).trimEnd()) ? `${text.slice(0, lead)}\\${text.slice(lead)}` : text
+  return reads(text.slice(lead), pattern) ? `${text.slice(0, lead)}\\${text.slice(lead)}` : text
 }
 
 /** The inverse of {@link escaped}: one `\` fewer. */
 function unescaped(text: string, pattern: RegExp): string {
   const lead = text.length - text.trimStart().length
-  return text[lead] === '\\' && pattern.test(text.slice(lead).trimEnd()) ? text.slice(0, lead) + text.slice(lead + 1) : text
+  return text[lead] === '\\' && reads(text.slice(lead), pattern) ? text.slice(0, lead) + text.slice(lead + 1) : text
 }
+
+/** As written or with its trailing space dropped: a box needs the space after `]`, a callout line ends at `]`. */
+const reads = (text: string, pattern: RegExp) => pattern.test(text) || pattern.test(text.trimEnd())
 
 function itemFromText(item: string, description: boolean, depth = 0): Block {
   const indent = depth > 0 ? { indent: depth } : undefined

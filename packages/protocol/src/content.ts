@@ -322,7 +322,8 @@ export function parseBodySegments(body: string, options: { indentedItems?: boole
 }
 
 /** A list item line at any indentation: its leading whitespace, its marker, its text. */
-const INDENTED_ITEM_RE = /^([ \t]*)([-•]|\d+\.)\s(.*)$/
+// `[\s\S]`, not `.`: `.` stops at `\r` and U+2028/9, which the opener's test does not (review of d98a5636).
+const INDENTED_ITEM_RE = /^([ \t]*)([-•]|\d+\.)\s([\s\S]*)$/
 const columnOf = (lead: string) => [...lead].reduce((column, c) => column + (c === '\t' ? 4 : 1), 0)
 
 /**
@@ -381,6 +382,11 @@ function parseWithIndentedItems(lines: string[]): BodySegment[] {
       items.push(match[3])
       depths.push(depth)
       i++
+    }
+    // Never loop on a line the opener took and the item reader did not: it is text.
+    if (items.length === 0) {
+      rest.push(lines[i++])
+      continue
     }
     const indented = depths.some((depth) => depth > 0) ? { depths } : {}
     if (opens === 'bullet') segments.push({ type: 'bullet', items, ...indented })

@@ -761,6 +761,19 @@ describe("an indented item and an escape in a description's text — d98a5636", 
     assert.deepEqual(parseBodySegments(text), parseBodySegments(text, {}))
   })
 
+  it('reads a list line holding \\r, U+2028 or U+2029, and a box with nothing after it, without looping or losing the escape', () => {
+    for (const odd of ['\r', ' ', ' ']) {
+      const doc = markerTextToBlockDocument(`- a${odd}b\n- c`, undefined, { description: true })
+      assert.equal((doc.content[0].content as Block[]).length, 2, JSON.stringify(odd))
+      const stored: BlockDocument = { type: 'doc', content: [{ type: 'bulletList', id: 'l', content: [item('a', `a${odd}b`)] }] }
+      roundTrips(stored)
+    }
+    for (const box of ['[ ] ', '[x] ', '[X] \t']) {
+      const text = roundTrips({ type: 'doc', content: [{ type: 'bulletList', id: 'l', content: [item('a', box)] }] })
+      assert.ok(text.startsWith('- \\['), text)
+    }
+  })
+
   it('keeps a numbered list its start number when it holds indented items', () => {
     const doc = markerTextToBlockDocument('3. c\n  - c.1\n4. d', undefined, { description: true })
     assert.equal(doc.content[0].attrs?.start, 3)
