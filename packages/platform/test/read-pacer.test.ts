@@ -130,7 +130,7 @@ test('an ahead read takes only what the window leaves over, short of the reserve
   assert.equal(second, true)
 })
 
-test('a click overtakes every ahead read waiting, and an ahead read never goes over HTTP', async () => {
+test('a click overtakes every ahead read waiting, and an ahead read goes over HTTP only when its spill allows', async () => {
   const clock = fakeClock()
   const pacer = pacerOn(clock, { reserve: 10 })
   await pacer.take(PER_WINDOW)
@@ -188,18 +188,19 @@ test('a promoted read that waited long is not starved ahead of the click that pr
   assert.deepEqual(order, ['the click', 'loaded ahead'])
 })
 
-test('promote with a hold sends no ahead read asked after it until the hold ends', async () => {
+test('an ahead read spills to HTTP when its spill allows, in either lane', async () => {
   const clock = fakeClock()
   const pacer = pacerOn(clock, { reserve: 10 })
-  pacer.promote(3_000)
-  let sent = false
-  void pacer.take(1, { lane: 'ahead' }).then(() => (sent = true))
-  await clock.advance(2_999)
-  assert.equal(sent, false)
-  // A click is not held.
-  assert.equal(await pacer.take(1), 'socket')
-  await clock.advance(1)
-  assert.equal(sent, true)
+  await pacer.take(PER_WINDOW)
+  const spill = { afterMs: 1_000, allowed: () => true }
+  const waiting = pacer.take(1, { lane: 'ahead', spill })
+  const promoted = pacer.take(1, { lane: 'ahead', spill: { afterMs: 1_500, allowed: () => true } })
+  await clock.advance(1_000)
+  assert.equal(await waiting, 'http')
+  pacer.promote()
+  await clock.advance(500)
+  assert.equal(await promoted, 'http', 'moved into the click lane, it keeps its spill')
+  assert.deepEqual(pacer.waiting(), { click: 0, ahead: 0 })
 })
 
 test('in flight: ahead holds at most its share, and a freed slot goes to a waiting click first', async () => {

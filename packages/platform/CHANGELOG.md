@@ -9,7 +9,8 @@ instantly). Additive.
   is as before: newest first, a read waiting past `STARVED_AFTER_MS` first,
   spilling to HTTP when allowed. `ahead` takes only what a window leaves over —
   never while a click waits, never past `perWindow - reserve` (a quarter by
-  default), never over HTTP — in the order asked. `promote()` moves the waiting
+  default) — in the order asked, and over HTTP only when its own `spill`
+  allows. `promote()` moves the waiting
   `ahead` reads into the click lane; `waiting()` counts both.
 - `createInFlight(max, aheadMax)` — at most `max` REQs on the wire, at most
   `aheadMax` of them `ahead`; a freed slot goes to a waiting click first.

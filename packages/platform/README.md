@@ -188,7 +188,8 @@ publish over something drawn from the copy: it may be older than the relay.
 per 5 s per pubkey), in two lanes. A `click` read — what the person asked for —
 goes newest first, and may spill to HTTP after waiting. An `ahead` read takes
 only what a window leaves over: never while a click waits, never past
-`perWindow - reserve`, never over HTTP. `promote()` moves the `ahead` reads
+`perWindow - reserve`, over HTTP only when its own `spill` allows — the app
+gives it a smaller HTTP allowance than a click's. `promote()` moves the `ahead` reads
 still waiting into the click lane, for the moment the person acts: an app's
 caches hand a click the read already out for the same thing. `createInFlight`
 keeps the same split for REQs on the wire.

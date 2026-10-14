@@ -17,8 +17,9 @@
  * - **`ahead`** — what the app loads before it is asked for (Peek's loader from
  *   Desk). It takes only what a window leaves over: never while a click read is
  *   waiting, never past `perWindow - reserve`, so a click arriving finds room at
- *   once, and never over HTTP, whose meter Ship and every write share. In the
- *   order asked.
+ *   once. In the order asked. It may spill to HTTP as a click does, when its
+ *   `spill` says so: while the socket's windows are full of the app's own
+ *   reads, HTTP's meter is often the one with room.
  *
  * No timers of its own and no DOM, as the rest of this package: the app hands
  * in the clock and the timers.
@@ -54,16 +55,13 @@ export interface PacerOptions {
 
 export interface TakeOptions {
   lane?: ReadLane
-  /**
-   * For a `click` read: asked every `afterMs` while it waits whether HTTP may
-   * take it instead. Ignored for `ahead`, which only ever waits.
-   */
+  /** Asked every `afterMs` while the read waits whether HTTP may take it instead. Without it, the read only waits. */
   spill?: { afterMs: number; allowed(): boolean }
 }
 
 export interface Pacer {
   /**
-   * `n` slots at once (one read's REQs), or `'http'` when a click read waited
+   * `n` slots at once (one read's REQs), or `'http'` when the read waited
    * `spill.afterMs` and `spill.allowed()` said HTTP may take it. `n` must not
    * exceed the window — for `ahead`, the window less the reserve.
    */
@@ -74,12 +72,10 @@ export interface Pacer {
    * Move every `ahead` read still waiting into the `click` lane, as the oldest
    * there. For the moment the person acts: the app's caches hand a click the
    * read already in flight for the same thing, so a click on what the loader
-   * had asked for would otherwise wait behind its own `ahead` read. They never
-   * spill to HTTP; reads asked after this wait in their own lane as before —
-   * and, with `holdMs`, none of them is sent for that long, so the burst of
-   * reads a click sets off has the whole window.
+   * had asked for would otherwise wait behind its own `ahead` read. Each keeps
+   * its own `spill`; reads asked after this wait in their own lane as before.
    */
-  promote(holdMs?: number): void
+  promote(): void
 }
 
 const host = globalThis as unknown as PacerTimers
@@ -101,8 +97,6 @@ export function createPacer(options: PacerOptions): Pacer {
   const clicks: Waiter[] = []
   const ahead: Waiter[] = []
   let pumpTimer: unknown = null
-  /** No `ahead` read is sent before this (`promote`'s hold). */
-  let heldUntil = 0
 
   function grant(waiter: Waiter) {
     if (waiter.spillTimer !== null) timers.clearTimeout(waiter.spillTimer)
@@ -124,15 +118,13 @@ export function createPacer(options: PacerOptions): Pacer {
       if (used() + clicks[index].n > perWindow) break
       grant(clicks.splice(index, 1)[0])
     }
-    const held = now() < heldUntil
-    while (!held && clicks.length === 0 && ahead.length > 0 && used() + ahead[0].n <= perWindow - reserve) {
+    while (clicks.length === 0 && ahead.length > 0 && used() + ahead[0].n <= perWindow - reserve) {
       grant(ahead.shift()!)
     }
-    // Wake when the oldest counted frame leaves the window, or the hold ends.
+    // Wake when the oldest counted frame leaves the window.
     const oldest = Math.min(sent[0] ?? Infinity, outside[0] ?? Infinity)
-    const wake = Math.min(oldest === Infinity ? Infinity : oldest + windowMs, held && ahead.length > 0 ? heldUntil : Infinity)
-    if (clicks.length + ahead.length > 0 && wake !== Infinity) {
-      pumpTimer = timers.setTimeout(pump, Math.max(0, wake - now()))
+    if (clicks.length + ahead.length > 0 && oldest !== Infinity) {
+      pumpTimer = timers.setTimeout(pump, Math.max(0, oldest + windowMs - now()))
     }
   }
 
@@ -140,33 +132,28 @@ export function createPacer(options: PacerOptions): Pacer {
     take(n, { lane = 'click', spill } = {}) {
       return new Promise((resolve) => {
         const waiter: Waiter = { n, at: now(), resolve, spillTimer: null }
-        if (lane === 'ahead') {
-          ahead.push(waiter)
-          pump()
-          return
-        }
-        // Asked again every `afterMs` while it waits: HTTP may have room later.
+        // Asked again every `afterMs` while it waits: HTTP may have room later. In
+        // whichever lane it waits by then — `promote` may have moved it.
         const trySpill = () => {
-          const i = clicks.indexOf(waiter)
-          if (i === -1 || !spill) return
+          const queue = clicks.includes(waiter) ? clicks : ahead.includes(waiter) ? ahead : null
+          if (!queue || !spill) return
           if (!spill.allowed()) {
             waiter.spillTimer = timers.setTimeout(trySpill, spill.afterMs)
             return
           }
-          clicks.splice(i, 1)
+          queue.splice(queue.indexOf(waiter), 1)
           resolve('http')
-          // The window may now have room for an ahead read this one held back.
+          // The window may now have room for a read this one held back.
           pump()
         }
         if (spill) waiter.spillTimer = timers.setTimeout(trySpill, spill.afterMs)
-        clicks.push(waiter)
+        ;(lane === 'ahead' ? ahead : clicks).push(waiter)
         pump()
       })
     },
     waiting: () => ({ click: clicks.length, ahead: ahead.length }),
-    promote(holdMs = 0) {
+    promote() {
       const at = now()
-      heldUntil = Math.max(heldUntil, at + holdMs)
       if (ahead.length === 0) return
       // Oldest first in `clicks`: newest-first serves the click's own reads before these. Their wait starts
       // now — counted from when they were asked, every one would be starved and go before the click's own.
