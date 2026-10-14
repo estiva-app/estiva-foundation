@@ -75,9 +75,11 @@ export interface Pacer {
    * there. For the moment the person acts: the app's caches hand a click the
    * read already in flight for the same thing, so a click on what the loader
    * had asked for would otherwise wait behind its own `ahead` read. They never
-   * spill to HTTP; reads asked after this wait in their own lane as before.
+   * spill to HTTP; reads asked after this wait in their own lane as before —
+   * and, with `holdMs`, none of them is sent for that long, so the burst of
+   * reads a click sets off has the whole window.
    */
-  promote(): void
+  promote(holdMs?: number): void
 }
 
 const host = globalThis as unknown as PacerTimers
@@ -99,6 +101,8 @@ export function createPacer(options: PacerOptions): Pacer {
   const clicks: Waiter[] = []
   const ahead: Waiter[] = []
   let pumpTimer: unknown = null
+  /** No `ahead` read is sent before this (`promote`'s hold). */
+  let heldUntil = 0
 
   function grant(waiter: Waiter) {
     if (waiter.spillTimer !== null) timers.clearTimeout(waiter.spillTimer)
@@ -120,13 +124,15 @@ export function createPacer(options: PacerOptions): Pacer {
       if (used() + clicks[index].n > perWindow) break
       grant(clicks.splice(index, 1)[0])
     }
-    while (clicks.length === 0 && ahead.length > 0 && used() + ahead[0].n <= perWindow - reserve) {
+    const held = now() < heldUntil
+    while (!held && clicks.length === 0 && ahead.length > 0 && used() + ahead[0].n <= perWindow - reserve) {
       grant(ahead.shift()!)
     }
-    // Wake when the oldest counted frame leaves the window.
+    // Wake when the oldest counted frame leaves the window, or the hold ends.
     const oldest = Math.min(sent[0] ?? Infinity, outside[0] ?? Infinity)
-    if (clicks.length + ahead.length > 0 && oldest !== Infinity) {
-      pumpTimer = timers.setTimeout(pump, Math.max(0, oldest + windowMs - now()))
+    const wake = Math.min(oldest === Infinity ? Infinity : oldest + windowMs, held && ahead.length > 0 ? heldUntil : Infinity)
+    if (clicks.length + ahead.length > 0 && wake !== Infinity) {
+      pumpTimer = timers.setTimeout(pump, Math.max(0, wake - now()))
     }
   }
 
@@ -158,11 +164,12 @@ export function createPacer(options: PacerOptions): Pacer {
       })
     },
     waiting: () => ({ click: clicks.length, ahead: ahead.length }),
-    promote() {
+    promote(holdMs = 0) {
+      const at = now()
+      heldUntil = Math.max(heldUntil, at + holdMs)
       if (ahead.length === 0) return
       // Oldest first in `clicks`: newest-first serves the click's own reads before these. Their wait starts
       // now — counted from when they were asked, every one would be starved and go before the click's own.
-      const at = now()
       for (const waiter of ahead) waiter.at = at
       clicks.unshift(...ahead.splice(0))
       pump()
