@@ -1,5 +1,23 @@
 # @estiva-app/platform
 
+## 0.7.0
+
+Loading what is opened next, without slowing a click (PEE-5, Peek opens
+instantly). Additive.
+
+- `createPacer` — Peek's socket pacer (OPT-2), moved here, with lanes. `click`
+  is as before: newest first, a read waiting past `STARVED_AFTER_MS` first,
+  spilling to HTTP when allowed. `ahead` takes only what a window leaves over —
+  never while a click waits, never past `perWindow - reserve` (a quarter by
+  default) — in the order asked, and over HTTP only when its own `spill`
+  allows. `promote()` moves the waiting
+  `ahead` reads into the click lane; `waiting()` counts both.
+- `createInFlight(max, aheadMax)` — at most `max` REQs on the wire, at most
+  `aheadMax` of them `ahead`; a freed slot goes to a waiting click first.
+- `loadAhead(steps, { concurrency })` — an app's steps in order, `concurrency`
+  (2) at a time, once; the first that throws stops it, `stop()` starts nothing
+  more, and `done` says what loaded and why it stopped.
+
 ## 0.6.1
 
 The copy writes only what changed (PEE-4, Peek opens instantly). A relay answer

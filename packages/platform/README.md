@@ -182,6 +182,43 @@ signed. `keepPlaintext` keeps the plaintext of the person's own blob beside
 the event, so an unchanged blob needs no decrypt on the next load. Never
 publish over something drawn from the copy: it may be older than the relay.
 
+### Loading what is opened next, without slowing a click
+
+`createPacer` holds a tab's socket reads to the relay's meter (buzz: 50 REQs
+per 5 s per pubkey), in two lanes. A `click` read — what the person asked for —
+goes newest first, and may spill to HTTP after waiting. An `ahead` read takes
+only what a window leaves over: never while a click waits, never past
+`perWindow - reserve`, over HTTP only when its own `spill` allows — the app
+gives it a smaller HTTP allowance than a click's. `promote()` moves the `ahead` reads
+still waiting into the click lane, for the moment the person acts: an app's
+caches hand a click the read already out for the same thing. `createInFlight`
+keeps the same split for REQs on the wire.
+
+`loadAhead` runs an app's list of steps in order, a few at a time, once; the
+first that throws stops it, and what loaded stays.
+
+```ts
+import { createInFlight, createPacer, loadAhead } from '@estiva-app/platform'
+
+const pacer = createPacer({ perWindow: 40, windowMs: 5_000, reserve: 15 })
+const wire = createInFlight(4) // two of them at most for `ahead`
+
+// In the socket reader:
+await pacer.take(reqs, { lane, spill })
+const release = await wire.acquire(lane)
+
+// Once the first page has drawn:
+const loader = loadAhead([
+  { label: 'Topics', run: () => readTopicsAhead() },
+  { label: 'Open work 1', run: () => readTopicAhead(first) },
+])
+addEventListener('pointerdown', () => pacer.promote(), true)
+const { loaded, stoppedBy } = await loader.done
+```
+
+What a step reads and where it keeps it are the app's: a step that reads into
+the same cache a click reads from is what makes the click draw at once.
+
 ## What this deliberately does not know
 
 Where anything is stored, beyond the copy's storage you hand it. Peek's version took a `LiveProjectionApi`, and
