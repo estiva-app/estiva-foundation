@@ -25,6 +25,8 @@
  */
 
 import { NOSTR_URI_RE } from './nip19.js'
+// blocks.js imports this module too; MAX_LIST_DEPTH is read only when a body is parsed, never at load.
+import { MAX_LIST_DEPTH } from './blocks.js'
 
 /** Marks a run of text can carry. `code` is exclusive — see {@link parseInlineMarks}. */
 export type InlineMark = 'bold' | 'italic' | 'underline' | 'code'
@@ -50,10 +52,12 @@ export interface InlineMarkSpan {
 /** A block-level run, parsed from line prefixes. */
 export type BodySegment =
   | { type: 'text'; lines: string[] }
-  | { type: 'bullet'; items: string[] }
+  | { type: 'bullet'; items: string[]; depths?: number[] }
   | {
       type: 'numbered'
       items: string[]
+      /** How deep each item sits, when it was read with `indentedItems` and any is indented. */
+      depths?: number[]
       /**
        * The number the author actually wrote, when it is not 1.
        *
@@ -245,8 +249,9 @@ function fenceCloses(lines: string[], from: number): number {
  * `## ` become headings; three or more `#`s, and a `#123` reference with no
  * space, stay plain text.
  */
-export function parseBodySegments(body: string): BodySegment[] {
+export function parseBodySegments(body: string, options: { indentedItems?: boolean } = {}): BodySegment[] {
   const lines = body.split('\n')
+  if (options.indentedItems) return parseWithIndentedItems(lines)
   const segments: BodySegment[] = []
   let i = 0
   while (i < lines.length) {
@@ -314,6 +319,104 @@ export function parseBodySegments(body: string): BodySegment[] {
     }
   }
   return segments
+}
+
+/** A list item line at any indentation: its leading whitespace, its marker, its text. */
+// `[\s\S]`, not `.`: `.` stops at `\r` and U+2028/9, which the opener's test does not (review of d98a5636).
+const INDENTED_ITEM_RE = /^([ \t]*)([-•]|\d+\.)\s([\s\S]*)$/
+const columnOf = (lead: string) => [...lead].reduce((column, c) => column + (c === '\t' ? 4 : 1), 0)
+
+/**
+ * {@link parseBodySegments} for a description's text (d98a5636), where an
+ * indented list item is one level deeper (§13.3 `attrs.indent`). Only a line at
+ * column 0 opens a list, as before; while one is open, an indented item of
+ * either marker continues it, because a list is flat on the wire and every
+ * indented item is of its list's type.
+ *
+ * Depth is read relative to the item above, not as a column count, so two,
+ * three or four spaces all mean "under the item above": an item indented
+ * further than the one above is one level below it; otherwise it is at the
+ * level of the nearest item above it at the same or a lesser indentation. Never
+ * deeper than {@link MAX_LIST_DEPTH}, the rule §13.3 already gives.
+ */
+function parseWithIndentedItems(lines: string[]): BodySegment[] {
+  const segments: BodySegment[] = []
+  const fenced = fencedLines(lines)
+  let rest: string[] = []
+  const flush = () => {
+    if (rest.length) segments.push(...parseBodySegments(rest.join('\n')))
+    rest = []
+  }
+  let i = 0
+  while (i < lines.length) {
+    const opens = /^[-•]\s/.test(lines[i]) ? 'bullet' : /^\d+\.\s/.test(lines[i]) ? 'numbered' : undefined
+    // A line inside a fence is the plain parser's, with the fence around it.
+    if (!opens || fenced[i]) {
+      rest.push(lines[i++])
+      continue
+    }
+    flush()
+    const items: string[] = []
+    const depths: number[] = []
+    // The open items an item can sit under: columns rising, each with its depth.
+    const stack: { column: number; depth: number }[] = []
+    while (i < lines.length) {
+      const match = INDENTED_ITEM_RE.exec(lines[i])
+      if (!match) break
+      const column = columnOf(match[1])
+      const kind = /^\d/.test(match[2]) ? 'numbered' : 'bullet'
+      if (column === 0 && kind !== opens) break
+      if (column > 0 && items.length === 0) break
+      let depth = 0
+      if (items.length > 0) {
+        const above = stack[stack.length - 1]
+        if (column > above.column) depth = Math.min(above.depth + 1, MAX_LIST_DEPTH)
+        else {
+          // The bottom is the list's first item, at column 0, so it always stays.
+          while (stack[stack.length - 1].column > column) stack.pop()
+          depth = stack[stack.length - 1].depth
+          if (stack[stack.length - 1].column === column) stack.pop()
+        }
+      }
+      stack.push({ column, depth })
+      items.push(match[3])
+      depths.push(depth)
+      i++
+    }
+    // Never loop on a line the opener took and the item reader did not: it is text.
+    if (items.length === 0) {
+      rest.push(lines[i++])
+      continue
+    }
+    const indented = depths.some((depth) => depth > 0) ? { depths } : {}
+    if (opens === 'bullet') segments.push({ type: 'bullet', items, ...indented })
+    else {
+      const first = Number.parseInt(lines[i - items.length], 10)
+      segments.push({ type: 'numbered', items, ...(first > 1 ? { start: first } : {}), ...indented })
+    }
+  }
+  flush()
+  return segments
+}
+
+/**
+ * Which lines sit inside a code fence, by the plain parser's rule — a fence
+ * opens only where it closes, and an unclosed one is text. Once, for the whole
+ * body: asking per list line re-read everything before it, quadratic in a long
+ * list after an unclosed fence (review of d98a5636).
+ */
+function fencedLines(lines: string[]): boolean[] {
+  const fenced = lines.map(() => false)
+  let open = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (!FENCE_RE.test(lines[i])) continue
+    if (open === -1) open = i
+    else {
+      for (let j = open; j <= i; j++) fenced[j] = true
+      open = -1
+    }
+  }
+  return fenced
 }
 
 /**

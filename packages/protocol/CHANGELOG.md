@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.35.0 — 2026-10-14
+
+**Wire behaviour: none for any app's editor; a description written as text can
+now carry a nested list** (SPEC §13.3 "A description as text", d98a5636). With
+`{ description: true }`, `markerTextToBlockDocument` reads an indented list item
+as `attrs.indent` — relative to the item above, so two, three or four spaces
+all mean one level under it, capped at `MAX_LIST_DEPTH` — and an indented item
+of the other marker as an item of its list. `blockDocumentToMarkerText` escapes
+a plain item whose text would read as a checklist box, and a plain quote whose
+first line would read as a callout, with one more `\`, which reading takes off.
+So the same text now publishes an indented item where 0.34.0 published a
+paragraph, which is why this is a MINOR. A message's text, and an untagged
+description's (§13.4), read exactly as before; `parseBodySegments` reads
+indentation only with the new `{ indentedItems: true }`.
+
 ## 0.34.0 — 2026-10-14
 
 **Wire behaviour: a new kind, `kind:30842`, the document** (SPEC, decided by
