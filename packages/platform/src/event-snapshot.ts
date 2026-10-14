@@ -290,6 +290,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   const byContent = new Map<string, string>()
   /** Plaintexts for a ciphertext no held event carries: this page load only. */
   const looseText = new Map<string, string>()
+  /** The last-seen time each event was last read or written with: what decides when seeing it again is written. */
+  const writtenSeenAt = new Map<string, number>()
   const filters = new Set<string>()
   /** The keys of filters whose last answer was whole — the ones a pooled list may be covered by. */
   const whole = new Set<string>()
@@ -313,6 +315,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (byContent.get(held.event.content) === id) byContent.delete(held.event.content)
     }
     dirty.delete(id)
+    writtenSeenAt.delete(id)
     removed.add(id)
   }
 
@@ -345,8 +348,10 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       previous.plaintext === plaintext &&
       previous.event.sig === event.sig &&
       previous.event.content === event.content &&
-      stored.seenAt - previous.seenAt < seenRefreshMs
-    events.set(event.id, { event, seenAt: unchanged ? previous.seenAt : stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
+      stored.seenAt - (writtenSeenAt.get(event.id) ?? previous.seenAt) < seenRefreshMs
+    // In memory the last-seen time is always the newest, so what was just seen is the last trimmed.
+    events.set(event.id, { event, seenAt: stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
+    if (!mark) writtenSeenAt.set(event.id, stored.seenAt)
     let ofKind = byKind.get(event.kind)
     if (!ofKind) byKind.set(event.kind, (ofKind = new Set()))
     ofKind.add(event.id)
@@ -387,6 +392,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       filters: [...filters],
       whole: [...whole],
     }
+    for (const stored of change.put) writtenSeenAt.set(stored.event.id, stored.seenAt)
     dirty.clear()
     removed.clear()
     filtersDirty = false

@@ -10,9 +10,10 @@ opened after a reload waited for the relay instead.
 
 - An event the copy already holds, unchanged — same signature, content and kept
   plaintext — is written again only when its last-seen time is
-  `SNAPSHOT_SEEN_REFRESH_MS` (an hour, `seenRefreshMs` to change it) old. Until
-  then it keeps the last-seen time that was written, so dropping the least
-  recently seen past `maxEvents` is out by at most that much.
+  `SNAPSHOT_SEEN_REFRESH_MS` (an hour, `seenRefreshMs` to change it) old. In
+  memory its last-seen time is always the newest, so this page drops the least
+  recently seen past `maxEvents` as before; a copy read after a reload may be
+  out by up to that hour.
 - Measured on Peek's first-load probe as QA-1: after a reload, each save puts
   0–10 events instead of 800–2,400, and the copy is read in 0.2–0.3 s.
 

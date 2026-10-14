@@ -242,6 +242,25 @@ test('an event held already and unchanged is not written again until its last-se
   assert.deepEqual(snap.answer([filter])?.map((e) => e.id), [b.id])
 })
 
+test('at the cap, an event seen again a moment ago is kept over one seen before it, though it was not written again', async () => {
+  let clock = 1_000
+  const snap = createEventSnapshot({ storage: memorySnapshotStorage(), scope: 's', version: 1, timers: still, now: () => clock, maxEvents: 2 })
+  await snap.ready
+  const a = ev(9, 10, [['h', 'a']])
+  const b = ev(9, 10, [['h', 'b']])
+  const c = ev(9, 10, [['h', 'c']])
+  snap.absorb([{ kinds: [9], '#h': ['a'] }], [a])
+  await snap.flush()
+  clock = 2_000
+  snap.absorb([{ kinds: [9], '#h': ['b'] }], [b])
+  clock = 3_000
+  snap.absorb([{ kinds: [9], '#h': ['a'] }], [a])
+  clock = 4_000
+  snap.absorb([{ kinds: [9], '#h': ['c'] }], [c])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['a'] }])?.map((e) => e.id), [a.id])
+  assert.deepEqual(snap.answer([{ kinds: [9], '#h': ['b'] }]), [], 'the least recently seen went')
+})
+
 test('a kind:5 naming an address drops that file, if its author signed it', async () => {
   const { snap } = await fresh()
   const author = 'b'.repeat(64)
