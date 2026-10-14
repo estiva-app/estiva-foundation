@@ -19,6 +19,7 @@ import {
   markerTextToBlockDocument,
   fromEditorDocument,
   MAX_LIST_DEPTH,
+  parseBodySegments,
   toRenderTree,
   parseBlockDocument,
   publishableFromEditor,
@@ -655,7 +656,7 @@ describe('a checklist item and a callout — RIC-19', () => {
 
   it('spells them in a description\'s text and reads the same attributes back', () => {
     assert.match(blockDocumentToMarkerText(DOC, { description: true }), /^- \[x\] ship it\n {2}- \[ \] verify it\n/)
-    // §13.2 has no nesting, so an indented list reads back level (MAN-13) and the agent keeps it whole; the tick is what is under test.
+    // The tick is what is under test; an indented one is d98a5636's, below.
     const level = JSON.parse(json.replace(',"indent":1', '')) as BlockDocument
     const text = blockDocumentToMarkerText(level, { description: true })
     assert.match(text, /^- \[x\] ship it\n- \[ \] verify it\n- a plain item\n- not a tick/)
@@ -684,5 +685,86 @@ describe('a checklist item and a callout — RIC-19', () => {
     const back = markerTextToBlockDocument('- [x] done\n\n> [!NOTE]\n> hi')
     assert.equal((back.content[0].content as Block[])[0].attrs, undefined)
     assert.equal(back.content[1].attrs, undefined)
+  })
+})
+
+describe("an indented item and an escape in a description's text — d98a5636", () => {
+  const item = (id: string, text: string, attrs?: Record<string, unknown>): Block => ({ type: 'listItem', id, ...(attrs ? { attrs } : {}), content: [{ type: 'text', text }] })
+  const shape = (doc: BlockDocument) =>
+    doc.content.map((b) =>
+      Array.isArray(b.content) && (b.content[0] as Block | undefined)?.id !== undefined
+        ? [b.type, (b.content as Block[]).map((i) => [inlineTextOf(i), i.attrs?.indent ?? 0, i.attrs?.checked])]
+        : [b.type, inlineTextOf(b), b.attrs?.tone],
+    )
+  const roundTrips = (doc: BlockDocument) => {
+    const text = blockDocumentToMarkerText(doc, { description: true })
+    const back = markerTextToBlockDocument(text, doc, { description: true })
+    assert.deepEqual(shape(back), shape(doc), text)
+    return text
+  }
+
+  it('reads an indented item back at its depth, ticks and numbering included', () => {
+    const text = roundTrips({
+      type: 'doc',
+      content: [
+        { type: 'bulletList', id: 'l1', content: [item('a', 'parent'), item('b', 'child', { indent: 1 }), item('c', 'grandchild', { indent: 2, checked: true }), item('d', 'back', { checked: false })] },
+        { type: 'orderedList', id: 'l2', content: [item('e', 'one'), item('f', 'one.one', { indent: 1 }), item('g', 'two')] },
+      ],
+    })
+    assert.equal(text, '- parent\n  - child\n    - [x] grandchild\n- [ ] back\n\n1. one\n  1. one.one\n2. two')
+  })
+
+  it('reads depth relative to the item above, so three or four spaces mean the same as two', () => {
+    const depths = (text: string) => (markerTextToBlockDocument(text, undefined, { description: true }).content[0].content as Block[]).map((b) => b.attrs?.indent ?? 0)
+    assert.deepEqual(depths('1. a\n   - b\n   - c\n2. d'), [0, 1, 1, 0])
+    assert.deepEqual(depths('- a\n    - b\n        - c\n    - d\n- e'), [0, 1, 2, 1, 0])
+    // Between two levels it sits with the nearest item above at a lesser indentation.
+    assert.deepEqual(depths('- a\n    - b\n  - c'), [0, 1, 0])
+    // An indented item of the other marker is an item of its list, which is flat on the wire.
+    const mixed = markerTextToBlockDocument('- a\n  1. b', undefined, { description: true })
+    assert.deepEqual(mixed.content.map((b) => [b.type, (b.content as Block[]).length]), [['bulletList', 2]])
+  })
+
+  it('never reads an item deeper than MAX_LIST_DEPTH', () => {
+    const text = Array.from({ length: 12 }, (_, i) => `${' '.repeat(i * 2)}- x${i}`).join('\n')
+    const items = markerTextToBlockDocument(text, undefined, { description: true }).content[0].content as Block[]
+    assert.equal(Math.max(...items.map((b) => (b.attrs?.indent as number) ?? 0)), MAX_LIST_DEPTH)
+  })
+
+  it('keeps an item its id when it is indented or outdented through the text', () => {
+    const doc: BlockDocument = { type: 'doc', content: [{ type: 'bulletList', id: 'l1', content: [item('a', 'one'), item('b', 'two')] }] }
+    const indented = markerTextToBlockDocument('- one\n  - two', doc, { description: true })
+    assert.equal(indented.content[0].id, 'l1')
+    assert.equal((indented.content[0].content as Block[])[1].attrs?.indent, 1)
+  })
+
+  it('escapes a plain item or quote that would read as a checklist item or a callout, backslashes included', () => {
+    const text = roundTrips({
+      type: 'doc',
+      content: [
+        { type: 'bulletList', id: 'l1', content: [item('a', '[ ] brackets'), item('b', '[x] too', { indent: 1 }), item('c', '\\[ ] a backslash'), item('d', '[ ] a real box', { checked: false })] },
+        { type: 'blockquote', id: 'q1', content: [{ type: 'text', text: '[!NOTE]\nnot a callout' }] },
+        { type: 'blockquote', id: 'q2', content: [{ type: 'text', text: '\\[!TIP]' }] },
+        { type: 'blockquote', id: 'q3', attrs: { tone: 'note' }, content: [{ type: 'text', text: '[!NOTE]' }] },
+      ],
+    })
+    assert.match(text, /^- \\\[ \] brackets\n {2}- \\\[x\] too\n- \\\\\[ \] a backslash\n- \[ \] \[ \] a real box\n\n> \\\[!NOTE\]\n> not a callout\n\n> \\\\\[!TIP\]\n\n> \[!NOTE\]\n> \[!NOTE\]$/)
+  })
+
+  it("leaves a message's text, and an untagged description's, exactly as §13.2 reads it", () => {
+    const text = '- a\n  - b\n- \\[ ] c\n\n> \\[!NOTE]'
+    const back = markerTextToBlockDocument(text)
+    assert.deepEqual(back.content.map((b) => b.type), ['bulletList', 'paragraph', 'bulletList', 'blockquote'])
+    assert.equal(inlineTextOf((back.content[2].content as Block[])[0]), '\\[ ] c')
+    assert.equal(inlineTextOf(back.content[3]), '\\[!NOTE]')
+    assert.ok(!JSON.stringify(back).includes('indent'))
+    assert.deepEqual(parseBodySegments(text), parseBodySegments(text, {}))
+  })
+
+  it('still opens a fence that holds an indented list line as code', () => {
+    const doc = markerTextToBlockDocument('```\n- a\n  - b\n```\n- c\n  - d', undefined, { description: true })
+    assert.deepEqual(doc.content.map((b) => b.type), ['codeBlock', 'bulletList'])
+    assert.equal(inlineTextOf(doc.content[0]), '- a\n  - b')
+    assert.equal((doc.content[1].content as Block[])[1].attrs?.indent, 1)
   })
 })

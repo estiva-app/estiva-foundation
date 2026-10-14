@@ -37,7 +37,7 @@ import {
   inlineNodesToMarkers,
   parseBodySegments,
 } from './content.js'
-import { type Block, type BlockDocument, newBlockId, listItemDepths, listItemChecked } from './blocks.js'
+import { type Block, type BlockDocument, newBlockId, listItemDepths, listItemChecked, MAX_LIST_DEPTH } from './blocks.js'
 
 const isInlineRun = (content: unknown): content is InlineTextNode[] =>
   Array.isArray(content) &&
@@ -68,6 +68,12 @@ const keyOf = (block: Block) => `${block.type}\u0000${textOf(block)}`
  * a checklist item as `- [ ] ` / `- [x] `, GFM's task list, and a callout as a
  * quote whose first line is `[!NOTE]`, GitHub's alert. **Descriptions only**
  * (Miky, 2026-10-13): a message stays §13.2's dialect, where `[x]` is text.
+ *
+ * Two more, so every list and quote reads back as it printed (d98a5636): an
+ * indented item (`attrs.indent`) is spelled two spaces a level and read
+ * relative to the item above; and a plain item or quote whose text would read
+ * as one of the above is escaped with one more `\` in front, which reading
+ * takes off again — `- \[ ] brackets` is a plain item whose text is `[ ] brackets`.
  */
 export interface DescriptionTextOptions {
   description?: boolean
@@ -75,21 +81,43 @@ export interface DescriptionTextOptions {
 
 const TASK = /^\[( |x|X)\] /
 const ALERT = /^\[!([A-Za-z]+)\]$/
+/** Text that reads as a checklist box or a callout line — after any backslashes, which the escape adds one of. */
+const ESCAPED_TASK = /^\\*\[( |x|X)\] /
+const ESCAPED_ALERT = /^\\*\[![A-Za-z]+\]$/
 
-function itemFromText(item: string, description: boolean): Block {
+/** One `\` more in front of text that would otherwise read as `pattern`, after `lead` whitespace. */
+function escaped(text: string, pattern: RegExp): string {
+  const lead = text.length - text.trimStart().length
+  return pattern.test(text.slice(lead).trimEnd()) ? `${text.slice(0, lead)}\\${text.slice(lead)}` : text
+}
+
+/** The inverse of {@link escaped}: one `\` fewer. */
+function unescaped(text: string, pattern: RegExp): string {
+  const lead = text.length - text.trimStart().length
+  return text[lead] === '\\' && pattern.test(text.slice(lead).trimEnd()) ? text.slice(0, lead) + text.slice(lead + 1) : text
+}
+
+function itemFromText(item: string, description: boolean, depth = 0): Block {
+  const indent = depth > 0 ? { indent: Math.min(depth, MAX_LIST_DEPTH) } : undefined
   const task = description ? TASK.exec(item) : null
-  if (!task) return { type: 'listItem', id: '', content: markersToInlineNodes(item) }
+  if (!task) {
+    const text = description ? unescaped(item, ESCAPED_TASK) : item
+    return { type: 'listItem', id: '', ...(indent ? { attrs: indent } : {}), content: markersToInlineNodes(text) }
+  }
   return {
     type: 'listItem',
     id: '',
-    attrs: { checked: task[1] !== ' ' },
+    attrs: { ...indent, checked: task[1] !== ' ' },
     content: markersToInlineNodes(item.slice(task[0].length)),
   }
 }
 
 function quoteFromLines(lines: string[], description: boolean): Block {
   const alert = description && lines.length > 0 ? ALERT.exec(lines[0].trim()) : null
-  if (!alert) return { type: 'blockquote', id: '', content: markersToInlineNodes(lines.join('\n')) }
+  if (!alert) {
+    const text = description && lines.length > 0 ? [unescaped(lines[0], ESCAPED_ALERT), ...lines.slice(1)] : lines
+    return { type: 'blockquote', id: '', content: markersToInlineNodes(text.join('\n')) }
+  }
   /*
     The kind is kept as written, lowercased: a tone this version does not know
     is still a callout, and the next save must not turn it into a `note`.
@@ -105,14 +133,14 @@ function blockFromSegment(seg: BodySegment, description: boolean): Block {
       return {
         type: 'bulletList',
         id: '',
-        content: seg.items.map((item) => itemFromText(item, description)),
+        content: seg.items.map((item, i) => itemFromText(item, description, seg.depths?.[i])),
       }
     case 'numbered':
       return {
         type: 'orderedList',
         id: '',
         ...(seg.start ? { attrs: { start: seg.start } } : {}),
-        content: seg.items.map((item) => itemFromText(item, description)),
+        content: seg.items.map((item, i) => itemFromText(item, description, seg.depths?.[i])),
       }
     case 'quote':
       return quoteFromLines(seg.lines, description)
@@ -134,7 +162,8 @@ function blockFromSegment(seg: BodySegment, description: boolean): Block {
  * still corresponds. The matching rule is in this module's header.
  */
 export function markerTextToBlockDocument(text: string, previous?: BlockDocument, options: DescriptionTextOptions = {}): BlockDocument {
-  const fresh = parseBodySegments(text).map((seg) => blockFromSegment(seg, options.description === true))
+  const description = options.description === true
+  const fresh = parseBodySegments(text, { indentedItems: description }).map((seg) => blockFromSegment(seg, description))
   const old = previous?.content ?? []
   const takenIds = new Set<string>()
   const usedOld = new Set<number>()
@@ -222,9 +251,9 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
       case 'orderedList': {
         /*
           An indented item (MAN-13) is spelled two spaces a level, as Markdown
-          does. §13.2 has no nesting, so it reads back level — still every
-          item, which is why the agent's text edit treats such a list as one it
-          cannot spell and keeps it whole.
+          does. A description's text reads it back at its depth (d98a5636); a
+          message's §13.2 has no nesting, so there it reads back level — still
+          every item.
         */
         const items = (block.content as Block[]) ?? []
         const depths = listItemDepths(items)
@@ -238,7 +267,8 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
           const marker = block.type === 'bulletList' ? '-' : `${next[depth]++}.`
           const checked = description ? listItemChecked(item) : undefined
           const task = checked === undefined ? '' : checked ? '[x] ' : '[ ] '
-          lines.push(`${'  '.repeat(depth)}${marker} ${task}${itemText(item)}`)
+          const text = description && checked === undefined ? escaped(itemText(item), ESCAPED_TASK) : itemText(item)
+          lines.push(`${'  '.repeat(depth)}${marker} ${task}${text}`)
         })
         break
       }
@@ -246,7 +276,9 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
         // The tone as written, not as `calloutTone` reads it: the next save reads back what this spelled.
         const tone = description && typeof block.attrs?.tone === 'string' && /^[A-Za-z]+$/.test(block.attrs.tone) ? block.attrs.tone : ''
         if (tone) lines.push(`> [!${tone.toUpperCase()}]`)
-        for (const line of inline.split('\n')) lines.push(`> ${line}`)
+        const quoted = inline.split('\n')
+        if (description && !tone) quoted[0] = escaped(quoted[0], ESCAPED_ALERT)
+        for (const line of quoted) lines.push(`> ${line}`)
         break
       }
       case 'codeBlock': {

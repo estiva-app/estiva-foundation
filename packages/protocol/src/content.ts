@@ -50,10 +50,12 @@ export interface InlineMarkSpan {
 /** A block-level run, parsed from line prefixes. */
 export type BodySegment =
   | { type: 'text'; lines: string[] }
-  | { type: 'bullet'; items: string[] }
+  | { type: 'bullet'; items: string[]; depths?: number[] }
   | {
       type: 'numbered'
       items: string[]
+      /** How deep each item sits, when it was read with `indentedItems` and any is indented. */
+      depths?: number[]
       /**
        * The number the author actually wrote, when it is not 1.
        *
@@ -245,8 +247,9 @@ function fenceCloses(lines: string[], from: number): number {
  * `## ` become headings; three or more `#`s, and a `#123` reference with no
  * space, stay plain text.
  */
-export function parseBodySegments(body: string): BodySegment[] {
+export function parseBodySegments(body: string, options: { indentedItems?: boolean } = {}): BodySegment[] {
   const lines = body.split('\n')
+  if (options.indentedItems) return parseWithIndentedItems(lines)
   const segments: BodySegment[] = []
   let i = 0
   while (i < lines.length) {
@@ -314,6 +317,86 @@ export function parseBodySegments(body: string): BodySegment[] {
     }
   }
   return segments
+}
+
+/** A list item line at any indentation: its leading whitespace, its marker, its text. */
+const INDENTED_ITEM_RE = /^([ \t]*)([-•]|\d+\.)\s(.*)$/
+const columnOf = (lead: string) => [...lead].reduce((column, c) => column + (c === '\t' ? 4 : 1), 0)
+
+/**
+ * {@link parseBodySegments} for a description's text (d98a5636), where an
+ * indented list item is one level deeper (§13.3 `attrs.indent`). Only a line at
+ * column 0 opens a list, as before; while one is open, an indented item of
+ * either marker continues it, because a list is flat on the wire and every
+ * indented item is of its list's type.
+ *
+ * Depth is read relative to the item above, not as a column count, so two,
+ * three or four spaces all mean "under the item above": an item indented
+ * further than the one above is one level below it; otherwise it is at the
+ * level of the nearest item above it at the same or a lesser indentation. The
+ * block reader caps it at `MAX_LIST_DEPTH`, the rule §13.3 already gives.
+ */
+function parseWithIndentedItems(lines: string[]): BodySegment[] {
+  const segments: BodySegment[] = []
+  let rest: string[] = []
+  const flush = () => {
+    if (rest.length) segments.push(...parseBodySegments(rest.join('\n')))
+    rest = []
+  }
+  let i = 0
+  while (i < lines.length) {
+    const opens = /^[-•]\s/.test(lines[i]) ? 'bullet' : /^\d+\.\s/.test(lines[i]) ? 'numbered' : undefined
+    // A fence that opens in the plain text before is the plain parser's to close.
+    if (!opens || insideFence(rest)) {
+      rest.push(lines[i++])
+      continue
+    }
+    flush()
+    const items: string[] = []
+    const depths: number[] = []
+    // The open items an item can sit under: columns rising, each with its depth.
+    const stack: { column: number; depth: number }[] = []
+    while (i < lines.length) {
+      const match = INDENTED_ITEM_RE.exec(lines[i])
+      if (!match) break
+      const column = columnOf(match[1])
+      const kind = /^\d/.test(match[2]) ? 'numbered' : 'bullet'
+      if (column === 0 && kind !== opens) break
+      if (column > 0 && items.length === 0) break
+      let depth = 0
+      if (items.length > 0) {
+        const above = stack[stack.length - 1]
+        if (column > above.column) depth = above.depth + 1
+        else {
+          while (stack.length > 1 && stack[stack.length - 1].column > column) stack.pop()
+          depth = stack[stack.length - 1].column <= column ? stack[stack.length - 1].depth : 0
+          if (stack[stack.length - 1].column === column) stack.pop()
+        }
+      }
+      stack.push({ column, depth })
+      items.push(match[3])
+      depths.push(depth)
+      i++
+    }
+    const indented = depths.some((depth) => depth > 0) ? { depths } : {}
+    if (opens === 'bullet') segments.push({ type: 'bullet', items, ...indented })
+    else {
+      const first = Number.parseInt(lines[i - items.length], 10)
+      segments.push({ type: 'numbered', items, ...(first > 1 ? { start: first } : {}), ...indented })
+    }
+  }
+  flush()
+  return segments
+}
+
+/** Whether these lines leave a code fence open — the plain parser's rule: a fence counts only once it closes. */
+function insideFence(lines: string[]): boolean {
+  for (let i = 0; i < lines.length; i++) {
+    const end = fenceCloses(lines, i)
+    if (end === -1 && FENCE_RE.test(lines[i])) return true
+    if (end !== -1) i = end
+  }
+  return false
 }
 
 /**
