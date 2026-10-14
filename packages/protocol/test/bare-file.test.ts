@@ -116,6 +116,6 @@ describe('buildDocument', () => {
   })
 
   it('refuses a document with no Folder', () => {
-    assert.throws(() => buildDocument(AUTHOR, 0, { fileId: 'x', title: 'X', channelUuid: '' }), /h/)
+    assert.throws(() => buildDocument(AUTHOR, 0, { fileId: 'x', title: 'X', channelUuid: '' }), /a document must name the Folder/)
   })
 })

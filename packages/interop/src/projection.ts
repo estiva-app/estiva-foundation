@@ -2949,7 +2949,8 @@ export interface ForeignObject {
    * The kind a move may name — the kind whose projection declares the
    * `movedBy` (MAN-1): `30850` for a Ship issue, so a move control offers
    * projects and not other issues. Absent with `parentField` on a bare file,
-   * which may sit under any kind (§6.7). {@link nestingOf}'s `moveTargetsOf`
+   * or a kind declared with `anyParent` (a document), which may sit under any
+   * kind (§6.7). {@link nestingOf}'s `moveTargetsOf`
    * reads it.
    */
   parentKind?: number
@@ -4071,8 +4072,9 @@ function parentRefOf(
  * parent it names — SPEC §7.2's `movedBy`, read off whichever projection lists
  * `kind` as its children (MAN-1).
  *
- * `parentKind` is absent for a bare file: §6.7 lets one sit under a file of any
- * kind, so its own list naming bare files is not a limit on where it may go.
+ * `parentKind` is absent for a bare file and for any kind a list declares with
+ * `anyParent` (a document): each may sit under a file of any kind (§6.7), so
+ * the list naming it is not a limit on where it may go.
  * Absent too for `match: 'identifier'`, where `movedBy` is ignored because a
  * move's value is an address and that list compares identifiers.
  */
@@ -4080,7 +4082,9 @@ function movedByOf(manifest: Manifest, kind: number): { field: string; parentKin
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
     if (!children || children.kind !== kind || !children.movedBy || children.match === 'identifier') continue
-    return kind === KIND_BARE_FILE || children.anyParent
+    // Any list declaring `anyParent` for the kind lifts the limit, so this and
+    // `ownParentTagOf` never disagree about where the kind may sit.
+    return ownParentTagOf(manifest, kind) !== undefined
       ? { field: children.movedBy }
       : { field: children.movedBy, parentKind: Number(parentKind) }
   }
@@ -4097,7 +4101,8 @@ function ownParentTagOf(manifest: Manifest, kind: number): string | undefined {
   if (kind === KIND_BARE_FILE) return 'a'
   for (const projection of Object.values(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
-    if (children?.kind === kind && children.anyParent && children.match !== 'identifier') return children.via
+    // Strictly `true`: nothing validates a published manifest, and "false" is truthy.
+    if (children?.kind === kind && children.anyParent === true && children.match !== 'identifier') return children.via
   }
   return undefined
 }

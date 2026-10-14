@@ -995,6 +995,7 @@ export function buildDocument(
   createdAtMs: number,
   args: Parameters<typeof buildBareFile>[2],
 ): UnsignedEvent {
+  if (!args.channelUuid) throw new Error('a document must name the Folder it lives in (h)')
   return { ...buildBareFile(pubkey, createdAtMs, args), kind: KIND.DOCUMENT }
 }
 

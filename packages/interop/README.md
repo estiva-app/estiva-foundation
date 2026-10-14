@@ -319,6 +319,10 @@ no parent. The object carries `parentField` (the bare file's is `parent`, now
 declared rather than hard-coded) and `parentKind`, the kind a move may name —
 `nestingOf(...).moveTargetsOf` offers only that kind.
 
+A list may add `"anyParent": true` (0.56.0): the child names its own parent with
+its `via` tag, of any kind, as a bare file does, so `parentKind` is absent and a
+move may name any file in the Folder. Leaf's document (`30842`) declares it.
+
 **Placement and listing.** A creation may name its Folder with `buzz-channel`
 instead of `h`, and an action declaring `listed: true` is followed by the
 `kind:1852` that keeps the Folder's listing true. Those are built by

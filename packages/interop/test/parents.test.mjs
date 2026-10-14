@@ -220,6 +220,12 @@ describe('resolveParents', () => {
       countingRelay([leafManifest({ anyParent: false }), ...events.slice(1)]).query,
     )
     assert.deepEqual(strict, { [D('under-topic')]: null, [D('under-doc')]: D('under-project') })
+    // Only `true` turns it on: a published manifest is not validated, and "false" is truthy.
+    const stringly = await resolveParents(
+      [D('under-topic')],
+      countingRelay([leafManifest({ anyParent: 'false' }), ...events.slice(1)]).query,
+    )
+    assert.deepEqual(stringly, { [D('under-topic')]: null })
   })
 
   test('a refused read rejects the whole call', async () => {
