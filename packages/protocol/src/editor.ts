@@ -8,7 +8,7 @@ import {
   type BlockDocument,
 } from './blocks.js'
 import { markerTextToBlockDocument } from './bridge-content.js'
-import type { InlineMarkNode, InlineTextNode } from './content.js'
+import { targetMark, type InlineMarkNode, type InlineTextNode } from './content.js'
 import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
 
 /**
@@ -160,10 +160,23 @@ function textNodes(text: string, marks: EditorNode['marks']): EditorNode[] {
   return out
 }
 
+/**
+ * A mark's `embed` as the editor node holds it: a layout string goes on the
+ * node, and anything else a later version may have put there rides in `extra`
+ * with the other unknown keys, so a save writes it back untouched. `none` and
+ * `""` are no card, which a writer omits (§13.3).
+ */
+function cardAndExtra(embed: unknown, rest: Record<string, unknown>): { card: { embed?: string }; extra: Record<string, unknown> } {
+  if (typeof embed === 'string') return { card: embed && embed !== 'none' ? { embed } : {}, extra: rest }
+  return { card: {}, extra: embed === undefined ? rest : { ...rest, embed } }
+}
+
 function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
   return runs.flatMap((run) => {
     const marks = run.marks ?? []
-    const reference = marks.find((m): m is Extract<InlineMarkNode, { type: 'reference' }> => m.type === 'reference')
+    // The marks a run keeps as marks; `reference` and `link` become the chip, or nothing when malformed.
+    const carried = marks.filter((m) => m.type !== 'reference' && m.type !== 'link').map((m) => m.type)
+    const reference = targetMark(marks, 'reference')
     if (reference) {
       /*
         An atom rather than a mark, and the difference is what a person sees.
@@ -173,18 +186,47 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         while reading, which is the mode difference this ticket is about.
 
         The run's other marks ride along so a bold reference comes back bold.
+        So does its card (`embed`, §13.3), and every key a later version adds
+        rides in `extra`: a mark has no id, so a key dropped on save would be
+        lost with nothing to say so.
       */
+      const { uri, embed, ...rest } = reference
+      const { card, extra } = cardAndExtra(embed, rest)
       return [
         {
           type: REFERENCE_NODE,
           attrs: {
-            uri: reference.attrs.uri,
-            marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type),
+            uri,
+            marks: carried,
+            ...card,
+            ...(Object.keys(extra).length ? { extra } : {}),
           },
         },
       ]
     }
-    return textNodes(run.text, marks.map((m) => ({ type: m.type })))
+    const link = targetMark(marks, 'link')
+    if (link && run.text === link.href) {
+      /*
+        A URL whose card its writer chose (§13.3): the chip it reads as, which
+        keeps the URL in `href` and writes it back as the same run. `uri` is
+        what it names, filled in by the editor's `LinkChips` once the app has
+        resolved it; until then the chip draws as the URL.
+
+        `extra` is always an object here, empty or not: it says the URL came
+        with a `link` mark, so a save writes the mark back even with no card,
+        and a description somebody else wrote that way saves the same bytes.
+      */
+      const { href, embed, ...rest } = link
+      const { card, extra } = cardAndExtra(embed, rest)
+      return [
+        {
+          type: REFERENCE_NODE,
+          attrs: { uri: '', href, marks: carried, ...card, extra },
+        },
+      ]
+    }
+    // A link on other words is not one these editors write or draw: its words stay, the link does not.
+    return textNodes(run.text, carried.map((type) => ({ type })))
   })
 }
 
@@ -373,13 +415,49 @@ function idFor(node: EditorNode, claims: IdClaims): string {
 
 function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
   const out: InlineTextNode[] = []
-  for (const node of nodes) {
+  for (const [i, node] of nodes.entries()) {
+    if (node.type === REFERENCE_NODE && typeof node.attrs?.href === 'string' && node.attrs.href) {
+      /*
+        A URL chip is its URL on the wire, never rewritten into the reference
+        it names (§13.3). With no card it is plain text, merged with the text
+        around it, so a description an editor only opened saves the same bytes.
+        A `link` mark holds it when it has a card, when it came with one
+        (`extra` set), or when what follows would read as more of the URL — a
+        word typed right after the chip, or another URL chip — so its end stays
+        where it was.
+      */
+      const href = node.attrs.href
+      const carried = Array.isArray(node.attrs.marks) ? (node.attrs.marks as string[]) : []
+      const embed = node.attrs.embed
+      const extra = node.attrs.extra && typeof node.attrs.extra === 'object' && !Array.isArray(node.attrs.extra) ? (node.attrs.extra as Record<string, unknown>) : undefined
+      const card = typeof embed === 'string' && embed !== '' && embed !== 'none'
+      const marks: InlineMarkNode[] = carried.map((type) => ({ type }) as InlineMarkNode)
+      if (card || extra || continuesUrl(nodes[i + 1])) {
+        // `href` first, as writers put it, so an untouched mark keeps its bytes; `extra` never holds it.
+        marks.push({ type: 'link', attrs: { href, ...extra, ...(card ? { embed } : {}) } })
+      }
+      const last = out[out.length - 1]
+      if (last && sameMarks(last.marks ?? [], marks)) last.text += href
+      else out.push({ type: 'text', text: href, ...(marks.length ? { marks } : {}) })
+      continue
+    }
     if (node.type === REFERENCE_NODE) {
       const uri = String(node.attrs?.uri ?? '')
       const carried = Array.isArray(node.attrs?.marks) ? (node.attrs.marks as string[]) : []
+      const embed = node.attrs?.embed
+      const extra = node.attrs?.extra
       const marks: InlineMarkNode[] = [
         ...carried.map((type) => ({ type }) as InlineMarkNode),
-        { type: 'reference', attrs: { uri } },
+        {
+          type: 'reference',
+          attrs: {
+            // `extra` first, so a key it carries can never overwrite the two this code owns.
+            ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}),
+            uri,
+            // `none` is no attribute (§13.3): a writer omits it.
+            ...(typeof embed === 'string' && embed !== '' && embed !== 'none' ? { embed } : {}),
+          },
+        },
       ]
       out.push({ type: 'text', text: uri, marks })
       continue
@@ -388,7 +466,7 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
       // Rejoin onto the previous run where there is one, so a paragraph is not
       // split into three runs by one break.
       const last = out[out.length - 1]
-      if (last && !last.marks?.some((m) => m.type === 'reference')) last.text += '\n'
+      if (last && !last.marks?.some(holdsTarget)) last.text += '\n'
       else out.push({ type: 'text', text: '\n' })
       continue
     }
@@ -407,9 +485,24 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
   return out
 }
 
+/**
+ * Whether this node, written right after a URL as plain text, would be read
+ * as more of the URL: another chip (its text is a URL or a `nostr:` URI), or
+ * text that does not start with a space or a sentence's closing punctuation.
+ */
+function continuesUrl(next: EditorNode | undefined): boolean {
+  if (!next) return false
+  if (next.type === REFERENCE_NODE) return true
+  if (next.type !== 'text' || !next.text) return false
+  return !/^(\s|[.,;:!?)\]]+(\s|$))/.test(next.text) && !/^[<>"'`]/.test(next.text)
+}
+
+/** A run that points somewhere is its own run: its text is what it points at, never merged into the next. */
+const holdsTarget = (m: InlineMarkNode) => m.type === 'reference' || m.type === 'link'
+
 function sameMarks(a: readonly InlineMarkNode[], b: readonly InlineMarkNode[]): boolean {
   if (a.length !== b.length) return false
-  if (a.some((m) => m.type === 'reference') || b.some((m) => m.type === 'reference')) return false
+  if (a.some(holdsTarget) || b.some(holdsTarget)) return false
   return a.every((m, i) => m.type === b[i].type)
 }
 

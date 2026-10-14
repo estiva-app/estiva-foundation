@@ -178,6 +178,42 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
 }
 
 /**
+ * The `nostr:` reference an app link names, by what `resolveLink` answered for
+ * it (§7.7), or undefined: nothing claims it, the answer has not come back, or
+ * the address is one no naddr can hold (a `d` over 255 bytes), which stays a
+ * link rather than taking the text down with it. What an editor's URL chip
+ * draws as (`@estiva-app/ui/editor`'s `LinkChips`).
+ */
+export function referenceOfLink(url: string, resolveLink: LinkResolver): string | undefined {
+  const value = normalise(resolveLink(url) ?? '')
+  if (!value) return undefined
+  try {
+    return `nostr:${EVENT_ID.test(value) ? encodeNevent({ id: value, relays: [] }) : addrToNaddr(value)}`
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The app links an editor may turn into chips in one text, where each sits:
+ * bare http(s) URLs, trailing punctuation left to the sentence. A
+ * `[words](https://…)` is the marker format's link on words and is skipped, as
+ * {@link linksAsReferences} skips it.
+ */
+export function urlRunsIn(text: string): { url: string; from: number; to: number }[] {
+  if (!text.includes('://')) return []
+  const out: { url: string; from: number; to: number }[] = []
+  for (const m of text.matchAll(LINK_OR_URL)) {
+    if (m[1]) continue
+    const start = m.index
+    if (text.slice(Math.max(0, start - 2), start) === '](' || text[start - 1] === '[') continue
+    const url = trimUrl(m[0])
+    out.push({ url, from: start, to: start + url.length })
+  }
+  return out
+}
+
+/**
  * One pass over a run: a link on words, `[words](https://…)` as the marker
  * format writes it (group 1 — its URL is the target of words the author chose),
  * or a bare URL (group 2). The same alternation the ui package's `RichText`
@@ -204,21 +240,21 @@ const LINK_OR_URL = /(\[[^[\]\n]+\]\((?:https?:\/\/|mailto:)[^\s)]+\))|(https?:\
  * not come back yet — which stays a link. The run keeps the URL as its text,
  * so a reader that draws references as text shows what was written.
  *
- * Messages only: a description is a block document, whose links are not this
- * function's business (§13.3).
+ * A block document's too, since 0.33.0 (§13.3): a description's URL reads as
+ * its chip as a message's does. There a run whose text is its own `link` mark's
+ * `href` is that URL, and keeps the card its writer chose (`embed`); a link on
+ * other words stays a link.
  */
 export function linksAsReferences(blocks: readonly RenderBlock[], resolveLink: LinkResolver): RenderBlock[] {
-  const referenceOf = (url: string): string | undefined => {
-    const value = normalise(resolveLink(url) ?? '')
-    if (!value) return undefined
-    // An address no naddr can hold (a `d` over 255 bytes) stays a link rather than taking the message down with it.
-    try {
-      return `nostr:${EVENT_ID.test(value) ? encodeNevent({ id: value, relays: [] }) : addrToNaddr(value)}`
-    } catch {
-      return undefined
-    }
-  }
+  const referenceOf = (url: string) => referenceOfLink(url, resolveLink)
   const split = (run: RenderInline): RenderInline[] => {
+    if (run.href !== undefined) {
+      // A block document's link: the URL as its own words is the URL, and takes its card along.
+      const reference = !run.reference && run.text === run.href && !run.marks.includes('code') ? referenceOf(run.href) : undefined
+      if (!reference) return [run]
+      const { href: _href, ...rest } = run
+      return [{ ...rest, reference }]
+    }
     if (run.reference || run.marks.includes('code') || !run.text.includes('://')) return [run]
     const out: RenderInline[] = []
     let at = 0

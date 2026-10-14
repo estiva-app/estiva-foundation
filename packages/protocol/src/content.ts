@@ -360,8 +360,36 @@ export function stripInlineFormatting(text: string): string {
 /** A mark on an inline run, in the JSON encoding. */
 export type InlineMarkNode =
   | { type: InlineMark }
-  /** §13.1's `reference`, which carries what it points at. */
-  | { type: 'reference'; attrs: { uri: string } }
+  /**
+   * §13.1's `reference`, which carries what it points at. In a block document
+   * `embed` is the card its writer chose (§13.3, "A reference's card"), and any
+   * other key is one a later version added, which an editor carries through.
+   */
+  | { type: 'reference'; attrs: { uri: string; embed?: unknown; [key: string]: unknown } }
+  /**
+   * §13.3's `link`, block documents only: a run that links to `href`. Estiva
+   * writes it on a run whose text is the URL itself, and only to carry the card
+   * its writer chose for the link (`embed`, §13.3 "A reference's card"); a URL
+   * with no card is plain text.
+   */
+  | { type: 'link'; attrs: { href: string; embed?: unknown; [key: string]: unknown } }
+
+/**
+ * The `reference` or `link` mark on a run, with its attrs, only when they are
+ * well formed: an object holding the string the mark points at (`uri`, `href`).
+ * A document is somebody else's JSON and the validator checks only a mark's
+ * `type`, so a mark with `"attrs": null` is read as no mark rather than taking
+ * every reader of the document down with it.
+ */
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'reference'): { uri: string; embed?: unknown; [key: string]: unknown } | undefined
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'link'): { href: string; embed?: unknown; [key: string]: unknown } | undefined
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'reference' | 'link'): Record<string, unknown> | undefined {
+  const mark = marks?.find((m) => m.type === type) as { attrs?: unknown } | undefined
+  const attrs = mark?.attrs
+  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs)) return undefined
+  const target = (attrs as Record<string, unknown>)[type === 'reference' ? 'uri' : 'href']
+  return typeof target === 'string' && target !== '' ? (attrs as Record<string, unknown>) : undefined
+}
 
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
 export interface InlineTextNode {
