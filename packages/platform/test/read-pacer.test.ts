@@ -175,6 +175,19 @@ test('promote moves the waiting ahead reads into the click lane, behind the newe
   assert.equal(order.length, 1)
 })
 
+test('a promoted read that waited long is not starved ahead of the click that promoted it', async () => {
+  const clock = fakeClock()
+  const pacer = pacerOn(clock, { reserve: 10 })
+  await pacer.take(PER_WINDOW)
+  const order: string[] = []
+  void pacer.take(20, { lane: 'ahead' }).then(() => order.push('loaded ahead'))
+  await clock.advance(4_000)
+  pacer.promote()
+  void pacer.take(20).then(() => order.push('the click'))
+  await clock.advance(WINDOW_MS)
+  assert.deepEqual(order, ['the click', 'loaded ahead'])
+})
+
 test('in flight: ahead holds at most its share, and a freed slot goes to a waiting click first', async () => {
   const clock = fakeClock()
   const slots = createInFlight(4, 2)

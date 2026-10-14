@@ -160,7 +160,10 @@ export function createPacer(options: PacerOptions): Pacer {
     waiting: () => ({ click: clicks.length, ahead: ahead.length }),
     promote() {
       if (ahead.length === 0) return
-      // Oldest first in `clicks`: newest-first serves the click's own reads before these.
+      // Oldest first in `clicks`: newest-first serves the click's own reads before these. Their wait starts
+      // now — counted from when they were asked, every one would be starved and go before the click's own.
+      const at = now()
+      for (const waiter of ahead) waiter.at = at
       clicks.unshift(...ahead.splice(0))
       pump()
     },
