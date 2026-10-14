@@ -7,6 +7,7 @@ import type { SignedEvent } from '@estiva-app/protocol'
 import {
   createEventSnapshot,
   memorySnapshotStorage,
+  SNAPSHOT_SEEN_REFRESH_MS,
   snapshotFilterKey,
   snapshotScope,
   type SnapshotTimers,
@@ -210,6 +211,35 @@ test('a save that fails is asked again, removals included', async () => {
   refuse = false
   await snap.flush()
   assert.deepEqual(storage.records.get('s')?.events, [])
+})
+
+test('an event held already and unchanged is not written again until its last-seen time is an hour old (PEE-4)', async () => {
+  const storage = memorySnapshotStorage()
+  const puts: number[] = []
+  const counting = { ...storage, save: (scope: string, change: Parameters<typeof storage.save>[1]) => (puts.push(change.put.length), storage.save(scope, change)) }
+  let clock = 1_000
+  const snap = createEventSnapshot({ storage: counting, scope: 's', version: 1, timers: still, now: () => clock })
+  await snap.ready
+  const filter = { kinds: [9], '#h': ['g'] }
+  const a = ev(9, 10, [['h', 'g']])
+  const b = ev(9, 20, [['h', 'g']])
+  snap.absorb([filter], [a])
+  await snap.flush()
+  clock += 1_000
+  snap.absorb([filter], [a, b])
+  await snap.flush()
+  assert.deepEqual(puts, [1, 1], 'only the new event is written the second time')
+  assert.equal(storage.records.get('s')?.events.find((s) => s.event.id === a.id)?.seenAt, 1_000, 'the last-seen time written stays')
+
+  clock += SNAPSHOT_SEEN_REFRESH_MS
+  snap.absorb([filter], [a, b])
+  await snap.flush()
+  assert.deepEqual(puts, [1, 1, 2], 'seen again an hour on: written with the new time')
+  assert.equal(storage.records.get('s')?.events.find((s) => s.event.id === a.id)?.seenAt, clock)
+
+  // Negative control: the answer is still taken in — a missing event is dropped as before.
+  snap.absorb([filter], [b])
+  assert.deepEqual(snap.answer([filter])?.map((e) => e.id), [b.id])
 })
 
 test('a kind:5 naming an address drops that file, if its author signed it', async () => {

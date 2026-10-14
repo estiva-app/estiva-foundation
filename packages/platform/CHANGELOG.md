@@ -1,5 +1,21 @@
 # @estiva-app/platform
 
+## 0.6.1
+
+The copy writes only what changed (PEE-4, Peek opens instantly). A relay answer
+used to mark every event it carried for writing, held already or not, so each
+Peek page load re-wrote thousands of unchanged events. A reload during such a
+write waited behind it: as QA-1, the copy took 2–6 s to be read and a topic
+opened after a reload waited for the relay instead.
+
+- An event the copy already holds, unchanged — same signature, content and kept
+  plaintext — is written again only when its last-seen time is
+  `SNAPSHOT_SEEN_REFRESH_MS` (an hour, `seenRefreshMs` to change it) old. Until
+  then it keeps the last-seen time that was written, so dropping the least
+  recently seen past `maxEvents` is out by at most that much.
+- Measured on Peek's first-load probe as QA-1: after a reload, each save puts
+  0–10 events instead of 800–2,400, and the copy is read in 0.2–0.3 s.
+
 ## 0.6.0
 
 The copy answers a pooled list it has seen every value of (PEE-4, Peek opens
