@@ -24,10 +24,12 @@ built-in bare-file manifest and how every declaration's changes are read.
   `ForeignObjectWidget`) now offers one on every bare file it draws whole, so
   **Peek must keep it read-only when it upgrades** (Miky, 2026-10-13).
 - **A change counts only in its target's Folder** (SPEC §6.2, every kind).
-  Its `h` (or `buzz-channel`) must be one the target root carries — `h`, or
-  `buzz-channel`, or for a `kind:39000` the Folder itself. Any other, or none,
-  is ignored by `resolveForeignObject(s)`, the Folder listing, a card's
-  children, the parent fold and `archiveOf`. The relay checks only the change's
+  Its first `h` with a value — the one the relay checks membership against —
+  must be a Folder the target's newest root carries: `h`, or `buzz-channel`,
+  or for a `kind:39000` the Folder itself. Any other, or none, is ignored by
+  `resolveForeignObject(s)`, `projectEvents`, the Folder listing and its list
+  of Folders, a card's children and their counts, the parent fold and every
+  archive. A root that names no Folder takes every change, as before. The relay checks only the change's
   own `h`, so before this a member of any Folder could rename, move, archive or
   rewrite a file in a Folder they cannot read. Where only an address is held
   (an archived parent read by address), nothing is compared, as before.

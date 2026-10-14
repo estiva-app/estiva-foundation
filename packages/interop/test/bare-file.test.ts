@@ -705,6 +705,28 @@ describe('a change signed in another Folder is ignored (SPEC §6.2)', () => {
     assert.equal(found?.slots.title.value, 'Launch naming')
   })
 
+  it('reads the change’s Folder as the relay does: an empty h ahead of a real one changes nothing', async () => {
+    // The relay skips `["h"]` and checks the signer against ELSEWHERE; a reader
+    // falling back to another tag would have taken TEAM.
+    const sneaky = event({
+      kind: CHANGE_KIND,
+      pubkey: OTHER,
+      tags: [['a', TOPIC], ['field', 'title'], ['value', 'Hijacked'], ['h'], ['h', ELSEWHERE], ['buzz-channel', TEAM]],
+    })
+    const found = await resolveForeignObject(TOPIC, relay([topic(), sneaky]))
+    assert.equal(found?.slots.title.value, 'Launch naming')
+  })
+
+  it('keeps a child on its parent’s card when the archive came from another Folder', async () => {
+    const PARENT = `${KIND_BARE_FILE}:${AUTHOR}:brief`
+    const parent = event({ kind: KIND_BARE_FILE, tags: [['d', 'brief'], ['title', 'Brief'], ['h', TEAM]] })
+    const child = event({ kind: KIND_BARE_FILE, tags: [['d', 'naming'], ['title', 'Launch naming'], ['h', TEAM], ['a', PARENT]] })
+    const card = await resolveForeignObject(PARENT, relay([parent, child, change('archived', 'true', ELSEWHERE)]))
+    assert.deepEqual(card?.children?.map((c) => c.slots.title?.value), ['Launch naming'])
+    const archivedHere = await resolveForeignObject(PARENT, relay([parent, child, change('archived', 'true', TEAM)]))
+    assert.deepEqual(archivedHere?.children?.map((c) => c.slots.title?.value), [], 'the same archive in the file’s own Folder hides it')
+  })
+
   it('drops it from a Folder listing too: the file is listed under its own title', async () => {
     const { files } = await resolveFolderContents(TEAM, relay([topic(), change('title', 'Hijacked', ELSEWHERE)]), async () => ({}))
     assert.deepEqual(files.map((f) => f.slots.title?.value), ['Launch naming'])

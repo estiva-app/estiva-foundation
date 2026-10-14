@@ -143,3 +143,16 @@ test('each root is read through its own author\'s manifest, as resolveForeignObj
   // An author whose kind no manifest claims is not drawn by somebody else's.
   assert.deepEqual(projectEvents([project, byOther], (p) => (p.pubkey === AUTHOR ? resolved : undefined)).map((o) => o.address), [PROJECT])
 })
+
+test('an archive signed in another Folder does not archive the held object (SPEC §6.2)', async () => {
+  const resolved = await resolveManifest(pointer(ISSUE), query)
+  const elsewhere = event({
+    kind: 1851,
+    pubkey: OTHER,
+    tags: [['a', ISSUE], ['field', 'archived'], ['value', 'true'], ['h', '0c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f']],
+  })
+  const held = [manifest, project, target, issue, renamed, elsewhere]
+  const issueObject = projectEvents(held, () => resolved).find((o) => o.address === ISSUE)
+  assert.equal(issueObject.slots.title.value, 'Renamed')
+  assert.equal(issueObject.archived, undefined)
+})
