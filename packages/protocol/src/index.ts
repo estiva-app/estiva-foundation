@@ -225,6 +225,9 @@ export {
   renderTreeText,
   standaloneReference,
   referencesIn,
+  type BlockCard,
+  blockCards,
+  cardLayout,
 } from './render.js'
 
 export {

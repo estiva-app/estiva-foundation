@@ -173,13 +173,19 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         while reading, which is the mode difference this ticket is about.
 
         The run's other marks ride along so a bold reference comes back bold.
+        So does its card (`embed`, §13.3), and every key a later version adds
+        rides in `extra`: a mark has no id, so a key dropped on save would be
+        lost with nothing to say so.
       */
+      const { uri, embed, ...extra } = reference.attrs
       return [
         {
           type: REFERENCE_NODE,
           attrs: {
-            uri: reference.attrs.uri,
+            uri,
             marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type),
+            ...(typeof embed === 'string' && embed !== 'none' ? { embed } : {}),
+            ...(Object.keys(extra).length ? { extra } : {}),
           },
         },
       ]
@@ -377,9 +383,20 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
     if (node.type === REFERENCE_NODE) {
       const uri = String(node.attrs?.uri ?? '')
       const carried = Array.isArray(node.attrs?.marks) ? (node.attrs.marks as string[]) : []
+      const embed = node.attrs?.embed
+      const extra = node.attrs?.extra
       const marks: InlineMarkNode[] = [
         ...carried.map((type) => ({ type }) as InlineMarkNode),
-        { type: 'reference', attrs: { uri } },
+        {
+          type: 'reference',
+          attrs: {
+            // `extra` first, so a key it carries can never overwrite the two this code owns.
+            ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}),
+            uri,
+            // `none` is no attribute (§13.3): a writer omits it.
+            ...(typeof embed === 'string' && embed !== '' && embed !== 'none' ? { embed } : {}),
+          },
+        },
       ]
       out.push({ type: 'text', text: uri, marks })
       continue

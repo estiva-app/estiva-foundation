@@ -360,8 +360,12 @@ export function stripInlineFormatting(text: string): string {
 /** A mark on an inline run, in the JSON encoding. */
 export type InlineMarkNode =
   | { type: InlineMark }
-  /** §13.1's `reference`, which carries what it points at. */
-  | { type: 'reference'; attrs: { uri: string } }
+  /**
+   * §13.1's `reference`, which carries what it points at. In a block document
+   * `embed` is the card its writer chose (§13.3, "A reference's card"), and any
+   * other key is one a later version added, which an editor carries through.
+   */
+  | { type: 'reference'; attrs: { uri: string; embed?: unknown; [key: string]: unknown } }
 
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
 export interface InlineTextNode {

@@ -51,6 +51,12 @@ export interface RenderInline {
    * nothing still shows the token rather than a blank.
    */
   reference?: string
+  /**
+   * The card its writer chose for this reference in a block document (§13.3,
+   * "A reference's card"): absent for none. A message's cards are its `embed`
+   * tags instead (§13.6.2), so a marker body never has one.
+   */
+  embed?: 'compact' | 'detailed'
 }
 
 /**
@@ -233,10 +239,12 @@ function blockFromDocument(block: Block): RenderBlock {
       out.inline = block.content.map((node) => {
         const marks = node.marks ?? []
         const reference = marks.find((m) => m.type === 'reference')
+        const embed = reference && 'attrs' in reference ? cardLayout(reference.attrs.embed) : undefined
         return {
           text: node.text,
           marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type) as InlineMark[],
           ...(reference && 'attrs' in reference ? { reference: reference.attrs.uri } : {}),
+          ...(embed ? { embed } : {}),
         }
       })
     } else {
@@ -328,10 +336,11 @@ export function renderTreeText(blocks: readonly RenderBlock[]): string {
  * on its line is alone on its line whether or not somebody left a space after
  * it.
  *
- * **For a block document (a description) only, since OPT-18.** In a message a
- * reference reads as its chip wherever it sits, and a card comes only from the
- * author's `embed` (§13.6.2). A description has no `embed` yet, so its readers
- * still draw a reference alone on its line as a card until it can choose one.
+ * @deprecated Since 0.33.0 a reference reads as its chip wherever it sits, in a
+ * message (§13.6.2) and in a block document (§13.3, "A reference's card"); a
+ * card comes only from what its writer chose. Use {@link blockCards} for a
+ * document and `cardsIn` for a message. Kept for one release so a reader on it
+ * still builds.
  */
 export function standaloneReference(block: RenderBlock): string | undefined {
   if (block.type !== 'paragraph' || block.children?.length) return undefined
@@ -339,6 +348,49 @@ export function standaloneReference(block: RenderBlock): string | undefined {
   if (runs.length !== 1) return undefined
   const only = runs[0]
   return only.reference && only.text.trim() === only.reference ? only.reference : undefined
+}
+
+// ── A reference's card in a block document — SPEC §13.3 ─────────────────────
+
+/**
+ * `attrs.embed` on a reference mark, read: `compact`, `detailed`, or absent for
+ * no card. A string this reader does not know is `compact` — the writer asked
+ * for a card, and the smallest is the safe reading, as for a message's `embed`
+ * tag (§13.6.2). `none`, a non-string and absence are all no card.
+ */
+export function cardLayout(raw: unknown): 'compact' | 'detailed' | undefined {
+  if (typeof raw !== 'string' || raw === 'none') return undefined
+  return raw === 'detailed' ? 'detailed' : 'compact'
+}
+
+/** One card a block document asks for: the reference it hangs from, and how much to show. */
+export interface BlockCard {
+  /** The `nostr:` URI, as the reference mark carries it. */
+  reference: string
+  layout: 'compact' | 'detailed'
+}
+
+/**
+ * The cards to draw after this block, in the order their references appear
+ * (§13.3, "A reference's card"). Only the block's own runs: a list's cards hang
+ * from each item, so a reader asks each item.
+ *
+ * Each occurrence is its own card, so the same object twice may draw twice. A
+ * reference split across runs (part of it bold) is one occurrence, and takes
+ * its card from its first run.
+ *
+ * Inside a card's body or a part a reader asks nothing: there every reference
+ * is its chip (§13.3), or two objects that card each other nest forever.
+ */
+export function blockCards(block: RenderBlock): BlockCard[] {
+  const out: BlockCard[] = []
+  let previous: string | undefined
+  for (const run of block.inline ?? []) {
+    if (run.reference && run.reference === previous) continue
+    previous = run.reference
+    if (run.reference && run.embed) out.push({ reference: run.reference, layout: run.embed })
+  }
+  return out
 }
 
 /**

@@ -4,6 +4,25 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.33.0 — 2026-10-14
+
+**Wire behaviour: a block document's reference mark may carry `attrs.embed`**,
+the card its writer chose (Widgets, SPEC §13.3 "A reference's card"):
+`compact` or `detailed`, with `none` written as no attribute. Nothing else
+changes on the wire, and a reader on 0.32.0 draws the chip.
+
+- `toRenderTree` puts it on the run as `embed` (`compact` | `detailed`), an
+  unknown string read as `compact`. New `blockCards(block)` lists the cards to
+  draw after one block, one per occurrence, in order; `cardLayout(raw)` reads
+  one value.
+- The editor translation carries `embed` onto the `reference` node, and any
+  other key of the mark in the node's `extra`, and writes both back, so a save
+  through an editor drops neither. An editor's `ReferenceNode` must declare
+  `embed` and `extra` (`@estiva-app/ui/editor`), or ProseMirror drops them:
+  take this release and that one together.
+- `standaloneReference` is deprecated. A reference reads as its chip wherever
+  it sits, in a description too.
+
 ## 0.32.0 — 2026-10-13
 
 **Wire behaviour: none.** A reader reads a message's links as references (OPT-18,
