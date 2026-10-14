@@ -8,7 +8,7 @@ import {
   type BlockDocument,
 } from './blocks.js'
 import { markerTextToBlockDocument } from './bridge-content.js'
-import type { InlineMarkNode, InlineTextNode } from './content.js'
+import { targetMark, type InlineMarkNode, type InlineTextNode } from './content.js'
 import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
 
 /**
@@ -163,7 +163,9 @@ function textNodes(text: string, marks: EditorNode['marks']): EditorNode[] {
 function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
   return runs.flatMap((run) => {
     const marks = run.marks ?? []
-    const reference = marks.find((m): m is Extract<InlineMarkNode, { type: 'reference' }> => m.type === 'reference')
+    // The marks a run keeps as marks; `reference` and `link` become the chip, or nothing when malformed.
+    const carried = marks.filter((m) => m.type !== 'reference' && m.type !== 'link').map((m) => m.type)
+    const reference = targetMark(marks, 'reference')
     if (reference) {
       /*
         An atom rather than a mark, and the difference is what a person sees.
@@ -177,29 +179,28 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         rides in `extra`: a mark has no id, so a key dropped on save would be
         lost with nothing to say so.
       */
-      const { uri, embed, ...extra } = reference.attrs
+      const { uri, embed, ...extra } = reference
       return [
         {
           type: REFERENCE_NODE,
           attrs: {
             uri,
-            marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type),
+            marks: carried,
             ...(typeof embed === 'string' && embed !== 'none' ? { embed } : {}),
             ...(Object.keys(extra).length ? { extra } : {}),
           },
         },
       ]
     }
-    const link = marks.find((m): m is Extract<InlineMarkNode, { type: 'link' }> => m.type === 'link')
-    const carried = marks.filter((m) => m.type !== 'link').map((m) => m.type)
-    if (link && link.attrs.href && run.text === link.attrs.href) {
+    const link = targetMark(marks, 'link')
+    if (link && run.text === link.href) {
       /*
         A URL whose card its writer chose (§13.3): the chip it reads as, which
         keeps the URL in `href` and writes it back as the same run. `uri` is
         what it names, filled in by the editor's `LinkChips` once the app has
         resolved it; until then the chip draws as the URL.
       */
-      const { href, embed, ...extra } = link.attrs
+      const { href, embed, ...extra } = link
       return [
         {
           type: REFERENCE_NODE,

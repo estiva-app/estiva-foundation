@@ -35,6 +35,7 @@ import {
   type InlineTextNode,
   parseBodySegments,
   parseInlineMarks,
+  targetMark,
 } from './content.js'
 import { type Block, type BlockDocument, type CalloutTone, parseBlockDocument, inlineTextOf, listItemDepths, listItemChecked, calloutTone } from './blocks.js'
 import type { SignedEvent } from './events.js'
@@ -247,17 +248,15 @@ function blockFromDocument(block: Block): RenderBlock {
     if (isInlineRun(block.content)) {
       out.inline = block.content.map((node) => {
         const marks = node.marks ?? []
-        const reference = marks.find((m) => m.type === 'reference')
-        const link = reference ? undefined : marks.find((m) => m.type === 'link')
-        const href = link && 'attrs' in link && typeof link.attrs.href === 'string' && link.attrs.href ? link.attrs.href : undefined
-        const carrier = reference ?? (href ? link : undefined)
-        const embed = carrier && 'attrs' in carrier ? cardLayout(carrier.attrs.embed) : undefined
+        const reference = targetMark(marks, 'reference')
+        const link = reference ? undefined : targetMark(marks, 'link')
+        const embed = cardLayout((reference ?? link)?.embed)
         return {
           text: node.text,
           // Only the four the vocabulary has: a mark this reader does not know is not one to draw (§13.3).
           marks: marks.map((m) => m.type).filter((type): type is InlineMark => INLINE_MARKS.has(type)),
-          ...(reference && 'attrs' in reference ? { reference: reference.attrs.uri } : {}),
-          ...(href ? { href } : {}),
+          ...(reference ? { reference: reference.uri } : {}),
+          ...(link ? { href: link.href } : {}),
           ...(embed ? { embed } : {}),
         }
       })

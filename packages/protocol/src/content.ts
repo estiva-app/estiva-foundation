@@ -374,6 +374,23 @@ export type InlineMarkNode =
    */
   | { type: 'link'; attrs: { href: string; embed?: unknown; [key: string]: unknown } }
 
+/**
+ * The `reference` or `link` mark on a run, with its attrs, only when they are
+ * well formed: an object holding the string the mark points at (`uri`, `href`).
+ * A document is somebody else's JSON and the validator checks only a mark's
+ * `type`, so a mark with `"attrs": null` is read as no mark rather than taking
+ * every reader of the document down with it.
+ */
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'reference'): { uri: string; embed?: unknown; [key: string]: unknown } | undefined
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'link'): { href: string; embed?: unknown; [key: string]: unknown } | undefined
+export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'reference' | 'link'): Record<string, unknown> | undefined {
+  const mark = marks?.find((m) => m.type === type) as { attrs?: unknown } | undefined
+  const attrs = mark?.attrs
+  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs)) return undefined
+  const target = (attrs as Record<string, unknown>)[type === 'reference' ? 'uri' : 'href']
+  return typeof target === 'string' && target !== '' ? (attrs as Record<string, unknown>) : undefined
+}
+
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
 export interface InlineTextNode {
   type: 'text'

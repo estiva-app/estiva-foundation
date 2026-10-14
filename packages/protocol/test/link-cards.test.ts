@@ -113,6 +113,29 @@ describe('a URL in a document, edited (C24)', () => {
   })
 })
 
+describe('a malformed mark (security review)', () => {
+  // The validator checks only a mark's `type`; somebody else's JSON must not take every reader down.
+  const bad = [
+    { type: 'link', attrs: null },
+    { type: 'link' },
+    { type: 'link', attrs: { href: 3 } },
+    { type: 'reference', attrs: null },
+    { type: 'reference', attrs: [] },
+  ]
+  for (const mark of bad) {
+    it(`reads ${JSON.stringify(mark)} as no mark, in the reader and the editor`, () => {
+      const d = doc({ type: 'paragraph', id: 'p1', content: [text(URL_, [mark, { type: 'bold' }])] })
+      const [p] = render(d)
+      assert.equal(p.inline?.[0].text, URL_)
+      assert.equal(p.inline?.[0].reference, undefined)
+      assert.equal(p.inline?.[0].href, undefined)
+      assert.deepEqual(p.inline?.[0].marks, ['bold'])
+      const editor = toEditorDocument(d)
+      assert.deepEqual(editor.content?.[0].content, [{ type: 'text', text: URL_, marks: [{ type: 'bold' }] }])
+    })
+  }
+})
+
 describe('referenceOfLink and urlRunsIn', () => {
   it('names the reference a resolved URL stands for, and nothing for one unanswered', () => {
     assert.equal(referenceOfLink(URL_, resolve), V)

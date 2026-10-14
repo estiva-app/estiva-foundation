@@ -38,6 +38,10 @@ into a `nostr:` reference.
   resolves it) and writes it back as the same run; a URL chip with no card is
   plain text, merged with its neighbours. A link on other words keeps its words
   and loses the link, as before.
+- A `reference` or `link` mark whose `attrs` is not an object holding its
+  string target (`uri`, `href`) is read as no mark, by `toRenderTree` and by
+  the editor translation. A `reference` with `"attrs": null` used to throw
+  for every reader of the document.
 - New `referenceOfLink(url, resolveLink)` and `urlRunsIn(text)`, for an editor
   that turns an app's URLs into chips (`@estiva-app/ui/editor`'s `LinkChips`).
 
