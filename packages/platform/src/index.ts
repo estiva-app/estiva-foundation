@@ -20,6 +20,18 @@
  * than received, and the two failures arrive together.
  */
 export {
+  STARVED_AFTER_MS,
+  createInFlight,
+  createPacer,
+  type InFlight,
+  type Pacer,
+  type PacerOptions,
+  type PacerTimers,
+  type ReadLane,
+  type TakeOptions,
+} from './read-pacer.js'
+export { loadAhead, type AheadLoader, type AheadLoaderOptions, type AheadOutcome, type AheadStep } from './ahead-loader.js'
+export {
   MAX_FOLDERS_PER_SUBSCRIPTION,
   createLiveClient,
   createLiveClientHolder,
