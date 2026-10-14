@@ -1390,7 +1390,14 @@ const BARE_FILE_MANIFEST: Manifest = {
       widget: 'card',
       slots: {
         title: { tag: 'title', fold: 'title' },
-        body: { field: 'content' },
+        /*
+          The text is the `description` fold, seeded from `content` (SPEC §6.7,
+          Leaf 1): anyone in the Folder saves it with the `describe` action
+          below, the author included — a republished root would lose silently
+          to an older change. Ship's body slot is the same fold, minus the
+          `tag`: a `30840` carries its text in `content`, never in a tag.
+        */
+        body: { fold: 'description', field: 'content' },
         // A bare file may hold bare files — a sub-topic under a topic. Children
         // of *other* kinds are found the other way round, by their own `a`
         // (`parentRefOf` below), which is FOL-4's generic direction; this slot
@@ -1425,8 +1432,8 @@ const BARE_FILE_MANIFEST: Manifest = {
     },
   },
   /*
-    Four actions, and the manifest is the only place a consumer learns of any
-    of them (FOL-33; `move` from FOL-4). A Peek page offering Rename and Delete on a bare file and
+    The manifest is the only place a consumer learns of any of these actions
+    (FOL-33; `move` from FOL-4, `describe` from Leaf 1). A Peek page offering Rename and Delete on a bare file and
     nothing on a Ship issue does so because *this* list says `rename` and
     `delete` and Ship's does not — never because the kind is 30840. The rule is
     the one FOL-31 set for `comment`: a control is drawn from a declaration.
@@ -1462,6 +1469,25 @@ const BARE_FILE_MANIFEST: Manifest = {
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: 'title' },
       input: { type: 'string' },
+    },
+    /*
+      `describe` replaces the file's text with a whole §13.3 block document —
+      a snapshot, last save wins (SPEC §6.7, decided 2026-10-13; live merging
+      between open windows is a later layer). The shape of Ship's
+      `describe-issue`, so a consumer that edits one edits both, and finds it
+      by `emits.field` rather than by this id. Every save is a full copy, so a
+      writer saves on leave, never per keystroke.
+    */
+    {
+      id: 'describe',
+      label: 'Edit text',
+      description:
+        "Replace this file's text with new text. A change event, so anyone in the Folder may, and every app " +
+        'reading the file folds it over the text it was made with; the later save wins.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: 1851, field: 'description' },
+      input: { type: 'string', format: BLOCK_DOCUMENT_FORMAT },
     },
     /*
       `move` is the `parent` field SPEC §6.7 already defines, declared so a
@@ -2119,9 +2145,49 @@ import { contentFormatOf, type ContentFormat } from '@estiva-app/protocol'
 export const BODY_SLOT = 'body'
 
 
-function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
+/**
+ * Does this change sit in the Folder its target is filed in — SPEC §6.2.
+ *
+ * The relay checks a change only against its own `h`: the signer must be a
+ * member of *that* Folder. Nothing on the relay ties it to the target's Folder,
+ * so before this a member of any Folder could rename, move, archive or rewrite
+ * a file in a Folder they cannot read, and every reader who could see the
+ * change folded it in. Probed on production 2026-10-13: QA-2's `description`
+ * change to QA-1's page, signed with another Folder's `h`, was accepted. So
+ * the reader ignores it, for every kind (Miky, 2026-10-13).
+ *
+ * The target's Folder is any placement its root carries — `h`, or Ship's
+ * `buzz-channel` (§7.3), whichever the root has; about half of Ship's projects
+ * carry one and half the other — or, for a `kind:39000`, the Folder itself.
+ * A change's own Folder is read the same way. Measured before this shipped:
+ * of 2,790 changes whose roots were readable, none would be dropped but two
+ * duplicated project changes and four Folder archives `folderArchiveOf`
+ * already ignored.
+ *
+ * Without the root there is nothing to compare, so every change counts: the
+ * caller that has only an address (an archived parent read by address) is no
+ * worse than before.
+ */
+function inTargetFolder(change: SignedEvent, root: SignedEvent | undefined): boolean {
+  if (!root) return true
+  const placements = new Set(PLACEMENTS.flatMap((name) => root.tags.filter((t) => t[0] === name && t[1]).map((t) => t[1]!)))
+  if (root.kind === KIND_CHANNEL_METADATA) {
+    const own = tagValue(root, 'd')
+    if (own) placements.add(own)
+  }
+  if (placements.size === 0) return true
+  const own = tagValue(change, 'h') ?? tagValue(change, 'buzz-channel')
+  return own !== undefined && placements.has(own)
+}
+
+/**
+ * Fold `changes` under `rule`, ignoring any not in `root`'s Folder
+ * ({@link inTargetFolder}). `root` is required so every caller decides: pass
+ * `undefined` only where the root genuinely is not at hand.
+ */
+function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
   const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat }> = {}
-  for (const change of [...changes].sort(byOrder)) {
+  for (const change of [...changes].filter((c) => inTargetFolder(c, root)).sort(byOrder)) {
     const field = tagValue(change, rule.fieldTag)
     const value = tagValue(change, rule.valueTag)
     if (!field || value === undefined) continue // a partial change sets nothing
@@ -2144,13 +2210,14 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule) {
  * the **first** target tag, as `archiveOf` reads it. Empty when the app declares
  * no change events — `foldRuleOf`'s substitute is never asked for.
  */
-function foldOf(events: SignedEvent[], address: string, manifest: Manifest) {
+function foldOf(events: SignedEvent[], address: string, manifest: Manifest, root: SignedEvent | undefined) {
   const records = foldRuleOf(manifest)
   return foldChanges(
     manifest.records
       ? events.filter((e) => e.kind === records.changeKind && tagValue(e, records.targetTag) === address)
       : [],
     records,
+    root,
   )
 }
 
@@ -2234,16 +2301,21 @@ function archiveOf(
   rule: RecordsRule,
   folderAdmins?: ReadonlySet<string>,
 ): Archive | undefined {
-  const [kind, , folderId] = address.split(':')
+  const [kind, author, identifier] = address.split(':')
   if (Number(kind) === KIND_CHANNEL) {
     if (!folderAdmins?.size) return undefined
-    changes = changes.filter((change) => tagValue(change, 'h') === folderId && folderAdmins.has(change.pubkey))
+    changes = changes.filter((change) => tagValue(change, 'h') === identifier && folderAdmins.has(change.pubkey))
   }
+  // SPEC §6.2: an archive signed in another Folder is ignored, as every fold
+  // ignores it — when the target's root is among `changes`; a caller holding
+  // only the address gets no check (`inTargetFolder`).
+  const root = changes.find((e) => e.kind === Number(kind) && e.pubkey === author && tagValue(e, 'd') === identifier)
   let last: SignedEvent | undefined
   for (const change of changes) {
     // The target is the first target tag, as every other fold reads it: a
     // change archiving one file must not archive another it also mentions.
     if (change.kind !== rule.changeKind || tagValue(change, rule.targetTag) !== address) continue
+    if (!inTargetFolder(change, root)) continue
     if (tagValue(change, rule.fieldTag) !== ARCHIVED_FIELD || tagValue(change, rule.valueTag) === undefined) continue
     if (!last || byOrder(last, change) < 0) last = change
   }
@@ -3379,7 +3451,7 @@ export function projectEvents(
       pointer,
       manifest,
       projection: manifest.projections![String(root.kind)],
-      folded: foldOf(byTarget(foldRuleOf(manifest).targetTag).get(address) ?? [], address, manifest),
+      folded: foldOf(byTarget(foldRuleOf(manifest).targetTag).get(address) ?? [], address, manifest, root),
       viaRecommendation: resolved.viaRecommendation,
       webTemplate: resolved.webTemplate,
       archived: archiveOf(byTarget(archiveRule.targetTag).get(address) ?? [], address, archiveRule),
@@ -3532,7 +3604,7 @@ export async function resolveParents(
       .sort(byOrder)
       .at(-1)
     if (!root) continue
-    const folded = foldOf(events, pointerToAddress(pointer), manifest)
+    const folded = foldOf(events, pointerToAddress(pointer), manifest, root)
     results[reference] = parentRefOf(manifest, pointer.kind, root, folded) ?? null
   }
   return results
@@ -3788,7 +3860,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges:
     }
   }
 
-  const folded = foldOf(events, address, manifest)
+  const folded = foldOf(events, address, manifest, root)
 
   /*
     Matched on the comment filter's own criteria — the kind **and** the `a` tag.
@@ -4130,7 +4202,7 @@ function childrenFrom(args: {
         parent, so only a folded value that names it keeps it: the tag is how
         it was found, not proof that it is still here.
     */
-    const folded = address ? foldOf(childChanges, address, manifest) : {}
+    const folded = address ? foldOf(childChanges, address, manifest, event) : {}
     if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
     if (address && movedIn.has(address) && folded[movedBy!]?.value !== childFilter.parent) return []
     if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
@@ -4722,7 +4794,7 @@ export async function resolveFolderProject(
     const applied = source.filter(
       (e) => e.kind === rule.changeKind && tagValue(e, rule.targetTag) === addressOfEvent(event),
     )
-    return foldChanges(applied, rule)[rule.hiddenWhen.field]?.value === rule.hiddenWhen.equals
+    return foldChanges(applied, rule, event)[rule.hiddenWhen.field]?.value === rule.hiddenWhen.equals
   }
 
   const roots = known
@@ -4799,7 +4871,7 @@ export async function resolveFolderProject(
     pointer,
     manifest,
     projection,
-    folded: foldChanges(changesFor(address), records),
+    folded: foldChanges(changesFor(address), records, root),
     viaRecommendation,
     webTemplate: resolved.webTemplate,
   })
@@ -4861,7 +4933,7 @@ export async function resolveFolderProject(
       relays: [],
     }
     const ticketChanges = changesFor(pointerToAddress(ticketPointer))
-    const folded = foldChanges(ticketChanges, records)
+    const folded = foldChanges(ticketChanges, records, event)
     const status = statusSpec ? resolveSlot(statusSpec, event, folded, manifest) : null
     const raw = statusSpec ? rawSlotValue(statusSpec, event, folded, false)?.value : undefined
 
@@ -6223,6 +6295,7 @@ export async function resolveFolderContents(
     const folded = foldChanges(
       events.filter((e) => e.kind === records.changeKind && hasTagValue(e, records.targetTag, address)),
       records,
+      root,
     )
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL

@@ -6,6 +6,38 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.55.0 — 2026-10-14
+
+**Manifests: the bare file's text is a change anyone in its Folder may make,
+and every fold ignores a change signed in another Folder** (Leaf 1, SPEC §6.2
+and §6.7). Published manifests mean what they meant; what changes is the
+built-in bare-file manifest and how every declaration's changes are read.
+
+- **The bare file's `body` is the `description` fold, seeded from `content`**
+  — `{ fold: 'description', field: 'content' }`, Ship's body slot without its
+  `tag`. A new **`describe`** action sets it: `emits { kind: 1851, field:
+  'description' }`, `input { type: 'string', format: 'estiva-blocks-1' }`, the
+  shape of Ship's `describe-issue`. Pass `contentFormat: 'estiva-blocks-1'` to
+  `buildActionEvent` and the change carries the tag before `ts`. The author
+  saves this way too: a republished root loses to an older change. A consumer
+  that draws a `format` action on the body slot as an editor (Peek's
+  `ForeignObjectWidget`) now offers one on every bare file it draws whole, so
+  **Peek must keep it read-only when it upgrades** (Miky, 2026-10-13).
+- **A change counts only in its target's Folder** (SPEC §6.2, every kind).
+  Its `h` (or `buzz-channel`) must be one the target root carries — `h`, or
+  `buzz-channel`, or for a `kind:39000` the Folder itself. Any other, or none,
+  is ignored by `resolveForeignObject(s)`, the Folder listing, a card's
+  children, the parent fold and `archiveOf`. The relay checks only the change's
+  own `h`, so before this a member of any Folder could rename, move, archive or
+  rewrite a file in a Folder they cannot read. Where only an address is held
+  (an archived parent read by address), nothing is compared, as before.
+  Compared on production 2026-10-14 against 0.54.0 across 48 Folders and 62
+  listed files: no listing, title, status, parent or archive changed.
+- **A FOL-20 placement from another Folder no longer lists a record.** A
+  placement is a change, so it follows the rule: it counts when the record
+  names that Folder (Ship's projects carry their team Folder in
+  `buzz-channel`), and is ignored otherwise.
+
 ## 0.54.0 — 2026-10-12
 
 **Manifests: a Folder offers actions no manifest declares, and the bare file's

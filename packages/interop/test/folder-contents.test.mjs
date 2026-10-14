@@ -211,11 +211,20 @@ describe('a folder lists the files placed in it, not only the files whose h it i
   const placement = (value = TEAM, at = {}) =>
     event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'folder'], ['v', value], ['h', TEAM]], ...at })
 
-  test('a record whose h is elsewhere lists under the folder it was placed in', async () => {
-    const query = relay([ringingManifest, channel, team, colony, placement()])
+  test('a record whose h is elsewhere lists under the folder it was placed in, when it names that folder too', async () => {
+    // Ship's shape: a project's own channel in `h`, its team Folder in `buzz-channel`.
+    const placedColony = { ...colony, tags: [...colony.tags, ['buzz-channel', TEAM]] }
+    const query = relay([ringingManifest, channel, team, placedColony, placement()])
     const contents = await resolveFolderContents(TEAM, query, async () => ({}))
     assert.equal(contents.name, 'Ringers')
     assert.deepEqual(contents.files.map((f) => f.slots.title?.value), ['Weir colony'])
+  })
+
+  test('a placement signed in a folder the record is not filed in is ignored (SPEC §6.2)', async () => {
+    // Any member of the team could otherwise pull a record from a Folder they cannot read into theirs.
+    const query = relay([ringingManifest, channel, team, colony, placement()])
+    const contents = await resolveFolderContents(TEAM, query, async () => ({}))
+    assert.deepEqual(contents.files, [])
   })
 
   test('and still lists under the folder its h is — nothing moved', async () => {

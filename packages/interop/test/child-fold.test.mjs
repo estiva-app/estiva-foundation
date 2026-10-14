@@ -169,7 +169,8 @@ describe('a child moved to another parent', () => {
     manifest.tags.push(['k', String(PLOT)])
     const events = [manifest, bed('east'), event({ kind: PLOT, tags: [['d', 'north'], ['title', 'north']] })]
     events.push(event({ kind: PLANT, tags: [['d', 'basil'], ['title', 'basil'], ['h', 'north'], ['a', bedAddress('east')]] }))
-    events.push(change(plantAddress('basil'), 'bed', bedAddress('west')))
+    // In the plant's own Folder: a change from any other is ignored (SPEC §6.2).
+    events.push(event({ kind: 1851, tags: [['a', plantAddress('basil')], ['f', 'bed'], ['v', bedAddress('west')], ['h', 'north']] }))
     const { query } = countingRelay(events)
 
     assert.deepEqual(titles(await resolveForeignObject(`${PLOT}:${GARDENER}:north`, query)), ['basil'])
