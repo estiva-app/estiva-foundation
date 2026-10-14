@@ -38,6 +38,7 @@ import {
 } from './content.js'
 import { type Block, type BlockDocument, type CalloutTone, parseBlockDocument, inlineTextOf, listItemDepths, listItemChecked, calloutTone } from './blocks.js'
 import type { SignedEvent } from './events.js'
+import { type LinkResolver, referenceOfLink } from './embeds.js'
 
 /** A run of text and the marks on it. Nothing here needs escaping; it is text. */
 export interface RenderInline {
@@ -57,6 +58,12 @@ export interface RenderInline {
    * tags instead (§13.6.2), so a marker body never has one.
    */
   embed?: 'compact' | 'detailed'
+  /**
+   * The URL a block document's `link` mark points this run at (§13.3). On a run
+   * whose text is the URL, `linksAsReferences` turns it into the reference the
+   * URL names, `embed` and all; a link on words keeps it.
+   */
+  href?: string
 }
 
 /**
@@ -164,6 +171,8 @@ const KNOWN: ReadonlySet<string> = new Set([
   'blockquote', 'codeBlock', 'table', 'horizontalRule', 'attachment', 'widget',
 ])
 
+const INLINE_MARKS: ReadonlySet<string> = new Set<InlineMark>(['bold', 'italic', 'underline', 'code'])
+
 const marksOf = (span: { bold?: boolean; italic?: boolean; underline?: boolean; code?: boolean }): InlineMark[] => {
   const out: InlineMark[] = []
   if (span.bold) out.push('bold')
@@ -239,11 +248,16 @@ function blockFromDocument(block: Block): RenderBlock {
       out.inline = block.content.map((node) => {
         const marks = node.marks ?? []
         const reference = marks.find((m) => m.type === 'reference')
-        const embed = reference && 'attrs' in reference ? cardLayout(reference.attrs.embed) : undefined
+        const link = reference ? undefined : marks.find((m) => m.type === 'link')
+        const href = link && 'attrs' in link && typeof link.attrs.href === 'string' && link.attrs.href ? link.attrs.href : undefined
+        const carrier = reference ?? (href ? link : undefined)
+        const embed = carrier && 'attrs' in carrier ? cardLayout(carrier.attrs.embed) : undefined
         return {
           text: node.text,
-          marks: marks.filter((m) => m.type !== 'reference').map((m) => m.type) as InlineMark[],
+          // Only the four the vocabulary has: a mark this reader does not know is not one to draw (§13.3).
+          marks: marks.map((m) => m.type).filter((type): type is InlineMark => INLINE_MARKS.has(type)),
           ...(reference && 'attrs' in reference ? { reference: reference.attrs.uri } : {}),
+          ...(href ? { href } : {}),
           ...(embed ? { embed } : {}),
         }
       })
@@ -379,16 +393,24 @@ export interface BlockCard {
  * reference split across runs (part of it bold) is one occurrence, and takes
  * its card from its first run.
  *
+ * A link carries its card the same way. Read the block through
+ * `linksAsReferences` first and a URL is its reference already; a link on
+ * other words draws its card only when `resolveLink` says what its `href`
+ * names (§7.7), and without one names nothing.
+ *
  * Inside a card's body or a part a reader asks nothing: there every reference
  * is its chip (§13.3), or two objects that card each other nest forever.
  */
-export function blockCards(block: RenderBlock): BlockCard[] {
+export function blockCards(block: RenderBlock, resolveLink?: LinkResolver): BlockCard[] {
   const out: BlockCard[] = []
   let previous: string | undefined
   for (const run of block.inline ?? []) {
-    if (run.reference && run.reference === previous) continue
-    previous = run.reference
-    if (run.reference && run.embed) out.push({ reference: run.reference, layout: run.embed })
+    const target = run.reference ?? (run.href !== undefined ? `href:${run.href}` : undefined)
+    if (target && target === previous) continue
+    previous = target
+    if (!run.embed) continue
+    const reference = run.reference ?? (run.href !== undefined && resolveLink ? referenceOfLink(run.href, resolveLink) : undefined)
+    if (reference) out.push({ reference, layout: run.embed })
   }
   return out
 }

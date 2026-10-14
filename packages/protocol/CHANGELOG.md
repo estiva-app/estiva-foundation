@@ -23,6 +23,24 @@ changes on the wire, and a reader on 0.32.0 draws the chip.
 - `standaloneReference` is deprecated. A reference reads as its chip wherever
   it sits, in a description too.
 
+**Wire behaviour: a URL in a block document can carry a card too.** It stays a
+URL: plain text with no card, and with one a run whose text is the URL carries
+`{"type":"link","attrs":{"href":<the URL>,"embed":…}}`. Never a URL rewritten
+into a `nostr:` reference.
+
+- `toRenderTree` reads a `link` mark onto the run as `href` (and `embed`), and no
+  longer lets a mark it does not know into `marks`.
+- `linksAsReferences` reads a block document's links as well: a plain URL, or a
+  `link` run whose text is its `href`, becomes the reference it names, keeping
+  its `embed`, so `blockCards` lists its card. A link on other words stays a link.
+- The editor translation turns a `link` run whose text is its `href` into the
+  `reference` node with `href` (a URL chip, `uri` empty until the editor
+  resolves it) and writes it back as the same run; a URL chip with no card is
+  plain text, merged with its neighbours. A link on other words keeps its words
+  and loses the link, as before.
+- New `referenceOfLink(url, resolveLink)` and `urlRunsIn(text)`, for an editor
+  that turns an app's URLs into chips (`@estiva-app/ui/editor`'s `LinkChips`).
+
 ## 0.32.0 — 2026-10-13
 
 **Wire behaviour: none.** A reader reads a message's links as references (OPT-18,

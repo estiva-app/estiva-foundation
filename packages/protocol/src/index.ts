@@ -262,7 +262,7 @@ export {
   resolveBlockAnchor,
   resolvePart,
 } from './anchors.js'
-export { type Embed, type EmbedLayout, type LinkResolver, EMBED_TAG, cardsIn, embedTag, embedsOf, linksAsReferences } from './embeds.js'
+export { type Embed, type EmbedLayout, type LinkResolver, EMBED_TAG, cardsIn, embedTag, embedsOf, linksAsReferences, referenceOfLink, urlRunsIn } from './embeds.js'
 export {
   type BlossomVerb,
   type Imeta,

@@ -366,6 +366,13 @@ export type InlineMarkNode =
    * other key is one a later version added, which an editor carries through.
    */
   | { type: 'reference'; attrs: { uri: string; embed?: unknown; [key: string]: unknown } }
+  /**
+   * §13.3's `link`, block documents only: a run that links to `href`. Estiva
+   * writes it on a run whose text is the URL itself, and only to carry the card
+   * its writer chose for the link (`embed`, §13.3 "A reference's card"); a URL
+   * with no card is plain text.
+   */
+  | { type: 'link'; attrs: { href: string; embed?: unknown; [key: string]: unknown } }
 
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
 export interface InlineTextNode {

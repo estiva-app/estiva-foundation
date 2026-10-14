@@ -190,7 +190,31 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         },
       ]
     }
-    return textNodes(run.text, marks.map((m) => ({ type: m.type })))
+    const link = marks.find((m): m is Extract<InlineMarkNode, { type: 'link' }> => m.type === 'link')
+    const carried = marks.filter((m) => m.type !== 'link').map((m) => m.type)
+    if (link && link.attrs.href && run.text === link.attrs.href) {
+      /*
+        A URL whose card its writer chose (§13.3): the chip it reads as, which
+        keeps the URL in `href` and writes it back as the same run. `uri` is
+        what it names, filled in by the editor's `LinkChips` once the app has
+        resolved it; until then the chip draws as the URL.
+      */
+      const { href, embed, ...extra } = link.attrs
+      return [
+        {
+          type: REFERENCE_NODE,
+          attrs: {
+            uri: '',
+            href,
+            marks: carried,
+            ...(typeof embed === 'string' && embed !== 'none' ? { embed } : {}),
+            ...(Object.keys(extra).length ? { extra } : {}),
+          },
+        },
+      ]
+    }
+    // A link on other words is not one these editors write or draw: its words stay, the link does not.
+    return textNodes(run.text, carried.map((type) => ({ type })))
   })
 }
 
@@ -380,6 +404,29 @@ function idFor(node: EditorNode, claims: IdClaims): string {
 function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
   const out: InlineTextNode[] = []
   for (const node of nodes) {
+    if (node.type === REFERENCE_NODE && typeof node.attrs?.href === 'string' && node.attrs.href) {
+      /*
+        A URL chip is its URL on the wire, never rewritten into the reference
+        it names (§13.3). With no card it is plain text, merged with the text
+        around it, so a description an editor only opened saves the same bytes.
+        With one, the run carries a `link` mark to hold it.
+      */
+      const href = node.attrs.href
+      const carried = Array.isArray(node.attrs.marks) ? (node.attrs.marks as string[]) : []
+      const embed = node.attrs.embed
+      const extra = node.attrs.extra
+      const marks: InlineMarkNode[] = carried.map((type) => ({ type }) as InlineMarkNode)
+      if (typeof embed === 'string' && embed !== '' && embed !== 'none') {
+        marks.push({
+          type: 'link',
+          attrs: { ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}), href, embed },
+        })
+      }
+      const last = out[out.length - 1]
+      if (last && sameMarks(last.marks ?? [], marks)) last.text += href
+      else out.push({ type: 'text', text: href, ...(marks.length ? { marks } : {}) })
+      continue
+    }
     if (node.type === REFERENCE_NODE) {
       const uri = String(node.attrs?.uri ?? '')
       const carried = Array.isArray(node.attrs?.marks) ? (node.attrs.marks as string[]) : []
@@ -405,7 +452,7 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
       // Rejoin onto the previous run where there is one, so a paragraph is not
       // split into three runs by one break.
       const last = out[out.length - 1]
-      if (last && !last.marks?.some((m) => m.type === 'reference')) last.text += '\n'
+      if (last && !last.marks?.some(holdsTarget)) last.text += '\n'
       else out.push({ type: 'text', text: '\n' })
       continue
     }
@@ -424,9 +471,12 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
   return out
 }
 
+/** A run that points somewhere is its own run: its text is what it points at, never merged into the next. */
+const holdsTarget = (m: InlineMarkNode) => m.type === 'reference' || m.type === 'link'
+
 function sameMarks(a: readonly InlineMarkNode[], b: readonly InlineMarkNode[]): boolean {
   if (a.length !== b.length) return false
-  if (a.some((m) => m.type === 'reference') || b.some((m) => m.type === 'reference')) return false
+  if (a.some(holdsTarget) || b.some(holdsTarget)) return false
   return a.every((m, i) => m.type === b[i].type)
 }
 
