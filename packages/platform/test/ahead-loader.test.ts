@@ -70,3 +70,12 @@ test('stop starts nothing more and settles when the running steps have', async (
 test('an empty list settles at once', async () => {
   assert.deepEqual(await loadAhead([]).done, { loaded: [] })
 })
+
+test('a step that throws before returning its promise stops the loader like one that rejects', async () => {
+  const outcome = await loadAhead([
+    { label: 'sync', run: () => { throw new Error('boom') } },
+    { label: 'never', run: async () => {} },
+  ], { concurrency: 1 }).done
+  assert.deepEqual(outcome.loaded, [])
+  assert.equal((outcome.stoppedBy as { label: string }).label, 'sync')
+})

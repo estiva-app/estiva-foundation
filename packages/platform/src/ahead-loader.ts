@@ -60,8 +60,9 @@ export function loadAhead(steps: AheadStep[], options: AheadLoaderOptions = {}):
     while (!halted() && running < concurrency && next < steps.length) {
       const step = steps[next++]
       running += 1
-      step
-        .run()
+      // A run that throws before it returns its promise fails the step like one that rejects.
+      Promise.resolve()
+        .then(() => step.run())
         .then(
           () => {
             outcome.loaded.push(step.label)

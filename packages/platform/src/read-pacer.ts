@@ -90,6 +90,7 @@ interface Waiter {
 export function createPacer(options: PacerOptions): Pacer {
   const { perWindow, windowMs } = options
   const reserve = options.reserve ?? Math.floor(perWindow / 4)
+  if (reserve < 0 || reserve >= perWindow) throw new RangeError(`reserve ${reserve} leaves the ahead lane no room in a window of ${perWindow}`)
   const now = options.now ?? (() => Date.now())
   const timers = options.timers ?? { setTimeout: (run, ms) => host.setTimeout(run, ms), clearTimeout: (h) => host.clearTimeout(h) }
   const others = options.others ?? (() => [])
@@ -130,6 +131,9 @@ export function createPacer(options: PacerOptions): Pacer {
 
   return {
     take(n, { lane = 'click', spill } = {}) {
+      // Wider than its lane could ever grant: it would wait forever, and a click would hold every read behind it.
+      const widest = lane === 'ahead' ? perWindow - reserve : perWindow
+      if (n > widest) return Promise.reject(new RangeError(`${n} slots is wider than the ${lane} lane's ${widest}`))
       return new Promise((resolve) => {
         const waiter: Waiter = { n, at: now(), resolve, spillTimer: null }
         // Asked again every `afterMs` while it waits: HTTP may have room later. In

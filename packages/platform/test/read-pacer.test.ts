@@ -222,3 +222,14 @@ test('in flight: ahead holds at most its share, and a freed slot goes to a waiti
   await clock.settle()
   assert.equal(releases.length, 3, 'with no click waiting, the ahead REQ takes it')
 })
+
+test('a read wider than its lane is refused at once rather than waiting forever', async () => {
+  const pacer = createPacer({ perWindow: PER_WINDOW, windowMs: 5_000, reserve: 10 })
+  await assert.rejects(pacer.take(PER_WINDOW + 1), RangeError)
+  await assert.rejects(pacer.take(PER_WINDOW - 9, { lane: 'ahead' }), RangeError)
+  assert.equal(await pacer.take(1), 'socket', 'and the lane is not held up by it')
+})
+
+test('a reserve that leaves the ahead lane nothing is refused', () => {
+  assert.throws(() => createPacer({ perWindow: PER_WINDOW, windowMs: 5_000, reserve: PER_WINDOW }), RangeError)
+})
