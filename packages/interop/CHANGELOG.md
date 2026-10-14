@@ -6,6 +6,16 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.56.0 — 2026-10-14
+
+**Manifests: a `children` list may declare `anyParent: true`** (SPEC §7.2, for
+the document, `kind:30842`; Miky 2026-10-14). The child names its own parent with
+its `via` tag, of any kind, as a bare file does (§6.7 Nesting), so an owned kind
+can sit under a topic, a project or itself. With it, `movedBy` names the field
+without limiting the parent to the declaring kind. Published manifests mean
+what they meant: without the key the declared kind is still the only parent.
+The built-in bare-file projection now declares it, which changes no answer.
+
 ## 0.55.0 — 2026-10-14
 
 **Manifests: the bare file's text is a change anyone in its Folder may make,

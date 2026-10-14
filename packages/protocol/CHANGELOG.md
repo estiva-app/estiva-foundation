@@ -4,6 +4,16 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.34.0 — 2026-10-14
+
+**Wire behaviour: a new kind, `kind:30842`, the document** (SPEC, decided by
+Miky 2026-10-14). The bare file's shape and tag order — `d`, `title`, `h`
+(required; the relay refuses one without it), then `a` naming a parent of any
+kind — under a kind an app owns through its `kind:31990`, as Ship owns an
+issue. Leaf is the first owner. New `KIND.DOCUMENT` and `buildDocument`. Nothing
+an app already publishes changes: a topic stays a `30840`, and no event
+converts between the two.
+
 ## 0.33.0 — 2026-10-14
 
 **Wire behaviour: a block document's reference mark may carry `attrs.embed`**,

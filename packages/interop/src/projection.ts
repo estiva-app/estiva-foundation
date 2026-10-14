@@ -685,6 +685,15 @@ interface SlotSpec {
      * value is an address.
      */
     movedBy?: string
+    /**
+     * The child names its own parent with its `via` tag, **of any kind** — the
+     * bare file's rule (SPEC §6.7 Nesting), declared rather than hard-coded so
+     * an owned kind can have it: a document sits under a topic, a project or
+     * another document (Miky, 2026-10-14). With it, `movedBy` names the field
+     * without limiting the parent to the declaring kind, and a consumer reads
+     * the parent off the child instead of matching the declaring kind's prefix.
+     */
+    anyParent?: boolean
   }
 }
 
@@ -1406,7 +1415,7 @@ const BARE_FILE_MANIFEST: Manifest = {
         // `movedBy` is SPEC §6.7's `parent` field, declared rather than
         // hard-coded since MAN-1, so a bare file moves by the rule every other
         // kind does — the move action below sets the same field.
-        list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200, movedBy: 'parent' } },
+        list: { children: { kind: KIND_BARE_FILE, via: 'a', limit: 200, movedBy: 'parent', anyParent: true } },
       },
     },
     /*
@@ -3983,7 +3992,7 @@ function withPeople({ object, children }: AssembledObject, people: People): Fore
  */
 function declaredChildSpec(projection: {
   slots: Record<string, SlotSpec | SlotSpec[]>
-}): { kind: number; via: string; limit?: number; match?: string; movedBy?: string } | undefined {
+}): { kind: number; via: string; limit?: number; match?: string; movedBy?: string; anyParent?: boolean } | undefined {
   const spec = projection.slots.list
   return !Array.isArray(spec) ? spec?.children : undefined
 }
@@ -4035,8 +4044,9 @@ function parentRefOf(
       return prefix.test(moved.value) ? moved.value : undefined
     }
   }
-  if (kind === KIND_BARE_FILE) {
-    return root.tags.find((t) => t[0] === 'a' && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
+  const own = ownParentTagOf(manifest, kind)
+  if (own) {
+    return root.tags.find((t) => t[0] === own && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
   }
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
@@ -4070,7 +4080,24 @@ function movedByOf(manifest: Manifest, kind: number): { field: string; parentKin
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
     if (!children || children.kind !== kind || !children.movedBy || children.match === 'identifier') continue
-    return kind === KIND_BARE_FILE ? { field: children.movedBy } : { field: children.movedBy, parentKind: Number(parentKind) }
+    return kind === KIND_BARE_FILE || children.anyParent
+      ? { field: children.movedBy }
+      : { field: children.movedBy, parentKind: Number(parentKind) }
+  }
+  return undefined
+}
+
+/**
+ * The tag a `kind` object names its own parent with, of any kind — `a` on a
+ * bare file (SPEC §6.7), and the `via` of any list declaring the kind with
+ * `anyParent` (a document's, 2026-10-14). Undefined for every other kind,
+ * whose parent is found from the parent's declared list instead.
+ */
+function ownParentTagOf(manifest: Manifest, kind: number): string | undefined {
+  if (kind === KIND_BARE_FILE) return 'a'
+  for (const projection of Object.values(manifest.projections ?? {})) {
+    const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
+    if (children?.kind === kind && children.anyParent && children.match !== 'identifier') return children.via
   }
   return undefined
 }

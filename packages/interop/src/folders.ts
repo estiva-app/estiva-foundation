@@ -119,7 +119,7 @@ export function planRenameFolder(
  * Delete a Folder: `[kind:9008]`.
  *
  * **For an empty Folder.** The relay refuses while the Folder holds a file —
- * a `30840`, `30850` or `30851` under its `h`, or any address its listing
+ * a `30840`, `30842`, `30850` or `30851` under its `h`, or any address its listing
  * names — with a reason naming the count ("folder holds N file(s) … remove
  * them first"), and a consumer shows that reason. A file moved out keeps its
  * `h`, so a Folder whose listing looks empty can still refuse.

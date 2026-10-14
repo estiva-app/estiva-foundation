@@ -7,7 +7,7 @@
 */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { KIND, buildBareFile, parseBlockDocument } from '../dist/index.js'
+import { KIND, buildBareFile, buildDocument, parseBlockDocument } from '../dist/index.js'
 
 const AUTHOR = 'a'.repeat(64)
 const TEAM = '7b32200c-e4c0-4216-b79a-8490fc05e0bd'
@@ -91,5 +91,31 @@ describe('buildBareFile', () => {
       document,
     })
     assert.equal(parseBlockDocument(ev.content).content[0].id, 'b1')
+  })
+})
+
+// The document — `kind:30842`: the bare file's shape under a kind an app owns
+// (Miky, 2026-10-14). Leaf's "New document" writes it; a topic stays a 30840.
+describe('buildDocument', () => {
+  it('writes the bare file’s tags, in its order, as kind 30842', () => {
+    const ev = buildDocument(AUTHOR, 1_700_000_000_123, {
+      fileId: 'brief',
+      title: 'Launch brief',
+      channelUuid: TEAM,
+      parent: PROJECT,
+    })
+    assert.equal(ev.kind, KIND.DOCUMENT)
+    assert.equal(ev.kind, 30842)
+    assert.deepEqual(ev.tags, [
+      ['d', 'brief'],
+      ['title', 'Launch brief'],
+      ['h', TEAM],
+      ['a', PROJECT],
+    ])
+    assert.equal(ev.content, '')
+  })
+
+  it('refuses a document with no Folder', () => {
+    assert.throws(() => buildDocument(AUTHOR, 0, { fileId: 'x', title: 'X', channelUuid: '' }), /h/)
   })
 })

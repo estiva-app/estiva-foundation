@@ -166,6 +166,62 @@ describe('resolveParents', () => {
     assert.equal(relay.calls.length, 0)
   })
 
+  test('a document names its own parent, of any kind, when its list says anyParent', async () => {
+    const DOC = 30842
+    const D = (d) => `${DOC}:${AUTHOR}:${d}`
+    const TOPIC = `30840:${OTHER}:topic`
+    const leafManifest = ({ anyParent = true } = {}) =>
+      event({
+        kind: 31990,
+        tags: [['d', 'leaf'], ['k', String(DOC)]],
+        content: JSON.stringify({
+          name: 'Leaf',
+          records: { changeKind: CHANGE, targetTag: 'a', fieldTag: 'field', valueTag: 'value' },
+          projections: {
+            [DOC]: {
+              widget: 'card',
+              noun: 'document',
+              slots: {
+                title: { tag: 'title', fold: 'title' },
+                list: { children: { kind: DOC, via: 'a', movedBy: 'parent', ...(anyParent ? { anyParent } : {}) } },
+              },
+            },
+          },
+        }),
+      })
+    const doc = (d, parent) => event({ kind: DOC, tags: [['d', d], ['title', d], ['h', 'f'], ...(parent ? [['a', parent]] : [])] })
+    const reparent = (address, value) =>
+      event({ kind: CHANGE, pubkey: OTHER, tags: [['a', address], ['field', 'parent'], ['value', value], ['h', 'f']] })
+    const events = [
+      leafManifest(),
+      doc('under-topic', TOPIC),
+      doc('under-project', P1),
+      doc('under-doc', D('under-project')),
+      doc('moved-to-topic', P1),
+      reparent(D('moved-to-topic'), TOPIC),
+      doc('top'),
+    ]
+    const refs = ['under-topic', 'under-project', 'under-doc', 'moved-to-topic', 'top'].map(D)
+    const parents = await resolveParents(refs, countingRelay(events).query)
+    assert.deepEqual(parents, {
+      [D('under-topic')]: TOPIC,
+      [D('under-project')]: P1,
+      [D('under-doc')]: D('under-project'),
+      [D('moved-to-topic')]: TOPIC,
+      [D('top')]: null,
+    })
+    const objects = await resolveForeignObjects(refs, countingRelay(events).query, async () => ({}))
+    for (const ref of refs) assert.equal(objects[ref]?.parentRef ?? null, parents[ref], ref)
+
+    // Without it the declared kind is the only parent, as for an issue: a
+    // document under a topic is drawn at the top, under another document it stays.
+    const strict = await resolveParents(
+      [D('under-topic'), D('under-doc')],
+      countingRelay([leafManifest({ anyParent: false }), ...events.slice(1)]).query,
+    )
+    assert.deepEqual(strict, { [D('under-topic')]: null, [D('under-doc')]: D('under-project') })
+  })
+
   test('a refused read rejects the whole call', async () => {
     const relay = countingRelay([shipManifest(), issue('stays', P1)], {
       fail: (filters) => filters.some((f) => f.kinds?.includes(ISSUE)),
