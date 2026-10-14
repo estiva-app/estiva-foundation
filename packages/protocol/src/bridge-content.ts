@@ -37,7 +37,7 @@ import {
   inlineNodesToMarkers,
   parseBodySegments,
 } from './content.js'
-import { type Block, type BlockDocument, newBlockId, listItemDepths, listItemChecked, MAX_LIST_DEPTH } from './blocks.js'
+import { type Block, type BlockDocument, newBlockId, listItemDepths, listItemChecked } from './blocks.js'
 
 const isInlineRun = (content: unknown): content is InlineTextNode[] =>
   Array.isArray(content) &&
@@ -98,7 +98,7 @@ function unescaped(text: string, pattern: RegExp): string {
 }
 
 function itemFromText(item: string, description: boolean, depth = 0): Block {
-  const indent = depth > 0 ? { indent: Math.min(depth, MAX_LIST_DEPTH) } : undefined
+  const indent = depth > 0 ? { indent: depth } : undefined
   const task = description ? TASK.exec(item) : null
   if (!task) {
     const text = description ? unescaped(item, ESCAPED_TASK) : item

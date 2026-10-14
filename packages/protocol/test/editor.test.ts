@@ -761,6 +761,28 @@ describe("an indented item and an escape in a description's text — d98a5636", 
     assert.deepEqual(parseBodySegments(text), parseBodySegments(text, {}))
   })
 
+  it('keeps a numbered list its start number when it holds indented items', () => {
+    const doc = markerTextToBlockDocument('3. c\n  - c.1\n4. d', undefined, { description: true })
+    assert.equal(doc.content[0].attrs?.start, 3)
+    assert.deepEqual((doc.content[0].content as Block[]).map((b) => b.attrs?.indent ?? 0), [0, 1, 0])
+  })
+
+  it('reads nesting after an unclosed fence, which is text, and does so in linear time', () => {
+    const doc = markerTextToBlockDocument('```\n\n- a\n  - b', undefined, { description: true })
+    assert.deepEqual(doc.content.map((b) => b.type), ['paragraph', 'bulletList'])
+    assert.equal((doc.content[1].content as Block[])[1].attrs?.indent, 1)
+    // Against §13.2's own (linear) read of the same text, so a busy machine slows both alike; quadratic was ~20× at this size.
+    const long = '```\n' + Array.from({ length: 40000 }, (_, i) => `- x${i}`).join('\n')
+    const time = (read: () => unknown) => {
+      const started = performance.now()
+      read()
+      return performance.now() - started
+    }
+    const plain = time(() => markerTextToBlockDocument(long))
+    const described = time(() => markerTextToBlockDocument(long, undefined, { description: true }))
+    assert.ok(described < plain * 4 + 50, `${Math.round(described)} ms against ${Math.round(plain)} ms`)
+  })
+
   it('still opens a fence that holds an indented list line as code', () => {
     const doc = markerTextToBlockDocument('```\n- a\n  - b\n```\n- c\n  - d', undefined, { description: true })
     assert.deepEqual(doc.content.map((b) => b.type), ['codeBlock', 'bulletList'])

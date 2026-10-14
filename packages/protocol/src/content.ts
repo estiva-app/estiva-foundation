@@ -25,6 +25,8 @@
  */
 
 import { NOSTR_URI_RE } from './nip19.js'
+// blocks.js imports this module too; MAX_LIST_DEPTH is read only when a body is parsed, never at load.
+import { MAX_LIST_DEPTH } from './blocks.js'
 
 /** Marks a run of text can carry. `code` is exclusive — see {@link parseInlineMarks}. */
 export type InlineMark = 'bold' | 'italic' | 'underline' | 'code'
@@ -333,11 +335,12 @@ const columnOf = (lead: string) => [...lead].reduce((column, c) => column + (c =
  * Depth is read relative to the item above, not as a column count, so two,
  * three or four spaces all mean "under the item above": an item indented
  * further than the one above is one level below it; otherwise it is at the
- * level of the nearest item above it at the same or a lesser indentation. The
- * block reader caps it at `MAX_LIST_DEPTH`, the rule §13.3 already gives.
+ * level of the nearest item above it at the same or a lesser indentation. Never
+ * deeper than {@link MAX_LIST_DEPTH}, the rule §13.3 already gives.
  */
 function parseWithIndentedItems(lines: string[]): BodySegment[] {
   const segments: BodySegment[] = []
+  const fenced = fencedLines(lines)
   let rest: string[] = []
   const flush = () => {
     if (rest.length) segments.push(...parseBodySegments(rest.join('\n')))
@@ -346,8 +349,8 @@ function parseWithIndentedItems(lines: string[]): BodySegment[] {
   let i = 0
   while (i < lines.length) {
     const opens = /^[-•]\s/.test(lines[i]) ? 'bullet' : /^\d+\.\s/.test(lines[i]) ? 'numbered' : undefined
-    // A fence that opens in the plain text before is the plain parser's to close.
-    if (!opens || insideFence(rest)) {
+    // A line inside a fence is the plain parser's, with the fence around it.
+    if (!opens || fenced[i]) {
       rest.push(lines[i++])
       continue
     }
@@ -366,10 +369,11 @@ function parseWithIndentedItems(lines: string[]): BodySegment[] {
       let depth = 0
       if (items.length > 0) {
         const above = stack[stack.length - 1]
-        if (column > above.column) depth = above.depth + 1
+        if (column > above.column) depth = Math.min(above.depth + 1, MAX_LIST_DEPTH)
         else {
-          while (stack.length > 1 && stack[stack.length - 1].column > column) stack.pop()
-          depth = stack[stack.length - 1].column <= column ? stack[stack.length - 1].depth : 0
+          // The bottom is the list's first item, at column 0, so it always stays.
+          while (stack[stack.length - 1].column > column) stack.pop()
+          depth = stack[stack.length - 1].depth
           if (stack[stack.length - 1].column === column) stack.pop()
         }
       }
@@ -389,14 +393,24 @@ function parseWithIndentedItems(lines: string[]): BodySegment[] {
   return segments
 }
 
-/** Whether these lines leave a code fence open — the plain parser's rule: a fence counts only once it closes. */
-function insideFence(lines: string[]): boolean {
+/**
+ * Which lines sit inside a code fence, by the plain parser's rule — a fence
+ * opens only where it closes, and an unclosed one is text. Once, for the whole
+ * body: asking per list line re-read everything before it, quadratic in a long
+ * list after an unclosed fence (review of d98a5636).
+ */
+function fencedLines(lines: string[]): boolean[] {
+  const fenced = lines.map(() => false)
+  let open = -1
   for (let i = 0; i < lines.length; i++) {
-    const end = fenceCloses(lines, i)
-    if (end === -1 && FENCE_RE.test(lines[i])) return true
-    if (end !== -1) i = end
+    if (!FENCE_RE.test(lines[i])) continue
+    if (open === -1) open = i
+    else {
+      for (let j = open; j <= i; j++) fenced[j] = true
+      open = -1
+    }
   }
-  return false
+  return fenced
 }
 
 /**
