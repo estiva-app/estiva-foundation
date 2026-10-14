@@ -111,6 +111,8 @@ export interface EventSnapshotOptions {
   maxEvents?: number
   /** How long after a change the copy is written. */
   saveAfterMs?: number
+  /** How old an event's last-seen time may grow before seeing it again is written (it orders what is dropped). */
+  seenRefreshMs?: number
   now?: () => number
   timers?: SnapshotTimers
 }
@@ -136,6 +138,13 @@ export interface EventSnapshot {
 
 export const SNAPSHOT_MAX_EVENTS = 10_000
 export const SNAPSHOT_SAVE_AFTER_MS = 1_000
+/**
+ * An event the copy already holds, unchanged, is written again only this long
+ * after it last was: re-writing every event of every answer kept thousands of
+ * writes in flight, and a reload's read of the copy waited seconds behind them
+ * (PEE-4). Dropping the least recently seen is out by at most this much.
+ */
+export const SNAPSHOT_SEEN_REFRESH_MS = 60 * 60 * 1000
 
 /** The scope of one person's copy on one relay. */
 export function snapshotScope(relayUrl: string, pubkey: string): string {
@@ -266,6 +275,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   let epoch: number | undefined
   const maxEvents = options.maxEvents ?? SNAPSHOT_MAX_EVENTS
   const saveAfterMs = options.saveAfterMs ?? SNAPSHOT_SAVE_AFTER_MS
+  const seenRefreshMs = options.seenRefreshMs ?? SNAPSHOT_SEEN_REFRESH_MS
   const now = options.now ?? (() => Date.now())
   const timers = () => options.timers ?? host
 
@@ -280,6 +290,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   const byContent = new Map<string, string>()
   /** Plaintexts for a ciphertext no held event carries: this page load only. */
   const looseText = new Map<string, string>()
+  /** The last-seen time each event was last read or written with: what decides when seeing it again is written. */
+  const writtenSeenAt = new Map<string, number>()
   const filters = new Set<string>()
   /** The keys of filters whose last answer was whole — the ones a pooled list may be covered by. */
   const whole = new Set<string>()
@@ -303,6 +315,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (byContent.get(held.event.content) === id) byContent.delete(held.event.content)
     }
     dirty.delete(id)
+    writtenSeenAt.delete(id)
     removed.add(id)
   }
 
@@ -328,7 +341,17 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     // never to somebody else's event that happens to carry the same ciphertext.
     const own = coordinate !== null && event.pubkey === owner
     const plaintext = own ? (stored.plaintext ?? previous?.plaintext ?? looseText.get(event.content)) : undefined
+    // Held already, unchanged and seen lately: nothing to write, and the last-seen time stays the one written.
+    const unchanged =
+      mark &&
+      previous !== undefined &&
+      previous.plaintext === plaintext &&
+      previous.event.sig === event.sig &&
+      previous.event.content === event.content &&
+      stored.seenAt - (writtenSeenAt.get(event.id) ?? previous.seenAt) < seenRefreshMs
+    // In memory the last-seen time is always the newest, so what was just seen is the last trimmed.
     events.set(event.id, { event, seenAt: stored.seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })
+    if (!mark) writtenSeenAt.set(event.id, stored.seenAt)
     let ofKind = byKind.get(event.kind)
     if (!ofKind) byKind.set(event.kind, (ofKind = new Set()))
     ofKind.add(event.id)
@@ -338,7 +361,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       carrying.add(event.id)
     }
     if (own && event.content) byContent.set(event.content, event.id)
-    if (mark) {
+    if (mark && !unchanged) {
       dirty.add(event.id)
       removed.delete(event.id)
     }
@@ -369,6 +392,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       filters: [...filters],
       whole: [...whole],
     }
+    for (const stored of change.put) writtenSeenAt.set(stored.event.id, stored.seenAt)
     dirty.clear()
     removed.clear()
     filtersDirty = false

@@ -66,6 +66,7 @@ export {
 export {
   SNAPSHOT_MAX_EVENTS,
   SNAPSHOT_SAVE_AFTER_MS,
+  SNAPSHOT_SEEN_REFRESH_MS,
   createEventSnapshot,
   indexedDbSnapshotStorage,
   matchesSnapshotFilter,
