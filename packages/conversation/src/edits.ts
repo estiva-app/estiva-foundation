@@ -145,6 +145,8 @@ export function foldAttachments(events: readonly SignedEvent[]): Record<string, 
  * {@link foldAttachments}. An edit with none leaves the set; `none` is how an
  * edit removes a card. Which of these the body still names is
  * `cardsIn`'s question, asked of the folded body. Messages with none are absent.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/the-author-chooses-a-links-card.md
  */
 export function foldEmbeds(events: readonly SignedEvent[]): Record<string, Embed[]> {
   const out: Record<string, Embed[]> = {}

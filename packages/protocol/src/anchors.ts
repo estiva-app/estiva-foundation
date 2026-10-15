@@ -96,6 +96,8 @@ export function resolveBlockAnchor(
  * which knows neither draws an ordinary reference to the object.
  *
  * Index 3 is left free for an extent (a section, a range), which is not built.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-shared-part-of-a-page-is-a-selected-run-of-blocks.md
  */
 export const PART_TAG = 'part'
 

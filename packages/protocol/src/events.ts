@@ -125,6 +125,8 @@ export const KIND = {
    * owns an issue; Leaf is the first owner. The bare file's shape, but owned:
    * a document is written and opened in its owner's app, where a topic
    * (`FILE`) is a conversation nobody owns (SPEC, Miky 2026-10-14).
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-document-is-its-own-type-of-file.md
    */
   DOCUMENT: 30842,
   /**

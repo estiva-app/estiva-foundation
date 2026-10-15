@@ -93,6 +93,8 @@ export function anchorsOf(event: Tagged): string[] {
  * migrated it — and is then read the way such a comment was written: by an
  * `a` its body does not name. Undeclared, a `kind:9` is chat and lists under
  * no object whatever `a` it carries (§6.4, CON-20).
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/early-shapes-are-migrated-or-deleted.md
  */
 export function isCommentOn(event: Readable, address: string, declaredKinds: readonly number[] = [KIND_COMMENT]): boolean {
   if (isReply(event)) return false

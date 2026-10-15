@@ -1567,6 +1567,8 @@ function bareFileManifest(): ResolvedManifest {
  * What a Folder's built-in actions are declared by — SPEC §3.2, as
  * {@link BARE_FILE_MANIFEST_ADDRESS} is for the bare file. The
  * `declaredBy.address` of an action no app declared.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
  */
 export const FOLDER_ACTIONS_ADDRESS = 'spec:3.2'
 
@@ -5611,6 +5613,8 @@ const nameOf = (event: SignedEvent | undefined) => (event ? tagValue(event, 'nam
 /**
  * The owners and admins a `kind:39001` lists — kept only when the channel's own
  * signer, the relay, signed it: anybody can publish an event of that shape.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/only-owners-and-admins-rename-or-archive-a-folder.md
  */
 function folderAdminsOf(admins: SignedEvent | undefined, channel: SignedEvent | undefined): string[] {
   if (!admins || !channel || admins.pubkey !== channel.pubkey) return []
@@ -5646,9 +5650,15 @@ export interface FolderSummary {
    * The title: its `kind:39000`'s `name`, and only that (SPEC §3.2). A `name`
    * an older `kind:1852` left on the state is never read — any member may send
    * one, and only owners and admins may rename the channel.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/only-owners-and-admins-rename-or-archive-a-folder.md
    */
   name?: string
-  /** True once the relay maintains state for it, rather than it being a bare channel. */
+  /**
+   * True once the relay maintains state for it, rather than it being a bare channel.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-folder-is-a-group-the-relay-lists.md
+   */
   hasState: boolean
   /**
    * Present when the Folder's relay-signed `kind:39000` carries `["private"]`

@@ -12,6 +12,8 @@
  * | a person (`@`) | `nostr:npub…`, or `@Name` with no key | `p`, from {@link mentionTagsFor} |
  * | a person, urgently (`!@`) | the same `nostr:npub…`, or `!@Name` | `p`, and {@link urgentTagsFor}'s `["urgent", <pubkey>]` |
  * | a message (`[`) | `nostr:nevent…` with its kind and no relay | `q`, from {@link quoteTagsFor} (CON-25) |
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/composer-triggers-are-one-shared-kit.md
  */
 import { bech32Decode, convertBits, decodeNevent, encodeNevent, encodeNpub, findNostrUris, type NostrTag } from '@estiva-app/protocol'
 import { mentionTagsFor } from './strength.js'
@@ -55,6 +57,8 @@ export const URGENT_TAG = 'urgent'
  *
  * `urgent` is what the composer's urgent picks name, by pubkey; the text alone
  * cannot say which of the people it names were urgent.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-urgent-mention-is-a-tag-beside-the-mention.md
  */
 export function urgentTagsFor(body: string, urgent: readonly string[] | undefined): NostrTag[] {
   if (!urgent || urgent.length === 0) return []

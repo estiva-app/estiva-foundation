@@ -42,6 +42,8 @@
  * relay lets only the channel's owners and admins change that, while any
  * member may send a `kind:1852` — so a name on a command would let anyone
  * retitle the Folder for every reader that believed it.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
  */
 import {
   buildCreateChannel,
@@ -316,6 +318,8 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
  * channel or absent (`target-is-private`, §3.1).
  *
  * A move to the same Folder, or of a set the source does not list, plans nothing.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/moving-a-file-never-changes-who-can-read-it.md
  */
 export function planMoveFile(
   pubkey: string,

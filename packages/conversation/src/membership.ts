@@ -170,6 +170,8 @@ function fold(steps: readonly Step[] | undefined): Membership {
 /**
  * One person's membership of one file (§11.8 *The fold*), from the file's own
  * events: its root, its stream and its changes.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/membership-replaces-following.md
  */
 export function membershipOf(file: string, person: string, events: readonly Event[]): Membership {
   return fold(stepsOf(file, events).get(person))
