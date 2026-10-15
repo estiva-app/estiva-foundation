@@ -147,6 +147,16 @@ describe("a file's summary is its subtitle, whatever its kind", () => {
   })
 })
 
+describe('a summary change nobody can check is not read', () => {
+  it('on a file whose root names no Folder, from a member of any Folder', async () => {
+    const filed = await resolveForeignObject(TOPIC, relay([topic(), summarize(TOPIC, 'From its Folder.')]))
+    assert.equal(filed?.slots.subtitle?.value, 'From its Folder.')
+    const unfiled = event({ kind: KIND_BARE_FILE, tags: [['d', 'naming'], ['title', 'Launch naming']] })
+    const found = await resolveForeignObject(TOPIC, relay([unfiled, summarize(TOPIC, 'From anywhere.', OTHER_FOLDER)]))
+    assert.equal(found?.slots.subtitle, undefined)
+  })
+})
+
 describe('clearing a summary', () => {
   for (const [what, value] of [
     ['an empty value', ''],

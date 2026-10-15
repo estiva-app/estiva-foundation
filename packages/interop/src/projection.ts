@@ -2258,6 +2258,9 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
     const field = tagValue(change, rule.fieldTag)
     const value = tagValue(change, rule.valueTag)
     if (!field || value === undefined) continue // a partial change sets nothing
+    // A summary is new, so it takes neither of §6.2's exceptions: a change the
+    // reader cannot check against the root's Folder is not read (SPEC §6.12).
+    if (field === SUMMARY_FIELD && !folders) continue
     // The format travels with the *winning* change, not with the object. SPEC
     // §13.4: "an app MUST read the tag from the event it took the value from,
     // never from the object's root" — a description created as marker text and

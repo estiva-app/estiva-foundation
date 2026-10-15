@@ -28,6 +28,9 @@ read changes for one slot:
   at 280 characters (a same-source declaration may cut it shorter): the relay
   does not hold a writer to about 240, and a consumer still clamps it to its
   room.
+- **A `summary` change nobody can check is not read**: one aimed at a root
+  that names no Folder, or folded without the root. A summary is new, so §6.2's
+  two exceptions for older fields do not apply to it.
 - **The bare file declares `summarize`**: `emits { kind: 1851, field:
   'summary' }`, `input { type: 'string' }`, no `format`. A consumer finds it by
   `field`, not by id.
