@@ -69,6 +69,8 @@ import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
  * the original carried on into — the only place Enter-then-type above a
  * paragraph can be told from the paragraph. It falls back to this rule, so a
  * change to `holdsText` here belongs there too.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/the-block-editor-kit-lives-in-protocol-and-ui.md
  */
 
 /** A ProseMirror/Tiptap node, as JSON. */

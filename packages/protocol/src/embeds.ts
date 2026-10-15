@@ -17,6 +17,8 @@
  * `a`/`q` match: an edit carries no index tags (§6.8), and a value first named
  * in an edit can still carry a card (Miky, 2026-10-13, OPT-16 kickoff).
  * {@link cardsIn} applies that rule; {@link embedsOf} reads the tags alone.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/the-author-chooses-a-links-card.md
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
