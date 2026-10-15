@@ -109,6 +109,11 @@ describe("a file's summary is its subtitle, whatever its kind", () => {
     assert.equal(changed?.slots.subtitle?.value, 'Changed since.')
   })
 
+  it('offers the seed as what Summary edits, so editing starts from it rather than from blank', async () => {
+    const found = await resolveForeignObject(TOPIC, relay([topic([['summary', 'Seeded at creation.']])]))
+    assert.equal(found?.actions.find((a) => a.id === 'summarize')?.current, 'Seeded at creation.')
+  })
+
   it("shows on an app's own kind whose manifest says nothing about it", async () => {
     const page = event({ kind: DOCUMENT_KIND, tags: [['d', 'page'], ['title', 'Plan'], ['h', FOLDER]] })
     const found = await resolveForeignObject(

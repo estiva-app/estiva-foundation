@@ -3201,7 +3201,9 @@ function buildObject(args: {
    * nothing.
    */
   const held: Record<string, string> = {}
-  for (const spec of Object.values(projection.slots).flat()) {
+  // The built-in subtitle too, or a summary seeded at creation shows on the
+  // card while `summarize` offers a blank to edit (SPEC §6.12).
+  for (const spec of Object.values(withDefaultSubtitle(projection.slots, root.kind)).flat()) {
     // `tag` may name several spellings (see `SlotSpec`); the field this slot
     // *is* keyed on is the first, which is the one the app writes today. The
     // rest are only there to keep older records rendering.
