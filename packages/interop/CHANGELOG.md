@@ -24,7 +24,10 @@ read changes for one slot:
   same source and keeps its `truncate`.
 - **`subtitle` is one line of plain text**: line breaks fold to spaces, and a
   value blank once trimmed resolves to no slot, so a summary cleared with `''`
-  or `'  '` draws nothing and its seed does not show through.
+  or `'  '` draws nothing and its seed does not show through. A summary is cut
+  at 280 characters (a same-source declaration may cut it shorter): the relay
+  does not hold a writer to about 240, and a consumer still clamps it to its
+  room.
 - **The bare file declares `summarize`**: `emits { kind: 1851, field:
   'summary' }`, `input { type: 'string' }`, no `format`. A consumer finds it by
   `field`, not by id.

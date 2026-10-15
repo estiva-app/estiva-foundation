@@ -2875,7 +2875,14 @@ function resolveSlot(
   }
 }
 
-const SUMMARY_SUBTITLE: SlotSpec = { tag: SUMMARY_FIELD, fold: SUMMARY_FIELD }
+/*
+  `truncate` is the clamp SPEC §6.12 makes a reader's job: the relay does not
+  hold a writer to about 240 characters, and with no manifest declaring the
+  slot nothing else would cut a 1,000-character summary down to a line. A
+  consumer still clamps it to its own room; this is the backstop.
+*/
+const SUMMARY_TRUNCATE = 280
+const SUMMARY_SUBTITLE: SlotSpec = { tag: SUMMARY_FIELD, fold: SUMMARY_FIELD, truncate: SUMMARY_TRUNCATE }
 const FOLDER_SUBTITLE: SlotSpec = { tag: 'about' }
 
 /**
@@ -2901,9 +2908,9 @@ function defaultSubtitle(kind: number): SlotSpec | undefined {
 /**
  * A projection's slots with `subtitle` taken from {@link defaultSubtitle}.
  *
- * A declaration naming the same source is kept, so its `label` or `truncate`
- * still applies (Peek's Folder projection truncates `about` at 120); one naming
- * any other source, or an array, is replaced.
+ * A declaration naming the same source keeps its `label` and a `truncate`
+ * tighter than the built-in one (Peek's Folder projection truncates `about` at
+ * 120); one naming any other source, or an array, is replaced.
  */
 function withDefaultSubtitle(
   slots: Record<string, SlotSpec | SlotSpec[]>,
@@ -2922,7 +2929,13 @@ function withDefaultSubtitle(
     declared.map === undefined &&
     declared.as === undefined &&
     declared.children === undefined
-  return same ? slots : { ...slots, [SUBTITLE_SLOT]: builtIn }
+  if (!same) return { ...slots, [SUBTITLE_SLOT]: builtIn }
+  // Same source: its `label` and a tighter `truncate` stand, never a looser one.
+  const truncate =
+    declared.truncate === undefined || builtIn.truncate === undefined
+      ? (declared.truncate ?? builtIn.truncate)
+      : Math.min(declared.truncate, builtIn.truncate)
+  return { ...slots, [SUBTITLE_SLOT]: { ...builtIn, label: declared.label, truncate } }
 }
 
 /**

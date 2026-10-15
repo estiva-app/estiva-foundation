@@ -181,6 +181,13 @@ describe('a summary is one line of plain text', () => {
     assert.equal(found?.slots.subtitle?.value, 'Two **lines** of text')
     assert.equal(found?.slots.subtitle?.format, undefined, 'no content model applies to it')
   })
+
+  it('is cut short when a writer ignores the length, since the relay does not stop it', async () => {
+    const found = await resolveForeignObject(TOPIC, relay([topic(), summarize(TOPIC, 'word '.repeat(200))]))
+    const value = found?.slots.subtitle?.value ?? ''
+    assert.ok(value.length <= 281, `drawn ${value.length} characters`)
+    assert.ok(value.endsWith('…'))
+  })
 })
 
 describe("a Folder's one-liner is its about", () => {
