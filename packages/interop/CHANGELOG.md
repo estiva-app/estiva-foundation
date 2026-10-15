@@ -6,6 +6,38 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.57.0 — 2026-10-15
+
+**Manifests: every file's `subtitle` is its summary, whatever its manifest
+declares** (SPEC §6.12, §7.2; Miky 2026-10-15). How a published declaration is
+read changes for one slot:
+
+- **On every addressable kind but NIP-29's `39000`–`39009`, `subtitle` is
+  `{ tag: 'summary', fold: 'summary' }`**: the root `summary` tag, overridden by
+  a `kind:1851` with `field` `summary`, last write wins. A manifest need not
+  declare it; one declaring another source for it on a file kind is ignored.
+  No published Estiva manifest declares one on a file kind, so Ship, Leaf and
+  Peek lose nothing; an outside app that aimed it at its description now shows
+  its summary there, or nothing.
+- **A Folder's `subtitle` is its `about`** (`{ tag: 'about' }`, §3.2), so a
+  `summary` change aimed at a `39000` is never drawn. Peek's declaration is the
+  same source and keeps its `truncate`.
+- **`subtitle` is one line of plain text**: line breaks fold to spaces, and a
+  value blank once trimmed resolves to no slot, so a summary cleared with `''`
+  or `'  '` draws nothing and its seed does not show through. A summary is cut
+  at 280 characters (a same-source declaration may cut it shorter): the relay
+  does not hold a writer to about 240, and a consumer still clamps it to its
+  room.
+- **A `summary` change nobody can check is not read**: one aimed at a root
+  that names no Folder, or folded without the root. A summary is new, so §6.2's
+  two exceptions for older fields do not apply to it.
+- **The bare file declares `summarize`**: `emits { kind: 1851, field:
+  'summary' }`, `input { type: 'string' }`, no `format`. A consumer finds it by
+  `field`, not by id.
+- **A Folder's built-in `create-file` takes an optional `summary`**, written to
+  the root tag of that name.
+- New export: `SUMMARY_FIELD`.
+
 ## 0.56.0 — 2026-10-14
 
 **Manifests: a `children` list may declare `anyParent: true`** (SPEC §7.2, for

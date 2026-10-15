@@ -452,7 +452,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     })
   let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
 
-  it('declares comment, rename, describe, move, archive and delete, each as the control a consumer draws', async () => {
+  it('declares comment, rename, describe, summarize, move, archive and delete, each as the control a consumer draws', async () => {
     const found = await resolveForeignObject(TOPIC, relay([topic()]))
     assert.deepEqual(
       found?.actions.map((a) => [a.id, a.control, a.effect]),
@@ -460,6 +460,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
         ['comment', 'text', 'writes'],
         ['rename', 'text', 'writes'],
         ['describe', 'text', 'writes'],
+        ['summarize', 'text', 'writes'],
         ['move', 'text', 'writes'],
         ['archive', 'select', 'writes'],
         ['delete', 'confirm', 'destructive'],

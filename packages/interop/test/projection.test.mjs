@@ -68,7 +68,7 @@ const manifest = event({
     projections: {
       [KIND]: {
         widget: 'card',
-        slots: { title: { tag: 'title' }, subtitle: { tag: 'about' } },
+        slots: { title: { tag: 'title' } },
       },
     },
   }),
@@ -76,12 +76,13 @@ const manifest = event({
 
 const object = event({
   kind: KIND,
-  tags: [['d', 'p1'], ['title', 'Payment integration'], ['about', 'Stripe'], ['h', FOLDER]],
+  tags: [['d', 'p1'], ['title', 'Payment integration'], ['h', FOLDER], ['summary', 'Stripe']],
 })
 
 test('renders an object from an app it knows nothing about', async () => {
   const found = await resolveForeignObject(`${KIND}:${AUTHOR}:p1`, relay([manifest, object]))
   assert.equal(found.slots.title.value, 'Payment integration')
+  // Its summary, with nothing in the manifest saying so (SPEC §7.2).
   assert.equal(found.slots.subtitle.value, 'Stripe')
   assert.equal(found.appName, 'Some app')
   assert.equal('noun' in found, false, 'no noun declared, none invented')

@@ -216,7 +216,9 @@ describe('resolveFolderProject', () => {
 
     assert.equal(found?.project.appName, 'Linear-lite')
     assert.equal(found?.project.slots.title.value, 'Payment integration')
-    assert.ok((found?.project.slots.subtitle.value).includes('Stripe Checkout'))
+    // The manifest aims `subtitle` at the description; on a file kind it is the
+    // summary whatever a manifest says (SPEC §7.2), and this project has none.
+    assert.equal(found?.project.slots.subtitle, undefined)
     // Status is not on the root event at all — it only exists as a folded change.
     assert.partialDeepStrictEqual(found?.project.slots.status, { value: 'In Progress', colour: 'blue' })
     // `field` names the tag or folded field behind the slot, so a renderer can
@@ -1682,12 +1684,13 @@ describe('a body slot carries the content model it is written in', () => {
       content: BLOCKS,
       tags: [['d', 'p1'], ['title', 'P'], ['h', FOLDER], ['content-format', 'estiva-blocks-1']],
     })
+    // `status`, because a file's `subtitle` is its summary whatever is declared.
     const found = await resolve(
-      { title: { tag: 'title' }, subtitle: { field: 'content', truncate: 40 } },
+      { title: { tag: 'title' }, status: { field: 'content', truncate: 40 } },
       [root],
     )
-    assert.equal(found?.slots.subtitle?.value, BLOCKS)
-    assert.ok(!found?.slots.subtitle?.value.endsWith('…'))
+    assert.equal(found?.slots.status?.value, BLOCKS)
+    assert.ok(!found?.slots.status?.value.endsWith('…'))
   })
 
   it('still truncates marker text, which degrades honestly', async () => {
@@ -1695,11 +1698,11 @@ describe('a body slot carries the content model it is written in', () => {
     // truncation is what makes them fit a row.
     const long = 'x'.repeat(200)
     const found = await resolve(
-      { title: { tag: 'title' }, subtitle: { field: 'content', truncate: 40 } },
+      { title: { tag: 'title' }, status: { field: 'content', truncate: 40 } },
       [project('p1', { content: long })],
     )
-    assert.equal(found?.slots.subtitle?.value.length, 41)
-    assert.ok(found?.slots.subtitle?.value.endsWith('…'))
+    assert.equal(found?.slots.status?.value.length, 41)
+    assert.ok(found?.slots.status?.value.endsWith('…'))
   })
 })
 
