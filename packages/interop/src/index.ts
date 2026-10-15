@@ -38,6 +38,7 @@ export {
   listFolders,
   topLevelFolders,
   ARCHIVED_FIELD,
+  SUMMARY_FIELD,
   isArchived,
   isClosedStatus,
   archiveImpact,

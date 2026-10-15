@@ -1375,6 +1375,19 @@ export const MOVED_TO_TAG = 'A'
 export const ARCHIVED_FIELD = 'archived'
 
 /**
+ * The field, and the root tag seeding it, that holds a file's one-line summary,
+ * whatever its kind — SPEC §6.12.
+ *
+ * Plain text, one or two sentences, beside the title: what a card, a row or a
+ * picker shows under it. Changed by a `kind:1851` like the title, last write
+ * wins, and a value that is blank after trimming means no summary. Every file
+ * kind's `subtitle` reads it ({@link defaultSubtitle}), so no manifest has to.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-summary-is-its-own-field.md
+ */
+export const SUMMARY_FIELD = 'summary'
+
+/**
  * Where a `ResolvedManifest.address` would name the manifest event, this names
  * the section of the specification the manifest is built from. Not an address,
  * and deliberately not shaped like one — a consumer that tried to fetch it
@@ -1499,6 +1512,23 @@ const BARE_FILE_MANIFEST: Manifest = {
       input: { type: 'string', format: BLOCK_DOCUMENT_FORMAT },
     },
     /*
+      `summarize` sets the file's one-line summary (SPEC §6.12): plain text, so
+      its input declares no `format` (§7.3), and a consumer finds it by
+      `emits.field`, not by this id. An empty value clears it, the summary the
+      file was created with included.
+    */
+    {
+      id: 'summarize',
+      label: 'Summary',
+      description:
+        "Set this file's summary: one or two sentences of plain text, about 240 characters, shown under its " +
+        'title wherever it is met in one line. A change event, so anyone in the Folder may; an empty value clears it.',
+      effect: 'writes',
+      appliesTo: [String(KIND_BARE_FILE)],
+      emits: { kind: 1851, field: SUMMARY_FIELD },
+      input: { type: 'string' },
+    },
+    /*
       `move` is the `parent` field SPEC §6.7 already defines, declared so a
       consumer draws the control from here as it draws Rename (FOL-4). The value
       is the new parent's address, or empty for the top of the Folder. A move
@@ -1601,12 +1631,18 @@ const FOLDER_CREATOR: ResolvedManifest = {
         id: 'create-file',
         label: 'New file',
         description:
-          'Put a new file in this Folder: a title, and nothing else yet. Everyone who can read the Folder can read ' +
+          'Put a new file in this Folder: a title and, if you have one, a short summary. Everyone who can read the Folder can read ' +
           'it, and the Folder lists it straight away. The app opening files calls it by its own word — Peek says topic.',
         effect: 'writes',
         appliesTo: String(KIND_CHANNEL_METADATA),
         emits: { kind: KIND_BARE_FILE, listed: true },
-        input: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
+        // `summary` is the root tag that seeds the new file's summary (SPEC
+        // §3.2, §6.12); left empty, it is omitted (§7.3).
+        input: {
+          type: 'object',
+          properties: { title: { type: 'string' }, [SUMMARY_FIELD]: { type: 'string' } },
+          required: ['title'],
+        },
       },
     ],
   },
@@ -2156,6 +2192,9 @@ import { contentFormatOf, type ContentFormat } from '@estiva-app/protocol'
  * and a consumer reads `slots.body` to find it.
  */
 export const BODY_SLOT = 'body'
+
+/** The slot that is a file's summary, one line of plain text (SPEC §7.2). */
+const SUBTITLE_SLOT = 'subtitle'
 
 
 /**
@@ -2784,7 +2823,19 @@ function resolveSlot(
   const source = rawSlotValue(spec, root, folded, name === BODY_SLOT)
 
   if (source === undefined || source.value === '') return null
-  const raw = source.value
+  let raw = source.value
+  /*
+    `subtitle` is plain text on one line (SPEC §7.2, §6.12): line breaks fold to
+    spaces, and a value that is blank once trimmed is no subtitle — a summary
+    cleared with " " reads as cleared, and the seed does not show through it.
+    Left to each consumer, `slots.subtitle &&` drew a blank one as an empty line
+    (Peek's ForeignObjectWidget). A body-shaped value declared into the slot is
+    left alone; the truncation guard below is what speaks to that.
+  */
+  if (name === SUBTITLE_SLOT && source.format !== 'blocks' && source.format !== 'unknown') {
+    raw = raw.replace(/\s+/g, ' ').trim()
+    if (raw === '') return null
+  }
 
   /*
     PRO-8's rule, now enforceable rather than only written down.
@@ -2824,6 +2875,56 @@ function resolveSlot(
   }
 }
 
+const SUMMARY_SUBTITLE: SlotSpec = { tag: SUMMARY_FIELD, fold: SUMMARY_FIELD }
+const FOLDER_SUBTITLE: SlotSpec = { tag: 'about' }
+
+/**
+ * Where a kind's `subtitle` comes from whatever its manifest says, or
+ * `undefined` where the manifest decides — SPEC §7.2, §6.12, §3.2.
+ *
+ * - **A Folder** (`kind:39000`): the `about` of its channel record, NIP-29's
+ *   one-liner. A `summary` change aimed at one is not read.
+ * - **Every other addressable kind is a file**, and its subtitle is its
+ *   summary: the `summary` fold over the root tag of that name. Built in, so an
+ *   app's files — an outside company's included — show their summary on every
+ *   card with nothing in its manifest, and no manifest can point the line at
+ *   another field (Miky, 2026-10-15, kickoff).
+ * - NIP-29's other `39001`–`39009` records, and regular events (a message, a
+ *   comment), keep what their manifest declares.
+ */
+function defaultSubtitle(kind: number): SlotSpec | undefined {
+  if (kind === KIND_CHANNEL_METADATA) return FOLDER_SUBTITLE
+  if (kind >= 39000 && kind <= 39009) return undefined
+  return isAddressableKind(kind) ? SUMMARY_SUBTITLE : undefined
+}
+
+/**
+ * A projection's slots with `subtitle` taken from {@link defaultSubtitle}.
+ *
+ * A declaration naming the same source is kept, so its `label` or `truncate`
+ * still applies (Peek's Folder projection truncates `about` at 120); one naming
+ * any other source, or an array, is replaced.
+ */
+function withDefaultSubtitle(
+  slots: Record<string, SlotSpec | SlotSpec[]>,
+  kind: number,
+): Record<string, SlotSpec | SlotSpec[]> {
+  const builtIn = defaultSubtitle(kind)
+  if (!builtIn) return slots
+  const declared = slots[SUBTITLE_SLOT]
+  const same =
+    declared !== undefined &&
+    !Array.isArray(declared) &&
+    declared.tag === builtIn.tag &&
+    declared.fold === builtIn.fold &&
+    declared.field === undefined &&
+    declared.default === undefined &&
+    declared.map === undefined &&
+    declared.as === undefined &&
+    declared.children === undefined
+  return same ? slots : { ...slots, [SUBTITLE_SLOT]: builtIn }
+}
+
 /**
  * Every slot a projection declares, resolved.
  *
@@ -2839,7 +2940,7 @@ function resolveSlots(
 ): { slots: Record<string, ResolvedSlot>; meta: ResolvedSlot[] } {
   const slots: Record<string, ResolvedSlot> = {}
   const meta: ResolvedSlot[] = []
-  for (const [name, spec] of Object.entries(projection.slots)) {
+  for (const [name, spec] of Object.entries(withDefaultSubtitle(projection.slots, root.kind))) {
     if (Array.isArray(spec)) {
       for (const one of spec) {
         // An array spec collects into `meta`, so the name it was declared under

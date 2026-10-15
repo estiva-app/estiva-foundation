@@ -204,7 +204,7 @@ test('a Folder offers a new file as its own built-in, and acting with it lists t
   assert.equal(create.declaredBy.address, FOLDER_ACTIONS_ADDRESS)
   assert.equal(create.control, 'form')
   assert.equal(create.listed, true)
-  assert.deepEqual(create.fields.map((f) => f.name), ['title'])
+  assert.deepEqual(create.fields.map((f) => f.name), ['title', 'summary'])
 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
   const acting = await resolveActingManifest(pointer, FOLDER_ACTIONS_ADDRESS, query)
