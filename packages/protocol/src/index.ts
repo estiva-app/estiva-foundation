@@ -269,6 +269,7 @@ export {
   type CommentAnchor,
   type Quote,
   type TextPoint,
+  MAX_RUN_ENTRIES_READ,
   MAX_RUN_IDS,
   QUOTE_CONTEXT_LENGTH,
   QUOTE_END_LENGTH,

@@ -60,6 +60,20 @@ describe('writing the anchor for a selection', () => {
     assert.deepEqual(tags[1], ['quote', 'the', '', 'the cat and ', ' dog'])
   })
 
+  it('leaves out a last block the selection ends at the very start of, rather than hanging', { timeout: 5000 }, () => {
+    const tags = selectionAnchorTags(page, ['p1', 'p2', 'p3'], { start: { block: 'p1', offset: 8 }, end: { block: 'p3', offset: 0 } })
+    assert.deepEqual(tags, [['block', 'p1', 'p2'], ['quote', 'on Friday.', 'QA signs off.']])
+  })
+
+  it('leaves out a first block the selection starts at the very end of', () => {
+    const tags = selectionAnchorTags(page, ['p1', 'p2', 'p3'], { start: { block: 'p1', offset: 18 }, end: { block: 'p3', offset: 7 } })
+    assert.deepEqual(tags, [['block', 'p2', 'p3'], ['quote', 'QA signs off.', 'Then we']])
+  })
+
+  it('refuses a selection whose ends are not in the run\'s first and last blocks', () => {
+    assert.throws(() => selectionAnchorTags(page, ['p1', 'p2'], { start: { block: 'p2', offset: 0 }, end: { block: 'p2', offset: 4 } }))
+  })
+
   it('lists the first 32 and the last 32 of a run longer than 64 blocks', () => {
     const ids = Array.from({ length: 70 }, (_, i) => `b${i}`)
     const tag = blockRunTag(ids)
@@ -72,6 +86,12 @@ describe('reading the run', () => {
   it('voids a run whose first id is invalid, and skips invalid and repeated later ones', () => {
     assert.equal(readRunIds(['bad id', 'p1']), undefined)
     assert.deepEqual(readRunIds(['p1', 'bad id', 'p2', 'p1']), ['p1', 'p2'])
+  })
+
+  it('reads a stranger\'s huge list quickly, no further than its first 1,024 entries', { timeout: 5000 }, () => {
+    const ids = Array.from({ length: 80_000 }, (_, i) => `x${i}`)
+    const run = readRunIds(ids)
+    assert.deepEqual([run?.length, run?.[0], run?.at(-1)], [64, 'x0', 'x1023'])
   })
 
   it('ignores a block tag on anything but a comment', () => {
@@ -109,6 +129,11 @@ describe('resolving a comment against the page as it is now', () => {
     assert.deepEqual(anchor.state === 'reworded' && anchor.blocks.map((b) => b.id), ['p1', 'p2', 'p3'])
   })
 
+  it('reads as reworded, not resolved, when the words where it ends are rewritten', () => {
+    const edited = doc(p('p1', 'We ship on Friday.'), p('p2', 'QA signs off.'), p('p3', 'After that we announce it.'))
+    assert.equal(resolveCommentAnchor(across, body(edited), 'blocks').state, 'reworded')
+  })
+
   it('reads as reworded when the block holding the start words is gone but the rest of the run is not', () => {
     const edited = doc(p('p2', 'QA signs off.'), p('p3', 'Then we announce it.'))
     assert.equal(resolveCommentAnchor(across, body(edited), 'blocks').state, 'reworded')
@@ -129,6 +154,22 @@ describe('resolving a comment against the page as it is now', () => {
     const c = comment([['block', 'r1'], ['quote', 'the', '', 'the cat and ', ' dog']])
     const anchor = resolveCommentAnchor(c, body(repeated), 'blocks')
     assert.deepEqual(anchor.state === 'resolved' && anchor.words?.start, { block: 'r1', offset: 12 })
+  })
+
+  it('ignores context longer than a writer sends, and stays fast on words repeated through a large page', { timeout: 5000 }, () => {
+    const big = doc(p('b1', 'a'.repeat(200_000)))
+    const hostile = comment([['block', 'b1'], ['quote', 'a', '', 'x'.repeat(10_000)]])
+    const anchor = resolveCommentAnchor(hostile, body(big), 'blocks')
+    assert.deepEqual(anchor.state === 'resolved' && anchor.words?.start, { block: 'b1', offset: 0 })
+    const unmatched = comment([['block', 'b1'], ['quote', 'a', '', 'zz']])
+    assert.equal(resolveCommentAnchor(unmatched, body(big), 'blocks').state, 'resolved')
+  })
+
+  it('treats a quote longer than any writer sends as no words, so it cannot stall a reader', { timeout: 5000 }, () => {
+    const big = doc(p('b1', 'a'.repeat(200_000)))
+    const hostile = comment([['block', 'b1'], ['quote', 'a'.repeat(100_000)]])
+    const anchor = resolveCommentAnchor(hostile, body(big), 'blocks')
+    assert.deepEqual(anchor.state === 'resolved' && anchor.words, undefined)
   })
 
   it('matches a mention as the text it is stored as, not the name it is drawn with', () => {
@@ -156,7 +197,7 @@ describe('resolving a comment against the page as it is now', () => {
 
   it('ignores words with no block, and a body with no blocks', () => {
     assert.equal(resolveCommentAnchor(comment([['quote', 'on Friday.']]), body(page), 'blocks').state, 'unanchored')
-    assert.equal(resolveCommentAnchor(words, 'We ship on Friday.', 'markers').state, 'unaddressable')
+    assert.equal(resolveCommentAnchor(words, 'We ship on Friday.', 'marker').state, 'unaddressable')
   })
 
   it('takes the run under the parent most of its blocks sit under', () => {

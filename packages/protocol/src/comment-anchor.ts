@@ -32,7 +32,10 @@ export const QUOTE_TAG = 'quote'
 /** The most ids a run lists: a longer selection keeps its first and last 32 (§13.3). */
 export const MAX_RUN_IDS = 64
 
-/** Up to this many characters, a selection's words are quoted whole. */
+/** A reader reads no further into a `block` tag than this many entries. */
+export const MAX_RUN_ENTRIES_READ = 1024
+
+/** Up to this many characters, a selection's words are quoted whole; a reader voids a longer quote string. */
 export const QUOTE_WHOLE_MAX = 1000
 
 /** Otherwise, about this many characters at each end, cut at a word boundary. */
@@ -55,9 +58,11 @@ function capRun(ids: readonly string[]): string[] {
 export function readRunIds(ids: readonly string[]): string[] | undefined {
   const [first] = ids
   if (first === undefined || !BLOCK_ID.test(first)) return undefined
-  const out: string[] = []
-  for (const id of ids) if (BLOCK_ID.test(id) && !out.includes(id)) out.push(id)
-  return capRun(out)
+  // A writer lists at most 64; a list far longer is a stranger's, and is read
+  // no further than its first 1,024 entries, so it costs every reader little.
+  const out = new Set<string>()
+  for (const id of ids.slice(0, MAX_RUN_ENTRIES_READ)) if (BLOCK_ID.test(id)) out.add(id)
+  return capRun([...out])
 }
 
 /** The `block` tag for a run, ids in document order. One id is today's one-block tag, unchanged. */
@@ -138,7 +143,7 @@ export function quoteTag(quote: Quote): string[] {
 export function quoteOf(event: { tags: string[][] }): Quote | undefined {
   const tag = event.tags.find((t) => t[0] === QUOTE_TAG)
   const [, start, end, prefix, suffix] = tag ?? []
-  if (!start) return undefined
+  if (!start || start.length > QUOTE_WHOLE_MAX || (end && end.length > QUOTE_WHOLE_MAX)) return undefined
   return {
     start,
     ...(end ? { end } : {}),
@@ -153,13 +158,18 @@ export interface TextPoint {
   offset: number
 }
 
-/** The text a quote is matched in: §13.3's runs, a mention as its `nostr:` text, NFC. */
+/**
+ * The text a quote is matched in: §13.3's runs, a mention as its `nostr:` text,
+ * exactly as stored — not normalised, so an offset into it is an offset into
+ * the block's own text.
+ */
 function textOf(block: Block): string {
-  return inlineTextOf(block).normalize('NFC')
+  return inlineTextOf(block)
 }
 
-/** How many times `words` occurs in `text`. */
+/** How many times `words` occurs in `text` (none for empty words). */
 function occurrences(text: string, words: string): number {
+  if (words === '') return 0
   let count = 0
   for (let at = text.indexOf(words); at !== -1; at = text.indexOf(words, at + 1)) count++
   return count
@@ -194,15 +204,27 @@ export function selectionAnchorTags(
   run: readonly string[],
   selection?: { start: TextPoint; end: TextPoint },
 ): string[][] {
-  const tags = [blockRunTag(run)]
-  if (!selection) return tags
+  if (!selection) return [blockRunTag(run)]
   const places = placesIn(doc)
-  const blockOf = (id: string) => {
-    const place = places.get(id)
+  const blockOf = (id: string | undefined) => {
+    const place = id === undefined ? undefined : places.get(id)
     if (!place) throw new Error(`block ${id} is not in the document`)
     return textOf(place.siblings[place.index])
   }
-  const { start, end } = selection
+  let ids = [...run]
+  let { start, end } = selection
+  if (start.block !== ids[0] || end.block !== ids[ids.length - 1]) throw new Error('a selection starts in the run\'s first block and ends in its last')
+  // A selection that starts at the very end of its first block, or ends at the
+  // very start of its last, holds no text in it: that block is not in the run.
+  if (ids.length > 1 && start.offset >= blockOf(start.block).length) {
+    ids = ids.slice(1)
+    start = { block: ids[0], offset: 0 }
+  }
+  if (ids.length > 1 && end.offset <= 0) {
+    ids = ids.slice(0, -1)
+    end = { block: ids[ids.length - 1], offset: blockOf(ids[ids.length - 1]).length }
+  }
+  const tags = [blockRunTag(ids)]
   const firstText = blockOf(start.block)
   const lastText = start.block === end.block ? firstText : blockOf(end.block)
   if (start.offset === 0 && end.offset >= lastText.length) return tags
@@ -216,7 +238,7 @@ export function selectionAnchorTags(
     quote.start = headOf(startWords, QUOTE_END_LENGTH)
     quote.end = tailOf(endWords, QUOTE_END_LENGTH)
   }
-  if (quote.start === '') return tags
+  if (quote.start === '' || quote.end === '') return tags
   if (occurrences(firstText, quote.start) > 1) quote.prefix = firstText.slice(Math.max(0, start.offset - QUOTE_CONTEXT_LENGTH), start.offset)
   if (occurrences(lastText, quote.end ?? quote.start) > 1) quote.suffix = lastText.slice(end.offset, end.offset + QUOTE_CONTEXT_LENGTH)
   if (quote.prefix === '') delete quote.prefix
@@ -289,21 +311,24 @@ export function resolveCommentAnchor(
   if (first === -1 || last === -1 || last < first) return reworded
   const firstText = textOf(blocks[first])
   const lastText = textOf(blocks[last])
-  const start = quote.start.normalize('NFC')
-  const end = quote.end?.normalize('NFC')
+  const { start, end } = quote
+  // Context longer than a writer ever sends is a stranger's, and ignored: each
+  // check below is then a short comparison however often the words repeat.
+  const prefix = quote.prefix && quote.prefix.length <= QUOTE_CONTEXT_LENGTH ? quote.prefix : undefined
+  const suffix = quote.suffix && quote.suffix.length <= QUOTE_CONTEXT_LENGTH ? quote.suffix : undefined
+  const before = (text: string, i: number) => !prefix || text.slice(Math.max(0, i - prefix.length), i) === prefix
+  const after = (text: string, i: number) => !suffix || text.slice(i, i + suffix.length) === suffix
 
   if (end === undefined) {
-    const at = find(firstText, start, 0, (i) =>
-      (!quote.prefix || firstText.slice(0, i).endsWith(quote.prefix)) &&
-      (!quote.suffix || firstText.slice(i + start.length).startsWith(quote.suffix)))
+    const at = find(firstText, start, 0, (i) => before(firstText, i) && after(firstText, i + start.length))
     if (at === -1) return reworded
     return { state: 'resolved', ids, blocks, words: { start: { block: ids[0], offset: at }, end: { block: ids[0], offset: at + start.length } } }
   }
 
-  const startAt = find(firstText, start, 0, (i) => !quote.prefix || firstText.slice(0, i).endsWith(quote.prefix))
+  const startAt = find(firstText, start, 0, (i) => before(firstText, i))
   if (startAt === -1) return reworded
   const from = first === last ? startAt + start.length : 0
-  const endAt = find(lastText, end, from, (i) => !quote.suffix || lastText.slice(i + end.length).startsWith(quote.suffix))
+  const endAt = find(lastText, end, from, (i) => after(lastText, i + end.length))
   if (endAt === -1) return reworded
   return {
     state: 'resolved',
