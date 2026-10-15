@@ -121,6 +121,8 @@ export function buildReply(
  * person's, and not on an agent's, whose NIP-OA owner the relay accepts but
  * no app can identify — offering it to everyone showed every other viewer a
  * control the relay refuses. An unknown viewer is offered nothing.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/edit-and-delete-are-offered-only-on-your-own-message.md
  */
 export function offersEditAndDelete(args: { viewer: string | null | undefined; author: string }): boolean {
   return !!args.viewer && args.viewer === args.author
