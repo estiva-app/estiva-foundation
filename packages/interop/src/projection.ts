@@ -1622,6 +1622,8 @@ const FOLDER_CREATOR: ResolvedManifest = {
  * runtime's, so a published manifest still cannot change how a bare file
  * behaves; it can only say what it is called where it opens. A comment takes
  * the name (it opens in the same app) and not the noun, which is the file's.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-labelled-by-its-type-not-its-app.md
  */
 function bareFileOpenedBy(opener: Manifest, template: string): ResolvedManifest {
   const name = wordOf(opener.name) ?? BARE_FILE_MANIFEST.name
