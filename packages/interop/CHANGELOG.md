@@ -6,6 +6,40 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.58.0 — 2026-10-15
+
+**Manifests: no manifest is read for a Folder (`kind:39000`) or a chat message
+(`kind:9`) any more; both are built in** (SPEC §3.2, §7.8; records
+*folders-belong-to-the-protocol* and *a-chat-message-belongs-to-the-protocol*).
+How published declarations are read changes for two kinds:
+
+- **A Folder resolves through a built-in manifest, answered before NIP-89**, as
+  the bare file does: title the `name`, subtitle the `about` (cut at 120, as
+  Peek's claim cut it), noun `folder`, opened by the `naddr` template of the
+  app declaring the `conversation` aspect and named after it. A `k 39000` claim
+  — Peek's, until it republishes — is not asked about, and its projection,
+  `list` slot and actions are ignored. Its address is `FOLDER_ACTIONS_ADDRESS`.
+- **No `list` slot on a Folder.** Peek's claim listed fifty `kind:9` messages,
+  which every Folder chip paid for; a Folder's contents are what its `30890`
+  names, read by `resolveFolderContents`. `children` is undefined and
+  `listsChildren` false on a resolved Folder.
+- **`start-a-conversation` is a Folder built-in** beside `create-file`, with
+  `declaredBy` naming `spec:3.2`: a `kind:9` carrying only `h`, its body in
+  `content`. Offer it only on a Folder with a relay-signed `30890`, and only if
+  you may sign `kind:9`. A manifest's own creation of a `kind:9` on a Folder
+  (Peek's) is not offered beside it.
+- **A chat message resolves through the built-in manifest**, as a comment does:
+  the `message` widget, the author as title, the text as body, noun `message`,
+  opened by the conversation app's `nevent` template. A `k 9` claim is not read.
+- `resolveActingManifest(folder, FOLDER_ACTIONS_ADDRESS)` answers the built-in
+  creator before the owner, whose address is the same section.
+- A refused handler sweep costs a Folder its link, never its name.
+- `KIND_MESSAGE` (9) is exported.
+
+Upgrade every consumer before Peek's manifest drops its `k 39000`, `k 9` and
+their projections: a runtime before this one finds a Folder and a message by
+those claims, and draws nothing once they go.
+
 ## 0.57.0 — 2026-10-15
 
 **Manifests: every file's `subtitle` is its summary, whatever its manifest

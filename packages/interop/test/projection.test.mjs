@@ -156,7 +156,9 @@ test('the public entry point exports what the README tells a builder to import',
 
 // ── resolveForeignEvent (PRO-11) ────────────────────────────────────────────
 
-const MESSAGE_KIND = 9
+// A regular kind an app owns through its manifest. Not `9`: a chat message is
+// built in now, and no manifest is asked about it (bare-file.test.ts).
+const MESSAGE_KIND = 1311
 const messageManifest = event({
   kind: 31990,
   tags: [['d', 'peek'], ['k', String(MESSAGE_KIND)]],
@@ -173,7 +175,7 @@ const messageManifest = event({
 const aMessage = event({ kind: MESSAGE_KIND, tags: [['h', 'chan']], content: 'hello from a message' })
 
 test('resolves an event that has no address at all', async () => {
-  // The whole point: a kind:9 has no `d`, so no naddr can name it and every
+  // The whole point: a regular event has no `d`, so no naddr can name it and every
   // address-keyed resolver is blind to it.
   const found = await resolveForeignEvent(aMessage.id, relay([messageManifest, aMessage]))
   assert.equal(found.slots.body.value, 'hello from a message')

@@ -210,6 +210,15 @@ const KIND_HANDLER_INFORMATION = 31990
  */
 const KIND_COMMENT = 1111
 /**
+ * NIP-29's chat message, the one a Folder's conversation is made of — SPEC §7.8.
+ *
+ * Owned by no app, like a comment: the specification says how it draws and
+ * where it opens, so no manifest's `k` tag is asked about it.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-chat-message-belongs-to-the-protocol.md
+ */
+export const KIND_MESSAGE = 9
+/**
  * NIP-09's deletion request. Protocol, like the two above, and the one kind an
  * action may emit that is neither a change nor a comment nor a creation: an
  * action emitting it is a *deletion* (`control: 'confirm'`), and the event it
@@ -1452,6 +1461,22 @@ const BARE_FILE_MANIFEST: Manifest = {
         body: { field: 'content' },
       },
     },
+    /*
+      A chat message, for the comment's reason: no app owns `kind:9` (SPEC
+      §7.8). Peek's manifest claimed it until this release, and drew it exactly
+      so — the author as the title, because the text carries structure and is
+      no title; the text as the body, untruncated.
+
+      why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-chat-message-belongs-to-the-protocol.md
+    */
+    [String(KIND_MESSAGE)]: {
+      widget: ['message', 'card'],
+      noun: 'message',
+      slots: {
+        title: { field: 'pubkey', as: 'pubkey' },
+        body: { field: 'content' },
+      },
+    },
   },
   /*
     The manifest is the only place a consumer learns of any of these actions
@@ -1620,12 +1645,21 @@ export const FOLDER_ACTIONS_ADDRESS = 'spec:3.2'
  * is the bare file's own, so the created object is drawn the way every other
  * bare file is. Each consumer offers it only if it may sign `30840` and `1852`
  * (§3.3).
+ *
+ * Starting a conversation is the second, moved here from Peek's manifest: a
+ * `kind:9` carrying the Folder in `h` and nothing else — never an `a` naming
+ * the `39000`, which §3.2 reads as a mention. A consumer offers it only on a
+ * Folder whose relay-signed `30890` it has read, since a group without one is
+ * a DM or a channel, and only if it may sign `kind:9`.
  */
 const FOLDER_CREATOR: ResolvedManifest = {
   manifest: {
     name: 'Folder',
     about: 'What every app may do in a Folder, whichever app made it.',
-    projections: { [String(KIND_BARE_FILE)]: BARE_FILE_MANIFEST.projections![String(KIND_BARE_FILE)] },
+    projections: {
+      [String(KIND_BARE_FILE)]: BARE_FILE_MANIFEST.projections![String(KIND_BARE_FILE)],
+      [String(KIND_MESSAGE)]: BARE_FILE_MANIFEST.projections![String(KIND_MESSAGE)],
+    },
     actions: [
       {
         id: 'create-file',
@@ -1644,10 +1678,83 @@ const FOLDER_CREATOR: ResolvedManifest = {
           required: ['title'],
         },
       },
+      /*
+        `toAddressOf: 'self'` and no `setTag`: the message hangs under the
+        Folder it was started in, and names it only with the `h` every created
+        event gets. One property, the body, written to `content` — a `kind:9`
+        has an author and a text and nothing else.
+      */
+      {
+        id: 'start-a-conversation',
+        label: 'Start a conversation',
+        description:
+          'Start a new conversation in this Folder, as a root message that people can then reply to. ' +
+          'Use when something is worth its own thread rather than an answer inside an existing one — ' +
+          'this cannot reply to a message. Everyone who can read the Folder reads it.',
+        effect: 'writes',
+        appliesTo: String(KIND_CHANNEL_METADATA),
+        emits: { kind: KIND_MESSAGE, toAddressOf: 'self' },
+        input: {
+          type: 'object',
+          properties: { message: { type: 'string', target: 'content' } },
+          required: ['message'],
+        },
+      },
     ],
   },
   address: FOLDER_ACTIONS_ADDRESS,
   viaRecommendation: false,
+}
+
+/**
+ * How a Folder draws — SPEC §3.2, answered here before NIP-89 is asked, as the
+ * bare file's is.
+ *
+ * No app owns a Folder, so no `kind:31990` may claim `39000`; until this
+ * release Peek's did, and every app learned a Folder's name from it. The title
+ * is the channel record's `name`, the subtitle its `about` (the built-in
+ * subtitle, {@link defaultSubtitle}), and the noun "folder".
+ *
+ * **No `list` slot.** What a Folder holds is what its relay-signed `30890`
+ * names, which no `children` declaration can say, and it is read by
+ * {@link resolveFolderContents} — only the files this viewer resolves, never a
+ * count of the rest. Peek's claim listed fifty chat messages instead, and every
+ * Folder chip paid for them. A Folder is never inside another (SPEC §3.1), so
+ * no listing needs a Folder's children drawn under its row.
+ *
+ * No actions of its own either: every app's way into a Folder is
+ * {@link FOLDER_CREATOR}'s, offered beside the others with `declaredBy`
+ * naming this section, so a consumer tells them apart as it always has.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
+ */
+const FOLDER_MANIFEST: Manifest = {
+  name: 'Folder',
+  about: 'A Folder no app owns: its name, its one-liner, and the files its state lists.',
+  projections: {
+    [String(KIND_CHANNEL_METADATA)]: {
+      widget: 'card',
+      noun: 'folder',
+      // The cut Peek's claim made, so no card grows when the claim goes.
+      slots: { title: { tag: 'name' }, subtitle: { tag: 'about', truncate: 120 } },
+    },
+  },
+}
+
+/**
+ * The Folder's manifest, named by the app that opens it — the bare file's rule
+ * ({@link bareFileOpenedBy}): its link goes to the app declaring the
+ * conversation aspect, by its `naddr` template, so "Open in Peek" says where.
+ * With no such app the Folder still draws, with nowhere to open.
+ */
+function folderManifest(opener: ResolvedManifest | null): ResolvedManifest {
+  const name = opener?.webTemplate ? wordOf(opener.manifest.name) : undefined
+  return {
+    manifest: name ? { ...FOLDER_MANIFEST, name } : FOLDER_MANIFEST,
+    address: FOLDER_ACTIONS_ADDRESS,
+    viaRecommendation: false,
+    ...(opener?.webTemplate ? { webTemplate: opener.webTemplate } : {}),
+  }
 }
 
 /**
@@ -1907,9 +2014,18 @@ export async function resolveManifest(
   // A comment resolves through the built-in manifest as a bare file does, and
   // opens in the same app — the one that renders every file's conversation
   // is the one that can show a thread in it (FOL-38).
-  if (pointer.kind === KIND_BARE_FILE || pointer.kind === KIND_COMMENT) {
-    const opener = await resolveAspectApp('conversation', query, cache, pointer.kind === KIND_COMMENT ? 'nevent' : 'naddr')
+  // A chat message is the comment's case exactly (SPEC §7.8), and a Folder has
+  // its own built-in that opens in the same app (§3.2): neither is asked of a
+  // `k` tag, so a manifest still claiming one is not read for it.
+  if (pointer.kind === KIND_BARE_FILE || pointer.kind === KIND_COMMENT || pointer.kind === KIND_MESSAGE) {
+    const opener = await resolveAspectApp('conversation', query, cache, pointer.kind === KIND_BARE_FILE ? 'naddr' : 'nevent')
     return opener?.webTemplate ? bareFileOpenedBy(opener.manifest, opener.webTemplate) : bareFileManifest()
+  }
+  // A refused sweep costs a Folder its link, never its name: Peek's `#k` claim
+  // was a read of its own, and the Folder still drew when the sweep failed.
+  // Not remembered (`throughCache` keeps no failure), so the next resolve asks.
+  if (pointer.kind === KIND_CHANNEL_METADATA) {
+    return folderManifest(await resolveAspectApp('conversation', query, cache, 'naddr').catch(() => null))
   }
   return throughCache(cache, `${pointer.kind}:${pointer.pubkey}`, () => resolveManifestUncached(pointer, query))
 }
@@ -2052,6 +2168,8 @@ function creatorsOrNone(kind: number, query: QueryFn, cache?: ProjectionCache): 
  * ({@link FOLDER_CREATOR}, INT-12): no app owns a Folder (SPEC §3.2), so no
  * app's claim to create the same kind there outranks the specification's —
  * a manifest declaring a bare file on a Folder is the second row, not this.
+ * The Folder's owner is the specification's too ({@link FOLDER_MANIFEST}), and
+ * declares no actions, so these are offered once.
  */
 function borrowedFrom(kind: number, owner: ResolvedManifest, creators: readonly ResolvedManifest[]): ResolvedManifest[] {
   const builtIn = kind === KIND_CHANNEL_METADATA ? [FOLDER_CREATOR] : []
@@ -2100,10 +2218,12 @@ export async function resolveActingManifest(
   query: QueryFn,
   cache?: ProjectionCache,
 ): Promise<ResolvedManifest | null> {
+  // A Folder's built-in needs no sweep, so a refused one must not cost it
+  // (INT-12). Asked before the owner, whose address is the same section and
+  // whose manifest only draws: every Folder action is the creator's.
+  if (pointer.kind === KIND_CHANNEL_METADATA && declaredBy === FOLDER_ACTIONS_ADDRESS) return FOLDER_CREATOR
   const owner = await resolveManifest(pointer, query, cache)
   if (!owner || !declaredBy || declaredBy === owner.address) return owner
-  // A Folder's built-in needs no sweep, so a refused one must not cost it (INT-12).
-  if (pointer.kind === KIND_CHANNEL_METADATA && declaredBy === FOLDER_ACTIONS_ADDRESS) return FOLDER_CREATOR
   const creators = await creatorsOn(pointer.kind, query, cache)
   return borrowedFrom(pointer.kind, owner, creators).find((creator) => creator.address === declaredBy) ?? null
 }

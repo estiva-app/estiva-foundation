@@ -164,14 +164,15 @@ test('a kind nothing claims is memoised too, so the expensive miss is paid once'
 
 test('children are matched on the filter, not on kind — they can share one', async () => {
   /*
-    Peek's Topic declares `kind:9` messages as its children and `kind:9` as its
+    Peek's Topic declared `kind:9` messages as its children and `kind:9` as its
     comment kind. Merging the two filters into one request puts both under one
     number in the response, and only the tag tells them apart. An event can
     honestly be both, and was returned to both result sets when these were two
-    queries.
+    queries. Kinds no app owns by specification stand in for the two Peek gave
+    up when Folders and messages were built in.
   */
-  const TOPIC = 39000
-  const MSG = 9
+  const TOPIC = 30871
+  const MSG = 1311
   const topicManifest = event({
     kind: 31990,
     tags: [['d', 'peek'], ['k', String(TOPIC)], ['k', String(MSG)]],
