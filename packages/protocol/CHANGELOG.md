@@ -4,6 +4,23 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.37.0 — 2026-10-15
+
+**Wire behaviour: new — a comment can anchor to a run of blocks and the words
+where its selection starts and ends** (SPEC §13.3 "A run of blocks", §13.6;
+LEAF-7; record a-comment-remembers-where-its-selection-starts-and-ends). The
+`block` tag lists every selected id, `["block", id1, …]`, read as a span (the
+rule COM-2 decided for `part`); one id is today's tag unchanged. A new `quote`
+tag carries the words: exact inside one block, the words at each end across
+blocks or past 1,000 characters, and the text around them only when they
+repeat. A selection of whole blocks carries none. New `selectionAnchorTags`
+writes both; `resolveCommentAnchor` reads one into five states, the new one
+`reworded` (the blocks are there, the words are not), which a reader must not
+draw as `detached`. Also `blockRunTag`, `blockRunOf`, `readRunIds`,
+`resolveBlockRun`, `quoteTag`, `quoteOf`. Nothing writes these yet; a reader on
+`blockAnchorOf` still sees the run's first block, so Peek moves to
+`resolveCommentAnchor` before any app writes a run.
+
 ## 0.36.0 — 2026-10-15
 
 **Wire behaviour: none — the agent already published this; now an editor can
