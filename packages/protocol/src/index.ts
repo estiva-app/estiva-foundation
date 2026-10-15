@@ -237,6 +237,8 @@ export {
   type DescriptionTextOptions,
 } from './bridge-content.js'
 
+export { descriptionTextToBlockDocument, tableToDescriptionText } from './description-text.js'
+
 export {
   type EditorNode,
   type EditorDocument,

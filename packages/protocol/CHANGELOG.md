@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.36.0 — 2026-10-15
+
+**Wire behaviour: none — the agent already published this; now an editor can
+too** (SPEC §13.3 "A description as text", LEAF-10). New
+`descriptionTextToBlockDocument(text, previous?)` reads a description's text
+whole, as §13.3 has it: `markerTextToBlockDocument` with `{ description: true }`
+plus a GFM pipe table as a `table` block, its ids carried from `previous`. And
+`tableToDescriptionText(block)` prints a table back as GFM, or `undefined` for
+a table §13.3 gives no spelling. Both moved here from the agent CLI (RIC-20,
+estiva-agent#75), so the agent's `edit-issue` and an editor's markdown paste
+read the same text the same way. One fix on the way: text that already held
+the private-use character standing in for a table, spelling table 0's place,
+became a second copy of that table; the stand-in is now a character the text
+does not hold. A message's text is untouched: §13.2 has no table.
+
 ## 0.35.0 — 2026-10-14
 
 **Wire behaviour: none for any app's editor; a description written as text can
