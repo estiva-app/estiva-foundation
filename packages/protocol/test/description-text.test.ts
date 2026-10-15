@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   descriptionTextToBlockDocument,
+  inlineTextOf,
   markerTextToBlockDocument,
   tableToDescriptionText,
   validateBlockDocument,
@@ -49,10 +50,41 @@ describe('descriptionTextToBlockDocument — a GFM pipe table is a table', () =>
     assert.equal(shape(doc.content[0]), '#A|#B|#C / 1||')
   })
 
+  it('widens the table to its widest row, so a cell past the header’s width keeps its text', () => {
+    const doc = descriptionTextToBlockDocument('| A |\n| --- |\n| 1 | 2 |')
+    assert.equal(shape(doc.content[0]), '#A|# / 1|2')
+  })
+
+  it('reads a table written without outer pipes', () => {
+    const doc = descriptionTextToBlockDocument('A | B\n--- | ---\n1 | 2\n\nAfter.')
+    assert.equal(types(doc), 'table,paragraph')
+    assert.equal(shape(doc.content[0]), '#A|#B / 1|2')
+  })
+
+  it('ends the table at the first line without a pipe, and keeps that line', () => {
+    const doc = descriptionTextToBlockDocument('| A | B |\n| --- | --- |\n| 1 | 2 |\nAfter.')
+    assert.equal(types(doc), 'table,paragraph')
+    assert.equal(shape(doc.content[0]), '#A|#B / 1|2')
+    assert.equal(inlineTextOf(doc.content[1]), 'After.')
+  })
+
   it('leaves pipes that are not a table as text: no delimiter row, a width mismatch, inside a code fence', () => {
     assert.equal(types(descriptionTextToBlockDocument('| A | B |\n| 1 | 2 |')), 'paragraph')
     assert.equal(types(descriptionTextToBlockDocument('| A | B |\n| --- |\n| 1 | 2 |')), 'paragraph')
     assert.equal(types(descriptionTextToBlockDocument('```\n| A | B |\n| --- | --- |\n```')), 'codeBlock')
+  })
+
+  it('reads a table after a closed code fence, and past three backticks that never close', () => {
+    assert.equal(types(descriptionTextToBlockDocument('```\nx\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |')), 'codeBlock,table')
+    assert.equal(types(descriptionTextToBlockDocument('```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |')), 'paragraph,table')
+  })
+
+  it('reads the table in text that holds every private-use character', () => {
+    let every = ''
+    for (let code = 0xe000; code <= 0xf8ff; code++) every += String.fromCharCode(code)
+    const doc = descriptionTextToBlockDocument(`${every}\n\n| A |\n| --- |\n| 1 |`)
+    assert.equal(types(doc), 'paragraph,table')
+    assert.equal(inlineTextOf(doc.content[0]), every)
   })
 
   it('reads text with no table exactly as markerTextToBlockDocument reads a description', () => {
@@ -81,6 +113,15 @@ describe('descriptionTextToBlockDocument — ids carried from the previous docum
     assert.equal(next.content[0].id, first.content[0].id)
   })
 
+  it('a table added or removed above an edited paragraph leaves that paragraph its id', () => {
+    const plain = descriptionTextToBlockDocument('Intro.\n\nDetails.')
+    const added = descriptionTextToBlockDocument('Intro.\n\n| A |\n| --- |\n| 1 |\n\nDetails, edited.', plain)
+    assert.equal(types(added), 'paragraph,table,paragraph')
+    assert.equal(added.content[2].id, plain.content[1].id)
+    const removed = descriptionTextToBlockDocument('Intro.\n\nDetails, edited again.', added)
+    assert.equal(removed.content[1].id, plain.content[1].id)
+  })
+
   it('deleting one of two tables never hands its ids to the other', () => {
     const two = descriptionTextToBlockDocument('| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |')
     const next = descriptionTextToBlockDocument('| B |\n| --- |\n| 3 |', two)
@@ -92,6 +133,15 @@ describe('tableToDescriptionText', () => {
   it('prints a table it read back as the same GFM, `|` escaped', () => {
     const text = '| Option | Note |\n| --- | --- |\n| **Blocks** | a \\| pipe |'
     assert.equal(tableToDescriptionText(descriptionTextToBlockDocument(text).content[0]), text)
+  })
+
+  it('prints a cell whose run ends in a long stretch of whitespace as its text alone', () => {
+    const read = descriptionTextToBlockDocument('| A |\n| --- |\n| 1 |').content[0]
+    const [header, body] = children(read)
+    const cell = children(body)[0]
+    const long = `a${' '.repeat(100_000)}b${' '.repeat(100_000)}\n`
+    const table = { ...read, content: [header, { ...body, content: [{ ...cell, content: [{ ...children(cell)[0], content: [{ type: 'text', text: long }] }] }] }] }
+    assert.equal(tableToDescriptionText(table as Block), `| A |\n| --- |\n| a${' '.repeat(100_000)}b |`)
   })
 
   it('gives no spelling for a table whose first row is not a header, or whose cell holds a heading', () => {

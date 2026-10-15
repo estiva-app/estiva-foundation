@@ -15,6 +15,7 @@
  */
 import { type Block, type BlockDocument, inlineTextOf, newBlockId } from './blocks.js'
 import { blockDocumentToMarkerText, markerTextToBlockDocument } from './bridge-content.js'
+import { fenceCloses } from './content.js'
 
 const DESCRIPTION = { description: true }
 
@@ -30,8 +31,9 @@ const childBlocks = (block: Block): Block[] | undefined =>
  * Text as a description's block document: marker text read with
  * `{ description: true }`, with each GFM pipe table read as a `table` block.
  * A table is a block boundary, so it stands in the marker text as a
- * placeholder paragraph of its own, and the document is parsed once:
- * `previous` then lends ids by the same index the whole text has. A table
+ * placeholder paragraph of its own. `previous` lends the other blocks their
+ * ids by index among the blocks that are not tables, so a table added or
+ * removed above a paragraph does not cost that paragraph its id. A table
  * takes the ids of a table in `previous` that prints the same; failing that,
  * of the table at its position, but only when the text has as many tables as
  * `previous` — else a deleted table's ids would pass to the next one.
@@ -39,26 +41,40 @@ const childBlocks = (block: Block): Block[] | undefined =>
 export function descriptionTextToBlockDocument(text: string, previous?: BlockDocument): BlockDocument {
   const before = previous?.content ?? []
   const mark = placeholderFor(text)
-  const placeholder = new RegExp(`^${mark}(\\d+)${mark}$`)
   const tables: string[][][] = []
   const lines = text.split('\n')
   const out: string[] = []
-  let fenced = false
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (/^ {0,3}```/.test(line)) fenced = !fenced
-    const header = !fenced && TABLE_ROW.test(line) ? rowCells(line) : undefined
+    const fenceEnd = fenceCloses(lines, i)
+    if (fenceEnd !== -1) {
+      out.push(...lines.slice(i, fenceEnd + 1))
+      i = fenceEnd
+      continue
+    }
+    const header = PIPE.test(line) ? rowCells(line) : undefined
     if (!header || i + 1 >= lines.length || !isSeparator(lines[i + 1], header.length)) {
       out.push(line)
       continue
     }
     const rows = [header]
-    for (i += 2; i < lines.length && TABLE_ROW.test(lines[i]); i++) rows.push(rowCells(lines[i]))
+    for (i += 2; i < lines.length && lines[i].trim() && PIPE.test(lines[i]); i++) rows.push(rowCells(lines[i]))
     i--
     out.push('', `${mark}${tables.length}${mark}`, '')
     tables.push(rows)
   }
-  if (!tables.length) return markerTextToBlockDocument(text, doc(before), DESCRIPTION)
+  const aligned = before.filter((block) => block.type !== 'table')
+  if (!tables.length) return markerTextToBlockDocument(text, doc(aligned), DESCRIPTION)
+
+  // Which blocks are tables' places is known before ids are lent: the blocks
+  // the text spells do not depend on `previous`.
+  const marked = out.join('\n')
+  const places = new Map(tables.map((_, n) => [`${mark}${n}${mark}`, n]))
+  const placeOf = (block: Block) => (block.type === 'paragraph' ? places.get(inlineTextOf(block)) : undefined)
+  markerTextToBlockDocument(marked, undefined, DESCRIPTION).content.forEach((block, i) => {
+    if (placeOf(block) !== undefined) aligned.splice(i, 0, { type: 'paragraph', id: '' })
+  })
+
   const oldTables = before.filter((block) => block.type === 'table')
   const used = new Set<Block>()
   const lend = (rows: string[][], n: number): Block | undefined => {
@@ -70,26 +86,32 @@ export function descriptionTextToBlockDocument(text: string, previous?: BlockDoc
     return old
   }
   return doc(
-    markerTextToBlockDocument(out.join('\n'), doc(before), DESCRIPTION).content.map((block) => {
-      const n = block.type === 'paragraph' ? Number(placeholder.exec(inlineTextOf(block))?.[1] ?? NaN) : NaN
-      return n < tables.length ? tableBlock(tables[n], lend(tables[n], n)) : block
+    markerTextToBlockDocument(marked, doc(aligned), DESCRIPTION).content.map((block) => {
+      const n = placeOf(block)
+      return n === undefined ? block : tableBlock(tables[n], lend(tables[n], n))
     }),
   )
 }
 
 /**
- * A private-use character the text does not hold, so nothing a person writes —
- * or pastes — is mistaken for a table's place.
+ * A mark the text does not hold, so nothing a person writes — or pastes — is
+ * mistaken for a table's place: a private-use character, or, in text that
+ * holds every one of them, one followed by a counter.
  */
 function placeholderFor(text: string): string {
-  let code = 0xe000
-  while (text.includes(String.fromCharCode(code))) code++
-  return String.fromCharCode(code)
+  for (let code = 0xe000; code <= 0xf8ff; code++) {
+    const mark = String.fromCharCode(code)
+    if (!text.includes(mark)) return mark
+  }
+  let n = 0
+  while (text.includes(`${n}x`)) n++
+  return `${n}x`
 }
 
-const TABLE_ROW = /^ {0,3}\|/
+/** An unescaped pipe: a line that can be a table's header or row. */
+const PIPE = /(?<!\\)\|/
 
-/** A row's cells, `\|` read as a literal pipe. */
+/** A row's cells, outer pipes optional, `\|` read as a literal pipe. */
 function rowCells(line: string): string[] {
   const inner = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '')
   return inner.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'))
@@ -97,13 +119,14 @@ function rowCells(line: string): string[] {
 
 /** GFM's delimiter row: one `---` (optionally `:`-aligned) per header cell. */
 function isSeparator(line: string, width: number): boolean {
-  if (!TABLE_ROW.test(line)) return false
+  if (!PIPE.test(line)) return false
   const cells = rowCells(line)
   return cells.length === width && cells.every((cell) => /^:?-+:?$/.test(cell))
 }
 
+/** A table as wide as its widest row, so no cell's text is lost. */
 function tableBlock(rows: string[][], old: Block | undefined): Block {
-  const width = rows[0].length
+  const width = Math.max(...rows.map((cells) => cells.length))
   const oldRows = old ? (childBlocks(old) ?? []) : []
   return {
     type: 'table',
@@ -170,7 +193,7 @@ function trimRun(block: Block): Block {
   while (run.length) {
     const last = run[run.length - 1]
     if (last.type !== 'text' || typeof last.text !== 'string') break
-    const trimmedText = last.text.replace(/\s+$/, '')
+    const trimmedText = last.text.trimEnd()
     if (trimmedText) {
       run[run.length - 1] = { ...last, text: trimmedText }
       break

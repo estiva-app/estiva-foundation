@@ -236,7 +236,7 @@ const FENCE_RE = /^```/
  * render literally, and swallowing the rest of the body because somebody typed
  * three backticks is the opposite of that.
  */
-function fenceCloses(lines: string[], from: number): number {
+export function fenceCloses(lines: string[], from: number): number {
   if (!FENCE_RE.test(lines[from])) return -1
   for (let j = from + 1; j < lines.length; j++) if (FENCE_RE.test(lines[j])) return j
   return -1
