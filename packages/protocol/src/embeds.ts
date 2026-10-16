@@ -43,6 +43,24 @@ export function embedTag(value: string, layout: EmbedLayout): string[] {
   return [EMBED_TAG, value, layout]
 }
 
+/**
+ * A whole `embed` set as tags, as a send or an edit writes it: each value
+ * normalised as {@link embedsOf} reads it, the first entry per value kept.
+ * Throws on a value that is neither an address nor an event id, or on a
+ * layout this writer does not know, rather than write a tag readers skip.
+ */
+export function embedTagsOf(set: readonly Embed[]): string[][] {
+  const seen = new Set<string>()
+  return set.flatMap((e) => {
+    const value = normalise(e.value)
+    if (!value) throw new Error(`not an address or event id: ${e.value}`)
+    if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
+    if (seen.has(value)) return []
+    seen.add(value)
+    return [embedTag(value, e.layout)]
+  })
+}
+
 // `partsOf`'s shape: an empty `d` is a valid address (NIP-01).
 const ADDRESS = /^\d+:[0-9a-f]{64}:/
 const EVENT_ID = /^[0-9a-f]{64}$/
@@ -94,7 +112,6 @@ function normalise(value: string): string | undefined {
 export type LinkResolver = (url: string) => string | undefined
 
 const TRAILING = new Set(['.', ',', ';', ':', '!', '?', ')', ']'])
-const URL_RUN = /https?:\/\/[^\s<>"'`]+/g
 
 /** A URL run without the sentence's trailing punctuation; stripped by a loop, which stays linear on a hostile run of dots. */
 function trimUrl(url: string): string {
@@ -106,11 +123,6 @@ function trimUrl(url: string): string {
 /** A URL stuck to the end of a word (`seehttps://…`) is the word's, not a link. */
 function stuckToWord(text: string, start: number): boolean {
   return start > 0 && /[\p{L}\p{N}]/u.test(text[start - 1])
-}
-
-/** The http(s) links in a text. Trailing punctuation is the sentence's, not the link's. */
-function urlsIn(text: string): string[] {
-  return [...text.matchAll(URL_RUN)].filter((m) => !stuckToWord(text, m.index)).map((m) => trimUrl(m[0]))
 }
 
 /**
@@ -172,26 +184,18 @@ export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResol
     seen.add(value)
     out.push(value)
   }
-  // Adjacent plain runs are read as one text, so a link a mark splits in two is still one link.
-  const scan = (text: string) => {
-    if (!resolveLink || !text.includes('://')) return
-    for (const url of urlsIn(text)) {
-      const value = resolveLink(url)
-      if (value) take(normalise(value))
-    }
-  }
+  const resolve = (url: string) => resolveLink && take(normalise(resolveLink(url) ?? ''))
+  // Run by run, by the rules {@link linksAsReferences} turns links by, so a URL names a value exactly where it draws as a reference.
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.type !== 'codeBlock') {
-        let text = ''
         for (const run of block.inline ?? []) {
-          if (run.reference || run.marks.includes('code')) {
-            scan(text)
-            text = ''
-            if (run.reference) take(valueOfReference(run.reference))
-          } else text += run.text
+          if (run.reference) take(valueOfReference(run.reference))
+          else if (run.marks.includes('code')) continue
+          else if (run.href !== undefined) {
+            if (run.text === run.href) resolve(run.href)
+          } else for (const { url } of urlRunsIn(run.text)) resolve(url)
         }
-        scan(text)
       }
       if (block.children) walk(block.children)
     }
@@ -251,31 +255,81 @@ export function isFolderValue(value: string): boolean {
 }
 
 /**
+ * What one line of a message draws (§13.2, §13.6.2):
+ * - `sentence` — its runs as they are, each reference its chip;
+ * - `row` — the line is only a reference to `value`, drawn as its row;
+ * - `nothing` — the same, but `value` has a card or a part under the message,
+ *   which stands for it (C26);
+ * - `url` — a lone URL that names nothing (no app claims it, or the answer has
+ *   not come back), drawn as the URL as written;
+ * - `unreadable` — a lone `nostr:` reference that names no address or event
+ *   id, drawn as the unreadable row.
+ */
+export type LineDraw =
+  | { draw: 'sentence' }
+  | { draw: 'row' | 'nothing'; value: string }
+  | { draw: 'url'; url: string }
+  | { draw: 'unreadable'; reference: string }
+
+/**
+ * How a reader draws one of a message's lines ({@link linesOf}) in `block`:
+ * {@link isOnlyReferenceLine}, then the value it names, then whether a card
+ * stands for it. `cards` is {@link cardsIn}'s answer (its `none` entries draw
+ * no card), `parts` the message's `part` pointers. A Folder alone on its line
+ * stays a chip, so its line is a sentence. Whether the reader can read a
+ * `row`'s object is its own business: one it cannot draws the unreadable row.
+ */
+export function lineDrawOf(
+  line: readonly RenderInline[],
+  block: Pick<RenderBlock, 'type'>,
+  context: { cards?: readonly Embed[]; parts?: readonly PartPointer[]; resolveLink?: LinkResolver } = {},
+): LineDraw {
+  const only = isOnlyReferenceLine(line, block)
+  if (!only) return { draw: 'sentence' }
+  const isReference = /^nostr:/i.test(only)
+  const value = isReference ? valueOfReference(only) : normalise(context.resolveLink?.(only) ?? '')
+  if (!value) return isReference ? { draw: 'unreadable', reference: only } : { draw: 'url', url: only }
+  if (isFolderValue(value)) return { draw: 'sentence' }
+  const carded =
+    (context.cards ?? []).some((e) => e.value === value && e.layout !== 'none') ||
+    (context.parts ?? []).some((p) => normalise(p.address) === value)
+  return { draw: carded ? 'nothing' : 'row', value }
+}
+
+/**
  * The value a writer gives the default card, `["embed", V, "detailed"]`, as
  * it sends or edits a message (§13.6.2), or undefined.
  *
  * `values` is what the body names, resolved ({@link valuesIn}), and `parts`
- * its `part` pointers. A file counts, except a Folder; so does a part's file.
- * A message (an event id) does not. When exactly one file counts, it gets the
- * card, unless a part names it (the part wins, and draws under the message
- * already) or it is `here`, the object whose conversation the message is in.
+ * its `part` pointers. A file counts, except a Folder and `here`, the object
+ * whose conversation the message is in (Miky, 2026-10-16: the issue a
+ * message is about plus one other file gives the other its card); a part's
+ * file counts too. A message (an event id) does not. When exactly one file
+ * counts, it gets the card, unless a part names it (the part wins, and draws
+ * under the message already).
  *
- * On an edit, pass the values the previous folded body named as `previous`: the
- * default is only for a file the edit names first, so a card its author
- * removed with ✕ before sending, which left no tag, does not come back. The
- * edit then carries the whole folded set plus this one ({@link withCard}).
+ * On an edit, pass the values the previous folded body named as `previous`,
+ * and the folded `embed` set as `embeds`: the default is only for a file the
+ * edit names first, so a card its author removed with ✕ before sending, which
+ * left no tag, does not come back, and a value that has an entry keeps it, so
+ * a ✕ after sending (`none`) holds even when the link is removed and named
+ * again. The edit then carries the whole folded set plus this one
+ * ({@link withCard}).
  */
 export function defaultCardOf(
   values: readonly string[],
   parts: readonly PartPointer[] = [],
-  options: { here?: string; previous?: readonly string[] } = {},
+  options: { here?: string; previous?: readonly string[]; embeds?: readonly Embed[] } = {},
 ): string | undefined {
+  const here = normalise(options.here ?? '')
   const withPart = new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v))
-  const files = new Set([...values.map(normalise), ...withPart].filter((v): v is string => !!v && ADDRESS.test(v) && !isFolderValue(v)))
+  const isFile = (v: string | undefined): v is string => !!v && ADDRESS.test(v) && !isFolderValue(v) && v !== here
+  const files = new Set([...values.map(normalise), ...withPart].filter(isFile))
   if (files.size !== 1) return undefined
   const [file] = files
-  if (withPart.has(file) || file === normalise(options.here ?? '')) return undefined
+  if (withPart.has(file)) return undefined
   if (options.previous?.some((v) => normalise(v) === file)) return undefined
+  if (options.embeds?.some((e) => normalise(e.value) === file)) return undefined
   return file
 }
 

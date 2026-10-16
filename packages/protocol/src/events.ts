@@ -35,7 +35,7 @@
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils'
 import { type BlockDocument, serializeBlockDocument } from './blocks.js'
-import { type Embed, embedTag } from './embeds.js'
+import { type Embed, embedTagsOf } from './embeds.js'
 
 /** A Nostr tag: an array of strings whose first element is the tag name. */
 export type NostrTag = string[]
@@ -745,7 +745,7 @@ export function buildEdit(
       // and a rounded `ts` could land in the next second and be discarded by
       // its own agreement rule.
       ['ts', String(Math.floor(createdAtMs))],
-      ...(args.embeds ?? []).map((e) => embedTag(e.value, e.layout)),
+      ...embedTagsOf(args.embeds ?? []),
       ...(args.mediaTags ?? []),
     ],
     content: args.body,

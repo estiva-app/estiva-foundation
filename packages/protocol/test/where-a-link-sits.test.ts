@@ -4,8 +4,8 @@
  * card under the message by the writer's default. Conformance C21, C26, C27.
  *
  * A reader here does what Peek and Ship do: split each block into lines
- * (`linesOf`), ask what a line is only (`isOnlyReferenceLine`), and draw
- * nothing on a lone line whose value has a card under the message (`cardsIn`).
+ * (`linesOf`) and ask each what it draws (`lineDrawOf`), given the cards under
+ * the message (`cardsIn`).
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -18,13 +18,12 @@ import {
   embedsOf,
   encodeNevent,
   encodeNpub,
-  isFolderValue,
   isOnlyReferenceLine,
+  lineDrawOf,
   linesOf,
   linksAsReferences,
   toRenderTree,
   urlRunsIn,
-  valueOfReference,
   valuesIn,
   withCard,
   type Embed,
@@ -47,22 +46,21 @@ const resolve: LinkResolver = (url) => (url === ISSUE_URL ? ISSUE : undefined)
 
 const tree = (text: string) => toRenderTree(text, 'marker')
 
-/** What each line of a message draws, as a reader following §13.6.2 would: `row <value>`, `url <url>`, `nothing`, or `sentence`. */
+/** What each line of a message draws, by `lineDrawOf`: `row <value>`, `url <url>`, `row unreadable`, `nothing`, or `sentence`. */
 function draw(text: string, embeds: Embed[] = [], parts: { address: string; block: string }[] = []): string[] {
   const blocks = tree(text)
-  const carded = new Set([...cardsIn(embeds, blocks, parts, resolve).filter((e) => e.layout !== 'none').map((e) => e.value), ...parts.map((p) => p.address)])
+  const cards = cardsIn(embeds, blocks, parts, resolve)
   const out: string[] = []
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.inline) {
         for (const line of linesOf(block)) {
           if (line.length === 0) continue
-          const only = isOnlyReferenceLine(line, block)
-          const value = only && (only.startsWith('nostr:') ? valueOfReference(only) : resolve(only))
-          if (!only) out.push('sentence')
-          else if (!value) out.push(only.startsWith('nostr:') ? 'row unreadable' : `url ${only}`)
-          else if (isFolderValue(value)) out.push('sentence')
-          else out.push(carded.has(value) ? 'nothing' : `row ${value}`)
+          const got = lineDrawOf(line, block, { cards, parts, resolveLink: resolve })
+          if (got.draw === 'row') out.push(`row ${got.value}`)
+          else if (got.draw === 'url') out.push(`url ${got.url}`)
+          else if (got.draw === 'unreadable') out.push('row unreadable')
+          else out.push(got.draw)
         }
       }
       if (block.children) walk(block.children)
@@ -93,6 +91,22 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     }
     assert.equal(isOnlyReferenceLine(linesOf(tree(`> ${ref(ISSUE)}`)[0])[0], { type: 'blockquote' }), undefined)
     assert.equal(isOnlyReferenceLine(linesOf(tree(`## ${ref(ISSUE)}`)[0])[0], { type: 'heading' }), undefined)
+  })
+
+  it('a link on words names nothing: no value, no card, no default card', () => {
+    for (const text of [`see [the plan](${ISSUE_URL})`, `[**the plan**](${ISSUE_URL})`]) {
+      assert.deepEqual(valuesIn(tree(text), resolve), [], text)
+      assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(text), [], resolve), [], text)
+      assert.equal(defaultCardOf(valuesIn(tree(text), resolve)), undefined, text)
+    }
+  })
+
+  it('a URL names a value exactly where it reads as a reference', () => {
+    for (const text of [ISSUE_URL, `**see**${ISSUE_URL}`, `see${ISSUE_URL}`, `[the plan](${ISSUE_URL})`, `[**the plan**](${ISSUE_URL})`, `\`${ISSUE_URL}\``, `(${ISSUE_URL}).`]) {
+      const named = valuesIn(tree(text), resolve).length > 0
+      const turned = linksAsReferences(tree(text), resolve).some((b) => b.inline?.some((r) => r.reference))
+      assert.equal(named, turned, text)
+    }
   })
 
   it('each line of a paragraph is its own line', () => {
@@ -151,6 +165,15 @@ describe('C27 — the default card (§13.6.2)', () => {
     assert.equal(defaultCardOf(named(ref(ISSUE)), [], { here: ISSUE }), undefined)
   })
 
+  it('on a file’s own conversation, that file and one other give the other its card', () => {
+    assert.equal(defaultCardOf(named(`${ref(ISSUE)} needs ${ref(PROJECT)}`), [], { here: ISSUE }), PROJECT)
+  })
+
+  it('a card removed with ✕ after sending stays off when its link is removed and added back', () => {
+    const embeds: Embed[] = [{ value: ISSUE, layout: 'none' }]
+    assert.equal(defaultCardOf(named(`again ${ref(ISSUE)}`), [], { previous: named('removed it'), embeds }), undefined)
+  })
+
   it('an edit adds it only for a file the previous body did not name, and carries the whole set', () => {
     const before = named('no link yet')
     const after = named(`now ${ref(ISSUE)}`)
@@ -167,6 +190,13 @@ describe('C27 — the default card (§13.6.2)', () => {
   it('an edit that changes no card carries no embed', () => {
     const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'fixed' })
     assert.deepEqual(edit.tags.map((t) => t[0]), ['h', 'e', 'ts'])
+  })
+
+  it('an edit writes each value once, lowercased as readers read it, and refuses one that is not an address or event id', () => {
+    const embeds: Embed[] = [{ value: MESSAGE.toUpperCase(), layout: 'none' }, { value: MESSAGE, layout: 'detailed' }]
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: messageRef, embeds })
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(MESSAGE, 'none')])
+    assert.throws(() => buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: [{ value: 'https://ship.estiva.app/issue/x', layout: 'detailed' }] }))
   })
 })
 
