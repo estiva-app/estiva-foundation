@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.37.0'
+export const PROTOCOL_VERSION = '0.38.0'
 
 export {
   // types
@@ -284,7 +284,25 @@ export {
   resolveCommentAnchor,
   selectionAnchorTags,
 } from './comment-anchor.js'
-export { type Embed, type EmbedLayout, type LinkResolver, EMBED_TAG, cardsIn, embedTag, embedsOf, linksAsReferences, referenceOfLink, urlRunsIn } from './embeds.js'
+export {
+  type Embed,
+  type EmbedLayout,
+  type LinkResolver,
+  EMBED_TAG,
+  cardsIn,
+  defaultCardOf,
+  embedTag,
+  embedsOf,
+  isFolderValue,
+  isOnlyReferenceLine,
+  linesOf,
+  linksAsReferences,
+  referenceOfLink,
+  urlRunsIn,
+  valueOfReference,
+  valuesIn,
+  withCard,
+} from './embeds.js'
 export {
   type BlossomVerb,
   type Imeta,

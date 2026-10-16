@@ -4,6 +4,24 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.38.0 — 2026-10-16
+
+**Wire behaviour: changed — where a link sits decides how it draws in a
+message** (SPEC §13.2, §13.6.2, C21, C26, C27; Widgets 2; record
+where-a-link-sits-decides-how-it-draws). No new tag. Reading: a line that is
+only a reference draws the file's row in place (`linesOf`,
+`isOnlyReferenceLine`; a person or a Folder stays a chip, `isFolderValue`),
+and draws nothing when that file has a card or a part under the message.
+Writing: `defaultCardOf` picks the one file that takes the default
+`["embed", V, "detailed"]` at send or on an edit that names it first;
+`withCard` sets one value in a folded set, for ✕ (`none`) or an edit's default;
+`buildEdit` takes `embeds` and `mediaTags`, so an edit can carry the whole
+set. Also exported: `valuesIn` (what a body names, the count `cardsIn` uses)
+and `valueOfReference`, which Peek and Ship each copied. **Changed:** a bare
+URL stuck to the end of a word (`seehttps://…`) is no longer a link, in
+`urlRunsIn`, `linksAsReferences` and `cardsIn`, so it names nothing and takes
+no `a`.
+
 ## 0.37.0 — 2026-10-15
 
 **Wire behaviour: new — a comment can anchor to a run of blocks and the words
