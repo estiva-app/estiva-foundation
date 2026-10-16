@@ -27,7 +27,11 @@ How published declarations are read changes for two kinds:
   `declaredBy` naming `spec:3.2`: a `kind:9` carrying only `h`, its body in
   `content`. Offer it only on a Folder with a relay-signed `30890`, and only if
   you may sign `kind:9`. A manifest's own creation of a `kind:9` on a Folder
-  (Peek's) is not offered beside it.
+  (Peek's) is not offered beside it. Act with it as with `create-file`,
+  `resolveActingManifest(folder, FOLDER_ACTIONS_ADDRESS)`: the Folder's owner
+  is the specification's and declares no actions, so a consumer that started
+  a conversation as the owner's action (no `declaredBy`, or Peek's address)
+  now finds none.
 - **A chat message resolves through the built-in manifest**, as a comment does:
   the `message` widget, the author as title, the text as body, noun `message`,
   opened by the conversation app's `nevent` template. A `k 9` claim is not read.

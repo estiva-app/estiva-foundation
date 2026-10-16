@@ -144,6 +144,7 @@ test('a Folder offers the creation another app declares on it, and says whose it
   const { query } = countingRelay([talk, ledger, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
 
+  assert.ok(found, 'a Folder draws with no manifest claiming it')
   assert.equal(found.appName, 'Talk', 'named by the app it opens in')
   assert.deepEqual(
     found.actions.map((a) => [a.id, a.declaredBy?.address]),
@@ -167,7 +168,7 @@ test('acting with the declaring manifest builds the other app’s object in the 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
 
   const owner = await resolveActingManifest(pointer, undefined, query)
-  assert.equal(owner.address, FOLDER_ACTIONS_ADDRESS, 'no declaredBy is the owner, exactly as resolveManifest — the specification')
+  assert.equal(owner?.address, FOLDER_ACTIONS_ADDRESS,'no declaredBy is the owner, exactly as resolveManifest — the specification')
 
   const acting = await resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query)
   assert.equal(acting.address, `31990:${LEDGER_APP}:ledger`)
@@ -268,7 +269,7 @@ test('an app declaring a new file on a Folder does not add a second row', async 
   })
   const { query } = countingRelay([talk, notes, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['create-file', 'start-a-conversation'], 'the specification’s row, once')
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation'], 'the specification’s row, once')
 })
 
 /*
@@ -280,7 +281,7 @@ test('an app declaring a new file on a Folder does not add a second row', async 
 test('a Folder offers starting a conversation as its own built-in, and the message names it by h alone', async () => {
   const { query } = countingRelay([talk, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  const start = found.actions.find((a) => a.id === 'start-a-conversation')
+  const start = found?.actions.find((a) => a.id === 'start-a-conversation')
   assert.ok(start, 'offered with no manifest declaring it')
   assert.equal(start.declaredBy.address, FOLDER_ACTIONS_ADDRESS)
   assert.equal(start.control, 'form')
@@ -346,7 +347,7 @@ test('only a creation of the declaring app’s own kind is borrowed', async () =
   ])
   const { query } = countingRelay([talk, ledger, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'])
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'])
 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
   const acting = await resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query)
@@ -378,7 +379,7 @@ test('another app declaring a message on a Folder does not add a second row', as
   })
   const { query } = countingRelay([talk, echo, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['create-file', 'start-a-conversation'])
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation'])
 })
 
 test('a set of Folders sweeps once for the kind, and each Folder carries the borrowed row', async () => {
@@ -388,7 +389,7 @@ test('a set of Folders sweeps once for the kind, and each Folder carries the bor
   const refs = [FOLDER, OTHER_FOLDER, THIRD_FOLDER].map((id) => `${KIND_CHANNEL_METADATA}:${RELAY}:${id}`)
   const objects = await resolveForeignObjects(refs, relay.query)
   for (const ref of refs) {
-    assert.deepEqual(objects[ref].actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'], ref)
+    assert.deepEqual(objects[ref]?.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'], ref)
   }
   // Two questions, each asked once for the set: where a Folder opens, and who
   // else creates in one. Neither is asked per Folder, nor of a `k` tag.
@@ -408,7 +409,7 @@ test('a refused sweep costs the borrowed rows, not the object, and is asked agai
   }
   const cache = createProjectionCache()
   const degraded = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)
-  assert.equal(degraded.slots.title.value, 'Accounts', 'the Folder still resolves')
+  assert.equal(degraded?.slots.title.value, 'Accounts', 'the Folder still resolves')
   assert.equal(degraded.openUrl, undefined, 'with nowhere to open it, since the opener was in the sweep too')
   // The Folder's built-ins need no sweep, so a refused one does not cost them.
   assert.deepEqual(degraded.actions.map((a) => a.id), ['create-file', 'start-a-conversation'])

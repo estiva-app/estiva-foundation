@@ -157,7 +157,7 @@ test('the public entry point exports what the README tells a builder to import',
 // ── resolveForeignEvent (PRO-11) ────────────────────────────────────────────
 
 // A regular kind an app owns through its manifest. Not `9`: a chat message is
-// built in now, and no manifest is asked about it (bare-file.test.ts).
+// built in now, and no manifest is asked about it (folder-and-message.test.ts).
 const MESSAGE_KIND = 1311
 const messageManifest = event({
   kind: 31990,
