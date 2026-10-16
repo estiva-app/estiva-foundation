@@ -8,9 +8,11 @@
  * on production 2026-09-30.
  *
  * The fixtures are two apps nobody wrote, as `action-conformance` uses: a
- * conversation app that owns the Folder's projection, and a ledger that makes
- * its books in Folders. The Folder is the relay's `kind:39000`, as on
- * production.
+ * conversation app that opens Folders, and a ledger that makes its books in
+ * them. The Folder is the relay's `kind:39000`, as on production, and since
+ * Folders were built in (SPEC §3.2) it is drawn by the specification, never by
+ * a manifest — `staleTalk` is the conversation app still claiming it, as
+ * Peek's manifest did until its republish.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -24,6 +26,8 @@ import {
   KIND_BARE_FILE,
   KIND_CHANNEL_METADATA,
 } from '../dist/index.js'
+
+const KIND_MESSAGE = 9
 
 const RELAY = 'f'.repeat(64)
 const TALK_APP = 'a'.repeat(64)
@@ -77,15 +81,29 @@ const startTalking = {
   input: { type: 'object', properties: { message: { type: 'string', target: 'content' } }, required: ['message'] },
 }
 
-/** The app that draws a Folder — Peek's role. */
+const TALK_WEB = 'https://talk.example/o/<bech32>'
+
+/** The app a Folder opens in — Peek's role: it declares the conversation aspect and claims no kind. */
 const talk = event({
   kind: 31990,
   pubkey: TALK_APP,
-  tags: [['d', 'talk'], ['k', String(KIND_CHANNEL_METADATA)], ['k', '9']],
+  tags: [['d', 'talk'], ['web', TALK_WEB, 'naddr'], ['web', TALK_WEB, 'nevent']],
+  content: JSON.stringify({ name: 'Talk', aspect: 'conversation', projections: {} }),
+})
+
+/** The same app before Folders were built in: it claims the Folder and the message, and declares starting one. */
+const staleTalk = event({
+  kind: 31990,
+  pubkey: TALK_APP,
+  tags: [['d', 'talk'], ['k', String(KIND_CHANNEL_METADATA)], ['k', '9'], ['web', TALK_WEB, 'naddr']],
   content: JSON.stringify({
     name: 'Talk',
+    aspect: 'conversation',
     projections: {
-      [KIND_CHANNEL_METADATA]: { widget: 'card', slots: { title: { tag: 'name' } } },
+      [KIND_CHANNEL_METADATA]: {
+        widget: 'card',
+        slots: { title: { field: 'pubkey' }, list: { children: { kind: 9, via: 'h', match: 'identifier', limit: 50 } } },
+      },
       9: { widget: 'card', slots: { body: { field: 'content' } } },
     },
     actions: [startTalking],
@@ -126,15 +144,16 @@ test('a Folder offers the creation another app declares on it, and says whose it
   const { query } = countingRelay([talk, ledger, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
 
-  assert.equal(found.appName, 'Talk', 'the Folder is still drawn by its owner')
+  assert.ok(found, 'a Folder draws with no manifest claiming it')
+  assert.equal(found.appName, 'Talk', 'named by the app it opens in')
   assert.deepEqual(
     found.actions.map((a) => [a.id, a.declaredBy?.address]),
     [
-      ['start-talking', undefined],
       ['create-file', FOLDER_ACTIONS_ADDRESS],
+      ['start-a-conversation', FOLDER_ACTIONS_ADDRESS],
       ['open-book', `31990:${LEDGER_APP}:ledger`],
     ],
-    "the owner's actions first, then the Folder's built-in, then the borrowed one naming its manifest",
+    "the Folder's built-ins first, then the borrowed one naming its manifest",
   )
   const borrowed = found.actions[2]
   assert.equal(borrowed.control, 'form')
@@ -149,7 +168,7 @@ test('acting with the declaring manifest builds the other app’s object in the 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
 
   const owner = await resolveActingManifest(pointer, undefined, query)
-  assert.equal(owner.manifest.name, 'Talk', 'no declaredBy is the owner, exactly as resolveManifest')
+  assert.equal(owner?.address, FOLDER_ACTIONS_ADDRESS,'no declaredBy is the owner, exactly as resolveManifest — the specification')
 
   const acting = await resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query)
   assert.equal(acting.address, `31990:${LEDGER_APP}:ledger`)
@@ -250,7 +269,57 @@ test('an app declaring a new file on a Folder does not add a second row', async 
   })
   const { query } = countingRelay([talk, notes, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['start-talking', 'create-file'], 'the specification’s row, once')
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation'], 'the specification’s row, once')
+})
+
+/*
+  Starting a conversation moved from Peek's manifest into the specification
+  (folders-belong-to-the-protocol). Acting with it writes a `kind:9` naming
+  the Folder by `h` alone: an `a` naming the `39000` is what §3.2 reads as a
+  mention of the Folder, and the message would be counted as one.
+*/
+test('a Folder offers starting a conversation as its own built-in, and the message names it by h alone', async () => {
+  const { query } = countingRelay([talk, folder()])
+  const found = await resolveForeignObject(FOLDER_ADDRESS, query)
+  const start = found?.actions.find((a) => a.id === 'start-a-conversation')
+  assert.ok(start, 'offered with no manifest declaring it')
+  assert.equal(start.declaredBy.address, FOLDER_ACTIONS_ADDRESS)
+  assert.equal(start.control, 'form')
+  assert.deepEqual(start.fields.map((f) => f.name), ['message'])
+
+  const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
+  const acting = await resolveActingManifest(pointer, FOLDER_ACTIONS_ADDRESS, query)
+  const built = buildActionEvents({
+    manifest: acting.manifest,
+    kind: KIND_CHANNEL_METADATA,
+    address: FOLDER_ADDRESS,
+    objectAuthor: RELAY,
+    folder: FOLDER,
+    actionId: 'start-a-conversation',
+    value: { message: 'Shall we close the quarter on Friday?' },
+    pubkey: PERSON,
+    createdAtMs: 1_700_000_500_000,
+  })
+  assert.ok(Array.isArray(built), String(built))
+  assert.equal(built.length, 1, 'a message is not listed: no Folder command follows it')
+  assert.equal(built[0].kind, KIND_MESSAGE)
+  assert.equal(built[0].content, 'Shall we close the quarter on Friday?')
+  assert.deepEqual(built[0].tags, [['h', FOLDER]])
+})
+
+test('a manifest still claiming the Folder neither draws it nor adds a second row', async () => {
+  const { query } = countingRelay([staleTalk, folder()])
+  const found = await resolveForeignObject(FOLDER_ADDRESS, query)
+  assert.equal(found.slots.title.value, 'Accounts', 'the name, not what the claim says the title is')
+  assert.equal(found.noun, 'folder')
+  assert.equal(found.children, undefined, 'no messages listed as its contents')
+  assert.deepEqual(
+    found.actions.map((a) => [a.id, a.declaredBy?.address]),
+    [
+      ['create-file', FOLDER_ACTIONS_ADDRESS],
+      ['start-a-conversation', FOLDER_ACTIONS_ADDRESS],
+    ],
+  )
 })
 
 test('naming a manifest that was never offered acts with nothing', async () => {
@@ -278,7 +347,7 @@ test('only a creation of the declaring app’s own kind is borrowed', async () =
   ])
   const { query } = countingRelay([talk, ledger, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['start-talking', 'create-file', 'open-book'])
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'])
 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
   const acting = await resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query)
@@ -295,9 +364,9 @@ test('a stale copy declaring the same creation is one row, from the newest manif
   assert.equal(books[0].declaredBy.address, `31990:${LEDGER_APP}:ledger`)
 })
 
-test('what the owner makes on its own kind is not offered again by another app', async () => {
-  // Another app declaring a `kind:9` on a Folder, which the owner already
-  // creates there: the owner's row is the one offered.
+test('another app declaring a message on a Folder does not add a second row', async () => {
+  // A `kind:9` on a Folder is the specification's to start: its row is the
+  // one offered, whoever else declares the same.
   const echo = event({
     kind: 31990,
     pubkey: STAGING,
@@ -310,19 +379,23 @@ test('what the owner makes on its own kind is not offered again by another app',
   })
   const { query } = countingRelay([talk, echo, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
-  assert.deepEqual(found.actions.map((a) => a.id), ['start-talking', 'create-file'])
+  assert.deepEqual(found?.actions.map((a) => a.id), ['create-file', 'start-a-conversation'])
 })
 
 test('a set of Folders sweeps once for the kind, and each Folder carries the borrowed row', async () => {
   const ledger = ledgerManifest(LEDGER_APP)
-  const relay = countingRelay([talk, ledger, folder(), folder(OTHER_FOLDER)])
-  const refs = [FOLDER_ADDRESS, `${KIND_CHANNEL_METADATA}:${RELAY}:${OTHER_FOLDER}`]
+  const THIRD_FOLDER = '5c9d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f'
+  const relay = countingRelay([talk, ledger, folder(), folder(OTHER_FOLDER), folder(THIRD_FOLDER)])
+  const refs = [FOLDER, OTHER_FOLDER, THIRD_FOLDER].map((id) => `${KIND_CHANNEL_METADATA}:${RELAY}:${id}`)
   const objects = await resolveForeignObjects(refs, relay.query)
   for (const ref of refs) {
-    assert.deepEqual(objects[ref].actions.map((a) => a.id), ['start-talking', 'create-file', 'open-book'], ref)
+    assert.deepEqual(objects[ref]?.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'], ref)
   }
-  const sweeps = relay.calls.filter((filters) => filters.some((f) => f.kinds?.includes(31990) && !f['#k']))
-  assert.equal(sweeps.length, 1)
+  // Two questions, each asked once for the set: where a Folder opens, and who
+  // else creates in one. Neither is asked per Folder, nor of a `k` tag.
+  const sweeps = relay.calls.filter((filters) => filters.some((f) => f.kinds?.includes(31990)))
+  assert.equal(sweeps.length, 2)
+  assert.ok(!sweeps.flat().some((f) => f['#k']))
 })
 
 test('a refused sweep costs the borrowed rows, not the object, and is asked again', async () => {
@@ -336,9 +409,10 @@ test('a refused sweep costs the borrowed rows, not the object, and is asked agai
   }
   const cache = createProjectionCache()
   const degraded = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)
-  assert.equal(degraded.slots.title.value, 'Accounts', 'the Folder still resolves')
-  // The Folder's built-in needs no sweep, so a refused one does not cost it.
-  assert.deepEqual(degraded.actions.map((a) => a.id), ['start-talking', 'create-file'])
+  assert.equal(degraded?.slots.title.value, 'Accounts', 'the Folder still resolves')
+  assert.equal(degraded.openUrl, undefined, 'with nowhere to open it, since the opener was in the sweep too')
+  // The Folder's built-ins need no sweep, so a refused one does not cost them.
+  assert.deepEqual(degraded.actions.map((a) => a.id), ['create-file', 'start-a-conversation'])
 
   const pointer = { kind: KIND_CHANNEL_METADATA, pubkey: RELAY, identifier: FOLDER, relays: [] }
   await assert.rejects(resolveActingManifest(pointer, `31990:${LEDGER_APP}:ledger`, query, cache), /rate-limited/, 'acting says so')
@@ -348,7 +422,8 @@ test('a refused sweep costs the borrowed rows, not the object, and is asked agai
 
   refuse = false
   const recovered = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, cache)
-  assert.deepEqual(recovered.actions.map((a) => a.id), ['start-talking', 'create-file', 'open-book'], 'the failure was not remembered')
+  assert.deepEqual(recovered.actions.map((a) => a.id), ['create-file', 'start-a-conversation', 'open-book'], 'the failure was not remembered')
+  assert.ok(recovered.openUrl?.startsWith('https://talk.example/o/naddr1'), 'nor was the missing opener')
 })
 
 test('with a cache the sweep is paid once, and a Folder nobody can read offers nothing', async () => {

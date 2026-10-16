@@ -51,6 +51,11 @@ const FOLDER = '7b32200c-e4c0-4216-b79a-8490fc05e0bd'
 const AUTHOR = 'a'.repeat(64)
 const PROJECT_KIND = 30850
 const ISSUE_KIND = 30851
+// A container and its regular-event children that no app owns by
+// specification — what Peek's Folder and message were before they were built
+// in — so the list machinery is still tested against a published manifest.
+const ROOM_KIND = 30871
+const CHAT_KIND = 1311
 const CHANGE_KIND = 1851
 
 let seq = 0
@@ -990,15 +995,16 @@ describe('a manifest that declares its own containment and stages', () => {
  * consumer before the layer is published as a package.
  */
 describe('a child that names its parent by identifier, not address', () => {
-  const CHANNEL = '39000'
+  // Peek's shape before Folders and messages were built in: a room holding
+  // chat lines, linked by `h`, which carries the bare room uuid. Kinds no app
+  // owns by specification, so the manifest is what is read.
+  const CHANNEL = String(ROOM_KIND)
   const RELAY_KEY = 'c'.repeat(64)
 
-  // A Peek-shaped manifest: a topic holding messages, linked by `h`, which
-  // carries the bare channel uuid.
   const peekManifest = (match?: 'address' | 'identifier') =>
     event({
       kind: 31990,
-      tags: [['d', 'peek'], ['k', CHANNEL], ['k', '9']],
+      tags: [['d', 'peek'], ['k', CHANNEL], ['k', String(CHAT_KIND)]],
       content: JSON.stringify({
         name: 'Peek',
         projections: {
@@ -1006,10 +1012,10 @@ describe('a child that names its parent by identifier, not address', () => {
             widget: 'card',
             slots: {
               title: { tag: 'name' },
-              list: { children: { kind: 9, via: 'h', ...(match ? { match } : {}), limit: 50 } },
+              list: { children: { kind: CHAT_KIND, via: 'h', ...(match ? { match } : {}), limit: 50 } },
             },
           },
-          9: { widget: ['message', 'card'], slots: { title: { field: 'pubkey', as: 'pubkey' } } },
+          [CHAT_KIND]: { widget: ['message', 'card'], slots: { title: { field: 'pubkey', as: 'pubkey' } } },
         },
       }),
     })
@@ -1020,7 +1026,7 @@ describe('a child that names its parent by identifier, not address', () => {
     tags: [['d', FOLDER], ['name', 'design'], ['h', FOLDER]],
   })
   const message = (id: string) =>
-    event({ kind: 9, tags: [['d', id], ['h', FOLDER]], content: `msg ${id}` })
+    event({ kind: CHAT_KIND, tags: [['d', id], ['h', FOLDER]], content: `msg ${id}` })
 
   /*
     Reached by address, never through `resolveFolderProject` — and that is not
@@ -1064,28 +1070,28 @@ describe('a slot whose value is the event’s author', () => {
   it('renders the pubkey as a person, which is the only title a message has', async () => {
     const AUTHOR_B = 'd'.repeat(64)
     const m = event({
-      kind: 39000,
+      kind: ROOM_KIND,
       pubkey: AUTHOR_B,
       tags: [['d', FOLDER], ['name', 'design'], ['h', FOLDER]],
     })
     const withPubkeyTitle = event({
       kind: 31990,
-      tags: [['d', 'peek'], ['k', '39000']],
+      tags: [['d', 'peek'], ['k', String(ROOM_KIND)]],
       content: JSON.stringify({
         name: 'Peek',
         projections: {
-          39000: {
+          [ROOM_KIND]: {
             widget: 'card',
             slots: {
               title: { field: 'pubkey', as: 'pubkey' },
               // A container relation, or the resolver never discovers the kind.
-              list: { children: { kind: 9, via: 'h', match: 'identifier' } },
+              list: { children: { kind: CHAT_KIND, via: 'h', match: 'identifier' } },
             },
           },
         },
       }),
     })
-    const found = await resolveForeignObject(`39000:${AUTHOR_B}:${FOLDER}`, relay([withPubkeyTitle, m]))
+    const found = await resolveForeignObject(`${ROOM_KIND}:${AUTHOR_B}:${FOLDER}`, relay([withPubkeyTitle, m]))
     assert.equal(found?.slots.title.value, AUTHOR_B)
     assert.equal(found?.slots.title.isPubkey, true)
   })
@@ -1104,25 +1110,25 @@ describe('an app whose records never change', () => {
    */
   const noRecords = event({
     kind: 31990,
-    tags: [['d', 'peek'], ['k', '39000']],
+    tags: [['d', 'peek'], ['k', String(ROOM_KIND)]],
     content: JSON.stringify({
       name: 'Peek',
       // no `records` key at all
       projections: {
-        39000: {
+        [ROOM_KIND]: {
           widget: 'card',
           slots: {
             title: { tag: 'name' },
             status: { fold: 'status', default: 'open' },
-            list: { children: { kind: 9, via: 'h', match: 'identifier' } },
+            list: { children: { kind: CHAT_KIND, via: 'h', match: 'identifier' } },
           },
         },
       },
     }),
   })
-  const topic = event({ kind: 39000, tags: [['d', FOLDER], ['name', 'design'], ['h', FOLDER]] })
+  const topic = event({ kind: ROOM_KIND, tags: [['d', FOLDER], ['name', 'design'], ['h', FOLDER]] })
 
-  const ADDRESS = `39000:${AUTHOR}:${FOLDER}`
+  const ADDRESS = `${ROOM_KIND}:${AUTHOR}:${FOLDER}`
 
   it('renders rather than returning nothing', async () => {
     const found = await resolveForeignObject(ADDRESS, relay([noRecords, topic]))
@@ -1147,28 +1153,28 @@ describe('an app whose records never change', () => {
 describe('resolveForeignObject — the list slot', () => {
   const RELAY_KEY = 'c'.repeat(64)
   const UUID = '925897ad-796e-4bc6-999c-ca19df26c4aa'
-  const TOPIC_ADDR = `39000:${RELAY_KEY}:${UUID}`
+  const TOPIC_ADDR = `${ROOM_KIND}:${RELAY_KEY}:${UUID}`
 
   const peekManifest = (opts: { list?: boolean; childProjection?: boolean } = {}) =>
     event({
       kind: 31990,
-      tags: [['d', 'peek'], ['k', '39000'], ['k', '9']],
+      tags: [['d', 'peek'], ['k', String(ROOM_KIND)], ['k', String(CHAT_KIND)]],
       content: JSON.stringify({
         name: 'Peek',
         projections: {
-          39000: {
+          [ROOM_KIND]: {
             widget: 'card',
             slots: {
               title: { tag: 'name' },
               ...(opts.list === false
                 ? {}
-                : { list: { children: { kind: 9, via: 'h', match: 'identifier', limit: 50 } } }),
+                : { list: { children: { kind: CHAT_KIND, via: 'h', match: 'identifier', limit: 50 } } }),
             },
           },
           ...(opts.childProjection === false
             ? {}
             : {
-                9: {
+                [CHAT_KIND]: {
                   widget: ['message', 'card'],
                   slots: { title: { field: 'pubkey', as: 'pubkey' }, body: { field: 'content' } },
                 },
@@ -1177,8 +1183,8 @@ describe('resolveForeignObject — the list slot', () => {
       }),
     })
 
-  const topic = event({ kind: 39000, pubkey: RELAY_KEY, tags: [['d', UUID], ['name', 'design']] })
-  const message = (body: string) => event({ kind: 9, tags: [['h', UUID]], content: body })
+  const topic = event({ kind: ROOM_KIND, pubkey: RELAY_KEY, tags: [['d', UUID], ['name', 'design']] })
+  const message = (body: string) => event({ kind: CHAT_KIND, tags: [['h', UUID]], content: body })
 
   it('resolves children for an object reached by address', async () => {
     const found = await resolveForeignObject(
