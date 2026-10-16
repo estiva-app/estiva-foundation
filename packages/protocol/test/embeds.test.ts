@@ -30,9 +30,9 @@ describe('reading embed tags', () => {
     assert.deepEqual(got, [{ value: PROJECT, layout: 'detailed' }, { value: ISSUE, layout: 'compact' }])
   })
 
-  it('draws an unknown layout as compact and keeps none', () => {
+  it('draws an unknown layout as compact, keeping what it said, and keeps none', () => {
     assert.deepEqual(embedsOf({ tags: [['embed', ISSUE, 'huge'], ['embed', PROJECT, 'none'], ['embed', MESSAGE]] }), [
-      { value: ISSUE, layout: 'compact' },
+      { value: ISSUE, layout: 'compact', written: 'huge' },
       { value: PROJECT, layout: 'none' },
       { value: MESSAGE, layout: 'compact' },
     ])

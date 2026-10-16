@@ -36,6 +36,12 @@ export interface Embed {
   /** An address (`kind:pubkey:d`) or a 64-hex event id, lowercase hex. */
   value: string
   layout: EmbedLayout
+  /**
+   * The layout as its tag wrote it, when this reader does not know it (and
+   * draws it as `compact`). An edit carries it as written ({@link embedTagsOf}),
+   * so a density added later is not rewritten by an older writer.
+   */
+  written?: string
 }
 
 /** The `embed` tag for one reference. */
@@ -45,9 +51,10 @@ export function embedTag(value: string, layout: EmbedLayout): string[] {
 
 /**
  * A whole `embed` set as tags, as a send or an edit writes it: each value
- * normalised as {@link embedsOf} reads it, the first entry per value kept.
+ * normalised as {@link embedsOf} reads it, the first entry per value kept, and
+ * a layout this writer does not know carried as it was written (`written`).
  * Throws on a value that is neither an address nor an event id, or on a
- * layout this writer does not know, rather than write a tag readers skip.
+ * layout that is neither known nor carried, rather than write a tag readers skip.
  */
 export function embedTagsOf(set: readonly Embed[]): string[][] {
   const seen = new Set<string>()
@@ -57,7 +64,7 @@ export function embedTagsOf(set: readonly Embed[]): string[][] {
     if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
     if (seen.has(value)) return []
     seen.add(value)
-    return [embedTag(value, e.layout)]
+    return [[EMBED_TAG, value, (e.layout === 'compact' && e.written) || e.layout]]
   })
 }
 
@@ -85,7 +92,8 @@ export function embedsOf(event: { tags: readonly (readonly string[])[] }): Embed
     const value = normalise(tag[1])
     if (!value || seen.has(value)) continue
     seen.add(value)
-    out.push({ value, layout: layoutOf(tag[2]) })
+    const layout = layoutOf(tag[2])
+    out.push(tag[2] && tag[2] !== layout ? { value, layout, written: tag[2] } : { value, layout })
   }
   return out
 }
@@ -122,7 +130,11 @@ function trimUrl(url: string): string {
 
 /** A URL stuck to the end of a word (`seehttps://…`) is the word's, not a link. */
 function stuckToWord(text: string, start: number): boolean {
-  return start > 0 && /[\p{L}\p{N}]/u.test(text[start - 1])
+  if (start === 0) return false
+  // The code point before it, so a letter outside the BMP (a surrogate pair) counts too.
+  const pair = start >= 2 && /[\uDC00-\uDFFF]/.test(text[start - 1]) && /[\uD800-\uDBFF]/.test(text[start - 2])
+  const at = pair ? start - 2 : start - 1
+  return /[\p{L}\p{N}]/u.test(String.fromCodePoint(text.codePointAt(at)!))
 }
 
 /**
@@ -267,7 +279,7 @@ export function isFolderValue(value: string): boolean {
  */
 export type LineDraw =
   | { draw: 'sentence' }
-  | { draw: 'row' | 'nothing'; value: string }
+  | { draw: 'row' | 'nothing'; value: string; url?: string }
   | { draw: 'url'; url: string }
   | { draw: 'unreadable'; reference: string }
 
@@ -277,7 +289,9 @@ export type LineDraw =
  * stands for it. `cards` is {@link cardsIn}'s answer (its `none` entries draw
  * no card), `parts` the message's `part` pointers. A Folder alone on its line
  * stays a chip, so its line is a sentence. Whether the reader can read a
- * `row`'s object is its own business: one it cannot draws the unreadable row.
+ * `row`'s object is its own business. One it cannot read draws the unreadable
+ * row when the line is a `nostr:` reference; when the line is a URL (`url` is
+ * set) it stays the URL as written, never an empty row (§13.6.2).
  */
 export function lineDrawOf(
   line: readonly RenderInline[],
@@ -293,7 +307,7 @@ export function lineDrawOf(
   const carded =
     (context.cards ?? []).some((e) => e.value === value && e.layout !== 'none') ||
     (context.parts ?? []).some((p) => normalise(p.address) === value)
-  return { draw: carded ? 'nothing' : 'row', value }
+  return { draw: carded ? 'nothing' : 'row', value, ...(isReference ? {} : { url: only }) }
 }
 
 /**
@@ -308,18 +322,18 @@ export function lineDrawOf(
  * counts, it gets the card, unless a part names it (the part wins, and draws
  * under the message already).
  *
- * On an edit, pass the values the previous folded body named as `previous`,
- * and the folded `embed` set as `embeds`: the default is only for a file the
- * edit names first, so a card its author removed with ✕ before sending, which
- * left no tag, does not come back, and a value that has an entry keeps it, so
- * a ✕ after sending (`none`) holds even when the link is removed and named
- * again. The edit then carries the whole folded set plus this one
+ * On an edit, pass the values the previous folded body named as `previous`:
+ * the default is only for a file the edit names first, so a card its author
+ * removed with ✕, which left no tag before sending or `none` after, does not
+ * come back while the link stays. A link taken out and put back is named
+ * first again and gets its card, whichever ✕ removed it (Miky, 2026-10-16).
+ * The edit then carries the whole folded set with this one set to `detailed`
  * ({@link withCard}).
  */
 export function defaultCardOf(
   values: readonly string[],
   parts: readonly PartPointer[] = [],
-  options: { here?: string; previous?: readonly string[]; embeds?: readonly Embed[] } = {},
+  options: { here?: string; previous?: readonly string[] } = {},
 ): string | undefined {
   const here = normalise(options.here ?? '')
   const withPart = new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v))
@@ -329,7 +343,6 @@ export function defaultCardOf(
   const [file] = files
   if (withPart.has(file)) return undefined
   if (options.previous?.some((v) => normalise(v) === file)) return undefined
-  if (options.embeds?.some((e) => normalise(e.value) === file)) return undefined
   return file
 }
 
