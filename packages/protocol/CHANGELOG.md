@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.39.0 — 2026-10-16
+
+**Wire behaviour: changed, on edits only** (SPEC §13.6.2; Widgets 2). An edit
+now carries an `embed` layout this writer does not know as it was written
+(`Embed.written`, from `embedsOf`), where 0.38.0 rewrote it as `compact`.
+`defaultCardOf` loses the `embeds` option: a link taken out of a message and
+put back gets its default card again, whichever ✕ removed it (Miky, 16 Oct).
+Reading: `lineDrawOf`'s `row` and `nothing` carry `url` when the line is a URL,
+so a reader that cannot read the file draws the URL, not an empty row. A URL
+right after a letter outside the BMP (`𝑎https://…`) is stuck to that word, as
+after any other Unicode letter or number.
+
 ## 0.38.0 — 2026-10-16
 
 **Wire behaviour: changed — where a link sits decides how it draws in a

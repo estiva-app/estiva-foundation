@@ -122,6 +122,13 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     assert.deepEqual(draw('https://example.com/x'), ['url https://example.com/x'])
     assert.deepEqual(draw('nostr:naddr1qqqqqq'), ['row unreadable'])
   })
+
+  it('a lone URL that names a file keeps the URL, so a reader that cannot read the file draws the URL, not an empty row', () => {
+    const [block] = tree(ISSUE_URL)
+    assert.deepEqual(lineDrawOf(linesOf(block)[0], block, { resolveLink: resolve }), { draw: 'row', value: ISSUE, url: ISSUE_URL })
+    const [refBlock] = tree(ref(ISSUE))
+    assert.deepEqual(lineDrawOf(linesOf(refBlock)[0], refBlock), { draw: 'row', value: ISSUE })
+  })
 })
 
 describe('C26 — the card replaces the row (§13.6.2)', () => {
@@ -169,9 +176,19 @@ describe('C27 — the default card (§13.6.2)', () => {
     assert.equal(defaultCardOf(named(`${ref(ISSUE)} needs ${ref(PROJECT)}`), [], { here: ISSUE }), PROJECT)
   })
 
-  it('a card removed with ✕ after sending stays off when its link is removed and added back', () => {
-    const embeds: Embed[] = [{ value: ISSUE, layout: 'none' }]
-    assert.equal(defaultCardOf(named(`again ${ref(ISSUE)}`), [], { previous: named('removed it'), embeds }), undefined)
+  it('a card removed with ✕ after sending stays off while its link stays, and comes back when the link is taken out and put back', () => {
+    const set: Embed[] = [{ value: ISSUE, layout: 'none' }]
+    assert.equal(defaultCardOf(named(`the ${ref(ISSUE)}`), [], { previous: named(`teh ${ref(ISSUE)}`) }), undefined)
+    const value = defaultCardOf(named(`again ${ref(ISSUE)}`), [], { previous: named('removed it') })
+    assert.equal(value, ISSUE)
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `again ${ref(ISSUE)}`, embeds: withCard(set, value!, 'detailed') })
+    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)), [{ value: ISSUE, layout: 'detailed' }])
+  })
+
+  it('an edit carries a layout this writer does not know as it was written', () => {
+    const set = embedsOf({ tags: [['embed', PROJECT, 'gallery'], ['embed', ISSUE, 'compact']] })
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: withCard(set, ISSUE, 'none') })
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [['embed', PROJECT, 'gallery'], embedTag(ISSUE, 'none')])
   })
 
   it('an edit adds it only for a file the previous body did not name, and carries the whole set', () => {
@@ -204,6 +221,8 @@ describe('where a bare URL starts and ends (§13.2)', () => {
   it('trailing punctuation and brackets are the sentence’s; a URL stuck to a word is not a link', () => {
     assert.deepEqual(urlRunsIn(`(${ISSUE_URL}), and "${ISSUE_URL}"`).map((r) => r.url), [ISSUE_URL, ISSUE_URL])
     assert.deepEqual(urlRunsIn(`see${ISSUE_URL}`), [])
+    assert.deepEqual(urlRunsIn(`𝑎${ISSUE_URL}`), [], 'a letter outside the BMP is a letter too')
+    assert.deepEqual(urlRunsIn(`🙂${ISSUE_URL}`).map((r) => r.url), [ISSUE_URL], 'an emoji is not a letter')
     assert.deepEqual(valuesIn(tree(`see${ISSUE_URL}`), resolve), [])
     const runs = linksAsReferences(tree(`see${ISSUE_URL}`), resolve)[0].inline!
     assert.equal(runs.some((r) => r.reference), false)
