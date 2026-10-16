@@ -6,6 +6,17 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.12.0 — 2026-10-16
+
+**A `[` row carries the file's summary, and a Leaf page is a type `[` names**
+(SUM-7). `ReferenceCandidate.summary` is a file's summary (SPEC §6.12), plain
+text on one line, for the row's second line; absent when the file has none.
+`ReferenceType` gains `'document'`, a Leaf page (`30842`), which `[` offers in
+every app (Miky, 2026-10-16). Ranking is unchanged: the summary is not matched,
+so search keeps to titles and refs.
+
+SPEC: none changed how this package reads or writes; §6.12 is read by interop.
+
 ## 0.11.0 — 2026-10-13
 
 **Cards fold like attachments** (OPT-16): `foldEmbeds(events)` is every

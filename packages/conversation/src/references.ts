@@ -22,7 +22,7 @@
 import { addrToNaddr } from '@estiva-app/protocol'
 
 /** What a reference names, as the row's type word says it (label objects by type, not app). */
-export type ReferenceType = 'message' | 'issue' | 'project' | 'topic'
+export type ReferenceType = 'message' | 'issue' | 'project' | 'topic' | 'document'
 
 /** Something `[` can offer. */
 export interface ReferenceCandidate {
@@ -36,6 +36,12 @@ export interface ReferenceCandidate {
   title: string
   /** An issue's project title, a message's opening words; `''` when there is none. */
   caption: string
+  /**
+   * A file's summary (SPEC §6.12), plain text on one line: the row's second
+   * line, with `caption` moving up beside the title. Absent when the file has
+   * none, and on a message. Not matched: search keeps to titles.
+   */
+  summary?: string
   /** Matched beside `title`: a message's text, an issue's ref (`CON-33`). */
   search?: string
   /** 0 is closest: {@link MESSAGE_TIER} or {@link FILE_TIER}. */
