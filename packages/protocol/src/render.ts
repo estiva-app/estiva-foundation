@@ -349,11 +349,11 @@ export function renderTreeText(blocks: readonly RenderBlock[]): string {
  * on its line is alone on its line whether or not somebody left a space after
  * it.
  *
- * @deprecated Since 0.33.0 a reference reads as its chip wherever it sits, in a
- * message (§13.6.2) and in a block document (§13.3, "A reference's card"); a
- * card comes only from what its writer chose. Use {@link blockCards} for a
- * document and `cardsIn` for a message. Kept for one release so a reader on it
- * still builds.
+ * @deprecated A whole paragraph is not the unit: since 0.38.0 a message's line
+ * that is only a reference draws its row (§13.2, §13.6.2), which
+ * `isOnlyReferenceLine` decides per line, list items and app URLs included. A
+ * block document reads a reference as its chip (§13.3); use {@link blockCards}
+ * for its cards.
  */
 export function standaloneReference(block: RenderBlock): string | undefined {
   if (block.type !== 'paragraph' || block.children?.length) return undefined

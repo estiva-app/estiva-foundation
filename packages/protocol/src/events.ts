@@ -35,6 +35,7 @@
 import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils'
 import { type BlockDocument, serializeBlockDocument } from './blocks.js'
+import { type Embed, embedTagsOf } from './embeds.js'
 
 /** A Nostr tag: an array of strings whose first element is the tag name. */
 export type NostrTag = string[]
@@ -716,6 +717,15 @@ export function buildEdit(
     targetEventId: string
     /** The new body, in the target's own format. */
     body: string
+    /**
+     * The message's whole `embed` set after this edit, when the edit changes it
+     * (SPEC §13.6.2): a set replaces, so every card it keeps is listed, and
+     * `none` for each it removes (`withCard`). Omitted or empty, the edit
+     * carries none and leaves the set as it was.
+     */
+    embeds?: readonly Embed[]
+    /** The whole `imeta` set after this edit, when it changes it; it folds the same way (§6.8). */
+    mediaTags?: NostrTag[]
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
@@ -735,6 +745,8 @@ export function buildEdit(
       // and a rounded `ts` could land in the next second and be discarded by
       // its own agreement rule.
       ['ts', String(Math.floor(createdAtMs))],
+      ...embedTagsOf(args.embeds ?? []),
+      ...(args.mediaTags ?? []),
     ],
     content: args.body,
   }
