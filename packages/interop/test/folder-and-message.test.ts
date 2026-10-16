@@ -128,6 +128,15 @@ describe('a Folder is drawn from the specification', () => {
     assert.ok(found.openUrl?.startsWith('https://peek.example/o/naddr1'), found.openUrl)
   })
 
+  it('cuts a long one-liner at 120 characters, as Peek’s claim did, so no card grows when the claim goes', async () => {
+    const about = 'Closing the books every quarter, with the receipts, the bank exports and the questions for the accountant, '.repeat(2)
+    const long = event({ kind: KIND_CHANNEL_METADATA, tags: [['d', FOLDER], ['name', 'Accounts'], ['about', about]] })
+    const found = await resolveForeignObject(FOLDER_ADDRESS, relay([peek(), long]).query)
+    const shown = found?.slots.subtitle?.value
+    assert.ok(typeof shown === 'string' && shown.length <= 121, `cut, not ${String(shown).length} characters`)
+    assert.ok(shown.startsWith('Closing the books every quarter'), shown)
+  })
+
   it('reads no claim on it, and no messages as its contents', async () => {
     const { query, asked } = relay([stalePeek(), folder(), message('one'), message('two')])
     const found = await resolveForeignObject(FOLDER_ADDRESS, query)
