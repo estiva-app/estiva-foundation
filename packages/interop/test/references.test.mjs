@@ -157,6 +157,26 @@ describe('searchFileReferences', () => {
     assert.equal(byId[P1].caption, '')
   })
 
+  test('finds a Leaf page by its title, as a document, with its summary (SUM-7)', async () => {
+    const DOCUMENT = 30842
+    const leaf = event({
+      kind: 31990,
+      tags: [['d', 'leaf'], ['k', String(DOCUMENT)]],
+      content: JSON.stringify({
+        name: 'Leaf',
+        records: { changeKind: CHANGE, targetTag: 'a', fieldTag: 'field', valueTag: 'value' },
+        projections: { [DOCUMENT]: { widget: 'card', slots: { title: { tag: 'title', fold: 'title' } } } },
+      }),
+    })
+    const page = event({ kind: DOCUMENT, tags: [['d', 'plan'], ['title', 'Launch plan'], ['summary', 'What we show on Friday'], ['h', 'f1']] })
+    const relay = searchingRelay([leaf, page])
+    const hits = await searchFileReferences('launch', relay.query)
+    assert.deepEqual(hits.map((c) => c.id), [`${DOCUMENT}:${AUTHOR}:plan`])
+    const [found] = hits
+    assert.equal(found.type, 'document')
+    assert.equal(found.summary, 'What we show on Friday')
+  })
+
   test('a relay that indexes nothing answers nothing, in one request', async () => {
     const relay = searchingRelay([manifest, project, issue('i1', 'Unindexed')])
     const quiet = { ...relay, query: async (filters) => (filters.some((f) => f.search) ? (relay.calls.push(filters), []) : relay.query(filters)) }
@@ -210,6 +230,21 @@ describe('fileCandidates', () => {
     assert.equal(byId[I('r4')].search, 'CON-33')
     assert.equal(byId[I('r4')].caption, 'CON-33 · Conversation standard')
     assert.equal(byId[P1].search, undefined)
+  })
+
+  test("carries a file's current summary as the row's second line, and none when it has none or it was cleared (SUM-7)", async () => {
+    const seeded = event({ kind: ISSUE, tags: [['d', 's1'], ['title', 'Summaries'], ['summary', 'The seed'], ['a', P1], ['h', 'f1']] })
+    const changed = event({ kind: CHANGE, tags: [['a', I('s1')], ['field', 'summary'], ['value', 'What it is  for\nnow'], ['h', 'f1'], ['ts', String(Date.now())]] })
+    const cleared = event({ kind: ISSUE, tags: [['d', 's2'], ['title', 'Cleared'], ['summary', 'Old seed'], ['a', P1], ['h', 'f1']] })
+    const blank = event({ kind: CHANGE, tags: [['a', I('s2')], ['field', 'summary'], ['value', '  '], ['h', 'f1'], ['ts', String(Date.now())]] })
+    const relay = searchingRelay([manifest, project, seeded, changed, cleared, blank, issue('s3', 'None')])
+    const objects = await resolveForeignObjects([P1, I('s1'), I('s2'), I('s3')], relay.query)
+    const rows = await fileCandidates(Object.values(objects), 0, relay.query)
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]))
+    assert.equal(byId[I('s1')].summary, 'What it is for now')
+    assert.equal(byId[I('s1')].caption, 'Conversation standard')
+    assert.equal('summary' in byId[I('s2')], false)
+    assert.equal('summary' in byId[I('s3')], false)
   })
 
   test('leaves out what did not resolve', async () => {

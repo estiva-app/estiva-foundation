@@ -6,7 +6,8 @@
  * resolved object into a row, and typed text into the search tier — so Peek
  * and Ship draw the same rows from the same reads.
  *
- * A row is the type word and the current title; an issue is captioned with its
+ * A row is the type word, the current title and, when it has one, the file's
+ * summary (SPEC §6.12, SUM-7); an issue is captioned with its
  * project's title, and nothing names a Folder (Miky, 2026-10-03). Only what the
  * reader resolved is offered: an object the relay did not hand back to them is
  * never a row, so nothing unreadable is offered. An archived file is offered
@@ -32,12 +33,24 @@ import {
 
 const KIND_PROJECT = 30850
 const KIND_ISSUE = 30851
+const KIND_DOCUMENT = 30842
 
-/** The kinds `[` offers as files, and the type word each draws as. */
+/**
+ * The kinds `[` offers as files, and the type word each draws as. A Leaf page
+ * is offered in every app, beside topics, projects and issues (Miky, SUM-7
+ * kickoff, 2026-10-16).
+ */
 export const REFERENCE_FILE_TYPES: Readonly<Record<number, ReferenceType>> = {
   [KIND_PROJECT]: 'project',
   [KIND_ISSUE]: 'issue',
   [KIND_BARE_FILE]: 'topic',
+  [KIND_DOCUMENT]: 'document',
+}
+
+/** A file's summary as a row's second line: plain text, never a body declared into the slot. */
+const summaryOf = (object: ForeignObject): string | undefined => {
+  const slot = object.slots.subtitle
+  return slot && !slot.format ? slot.value.replace(/\s+/g, ' ').trim() || undefined : undefined
 }
 
 const typeOf = (kind: number): ReferenceType | undefined => REFERENCE_FILE_TYPES[kind]
@@ -95,6 +108,7 @@ export async function fileCandidates(
   return files.map((o) => {
     const parent = o.kind === KIND_ISSUE && o.parentRef ? parents.get(o.parentRef) : undefined
     const ref = refOf(o)
+    const summary = summaryOf(o)
     return {
       id: o.address,
       uri: fileReference(o.address),
@@ -103,6 +117,7 @@ export async function fileCandidates(
       title: o.slots.title!.value,
       // An issue reads "CON-33 · Conversation standard": the ref first, so a hit by ref shows it (Miky, 2026-10-05).
       caption: [ref, parent?.slots.title?.value].filter(Boolean).join(' · '),
+      ...(summary ? { summary } : {}),
       tier,
       ...(ref ? { search: ref } : {}),
       ...(isClosedStatus(o.slots.status) ? { closed: true } : {}),

@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.59.0 — 2026-10-16
+
+**`[` offers Leaf pages, and every row carries its file's summary** (SUM-7).
+
+- `REFERENCE_FILE_TYPES` gains `30842` as `'document'`, so `fileCandidates`
+  and `searchFileReferences` offer a Leaf page in every app, beside topics,
+  projects and issues (Miky, 2026-10-16). The relay finds it by title already:
+  it indexes every object kind's `title` (checked on production, 2026-10-16).
+- Each file row carries `summary`, its `subtitle` slot (SPEC §6.12), one line
+  of plain text; none when the file has no summary or it was cleared.
+
+Manifests: none. Nothing a manifest declares, or how a declaration is read,
+changed. Needs @estiva-app/conversation 0.12.0 for the types.
+
 ## 0.58.0 — 2026-10-15
 
 **Manifests: no manifest is read for a Folder (`kind:39000`) or a chat message
