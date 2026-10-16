@@ -64,7 +64,7 @@ export function embedTagsOf(set: readonly Embed[]): string[][] {
     if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
     if (seen.has(value)) return []
     seen.add(value)
-    return [[EMBED_TAG, value, e.written || e.layout]]
+    return [[EMBED_TAG, value, (e.layout === 'compact' && e.written) || e.layout]]
   })
 }
 
@@ -132,7 +132,8 @@ function trimUrl(url: string): string {
 function stuckToWord(text: string, start: number): boolean {
   if (start === 0) return false
   // The code point before it, so a letter outside the BMP (a surrogate pair) counts too.
-  const at = start >= 2 && /[\uDC00-\uDFFF]/.test(text[start - 1]) ? start - 2 : start - 1
+  const pair = start >= 2 && /[\uDC00-\uDFFF]/.test(text[start - 1]) && /[\uD800-\uDBFF]/.test(text[start - 2])
+  const at = pair ? start - 2 : start - 1
   return /[\p{L}\p{N}]/u.test(String.fromCodePoint(text.codePointAt(at)!))
 }
 

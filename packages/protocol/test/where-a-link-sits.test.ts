@@ -189,6 +189,8 @@ describe('C27 — the default card (§13.6.2)', () => {
     const set = embedsOf({ tags: [['embed', PROJECT, 'gallery'], ['embed', ISSUE, 'compact']] })
     const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: withCard(set, ISSUE, 'none') })
     assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [['embed', PROJECT, 'gallery'], embedTag(ISSUE, 'none')])
+    const removed = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: [{ value: PROJECT, layout: 'none', written: 'gallery' }] })
+    assert.deepEqual(removed.tags.filter((t) => t[0] === 'embed'), [embedTag(PROJECT, 'none')], 'a ✕ on it writes none, not the old layout')
   })
 
   it('an edit adds it only for a file the previous body did not name, and carries the whole set', () => {
@@ -223,6 +225,7 @@ describe('where a bare URL starts and ends (§13.2)', () => {
     assert.deepEqual(urlRunsIn(`see${ISSUE_URL}`), [])
     assert.deepEqual(urlRunsIn(`𝑎${ISSUE_URL}`), [], 'a letter outside the BMP is a letter too')
     assert.deepEqual(urlRunsIn(`🙂${ISSUE_URL}`).map((r) => r.url), [ISSUE_URL], 'an emoji is not a letter')
+    assert.deepEqual(urlRunsIn(`a\uDC00${ISSUE_URL}`).map((r) => r.url), [ISSUE_URL], 'a lone low surrogate is not a letter')
     assert.deepEqual(valuesIn(tree(`see${ISSUE_URL}`), resolve), [])
     const runs = linksAsReferences(tree(`see${ISSUE_URL}`), resolve)[0].inline!
     assert.equal(runs.some((r) => r.reference), false)
