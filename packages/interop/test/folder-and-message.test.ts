@@ -178,6 +178,78 @@ describe('a Folder is drawn from the specification', () => {
   })
 })
 
+/*
+  A Folder's card lists the files in it this reader can open (Miky, 2026-10-16):
+  what its relay-signed `30890` names, never its chat messages and never a count
+  of what the reader cannot open. A chip asks for nothing of it.
+*/
+const KIND_BARE_FILE = 30840
+const KIND_FOLDER_STATE = 30890
+const topic = (d: string, title: string) =>
+  event({ kind: KIND_BARE_FILE, pubkey: PERSON, tags: [['d', d], ['title', title], ['h', FOLDER]] })
+const addressOf = (file: SignedEvent) => `${file.kind}:${file.pubkey}:${file.tags.find((t) => t[0] === 'd')?.[1]}`
+/** The relay's listing of the Folder, naming each address given. */
+const state = (...addresses: string[]) =>
+  event({ kind: KIND_FOLDER_STATE, tags: [['d', FOLDER], ...addresses.map((a) => ['a', a])] })
+
+describe('a Folder card lists its files', () => {
+  it('lists the files its listing names that this reader can open, and nothing of the rest', async () => {
+    const quarter = topic('quarter', 'Q3 close')
+    const receipts = topic('receipts', 'Receipts to chase')
+    // Named by the listing, and not readable here: absent, and not counted.
+    const hidden = `${KIND_BARE_FILE}:${PERSON}:payroll`
+    const { query } = relay([stalePeek(), folder(), message('one'), quarter, receipts, state(addressOf(quarter), hidden, addressOf(receipts))])
+    const found = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, undefined, { folderFiles: true })
+    assert.deepEqual(
+      found?.children?.map((c) => c.slots.title.value),
+      ['Q3 close', 'Receipts to chase'],
+      'its files, in the listing’s order — no messages, no stand-in for the one this reader cannot open',
+    )
+    assert.equal(found?.slots.title.value, 'Accounts')
+  })
+
+  it('says it holds nothing when its listing names nothing', async () => {
+    const { query } = relay([peek(), folder(), message('one'), state()])
+    const found = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, undefined, { folderFiles: true })
+    assert.deepEqual(found?.children, [])
+  })
+
+  it('still draws, with no list rather than an empty one, when its listing cannot be read', async () => {
+    const { query: answer } = relay([peek(), folder()])
+    const query = async (filters: Record<string, unknown>[]) => {
+      if (filters.some((f) => (f.kinds as number[] | undefined)?.includes(KIND_FOLDER_STATE))) throw new Error('rate-limited')
+      return answer(filters)
+    }
+    const found = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, undefined, { folderFiles: true })
+    assert.equal(found?.slots.title.value, 'Accounts')
+    assert.equal(found?.children, undefined)
+  })
+
+  it('a chip reads no listing', async () => {
+    const quarter = topic('quarter', 'Q3 close')
+    const { query, asked } = relay([peek(), folder(), quarter, state(addressOf(quarter))])
+    const found = await resolveForeignObject(FOLDER_ADDRESS, query)
+    assert.equal(found?.slots.title.value, 'Accounts')
+    assert.equal(found?.children, undefined)
+    assert.ok(!asked.some((f) => f.kinds?.includes(KIND_FOLDER_STATE)), 'a Folder chip pays for no list it does not draw')
+  })
+
+  it('lists nothing for a Folder this reader cannot see, though its listing is public', async () => {
+    const quarter = topic('quarter', 'Q3 close')
+    const { query } = relay([peek(), quarter, state(addressOf(quarter))])
+    const found = await resolveForeignObject(FOLDER_ADDRESS, query, undefined, 0, undefined, { folderFiles: true })
+    assert.equal(found?.unreachable, true)
+    assert.equal(found?.children, undefined)
+  })
+
+  it('lists the same files in a set as alone', async () => {
+    const quarter = topic('quarter', 'Q3 close')
+    const { query } = relay([stalePeek(), folder(), message('one'), quarter, state(addressOf(quarter))])
+    const set = await resolveForeignObjects([FOLDER_ADDRESS], query, undefined, createProjectionCache(), { folderFiles: true })
+    assert.deepEqual(set[FOLDER_ADDRESS]?.children?.map((c) => c.slots.title.value), ['Q3 close'])
+  })
+})
+
 describe('a chat message is drawn from the specification', () => {
   it('draws as a message: its author as the title, its text as the body, called a message', async () => {
     const said = message('Shall we close on Friday?')

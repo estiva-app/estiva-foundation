@@ -525,7 +525,9 @@ the noun "message", and a **Folder** (`kind:39000`, §3.2): its `name` as the
 title, its `about` as the subtitle, the noun "folder", opened by your `naddr`
 template. Do not claim either with a `k` tag; the runtime never asks. A
 Folder's contents are what `resolveFolderContents` reads (section 5), not a
-`list` slot, and what every app may do in one — New file, Start a conversation
+`list` slot; a card that lists them under the name resolves the Folder with
+`{ folderFiles: true }` and draws its `children`, the files this reader can
+open, and a chip leaves it off and reads nothing more. What every app may do in one — New file, Start a conversation
 — comes with it, declared by `FOLDER_ACTIONS_ADDRESS`.
 
 ### Say what your links look like

@@ -1718,9 +1718,11 @@ const FOLDER_CREATOR: ResolvedManifest = {
  * **No `list` slot.** What a Folder holds is what its relay-signed `30890`
  * names, which no `children` declaration can say, and it is read by
  * {@link resolveFolderContents} — only the files this viewer resolves, never a
- * count of the rest. Peek's claim listed fifty chat messages instead, and every
- * Folder chip paid for them. A Folder is never inside another (SPEC §3.1), so
- * no listing needs a Folder's children drawn under its row.
+ * count of the rest. A card asks for them as its `children` with
+ * {@link ArchiveReadOptions.folderFiles}; a chip does not, and pays nothing.
+ * Peek's claim listed fifty chat messages instead, and every Folder chip paid
+ * for them. A Folder is never inside another (SPEC §3.1), so no listing needs a
+ * Folder's children drawn under its row.
  *
  * No actions of its own either: every app's way into a Folder is
  * {@link FOLDER_CREATOR}'s, offered beside the others with `declaredBy`
@@ -3478,14 +3480,24 @@ export async function resolveForeignObject(
 
   // Beside the object's own read, not after it: the sweep is cached, and cold
   // it would otherwise add a round trip to every resolve that pays for it.
-  const [answered, creators] = await Promise.all([query(plan.filters), creatorsOrNone(pointer.kind, query, cache)])
+  // A Folder card's files too, for the same reason.
+  const [answered, creators, files] = await Promise.all([
+    query(plan.filters),
+    creatorsOrNone(pointer.kind, query, cache),
+    options.folderFiles && pointer.kind === KIND_CHANNEL_METADATA
+      ? folderFilesOf(pointer.identifier, query, lookupPeople, cache)
+      : undefined,
+  ])
   const followUp = childChangeFilters(plan, answered)
   const assembled = assembleObject(plan, answered, followUp.length ? await queryChunked(followUp, query) : [])
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
-  return withBorrowed(
-    withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled))),
-    borrowedActions(pointer.kind, resolved, creators),
+  return withFiles(
+    withBorrowed(
+      withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled))),
+      borrowedActions(pointer.kind, resolved, creators),
+    ),
+    files,
   )
 }
 
@@ -3587,11 +3599,21 @@ export async function resolveForeignObjects(
   // Who else creates on each kind in the set (MAN-8): one sweep per kind, not
   // per object, read beside the objects themselves.
   const kinds = [...new Set(plans.map(({ plan }) => plan.pointer.kind))]
-  const [events, creatorLists] = await Promise.all([
+  // And each Folder card's files, once per Folder however it is spelled.
+  const folders = options.folderFiles
+    ? [
+        ...new Set(
+          plans.filter(({ plan }) => plan.pointer.kind === KIND_CHANNEL_METADATA).map(({ plan }) => plan.pointer.identifier),
+        ),
+      ]
+    : []
+  const [events, creatorLists, fileLists] = await Promise.all([
     queryChunked(filters, query),
     Promise.all(kinds.map((kind) => creatorsOrNone(kind, query, cache))),
+    Promise.all(folders.map((folder) => folderFilesOf(folder, query, lookupPeople, cache))),
   ])
   const creatorsByKind = new Map(kinds.map((kind, i) => [kind, creatorLists[i]]))
+  const filesByFolder = new Map(folders.map((folder, i) => [folder, fileLists[i]]))
 
   // Every card's children's changes in one more read for the whole set, not
   // one per card (MAN-7) — and none at all when no card has a fold to read.
@@ -3625,9 +3647,12 @@ export async function resolveForeignObjects(
     // it happened to be resolved beside.
     const own: People = {}
     for (const key of peopleOf(built)) if (key in people) own[key] = people[key]
-    results[reference] = withBorrowed(
-      withPeople(built, own),
-      borrowedActions(plan.pointer.kind, plan.resolved, creatorsByKind.get(plan.pointer.kind) ?? []),
+    results[reference] = withFiles(
+      withBorrowed(
+        withPeople(built, own),
+        borrowedActions(plan.pointer.kind, plan.resolved, creatorsByKind.get(plan.pointer.kind) ?? []),
+      ),
+      plan.pointer.kind === KIND_CHANNEL_METADATA ? filesByFolder.get(plan.pointer.identifier) : undefined,
     )
   }
   return results
@@ -3891,6 +3916,46 @@ export interface ArchiveReadOptions {
    * card would pay it every time (SHI-13's one request per tick).
    */
   archivedWith?: boolean
+  /**
+   * For a Folder's card: also list the files in it this reader can open, as
+   * `children` — SPEC §3.2. What {@link resolveFolderContents} returns, so a
+   * file this reader cannot resolve is absent and nothing counts the rest. Off
+   * by default, so a Folder chip in a sentence pays nothing for a list it does
+   * not draw; ignored for anything that is not a Folder.
+   *
+   * When the listing cannot be read the Folder still draws, without
+   * `children`: no list, rather than an empty one that says it holds nothing.
+   *
+   * **It costs what a Folder's page costs**, almost all of it its files'
+   * change history (a description edit is a whole `kind:1851`, and no relay
+   * can filter one by its `field`). Estiva HQ on 2026-10-16, 24 files: 11
+   * requests and 7.6 MB cold, 3 and 7.6 MB warm, ~2 s — where the chip is 1
+   * request and nothing warm. Read it on open and focus, not on a refresh tick.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
+   */
+  folderFiles?: boolean
+}
+
+/**
+ * The files a Folder's card lists ({@link ArchiveReadOptions.folderFiles}),
+ * or `undefined` when its listing could not be read.
+ */
+async function folderFilesOf(
+  folder: string,
+  query: QueryFn,
+  lookupPeople: PeopleFn | undefined,
+  cache: ProjectionCache | undefined,
+): Promise<ForeignObject[] | undefined> {
+  try {
+    return (await resolveFolderContents(folder, query, lookupPeople, cache)).files
+  } catch {
+    return undefined
+  }
+}
+
+function withFiles(object: ForeignObject, files: ForeignObject[] | undefined): ForeignObject {
+  return files && !object.unreachable ? { ...object, children: files } : object
 }
 
 /**

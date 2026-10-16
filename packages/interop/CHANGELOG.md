@@ -19,10 +19,18 @@ How published declarations are read changes for two kinds:
   app declaring the `conversation` aspect and named after it. A `k 39000` claim
   — Peek's, until it republishes — is not asked about, and its projection,
   `list` slot and actions are ignored. Its address is `FOLDER_ACTIONS_ADDRESS`.
-- **No `list` slot on a Folder.** Peek's claim listed fifty `kind:9` messages,
-  which every Folder chip paid for; a Folder's contents are what its `30890`
-  names, read by `resolveFolderContents`. `children` is undefined and
-  `listsChildren` false on a resolved Folder.
+- **A Folder's card lists its files, a chip nothing.** Peek's claim listed
+  fifty `kind:9` messages, which every Folder chip paid for; a Folder's
+  contents are what its `30890` names. Pass `{ folderFiles: true }` to
+  `resolveForeignObject` or `resolveForeignObjects` when you draw a Folder as
+  a card or row: its `children` are the files this reader can open, exactly
+  `resolveFolderContents(…).files`, with nothing counting the rest. Without
+  it (a chip) nothing more is read and `children` is undefined; it is
+  undefined too when the listing cannot be read, so no card says "nothing in
+  it" wrongly. `listsChildren` is false on a Folder: there is no declared
+  list to expand. Every card that drew Peek's messages under a Folder needs
+  the option, or it draws no list. It costs a Folder page's read (Estiva HQ:
+  7.6 MB, ~2 s warm), so read it on open and focus, not on a refresh tick.
 - **`start-a-conversation` is a Folder built-in** beside `create-file`, with
   `declaredBy` naming `spec:3.2`: a `kind:9` carrying only `h`, its body in
   `content`. Offer it only on a Folder with a relay-signed `30890`, and only if
