@@ -214,6 +214,16 @@ describe('a Folder card lists its files', () => {
     assert.deepEqual(found?.children, [])
   })
 
+  it('lists nothing a file claims by naming the Folder itself, when the relay keeps no listing for it', async () => {
+    // A DM is such a Folder: no list under it, rather than "nothing in it".
+    const claimed = topic('claimed', 'Filed by its own h')
+    const found = await resolveForeignObject(FOLDER_ADDRESS, relay([peek(), folder(), claimed]).query, undefined, 0, undefined, {
+      folderFiles: true,
+    })
+    assert.equal(found?.slots.title.value, 'Accounts')
+    assert.equal(found?.children, undefined)
+  })
+
   it('still draws, with no list rather than an empty one, when its listing cannot be read', async () => {
     const { query: answer } = relay([peek(), folder()])
     const query = async (filters: Record<string, unknown>[]) => {

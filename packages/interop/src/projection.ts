@@ -3918,13 +3918,18 @@ export interface ArchiveReadOptions {
   archivedWith?: boolean
   /**
    * For a Folder's card: also list the files in it this reader can open, as
-   * `children` — SPEC §3.2. What {@link resolveFolderContents} returns, so a
-   * file this reader cannot resolve is absent and nothing counts the rest. Off
-   * by default, so a Folder chip in a sentence pays nothing for a list it does
-   * not draw; ignored for anything that is not a Folder.
+   * `children` — SPEC §3.2. What its relay-signed `30890` lists, read as
+   * {@link resolveFolderContents} reads it, so a file this reader cannot
+   * resolve is absent and nothing counts the rest. Off by default, so a Folder
+   * chip in a sentence pays nothing for a list it does not draw; ignored for
+   * anything that is not a Folder.
    *
-   * When the listing cannot be read the Folder still draws, without
-   * `children`: no list, rather than an empty one that says it holds nothing.
+   * A Folder with no `30890` (a DM has none) and one whose listing cannot be
+   * read still draw, without `children`: no list, rather than an empty one
+   * that says it holds nothing.
+   *
+   * The resolve returns once the files have, so read a card's files in a call
+   * of their own: what else is on the page should not wait for them.
    *
    * **It costs what a Folder's page costs**, almost all of it its files'
    * change history (a description edit is a whole `kind:1851`, and no relay
@@ -3938,8 +3943,10 @@ export interface ArchiveReadOptions {
 }
 
 /**
- * The files a Folder's card lists ({@link ArchiveReadOptions.folderFiles}),
- * or `undefined` when its listing could not be read.
+ * The files a Folder's card lists ({@link ArchiveReadOptions.folderFiles}):
+ * what its relay-signed `30890` names, never what files claim by naming the
+ * Folder themselves. `undefined` — no list, not an empty one — for a Folder
+ * with no listing (a DM is one) and when the listing could not be read.
  */
 async function folderFilesOf(
   folder: string,
@@ -3948,14 +3955,15 @@ async function folderFilesOf(
   cache: ProjectionCache | undefined,
 ): Promise<ForeignObject[] | undefined> {
   try {
-    return (await resolveFolderContents(folder, query, lookupPeople, cache)).files
+    const contents = await resolveFolderContents(folder, query, lookupPeople, cache, { listedOnly: true })
+    return contents.hasState ? contents.files : undefined
   } catch {
     return undefined
   }
 }
 
 function withFiles(object: ForeignObject, files: ForeignObject[] | undefined): ForeignObject {
-  return files && !object.unreachable ? { ...object, children: files } : object
+  return files ? { ...object, children: files } : object
 }
 
 /**
@@ -6532,6 +6540,12 @@ export async function resolveFolderContents(
      * Every other list wants the default.
      */
     includeArchived?: boolean
+    /**
+     * Only what the relay-signed `30890` lists: a Folder with none lists no
+     * files, rather than the files that name it themselves. For a Folder's
+     * card ({@link ArchiveReadOptions.folderFiles}).
+     */
+    listedOnly?: boolean
   } = {},
 ): Promise<FolderContents> {
   // 1. The folder itself. Both kinds in one trip: the state is the model and
@@ -6570,7 +6584,9 @@ export async function resolveFolderContents(
         addresses: [...new Set(state.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]))],
         placed: new Map<string, SignedEvent[]>(),
       }
-    : await addressesByContainment(folder, query)
+    : options.listedOnly
+      ? { addresses: [], placed: new Map<string, SignedEvent[]>() }
+      : await addressesByContainment(folder, query)
 
   if (addresses.length === 0) {
     // Nothing listed, so no change query to ride on: the Folder's own archive

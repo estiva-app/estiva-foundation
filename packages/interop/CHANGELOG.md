@@ -23,11 +23,13 @@ How published declarations are read changes for two kinds:
   fifty `kind:9` messages, which every Folder chip paid for; a Folder's
   contents are what its `30890` names. Pass `{ folderFiles: true }` to
   `resolveForeignObject` or `resolveForeignObjects` when you draw a Folder as
-  a card or row: its `children` are the files this reader can open, exactly
-  `resolveFolderContents(…).files`, with nothing counting the rest. Without
-  it (a chip) nothing more is read and `children` is undefined; it is
-  undefined too when the listing cannot be read, so no card says "nothing in
-  it" wrongly. `listsChildren` is false on a Folder: there is no declared
+  a card or row: its `children` are the files its relay-signed `30890` lists
+  that this reader can open, with nothing counting the rest. Without it (a
+  chip) nothing more is read and `children` is undefined; it is undefined too
+  for a Folder with no `30890` (a DM) and when the listing cannot be read, so
+  no card says "nothing in it" wrongly. The resolve waits for the files, so
+  read a card's in a call of its own. `resolveFolderContents` takes
+  `listedOnly` for the same rule. `listsChildren` is false on a Folder: there is no declared
   list to expand. Every card that drew Peek's messages under a Folder needs
   the option, or it draws no list. It costs a Folder page's read (Estiva HQ:
   7.6 MB, ~2 s warm), so read it on open and focus, not on a refresh tick.
