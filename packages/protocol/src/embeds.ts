@@ -20,7 +20,7 @@
  * in an edit can still carry a card (Miky, 2026-10-13, OPT-16 kickoff).
  * {@link cardsIn} applies that rule; {@link embedsOf} reads the tags alone.
  *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/where-a-link-sits-decides-how-it-draws.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/where-a-link-sits-and-which-file-gets-the-card.md
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
