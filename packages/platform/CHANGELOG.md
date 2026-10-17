@@ -1,5 +1,17 @@
 # @estiva-app/platform
 
+## 0.7.1
+
+A reaction or its taking back now reaches a Folder watch (COMM-4).
+
+- `watchFolders` used to drop every event without an `h` tag. A `kind:7` and a
+  `kind:5` carry none: the relay files them under their target's Folder and
+  sends them only to a subscription naming it. The listener now hears them,
+  under the subscription's one Folder, or under each of its Folders when it
+  watches several (each matches the event by its `e`). Seen on production: a
+  reaction QA-1 added in Peek reached an open Leaf tab's socket and never its
+  comment column.
+
 ## 0.7.0
 
 Loading what is opened next, without slowing a click (PEE-5, Peek opens

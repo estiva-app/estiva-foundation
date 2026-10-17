@@ -266,8 +266,11 @@ export function createLiveClient(options: LiveClientOptions): LiveClient {
             },
           ],
           (event) => {
+            // A reaction or a deletion carries no `h`: the relay files it under its target's Folder and sends
+            // it only to a subscription naming that Folder, so it belongs to this group — to its one Folder,
+            // or to one of several, which each hear it and match it by its `e` (COMM-4).
             const folder = folderOf(event)
-            if (folder) activity.notify(folder, event)
+            for (const each of folder ? [folder] : group) activity.notify(each, event)
           },
           {
             onClosed: (reason) => options.log?.('folder subscription closed', { reason }),
