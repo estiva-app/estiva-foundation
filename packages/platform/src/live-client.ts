@@ -149,6 +149,10 @@ export interface LiveClient {
    * reader must be idempotent by event id. `since` bounds that replay: without
    * it the relay replays whatever its default limit allows, shared across every
    * Folder in the filter, which a keeping reader then has to dedupe.
+   *
+   * An event with no `h` — a `kind:7` or a `kind:5`, which the relay files
+   * under its target's Folder — is heard only on a watch of exactly one
+   * Folder: among several, nothing says which one it is in.
    */
   watchFolders(
     folders: string[],
@@ -266,7 +270,10 @@ export function createLiveClient(options: LiveClientOptions): LiveClient {
             },
           ],
           (event) => {
-            const folder = folderOf(event)
+            // A reaction or a deletion carries no `h`: the relay files it under its target's Folder and sends
+            // it only to a subscription naming that Folder. Watching one Folder, that is the one (COMM-4); among
+            // several it cannot be told, and handing it to each would make a wide watch re-read them all.
+            const folder = folderOf(event) ?? (group.length === 1 ? group[0] : undefined)
             if (folder) activity.notify(folder, event)
           },
           {
