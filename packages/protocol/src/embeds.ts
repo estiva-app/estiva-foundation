@@ -202,21 +202,28 @@ export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResol
     out.push(value)
   }
   const resolve = (url: string) => resolveLink && take(normalise(resolveLink(url) ?? ''))
-  // Run by run: a bare URL names a value exactly where {@link linksAsReferences} draws it as a
-  // reference, and a link on words names its target, never a URL in its words.
+  // A bare URL names a value exactly where {@link linksAsReferences} draws it as a reference;
+  // a link on words names its target, never a URL in its words. Each is taken where it starts.
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.type !== 'codeBlock') {
-        let before = ''
-        for (const run of block.inline ?? []) {
-          if (run.reference) take(valueOfReference(run.reference))
-          else if (run.href !== undefined) {
-            if (!run.marks.includes('code')) resolve(run.href)
-          } else if (!run.marks.includes('code')) {
-            for (const target of linkTargetsIn(run.text, before)) resolve(target.url)
+        const runs = block.inline ?? []
+        const links = linksOnWordsIn(runs)
+        const named: { at: number; reference?: string; url?: string }[] = []
+        let at = 0
+        for (const run of runs) {
+          if (run.reference) named.push({ at, reference: run.reference })
+          else if (run.href !== undefined) named.push({ at, url: run.href })
+          else if (!run.marks.includes('code')) {
+            for (const { url, from } of urlRunsIn(run.text)) {
+              if (!links.some((l) => at + from >= l.from && at + from < l.wordsEnd)) named.push({ at: at + from, url })
+            }
+            for (const l of links) if (l.target >= at && l.target < at + run.text.length) named.push({ at: l.from, url: l.url })
           }
-          before += run.text
+          at += run.text.length
         }
+        named.sort((a, b) => a.at - b.at)
+        for (const n of named) n.reference ? take(valueOfReference(n.reference)) : resolve(n.url!)
       }
       if (block.children) walk(block.children)
     }
@@ -407,30 +414,19 @@ export function urlRunsIn(text: string): { url: string; from: number; to: number
 }
 
 /**
- * The URLs a run of marker text names, in order: each bare URL {@link urlRunsIn}
- * finds, and the target of each link on words, never a URL in its words (SPEC
- * §13.6.2). `before` is the block's text ahead of the run, so a link on words
- * whose words carry a mark, split across runs, is told by its `[`.
+ * Each link on words in a block of marker text, `[words](https://…)`, found
+ * over the block's runs joined, so one whose words carry a mark (split across
+ * runs) is found too. Offsets are into that joined text: `from` the `[`,
+ * `wordsEnd` the `]`, `target` where the URL starts (SPEC §13.6.2).
  */
-function linkTargetsIn(text: string, before: string): { url: string }[] {
-  if (!text.includes('://')) return []
-  const out: { url: string }[] = []
+function linksOnWordsIn(runs: readonly RenderInline[]): { from: number; wordsEnd: number; target: number; url: string }[] {
+  const text = runs.map((r) => r.text).join('')
+  if (!text.includes('](')) return []
+  const out: { from: number; wordsEnd: number; target: number; url: string }[] = []
   for (const m of text.matchAll(LINK_OR_URL)) {
-    const start = m.index
-    if (m[1]) {
-      out.push({ url: m[1].slice(m[1].indexOf('](') + 2, -1) })
-      continue
-    }
-    if (stuckToWord(text, start)) continue
-    const url = trimUrl(m[0])
-    if (text.slice(Math.max(0, start - 2), start) === '](') {
-      // The target of a link on words split across runs: `[`, words with a mark, then `](url)`.
-      const opened = /\[[^[\]\n]*$/.test(before + text.slice(0, start - 2))
-      if (opened && text[start + url.length] === ')') out.push({ url })
-      continue
-    }
-    if (text[start - 1] === '[') continue
-    out.push({ url })
+    if (!m[1]) continue
+    const close = m[1].indexOf('](')
+    out.push({ from: m.index, wordsEnd: m.index + close, target: m.index + close + 2, url: m[1].slice(close + 2, -1) })
   }
   return out
 }

@@ -126,6 +126,20 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     assert.deepEqual(valuesIn(tree(`[see ${ISSUE_URL} here](https://example.com)`), resolve), [])
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(`[${ISSUE_URL}](https://example.com)`), [], resolve), [])
     assert.deepEqual(valuesIn(tree(`[${PROJECT_URL}](${ISSUE_URL})`), resolve), [ISSUE])
+    // Words that carry a mark arrive split across runs; a URL in them still names nothing.
+    assert.deepEqual(valuesIn(tree(`[**${PROJECT_URL}**](${ISSUE_URL})`), resolve), [ISSUE])
+    assert.deepEqual(valuesIn(tree(`[see **${PROJECT_URL}** here](https://example.com)`), resolve), [])
+  })
+
+  it('a link with no words is not a link on words, and names nothing', () => {
+    assert.deepEqual(valuesIn(tree(`[](${ISSUE_URL})`), resolve), [])
+  })
+
+  it('a block document’s link names its target whatever its words, code-styled words included', () => {
+    const doc = (text: string, marks: string[] = []): RenderBlock[] => [{ type: 'paragraph', inline: [{ text, marks, href: ISSUE_URL }] } as RenderBlock]
+    assert.deepEqual(valuesIn(doc('the plan'), resolve), [ISSUE])
+    assert.deepEqual(valuesIn(doc('the plan', ['code']), resolve), [ISSUE])
+    assert.deepEqual(valuesIn(doc(PROJECT_URL), resolve), [ISSUE])
   })
 
   it('a `](url)` with no `[` before it on its line is not a link on words', () => {
