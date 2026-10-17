@@ -529,6 +529,13 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * as theft. No answer, or a 5xx, is not a refusal: the token is kept, and the
    * caller tries again rather than asking for a passkey.
    */
+  // Whatever this tab's renewal came to, another tab's sign-out or sign-in
+  // since is the session now.
+  const theirs = (): Renewal => {
+    const token = validToken()
+    return token ? { outcome: 'renewed', token } : { outcome: 'refused' }
+  }
+
   const performRefresh = async (): Promise<Renewal> => {
     const s = session()
     const current = storedToken()
@@ -560,13 +567,6 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       the session this renewal spent is replaced or cleared.
     */
     const stillOurs = () => storedToken()?.refreshToken === current.refreshToken
-
-    // Whatever this tab's renewal came to, another tab's sign-out or sign-in
-    // since is the session now.
-    const theirs = (): Renewal => {
-      const token = validToken()
-      return token ? { outcome: 'renewed', token } : { outcome: 'refused' }
-    }
 
     if (!response.ok) {
       if (!stillOurs()) return theirs()
@@ -625,10 +625,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
     const spending = storedToken()?.refreshToken
     refreshing = new Promise<Renewal>((answer, fail) => {
       lock(`${config.keyPrefix}.renewal`, async () => {
-        if (storedToken()?.refreshToken !== spending) {
-          const token = validToken()
-          return answer(token ? { outcome: 'renewed', token } : { outcome: 'refused' })
-        }
+        if (storedToken()?.refreshToken !== spending) return answer(theirs())
         answer(await performRefresh())
         /*
           Held a little longer than the renewal, though the caller already has
@@ -871,7 +868,10 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
 
       const attempt = (): void => {
         renewing = true
-        void renew().then((result) => {
+        // A renewal that threw (storage full, a lock aborted) answered nothing,
+        // so it is retried like one the network lost, never left holding
+        // `renewing` with no timer armed.
+        void renew().catch((): Renewal => ({ outcome: 'unreachable' })).then((result) => {
           renewing = false
           if (cancelled) return
           if (result.outcome === 'unreachable') {
@@ -919,7 +919,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
         else arm()
       }
 
-      const unwatch = (config.onWake ?? pageWake)(wake)
+      let unwatch = (): void => {}
 
       const stop = (): void => {
         cancelled = true
@@ -948,6 +948,8 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
       }
 
       arm()
+      // Subscribed last, so an `onWake` that wakes at once finds the schedule whole.
+      if (!cancelled) unwatch = (config.onWake ?? pageWake)(wake)
 
       return { cancel: stop }
     },

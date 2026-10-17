@@ -1040,4 +1040,41 @@ describe('coming back to a tab renews it, and a lost network is not a sign-out',
     assert.equal(ended, true)
     assert.equal(w2.listening, false)
   })
+
+  it('a renewal that threw is retried, and the tab shown again still renews', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    let locked = 0
+    const h = harness({
+      setTimer: t.setTimer,
+      clearTimer: t.clearTimer,
+      onWake: w.onWake,
+      lock: (_name, run) => (locked++ === 0 ? Promise.reject(new Error('The lock request was aborted')) : run()),
+    })
+    seedSession(h, { expiresAt: NOW - 1000 })
+    let ended = false
+    h.client.scheduleRenewal({ onEnded: () => void (ended = true) })
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    t.fire()
+    await settle()
+    assert.equal(ended, false, 'a renewal that threw is not an ended sign-in')
+    assert.equal(t.armed.at(-1)!.ms, 15_000, 'and it is retried, not left with no timer')
+
+    w.wake()
+    await settle()
+    assert.equal(h.client.validToken()?.accessToken, 'new', 'shown again, the tab renews')
+  })
+
+  it('an onWake that wakes as it is subscribed renews a due token', async () => {
+    const t = fakeTimers()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: (wake) => (wake(), () => {}), lock })
+    seedSession(h, { expiresAt: NOW - 1000 })
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    h.client.scheduleRenewal()
+    await settle()
+    assert.equal(h.client.validToken()?.accessToken, 'new')
+    assert.equal(h.requests.length, 1, 'once, not once for the wake and again for the timer')
+  })
 })

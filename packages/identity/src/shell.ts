@@ -31,6 +31,8 @@
  * (ADR 0002 §4a).
  */
 
+import type { Renewal } from './client.js'
+
 /**
  * The subset of a web Storage this package uses.
  *
@@ -231,7 +233,7 @@ export function decideBoot(o: BootObservation): BootAction {
  * decides again as a device with nothing to renew with.
  */
 export function decideAfterRenewal(
-  outcome: 'renewed' | 'refused' | 'unreachable' | 'none',
+  outcome: Renewal['outcome'],
   o: BootObservation,
 ): BootAction {
   switch (outcome) {
