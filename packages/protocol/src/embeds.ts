@@ -20,7 +20,7 @@
  * in an edit can still carry a card (Miky, 2026-10-13, OPT-16 kickoff).
  * {@link cardsIn} applies that rule; {@link embedsOf} reads the tags alone.
  *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/where-a-link-sits-and-which-file-gets-the-card.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
@@ -164,7 +164,8 @@ export function valueOfReference(reference: string): string | undefined {
  * `embeds` is the message's folded set; `blocks` its folded body as a render
  * tree; `parts` its `part` pointers (§13.6.1). A value appears here only while
  * the body names it — by a `nostr:` reference, or by an app link that
- * `resolveLink` resolves to it (§7.7) — and only when no `part` names the
+ * `resolveLink` resolves to it (§7.7), bare or as a link on words' target —
+ * and only when no `part` names the
  * same address, because the live block already stands for that object. Text in
  * a code span names nothing (§13.1). Without `resolveLink` a link names nothing:
  * resolving one needs the manifests and the relay, which this package does not hold.
@@ -185,8 +186,12 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
 /**
  * Every address and event id a message's body names, once each, in the order
  * it first names them: by a `nostr:` reference, or by an app link that
- * `resolveLink` resolves (§7.7). A person names no value. Text in a code span
- * names nothing (§13.1). What {@link cardsIn} and {@link defaultCardOf} count.
+ * `resolveLink` resolves (§7.7), written bare or as the target of a link on
+ * words. A link on words keeps its words where it draws, but names its file;
+ * a URL in its words names nothing. A person names no value. Text in a code
+ * span names nothing (§13.1). What {@link cardsIn} and {@link defaultCardOf} count.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResolver): string[] {
   const out: string[] = []
@@ -197,16 +202,20 @@ export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResol
     out.push(value)
   }
   const resolve = (url: string) => resolveLink && take(normalise(resolveLink(url) ?? ''))
-  // Run by run, by the rules {@link linksAsReferences} turns links by, so a URL names a value exactly where it draws as a reference.
+  // Run by run: a bare URL names a value exactly where {@link linksAsReferences} draws it as a
+  // reference, and a link on words names its target, never a URL in its words.
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.type !== 'codeBlock') {
+        let before = ''
         for (const run of block.inline ?? []) {
           if (run.reference) take(valueOfReference(run.reference))
-          else if (run.marks.includes('code')) continue
           else if (run.href !== undefined) {
-            if (run.text === run.href) resolve(run.href)
-          } else for (const { url } of urlRunsIn(run.text)) resolve(url)
+            if (!run.marks.includes('code')) resolve(run.href)
+          } else if (!run.marks.includes('code')) {
+            for (const target of linkTargetsIn(run.text, before)) resolve(target.url)
+          }
+          before += run.text
         }
       }
       if (block.children) walk(block.children)
@@ -393,6 +402,35 @@ export function urlRunsIn(text: string): { url: string; from: number; to: number
     if (text.slice(Math.max(0, start - 2), start) === '](' || text[start - 1] === '[') continue
     const url = trimUrl(m[0])
     out.push({ url, from: start, to: start + url.length })
+  }
+  return out
+}
+
+/**
+ * The URLs a run of marker text names, in order: each bare URL {@link urlRunsIn}
+ * finds, and the target of each link on words, never a URL in its words (SPEC
+ * §13.6.2). `before` is the block's text ahead of the run, so a link on words
+ * whose words carry a mark, split across runs, is told by its `[`.
+ */
+function linkTargetsIn(text: string, before: string): { url: string }[] {
+  if (!text.includes('://')) return []
+  const out: { url: string }[] = []
+  for (const m of text.matchAll(LINK_OR_URL)) {
+    const start = m.index
+    if (m[1]) {
+      out.push({ url: m[1].slice(m[1].indexOf('](') + 2, -1) })
+      continue
+    }
+    if (stuckToWord(text, start)) continue
+    const url = trimUrl(m[0])
+    if (text.slice(Math.max(0, start - 2), start) === '](') {
+      // The target of a link on words split across runs: `[`, words with a mark, then `](url)`.
+      const opened = /\[[^[\]\n]*$/.test(before + text.slice(0, start - 2))
+      if (opened && text[start + url.length] === ')') out.push({ url })
+      continue
+    }
+    if (text[start - 1] === '[') continue
+    out.push({ url })
   }
   return out
 }

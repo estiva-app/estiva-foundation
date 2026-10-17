@@ -42,7 +42,8 @@ const ref = (address: string) => `nostr:${addrToNaddr(address)}`
 const messageRef = `nostr:${encodeNevent({ id: MESSAGE, relays: [] })}`
 const personRef = `nostr:${encodeNpub(PK)}`
 const ISSUE_URL = 'https://ship.estiva.app/issue/f78c3b96-2a3b-4d92-910a-ac25aba672cd'
-const resolve: LinkResolver = (url) => (url === ISSUE_URL ? ISSUE : undefined)
+const PROJECT_URL = 'https://ship.estiva.app/project/15e9b50a-825a-4537-8b4a-df46efb9c7e4'
+const resolve: LinkResolver = (url) => (url === ISSUE_URL ? ISSUE : url === PROJECT_URL ? PROJECT : undefined)
 
 const tree = (text: string) => toRenderTree(text, 'marker')
 
@@ -93,20 +94,61 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     assert.equal(isOnlyReferenceLine(linesOf(tree(`## ${ref(ISSUE)}`)[0])[0], { type: 'heading' }), undefined)
   })
 
-  it('a link on words names nothing: no value, no card, no default card', () => {
-    for (const text of [`see [the plan](${ISSUE_URL})`, `[**the plan**](${ISSUE_URL})`]) {
-      assert.deepEqual(valuesIn(tree(text), resolve), [], text)
-      assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(text), [], resolve), [], text)
-      assert.equal(defaultCardOf(valuesIn(tree(text), resolve)), undefined, text)
+  it('a link on words names its file: its card draws, it is the default, and its words stay a link', () => {
+    for (const text of [
+      `the plan is [these words](${ISSUE_URL}) for now`,
+      `[**the plan**](${ISSUE_URL})`,
+      `[the **big** plan](${ISSUE_URL}).`,
+      `[\`the plan\`](${ISSUE_URL})`,
+    ]) {
+      assert.deepEqual(valuesIn(tree(text), resolve), [ISSUE], text)
+      assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(text), [], resolve), [{ value: ISSUE, layout: 'detailed' }], text)
+      assert.equal(defaultCardOf(valuesIn(tree(text), resolve)), ISSUE, text)
+      assert.equal(linksAsReferences(tree(text), resolve).some((b) => b.inline?.some((r) => r.reference)), false, text)
     }
+    // Alone on its line it is still a sentence: the words draw, the card goes under the message.
+    assert.deepEqual(draw(`[the plan](${ISSUE_URL})`), ['sentence'])
   })
 
-  it('a URL names a value exactly where it reads as a reference', () => {
-    for (const text of [ISSUE_URL, `**see**${ISSUE_URL}`, `see${ISSUE_URL}`, `[the plan](${ISSUE_URL})`, `[**the plan**](${ISSUE_URL})`, `\`${ISSUE_URL}\``, `(${ISSUE_URL}).`]) {
+  it('files are counted, not links: a second file takes the default away, a web link does not', () => {
+    const count = (text: string) => defaultCardOf(valuesIn(tree(text), resolve))
+    assert.equal(count(`[the plan](${ISSUE_URL}) and [the project](${PROJECT_URL})`), undefined)
+    assert.equal(count(`[the plan](${ISSUE_URL}) and ${PROJECT_URL}`), undefined)
+    assert.equal(count(`${ISSUE_URL} and [the project](${PROJECT_URL})`), undefined)
+    assert.equal(count(`[the plan](${ISSUE_URL}) and [the docs](https://example.com/docs)`), ISSUE)
+    assert.equal(count(`[the plan](${ISSUE_URL}) and https://example.com/docs`), ISSUE)
+    // The same file twice, on words and bare, is one file.
+    assert.equal(count(`[the plan](${ISSUE_URL}), that is ${ISSUE_URL}`), ISSUE)
+  })
+
+  it('a URL in a link’s words names nothing; its target does', () => {
+    assert.deepEqual(valuesIn(tree(`[${ISSUE_URL}](https://example.com)`), resolve), [])
+    assert.deepEqual(valuesIn(tree(`[see ${ISSUE_URL} here](https://example.com)`), resolve), [])
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(`[${ISSUE_URL}](https://example.com)`), [], resolve), [])
+    assert.deepEqual(valuesIn(tree(`[${PROJECT_URL}](${ISSUE_URL})`), resolve), [ISSUE])
+  })
+
+  it('a `](url)` with no `[` before it on its line is not a link on words', () => {
+    assert.deepEqual(valuesIn(tree(`**the plan**](${ISSUE_URL})`), resolve), [])
+    assert.deepEqual(valuesIn(tree(`[the plan]\n**more**](${ISSUE_URL})`), resolve), [])
+  })
+
+  it('a bare URL names a value exactly where it reads as a reference; a link on words names its target and stays a link', () => {
+    for (const text of [ISSUE_URL, `**see**${ISSUE_URL}`, `see${ISSUE_URL}`, `\`${ISSUE_URL}\``, `(${ISSUE_URL}).`]) {
       const named = valuesIn(tree(text), resolve).length > 0
       const turned = linksAsReferences(tree(text), resolve).some((b) => b.inline?.some((r) => r.reference))
       assert.equal(named, turned, text)
     }
+    for (const text of [`[the plan](${ISSUE_URL})`, `[**the plan**](${ISSUE_URL})`]) {
+      assert.deepEqual(valuesIn(tree(text), resolve), [ISSUE], text)
+      assert.equal(linksAsReferences(tree(text), resolve).some((b) => b.inline?.some((r) => r.reference)), false, text)
+    }
+  })
+
+  it('values come in the order the body first names them, a link on words included', () => {
+    assert.deepEqual(valuesIn(tree(`${PROJECT_URL} then [the plan](${ISSUE_URL})`), resolve), [PROJECT, ISSUE])
+    assert.deepEqual(valuesIn(tree(`[the plan](${ISSUE_URL}) then ${PROJECT_URL}`), resolve), [ISSUE, PROJECT])
+    assert.deepEqual(valuesIn(tree(`[**the plan**](${ISSUE_URL}) then ${ref(PROJECT)}`), resolve), [ISSUE, PROJECT])
   })
 
   it('each line of a paragraph is its own line', () => {
