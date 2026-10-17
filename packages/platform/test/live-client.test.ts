@@ -279,11 +279,11 @@ test('hands a reaction with no h tag to the one Folder it was watched under', as
   await waitFor(() => assert.deepEqual(got, [{ folder: FOLDER, id: 'r1' }]))
 })
 
-test('hands a deletion with no h tag to every Folder of the subscription it came on', async () => {
+test('does not guess the Folder of a deletion with no h tag on a watch of several', async () => {
   const h = harness()
   const socket = await reachLive(h)
   const got: { folder: string; id?: string }[] = []
-  h.client.watchFolders([FOLDER, OTHER], (folder, event) => got.push({ folder, id: event?.id }), { kinds: [7, 5] })
+  h.client.watchFolders([FOLDER, OTHER], (folder, event) => got.push({ folder, id: event?.id }), { kinds: [7, 5, 9] })
   await waitFor(() => assert.equal(socket.reqs().length, 1))
 
   socket.deliver([
@@ -291,12 +291,13 @@ test('hands a deletion with no h tag to every Folder of the subscription it came
     socket.subIdOf(0),
     { id: 'd1', kind: 5, pubkey: PUBKEY, created_at: 1, tags: [['e', 'r1']], content: '', sig: '' },
   ])
-  await waitFor(() =>
-    assert.deepEqual(got, [
-      { folder: FOLDER, id: 'd1' },
-      { folder: OTHER, id: 'd1' },
-    ]),
-  )
+  // Delivered after it on the same socket: once this one is heard, the deletion was handled too.
+  socket.deliver([
+    'EVENT',
+    socket.subIdOf(0),
+    { id: 'm1', kind: 9, pubkey: PUBKEY, created_at: 1, tags: [['h', OTHER]], content: 'x', sig: '' },
+  ])
+  await waitFor(() => assert.deepEqual(got, [{ folder: OTHER, id: 'm1' }]))
 })
 
 test('stopping a folder watch is idempotent', async () => {
