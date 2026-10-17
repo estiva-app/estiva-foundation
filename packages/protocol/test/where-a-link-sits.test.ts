@@ -131,6 +131,12 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     assert.deepEqual(valuesIn(tree(`[see **${PROJECT_URL}** here](https://example.com)`), resolve), [])
   })
 
+  it('a link’s target split across runs names nothing, since a reader draws only the part in its run', () => {
+    const [prefix, rest] = [ISSUE_URL.slice(0, -6), ISSUE_URL.slice(-6)]
+    const blocks = [{ type: 'paragraph', inline: [{ text: `[x](${prefix}`, marks: [] }, { text: rest, marks: ['bold'] }, { text: ')', marks: [] }] }] as RenderBlock[]
+    assert.deepEqual(valuesIn(blocks, resolve), [])
+  })
+
   it('a link with no words is not a link on words, and names nothing', () => {
     assert.deepEqual(valuesIn(tree(`[](${ISSUE_URL})`), resolve), [])
   })

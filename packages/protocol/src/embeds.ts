@@ -210,17 +210,29 @@ export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResol
         const runs = block.inline ?? []
         const links = linksOnWordsIn(runs)
         const named: { at: number; reference?: string; url?: string }[] = []
+        // `links` is in text order and its spans do not overlap, so two cursors keep this linear.
+        let inWords = 0
+        let byTarget = 0
         let at = 0
         for (const run of runs) {
+          const end = at + run.text.length
           if (run.reference) named.push({ at, reference: run.reference })
           else if (run.href !== undefined) named.push({ at, url: run.href })
           else if (!run.marks.includes('code')) {
             for (const { url, from } of urlRunsIn(run.text)) {
-              if (!links.some((l) => at + from >= l.from && at + from < l.wordsEnd)) named.push({ at: at + from, url })
+              const pos = at + from
+              while (inWords < links.length && links[inWords].wordsEnd <= pos) inWords++
+              const link = links[inWords]
+              if (!link || pos < link.from) named.push({ at: pos, url })
             }
-            for (const l of links) if (l.target >= at && l.target < at + run.text.length) named.push({ at: l.from, url: l.url })
+            while (byTarget < links.length && links[byTarget].target < at) byTarget++
+            for (; byTarget < links.length && links[byTarget].target < end; byTarget++) {
+              const link = links[byTarget]
+              // Only a target written whole in this run, `)` included, is the URL a reader draws.
+              if (link.target + link.url.length + 1 <= end) named.push({ at: link.from, url: link.url })
+            }
           }
-          at += run.text.length
+          at = end
         }
         named.sort((a, b) => a.at - b.at)
         for (const n of named) n.reference ? take(valueOfReference(n.reference)) : resolve(n.url!)
