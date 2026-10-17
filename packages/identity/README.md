@@ -135,18 +135,14 @@ and it does so for every caller, not only the scheduler: Ship signs the NIP-98
 auth event and the content event as two separate `POST /sign` calls, and a token
 that expires between them answers `401` to both.
 
-**Known limitation: `setTimeout` is throttled in a background tab.** Chrome and
-Safari clamp a hidden tab's timers to roughly once a minute, and may freeze them
-outright after five minutes hidden, so a backgrounded tab can miss its renewal
-window. This is recorded here rather than rediscovered once per app.
-
-It degrades safely. The refresh token outlives the access token by a long way, so
-a late renewal is still a renewal, and anything that beats the late timer takes
-the existing `401`-and-retry path — which is exactly why the coalescing guard
-above is not an optimisation. A `visibilitychange` listener that re-armed on
-foreground would tighten it and is deliberately absent: `document` is a global
-this package does not touch (ADR 0002 §4a). An app that wants it can `cancel()`
-and call `scheduleRenewal` again.
+**`setTimeout` is throttled in a background tab.** Chrome and Safari clamp a
+hidden tab's timers to roughly once a minute, and may freeze them outright after
+five minutes hidden, so a backgrounded tab can miss its renewal window. Since
+0.3.0 the schedule also renews when the tab is shown again or the network comes
+back (`onWake`, defaulting to `visibilitychange` and `online`; read through
+locally declared globals, so the published types still name none, ADR 0002
+§4a). A renewal that gets no answer retries rather than ending the sign-in;
+only Estiva ID's refusal calls `onEnded`.
 
 ## The prediction this package falsified
 

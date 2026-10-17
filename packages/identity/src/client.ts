@@ -24,9 +24,11 @@
  * happens. An identity provider that prefix-matched would be an open redirector
  * handing out authorization codes.
  *
- * The request body is **camelCase JSON** (`codeVerifier`, not `code_verifier`)
- * while the response is snake_case (`access_token`). That is genuinely the
- * contract, not a typo — see `docs/API.md` in estiva-id.
+ * `/token` is plain OAuth 2.0 (RFC 6749 §4.1.3, §6): a form-encoded body with
+ * snake_case fields, and a refusal answered as `{"error": "invalid_grant"}`.
+ * Until 0.3.0 this sent Estiva's own camelCase JSON, which no OAuth library
+ * speaks; Estiva ID drops it once every app runs this release (AUT-3).
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/sign-in-is-plain-oauth.md
  *
  * ## Everything is injected, and each injection is a real difference
  *
@@ -73,7 +75,9 @@ declare const TextEncoder: { new (): { encode(input: string): Uint8Array } }
 declare const URL: {
   new (url: string, base?: string): { searchParams: { set(k: string, v: string): void }; toString(): string }
 }
-declare const URLSearchParams: { new (init: string): { get(name: string): string | null } }
+declare const URLSearchParams: {
+  new (init: string | Record<string, string>): { get(name: string): string | null; toString(): string }
+}
 
 /**
  * The timer pair, for {@link EstivaIdClient.scheduleRenewal}.
@@ -120,6 +124,38 @@ function webStore(which: 'local' | 'session'): KeyValueStore | null {
 function webLock<T>(name: string, run: () => Promise<T>): Promise<T> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator?.locks
   return locks ? locks.request(name, run) : run()
+}
+
+/** The default for `onWake`: declared here for the same reason as the stores above. */
+interface EventTargetLike {
+  addEventListener(type: string, listener: () => void): void
+  removeEventListener(type: string, listener: () => void): void
+}
+declare const document: (EventTargetLike & { visibilityState?: string }) | undefined
+declare const window: EventTargetLike | undefined
+
+/** A tab shown again, or the network back: the moments a throttled or failed renewal is owed. */
+function pageWake(wake: () => void): () => void {
+  const doc = typeof document === 'undefined' ? undefined : document
+  const win = typeof window === 'undefined' ? undefined : window
+  const shown = () => {
+    if (doc?.visibilityState === 'visible') wake()
+  }
+  doc?.addEventListener('visibilitychange', shown)
+  win?.addEventListener('online', wake)
+  return () => {
+    doc?.removeEventListener('visibilitychange', shown)
+    win?.removeEventListener('online', wake)
+  }
+}
+
+/** A form-encoded `/token` request (RFC 6749 §4.1.3, §6). */
+function tokenRequest(fields: Record<string, string>): { method: string; headers: Record<string, string>; body: string } {
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields).toString(),
+  }
 }
 
 export interface EstivaIdConfig {
@@ -184,6 +220,17 @@ export interface EstivaIdConfig {
    * tab to race.
    */
   lock?: <T>(name: string, run: () => Promise<T>) => Promise<T>
+  /**
+   * Calls `wake` whenever a renewal may be owed early, and returns how to stop
+   * (AUT-3). A background tab's timers are throttled to once a minute and
+   * may be frozen outright, so the scheduled renewal can still be pending when
+   * the tab is shown again with a dead token; and a renewal the network
+   * swallowed is owed the moment it is back.
+   *
+   * Defaults to the page's `visibilitychange` (to visible) and `online`
+   * events, and to nothing where there is no page.
+   */
+  onWake?: (wake: () => void) => () => void
 }
 
 export interface StoredToken {
@@ -221,16 +268,38 @@ export interface RenewalHandlers {
   /** A renewal succeeded. The session continues, on a later expiry. */
   onRenewed?: (token: StoredToken) => void
   /**
-   * A renewal failed, and the session is over.
+   * Estiva ID refused the renewal, and the sign-in is over.
    *
-   * The only honest thing an app can do here is drop to the shell. Note this
-   * fires on refusal *and* on an unreachable network — `refreshAccessToken`
-   * distinguishes them for the purpose of clearing the stored token, but from a
-   * scheduler's point of view a renewal that did not happen is a renewal that
-   * did not happen, and the shell's own probe is what sorts out which it was.
+   * The app asks for the passkey on the page the person is on (SPEC §4.4: "Any
+   * 4xx from the refresh grant ends renewal"). An unreachable network does not
+   * fire this since 0.3.0: the schedule retries, shortly and whenever the
+   * network is back, because a laptop waking before its wifi must not look
+   * like a sign-out (AUT-3).
    */
   onEnded?: () => void
 }
+
+/**
+ * What one renewal came to. `refused` is Estiva ID's answer (any 4xx) and has
+ * already cleared the stored session; `unreachable` is no answer, or a 5xx, and
+ * has cleared nothing; `none` means there was no refresh token to spend.
+ */
+export type Renewal =
+  | { outcome: 'renewed'; token: StoredToken }
+  | { outcome: 'refused' }
+  | { outcome: 'unreachable' }
+  | { outcome: 'none' }
+
+/** How long a renewal the network swallowed waits before trying again, doubling to the ceiling. */
+const UNREACHABLE_RETRY_MS = 15_000
+const UNREACHABLE_RETRY_MAX_MS = 5 * 60_000
+
+/**
+ * How close to its renewal time a token must be for a wake to renew it now.
+ * `expiresAt` already sits 30 s before the token's real end (`tokenFrom`);
+ * this covers a tab shown just before the timer would have fired anyway.
+ */
+const WAKE_MARGIN_MS = 60_000
 
 export interface RenewalSchedule {
   /** Stop renewing. Idempotent, and safe to call after the session has ended. */
@@ -250,6 +319,7 @@ export interface EstivaIdClient {
   beginSignIn: (returnTo: string, options?: { silent?: boolean }) => Promise<void>
   completeSignIn: (search: string) => Promise<{ token: StoredToken; returnTo: string }>
   refreshAccessToken: () => Promise<StoredToken | null>
+  renew: () => Promise<Renewal>
   scheduleRenewal: (handlers?: RenewalHandlers) => RenewalSchedule
   storedToken: () => StoredToken | null
   validToken: (now?: number) => StoredToken | null
@@ -452,34 +522,35 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * could only be replaced by a top-level navigation through `/authorize`,
    * which costs whatever the person had on screen.
    *
-   * Returns `null` for every failure, and the failures are not worth
-   * distinguishing: Estiva ID answers `invalid_grant` for all of them by
-   * design, and the caller's only move either way is to fall back to the
-   * shell. The stored token is cleared on refusal so a spent refresh token is
-   * never presented twice — a replay is what Estiva ID treats as theft.
+   * Two failures, and since 0.3.0 they are told apart (AUT-3). A refusal is
+   * any 4xx: the sign-in is over (Estiva ID answers a uniform `invalid_grant`
+   * for every reason, by design), and the stored token is cleared so a spent
+   * refresh token is never presented twice — a replay is what Estiva ID treats
+   * as theft. No answer, or a 5xx, is not a refusal: the token is kept, and the
+   * caller tries again rather than asking for a passkey.
    */
-  const performRefresh = async (): Promise<StoredToken | null> => {
+  const performRefresh = async (): Promise<Renewal> => {
     const s = session()
     const current = storedToken()
-    if (!s || !current?.refreshToken) return null
+    if (!s || !current?.refreshToken) return { outcome: 'none' }
 
     let response: Awaited<ReturnType<FetchLike>>
     try {
-      response = await send()(new URL('/token', config.base).toString(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          grantType: 'refresh_token',
-          refreshToken: current.refreshToken,
-          clientId: config.clientId,
+      response = await send()(
+        new URL('/token', config.base).toString(),
+        tokenRequest({
+          grant_type: 'refresh_token',
+          refresh_token: current.refreshToken,
+          client_id: config.clientId,
         }),
-      })
+      )
     } catch {
       // Unreachable rather than refused. The token in hand may still be fine,
       // so this deliberately does not clear the session — a flaky network must
       // not sign somebody out.
-      return null
+      return { outcome: 'unreachable' }
     }
+    if (response.status >= 500) return { outcome: 'unreachable' }
 
     /*
       The session is shared by every tab (PEE-3), and signing out takes no lock:
@@ -490,21 +561,34 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
     */
     const stillOurs = () => storedToken()?.refreshToken === current.refreshToken
 
-    if (!response.ok) {
-      if (stillOurs()) clearSession()
-      return null
+    // Whatever this tab's renewal came to, another tab's sign-out or sign-in
+    // since is the session now.
+    const theirs = (): Renewal => {
+      const token = validToken()
+      return token ? { outcome: 'renewed', token } : { outcome: 'refused' }
     }
 
-    const body = (await response.json()) as TokenResponse
-    if (!stillOurs()) return validToken()
+    if (!response.ok) {
+      if (!stillOurs()) return theirs()
+      clearSession()
+      return { outcome: 'refused' }
+    }
+
+    let body: TokenResponse
+    try {
+      body = (await response.json()) as TokenResponse
+    } catch {
+      return { outcome: 'unreachable' }
+    }
+    if (!stillOurs()) return theirs()
     if (!body.access_token) {
       clearSession()
-      return null
+      return { outcome: 'refused' }
     }
 
     const next = tokenFrom(body, body.pubkey ?? current.pubkey)
     s.setItem(TOKEN_KEY, JSON.stringify(next))
-    return next
+    return { outcome: 'renewed', token: next }
   }
 
   /**
@@ -534,14 +618,17 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
    * renewed (or signed out, or in) meanwhile, that tab's answer is taken and
    * `/token` is not called — presenting the spent token would be the replay.
    */
-  let refreshing: Promise<StoredToken | null> | null = null
+  let refreshing: Promise<Renewal> | null = null
 
-  const refreshAccessToken = (): Promise<StoredToken | null> => {
+  const renew = (): Promise<Renewal> => {
     if (refreshing) return refreshing
     const spending = storedToken()?.refreshToken
-    refreshing = new Promise<StoredToken | null>((answer, fail) => {
+    refreshing = new Promise<Renewal>((answer, fail) => {
       lock(`${config.keyPrefix}.renewal`, async () => {
-        if (storedToken()?.refreshToken !== spending) return answer(validToken())
+        if (storedToken()?.refreshToken !== spending) {
+          const token = validToken()
+          return answer(token ? { outcome: 'renewed', token } : { outcome: 'refused' })
+        }
         answer(await performRefresh())
         /*
           Held a little longer than the renewal, though the caller already has
@@ -557,6 +644,10 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
     })
     return refreshing
   }
+
+  /** {@link renew}, for callers that only need the token: `null` for every failure, as before 0.3.0. */
+  const refreshAccessToken = (): Promise<StoredToken | null> =>
+    renew().then((r) => (r.outcome === 'renewed' ? r.token : null))
 
 
   return {
@@ -692,18 +783,16 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
         throw new SignInError('Sign-in state did not match. Try signing in again.')
       }
 
-      const response = await send()(new URL('/token', config.base).toString(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // camelCase — see the file header.
-        body: JSON.stringify({
-          grantType: 'authorization_code',
+      const response = await send()(
+        new URL('/token', config.base).toString(),
+        tokenRequest({
+          grant_type: 'authorization_code',
           code,
-          clientId: config.clientId,
-          redirectUri: config.redirectUri(),
-          codeVerifier: verifier,
+          client_id: config.clientId,
+          redirect_uri: config.redirectUri(),
+          code_verifier: verifier,
         }),
-      })
+      )
 
       if (!response.ok) {
         throw new SignInError(
@@ -724,6 +813,7 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
     },
 
     refreshAccessToken,
+    renew,
 
     /**
      * Renew shortly **before** the token expires, rather than reacting to it
@@ -747,17 +837,19 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
      * Safari, and after five minutes of being hidden they may be frozen outright.
      * So a tab left in the background can miss its renewal window entirely.
      *
-     * This is a known limitation rather than a bug, and it is recorded here so
-     * it is not rediscovered once per app. It degrades safely: a late renewal is
-     * still a valid renewal, because the refresh token outlives the access token
-     * by a long way, and a call that beats the late timer gets the existing
-     * `401`-and-retry path. What it must not do is renew *twice* in the scramble,
-     * which is what the guard on `refreshAccessToken` is for.
+     * So the schedule also listens for {@link EstivaIdConfig.onWake} — the tab
+     * shown again, the network back — and renews there if the token is due
+     * (AUT-3). Until 0.3.0 this was left to each app, and none did: a Peek tab
+     * shown after an hour carried a dead token until its throttled timer came
+     * round. The default reads `document` and `window` the way the stores are
+     * read, declared here and checked with `typeof`, so the published types
+     * still name no DOM global (ADR 0002 §4a). What it must not do is renew
+     * *twice* in the scramble, which is what the guard on `renew` is for.
      *
-     * A `visibilitychange` listener that re-arms on foreground would tighten
-     * this, and is deliberately not here: `document` is a global this package
-     * does not touch (ADR 0002 §4a), and an app that wants it can `cancel()` and
-     * call this again.
+     * ## Unreachable is not ended
+     *
+     * A renewal that gets no answer retries after {@link UNREACHABLE_RETRY_MS},
+     * doubling, and at once on a wake; only Estiva ID's refusal calls `onEnded`.
      */
     scheduleRenewal(handlers: RenewalHandlers = {}): RenewalSchedule {
       const setTimer = config.setTimer ?? ((run, ms) => setTimeout(run, ms))
@@ -765,12 +857,80 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
 
       let handle: unknown = null
       let cancelled = false
+      /** The expiry the timer was last armed for: a later one in storage is another tab's renewal. */
+      let armedFor = 0
+      /** Set while a renewal is out, so a wake in the meantime does not start a second schedule. */
+      let renewing = false
+      /** The wait before the next try after an unreachable renewal; null when the last one was answered. */
+      let retryMs: number | null = null
+
+      const clear = (): void => {
+        if (handle !== null) clearTimer(handle)
+        handle = null
+      }
+
+      const attempt = (): void => {
+        renewing = true
+        void renew().then((result) => {
+          renewing = false
+          if (cancelled) return
+          if (result.outcome === 'unreachable') {
+            retryMs = retryMs === null ? UNREACHABLE_RETRY_MS : Math.min(retryMs * 2, UNREACHABLE_RETRY_MAX_MS)
+            handle = setTimer(fire, retryMs)
+            return
+          }
+          retryMs = null
+          if (result.outcome !== 'renewed') {
+            stop()
+            handlers.onEnded?.()
+            return
+          }
+          handlers.onRenewed?.(result.token)
+          // Re-armed from the *new* expiry rather than a fixed interval, so
+          // the schedule follows whatever lifetime Estiva ID actually issued.
+          arm()
+        })
+      }
+
+      const fire = (): void => {
+        handle = null
+        // Another tab sharing the session renewed first (PEE-3): follow its
+        // token rather than spend a grant this tab no longer needs.
+        const shared = storedToken()
+        if (shared && shared.expiresAt > armedFor) {
+          retryMs = null
+          handlers.onRenewed?.(shared)
+          arm()
+          return
+        }
+        attempt()
+      }
+
+      const wake = (): void => {
+        if (cancelled || renewing) return
+        const token = storedToken()
+        if (!token) return
+        clear()
+        // Due, owed a retry, or already renewed by another tab: settle it now.
+        // Otherwise only re-arm, since a throttled timer may have drifted.
+        if (retryMs !== null || token.expiresAt > armedFor || token.expiresAt - now() <= WAKE_MARGIN_MS) fire()
+        else arm()
+      }
+
+      const unwatch = (config.onWake ?? pageWake)(wake)
+
+      const stop = (): void => {
+        cancelled = true
+        clear()
+        unwatch()
+      }
 
       const arm = (): void => {
         const token = storedToken()
         // Nothing to renew. Not an ending — the caller is simply signed out, and
         // an app that signs in later starts a new schedule.
         if (!token) return
+        armedFor = token.expiresAt
 
         /*
           Clamped at both ends. A negative delay is a token that already expired
@@ -782,41 +942,12 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
         */
         const delay = Math.min(Math.max(0, token.expiresAt - now()), MAX_TIMER_MS)
 
-        handle = setTimer(() => {
-          handle = null
-          // Another tab sharing the session renewed first (PEE-3): follow its
-          // token rather than spend a grant this tab no longer needs.
-          const shared = storedToken()
-          if (shared && shared.expiresAt > token.expiresAt) {
-            handlers.onRenewed?.(shared)
-            arm()
-            return
-          }
-          void refreshAccessToken().then((next) => {
-            if (cancelled) return
-            if (!next) {
-              handlers.onEnded?.()
-              return
-            }
-            handlers.onRenewed?.(next)
-            // Re-armed from the *new* expiry rather than a fixed interval, so
-            // the schedule follows whatever lifetime Estiva ID actually issued.
-            arm()
-          })
-        }, delay)
+        handle = setTimer(fire, delay)
       }
 
       arm()
 
-      return {
-        cancel(): void {
-          cancelled = true
-          if (handle !== null) {
-            clearTimer(handle)
-            handle = null
-          }
-        },
-      }
+      return { cancel: stop }
     },
 
 

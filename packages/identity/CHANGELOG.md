@@ -1,5 +1,31 @@
 # @estiva-app/identity
 
+## 0.3.0 — 2026-10-17
+
+**Breaking only for an exhaustive `switch` over `BootAction`**, which gains
+`renew`; a caller that does not pass `canRenew` never sees it. Coming back to an
+app renews its sign-in in place (AUT-3).
+
+- **`/token` is called in the standard OAuth form** (RFC 6749): form-encoded,
+  snake_case, for both the code and the refresh grant. Estiva ID has accepted it
+  since the SPEC §4.4 ticket and drops its own JSON format once Peek, Ship and
+  Leaf run this release (record `sign-in-is-plain-oauth`).
+- **`renew()`** says what a renewal came to: `renewed`, `refused` (any 4xx: the
+  sign-in is over, the session is cleared), `unreachable` (no answer or a 5xx:
+  nothing is cleared) or `none`. `refreshAccessToken()` is unchanged on top of it.
+- **`decideBoot` renews before it leaves.** With `canRenew: true` (a refresh
+  token is stored), an expired token gets `{ do: 'renew' }` instead of the trip
+  to `/authorize?prompt=none` or, mid-session, the passkey prompt.
+  `decideAfterRenewal(outcome, observation)` then says what follows: enter; on a
+  refusal the passkey on the page at once (SPEC §4.4); on no answer the
+  `network` failure with its retry.
+- **`scheduleRenewal` renews when the tab is shown again or the network comes
+  back**, if the token is due within a minute: a background tab's timer is
+  throttled or frozen and used to leave the tab holding a dead token. New
+  `onWake` config, defaulting to `visibilitychange` and `online`.
+- **A renewal the network swallowed retries** (15 s, doubling to 5 min, and at
+  once on a wake) and no longer calls `onEnded`; only a refusal does.
+
 ## 0.2.3 — 2026-10-13
 
 **Additive.** A caller that passes `storage` behaves exactly as before, apart

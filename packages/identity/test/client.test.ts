@@ -56,7 +56,9 @@ function harness(over: Partial<EstivaIdConfig> = {}): Harness {
     navigate: (url) => void navigated.push(url),
     now: () => 1_787_142_018_561,
     fetch: async (url, init) => {
-      requests.push({ url, body: JSON.parse(init.body) })
+      // Read as a server would: a form-encoded body is the contract (RFC 6749), anything else is refused here.
+      assert.equal(init.headers['content-type'], 'application/x-www-form-urlencoded')
+      requests.push({ url, body: Object.fromEntries(new URLSearchParams(init.body)) })
       return { ok: next.ok, status: next.status, json: async () => next.body }
     },
     ...over,
@@ -148,7 +150,7 @@ describe('coming back', () => {
     return { state: h.store.getItem(KEYS.state)! }
   }
 
-  it('redeems the code with camelCase keys, which is genuinely the contract', async () => {
+  it('redeems the code as a standard OAuth form, which any library also sends (AUT-3)', async () => {
     const h = harness()
     const { state } = await started(h)
     // Captured before the call: `completeSignIn` spends the verifier before it
@@ -160,11 +162,11 @@ describe('coming back', () => {
     assert.equal(h.requests.length, 1)
     assert.equal(h.requests[0].url, 'https://id.estiva.app/token')
     assert.deepEqual(h.requests[0].body, {
-      grantType: 'authorization_code',
+      grant_type: 'authorization_code',
       code: 'abc',
-      clientId: 'estiva-peek',
-      redirectUri: 'https://peek.estiva.app/auth/callback',
-      codeVerifier: verifier,
+      client_id: 'estiva-peek',
+      redirect_uri: 'https://peek.estiva.app/auth/callback',
+      code_verifier: verifier,
     })
     assert.equal(token.accessToken, 'at')
     assert.equal(token.refreshToken, 'rt')
@@ -241,7 +243,7 @@ describe('renewal (PEEK-108)', () => {
     h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
     const next = await h.client.refreshAccessToken()
     assert.equal(next?.accessToken, 'new')
-    assert.deepEqual(h.requests[0].body, { grantType: 'refresh_token', refreshToken: 'rt', clientId: 'estiva-peek' })
+    assert.deepEqual(h.requests[0].body, { grant_type: 'refresh_token', refresh_token: 'rt', client_id: 'estiva-peek' })
     // Single-use: Estiva ID rotates on every redemption and reads a replay as
     // theft, so the successor replaces its predecessor rather than sitting beside it.
     assert.equal(next?.refreshToken, 'rt2')
@@ -628,7 +630,7 @@ describe('one session shared by every tab (PEE-3)', () => {
     const next = await b.client.refreshAccessToken()
 
     assert.equal(b.requests.length, 1)
-    assert.equal((b.requests[0].body as { refreshToken: string }).refreshToken, 'rt2')
+    assert.equal((b.requests[0].body as { refresh_token: string }).refresh_token, 'rt2')
     assert.equal(next?.accessToken, 'new-b')
   })
 
@@ -894,5 +896,148 @@ describe('the expiry is the token’s own, not the clock’s', () => {
     assert.ok(next, 'the token is still stored — this is not a refusal')
     assert.equal(h.client.validToken(), null, 'but it is never offered to a caller')
     assert.ok(h.client.storedToken(), 'and it is still there for a renewal to replace')
+  })
+})
+
+/*
+  Coming back renews in place (AUT-3). A background tab's timers are throttled
+  or frozen, so the scheduled renewal can still be pending when the tab is
+  shown with a dead token; and a laptop that wakes before its wifi must not
+  read as a sign-out.
+*/
+describe('coming back to a tab renews it, and a lost network is not a sign-out', () => {
+  /** An `onWake` the test can call, and whether the schedule still listens. */
+  const wakes = () => {
+    const w = { listening: false, wake: () => {}, onWake: (wake: () => void) => {
+      w.listening = true
+      w.wake = wake
+      return () => void (w.listening = false)
+    } }
+    return w
+  }
+  /** A fetch that fails the way an offline browser does until `online` is set. */
+  const network = (h: () => Harness) => {
+    const n = { online: false, fetch: async (url: string, init: Parameters<NonNullable<EstivaIdConfig['fetch']>>[1]) => {
+      if (!n.online) throw new TypeError('Failed to fetch')
+      h().requests.push({ url, body: Object.fromEntries(new URLSearchParams(init.body)) })
+      return { ok: true, status: 200, json: async () => ({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' }) }
+    } }
+    return n
+  }
+  /** Lets the renewal's promise chain run out; no clock is involved, only turns of the event loop. */
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+  }
+  /** One tab: the cross-tab lock is covered by its own tests above. */
+  const lock: EstivaIdConfig['lock'] = (_name, run) => run()
+
+  it('renews at once when a tab is shown with its token due, without waiting for the throttled timer', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w.onWake, lock })
+    seedSession(h, { expiresAt: NOW - 1000 })
+    const renewed: unknown[] = []
+    h.client.scheduleRenewal({ onRenewed: (token) => void renewed.push(token) })
+    h.reply({ access_token: 'new', expires_in: 3600, refresh_token: 'rt2' })
+
+    w.wake()
+    await settle()
+
+    assert.equal(h.requests.length, 1, 'shown again with a dead token, the tab renews then')
+    assert.equal(h.client.validToken()?.accessToken, 'new')
+    assert.equal(renewed.length, 1)
+    assert.deepEqual(t.cleared, [t.armed[0].id], 'the throttled timer is dropped, so it cannot renew a second time')
+  })
+
+  it('CONTROL: a tab shown with time left on its token only re-arms, and spends nothing', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w.onWake, lock })
+    seedSession(h)
+    h.client.scheduleRenewal()
+
+    w.wake()
+    await settle()
+
+    assert.equal(h.requests.length, 0)
+    assert.equal(t.armed.length, 2)
+    assert.equal(t.armed[1].ms, EXPIRES_AT - NOW)
+  })
+
+  it('keeps the sign-in and retries when the renewal gets no answer, and renews once the network is back', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    let h!: Harness
+    const n = network(() => h)
+    h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w.onWake, lock, fetch: n.fetch })
+    seedSession(h, { expiresAt: NOW - 1000 })
+    let ended = false
+    const renewed: unknown[] = []
+    h.client.scheduleRenewal({ onEnded: () => void (ended = true), onRenewed: (token) => void renewed.push(token) })
+
+    t.fire()
+    await settle()
+    assert.equal(ended, false, 'an unreachable Estiva ID is not an ended sign-in')
+    assert.ok(h.client.storedToken(), 'and the refresh token is kept for the retry')
+    assert.equal(t.armed.at(-1)!.ms, 15_000, 'a retry is scheduled')
+
+    n.online = true
+    w.wake()
+    await settle()
+    assert.equal(renewed.length, 1, 'the network coming back renews at once')
+    assert.equal(h.client.validToken()?.accessToken, 'new')
+  })
+
+  it('backs off between retries, to a ceiling', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    let h!: Harness
+    h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w.onWake, lock, fetch: network(() => h).fetch })
+    seedSession(h, { expiresAt: NOW - 1000 })
+    h.client.scheduleRenewal()
+
+    const waits: number[] = []
+    for (let i = 0; i < 7; i++) {
+      t.fire()
+      await settle()
+      waits.push(t.armed.at(-1)!.ms)
+    }
+    assert.deepEqual(waits, [15_000, 30_000, 60_000, 120_000, 240_000, 300_000, 300_000])
+  })
+
+  it('treats a 5xx as no answer, not a refusal', async () => {
+    const h = harness()
+    seedSession(h)
+    h.reply({ error: 'server_error' }, { ok: false, status: 503 })
+    assert.deepEqual(await h.client.renew(), { outcome: 'unreachable' })
+    assert.ok(h.client.storedToken(), 'a struggling Estiva ID must not sign anybody out')
+  })
+
+  it('ends the sign-in on a 4xx, as SPEC §4.4 says', async () => {
+    const h = harness()
+    seedSession(h)
+    h.reply({ error: 'invalid_grant' }, { ok: false, status: 400 })
+    assert.deepEqual(await h.client.renew(), { outcome: 'refused' })
+    assert.equal(h.client.storedToken(), null)
+  })
+
+  it('stops listening once cancelled or ended', async () => {
+    const t = fakeTimers()
+    const w = wakes()
+    const h = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w.onWake, lock })
+    seedSession(h)
+    h.client.scheduleRenewal().cancel()
+    assert.equal(w.listening, false)
+
+    const w2 = wakes()
+    const h2 = harness({ setTimer: t.setTimer, clearTimer: t.clearTimer, onWake: w2.onWake, lock })
+    seedSession(h2, { expiresAt: NOW - 1000 })
+    h2.reply({}, { ok: false, status: 400 })
+    let ended = false
+    h2.client.scheduleRenewal({ onEnded: () => void (ended = true) })
+    t.fire()
+    await settle()
+    assert.equal(ended, true)
+    assert.equal(w2.listening, false)
   })
 })
