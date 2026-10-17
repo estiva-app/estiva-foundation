@@ -17,8 +17,10 @@ app renews its sign-in in place (AUT-3).
   token is stored), an expired token gets `{ do: 'renew' }` instead of the trip
   to `/authorize?prompt=none` or, mid-session, the passkey prompt.
   `decideAfterRenewal(outcome, observation)` then says what follows: enter; on a
-  refusal the passkey on the page at once (SPEC §4.4); on no answer the
-  `network` failure with its retry.
+  refusal the passkey on the page at once (SPEC §4.4); on no answer, enter
+  with what the device holds while `scheduleRenewal` keeps trying (Miky,
+  17 Oct: an app opened before its wifi shows the person their workspace,
+  not an error).
 - **`scheduleRenewal` renews when the tab is shown again or the network comes
   back**, if the token is due within a minute: a background tab's timer is
   throttled or frozen and used to leave the tab holding a dead token. New

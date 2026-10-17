@@ -156,8 +156,8 @@ describe('renewing in place before leaving the page', () => {
     assert.deepEqual(decideAfterRenewal('refused', base), { do: 'prompt_passkey', reason: 'session_expired' })
   })
 
-  it('says the network failed, with a retry, when the renewal got no answer — never that the sign-in ended', () => {
-    assert.deepEqual(decideAfterRenewal('unreachable', base), { do: 'fail', reason: 'network' })
+  it('enters with what the device holds when the renewal got no answer — never an error, never that the sign-in ended', () => {
+    assert.deepEqual(decideAfterRenewal('unreachable', base), { do: 'enter' })
   })
 
   it('decides again as a device with nothing to renew with when the refresh token went meanwhile', () => {

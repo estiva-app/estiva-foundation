@@ -227,8 +227,11 @@ export function decideBoot(o: BootObservation): BootAction {
  * A refusal asks for the passkey on the page at once, with no silent trip
  * first: the sign-in has ended (SPEC §4.4, "asks the person to sign in on the
  * page they are on"), and the Continue it offers comes back without a tap if
- * Estiva ID's own sign-in happens to outlive this app's chain. No answer is a
- * network failure, said as one with a retry, never as an ended sign-in.
+ * Estiva ID's own sign-in happens to outlive this app's chain. No answer is
+ * not an ended sign-in, nor anything for the person to act on: the app enters
+ * with what the device already holds, and `scheduleRenewal` keeps trying until
+ * the network is back (Miky, 17 Oct, AUT-3: a laptop opened before its wifi
+ * shows the workspace, not an error). A refusal on that later try ends it then.
  * `none` — the refresh token went between the observation and the renewal —
  * decides again as a device with nothing to renew with.
  */
@@ -242,7 +245,7 @@ export function decideAfterRenewal(
     case 'refused':
       return { do: 'prompt_passkey', reason: 'session_expired' }
     case 'unreachable':
-      return { do: 'fail', reason: 'network' }
+      return { do: 'enter' }
     case 'none':
       return decideBoot({ ...o, hasValidToken: false, canRenew: false })
   }
