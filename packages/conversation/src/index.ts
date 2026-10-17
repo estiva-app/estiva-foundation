@@ -67,6 +67,16 @@ export { buildComment, buildReply, offersEditAndDelete, type CommentRef } from '
 export { eventsNamedInBody, mentionText, messageReference, quoteTagsFor, URGENT_TAG, urgentTagsFor } from './compose.js'
 
 export {
+  composerDocument,
+  composerDraft,
+  composerText,
+  withoutNewUrgency,
+  type ComposerDraft,
+  type ComposerLabels,
+  type ComposerText,
+} from './composer.js'
+
+export {
   FILE_TIER,
   fileReference,
   MESSAGE_TIER,

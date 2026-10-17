@@ -6,6 +6,22 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.13.0 — 2026-10-17
+
+**What the shared comment box holds, as the message it writes, and back**
+(COMM-2). `@estiva-app/ui/editor`'s `CommentBox` hands its app the editor's
+document; `composerText(doc)` is the trimmed marker text a send writes and the
+keys its urgent chips name, for `urgentTagsFor`. `composerDocument(text,
+labels, urgent?)` opens an edit or a draft with its people and references as
+chips again, and leaves as a `reference` whatever the app cannot name, or one
+with marks or a card. `withoutNewUrgency` (an edit makes nobody newly urgent)
+and `composerDraft(store, key, labels)` (a `DraftStore` in the box's terms)
+come with them. Moved from Ship's `composerTriggers.tsx`, byte for byte in what
+they write, so every app's box writes the same text.
+
+SPEC: none changed how this package reads or writes; §13.1 is written as
+before.
+
 ## 0.12.0 — 2026-10-16
 
 **A `[` row carries the file's summary, and a Leaf page is a type `[` names**
