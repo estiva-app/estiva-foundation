@@ -17,6 +17,7 @@ import {
   PROBE_TIMEOUT_MS,
   SHELL_COPY,
   type ShellReason,
+  decideAfterRenewal,
   decideBoot,
   isRecoverable,
   reasonForCallbackError,
@@ -24,15 +25,15 @@ import {
 
 const NOW = 1_700_000_000_000
 
-const observation = (o: Partial<Parameters<typeof decideBoot>[0]> = {}) =>
-  decideBoot({
-    callback: null,
-    hasValidToken: false,
-    guardAttemptedAt: null,
-    enteredThisPageLoad: false,
-    now: NOW,
-    ...o,
-  })
+const base: Parameters<typeof decideBoot>[0] = {
+  callback: null,
+  hasValidToken: false,
+  guardAttemptedAt: null,
+  enteredThisPageLoad: false,
+  now: NOW,
+}
+
+const observation = (o: Partial<Parameters<typeof decideBoot>[0]> = {}) => decideBoot({ ...base, ...o })
 
 describe('the boot decision', () => {
   it('enters on a live token without touching the network', () => {
@@ -126,6 +127,41 @@ describe('mid-session expiry', () => {
     assert.deepEqual(observation({ enteredThisPageLoad: true, callback: { code: 'abc' } }), {
       do: 'complete_callback',
     })
+  })
+})
+
+/*
+  Coming back renews in place (AUT-3). Measured as QA-1 on 16 Oct: Peek opened
+  an hour after its last renewal went to id.estiva.app and back, although it
+  held a refresh token.
+*/
+describe('renewing in place before leaving the page', () => {
+  it('renews an expired token in place when a refresh token is stored, instead of probing', () => {
+    assert.deepEqual(observation({ canRenew: true }), { do: 'renew' })
+  })
+
+  it('renews a token that died mid-session before asking for a passkey', () => {
+    assert.deepEqual(observation({ canRenew: true, enteredThisPageLoad: true }), { do: 'renew' })
+  })
+
+  it('CONTROL: a device with nothing to renew with still probes silently', () => {
+    assert.deepEqual(observation({ canRenew: false }), { do: 'probe_silently' })
+  })
+
+  it('enters when the renewal succeeds', () => {
+    assert.deepEqual(decideAfterRenewal('renewed', base), { do: 'enter' })
+  })
+
+  it('asks for the passkey on the page when the renewal is refused, with no trip to Estiva ID first', () => {
+    assert.deepEqual(decideAfterRenewal('refused', base), { do: 'prompt_passkey', reason: 'session_expired' })
+  })
+
+  it('enters with what the device holds when the renewal got no answer — never an error, never that the sign-in ended', () => {
+    assert.deepEqual(decideAfterRenewal('unreachable', base), { do: 'enter' })
+  })
+
+  it('decides again as a device with nothing to renew with when the refresh token went meanwhile', () => {
+    assert.deepEqual(decideAfterRenewal('none', { ...base, canRenew: true }), { do: 'probe_silently' })
   })
 })
 

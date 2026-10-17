@@ -31,6 +31,8 @@
  * (ADR 0002 §4a).
  */
 
+import type { Renewal } from './client.js'
+
 /**
  * The subset of a web Storage this package uses.
  *
@@ -117,6 +119,12 @@ export interface BootObservation {
   callback: { code?: string | undefined; error?: string | undefined } | null
   /** A stored token that is present *and* still usable. */
   hasValidToken: boolean
+  /**
+   * A refresh token is stored, so an expired access token can be renewed
+   * without leaving the page (AUT-3). Optional so a caller that predates the
+   * renew step keeps today's decision.
+   */
+  canRenew?: boolean
   /** The silent-attempt marker, if one is set. */
   guardAttemptedAt: number | null
   /**
@@ -137,6 +145,8 @@ export type BootAction =
   | { do: 'complete_callback' }
   /** Enter with what is already held. */
   | { do: 'enter' }
+  /** Spend the stored refresh token in place, then ask {@link decideAfterRenewal}. */
+  | { do: 'renew' }
   /** Navigate to `/authorize?prompt=none`. Sets the marker first. */
   | { do: 'probe_silently' }
   /** Show the one affordance and wait for the tap. */
@@ -182,6 +192,15 @@ export function decideBoot(o: BootObservation): BootAction {
   if (o.hasValidToken) return { do: 'enter' }
 
   /**
+   * An expired token with a refresh token beside it renews where it is: one
+   * `fetch`, where the probe below is a trip to Estiva ID and back (AUT-3).
+   * Before the passkey prompt too, since a token that died mid-session is
+   * usually just due, not ended. The probe is left for a device with nothing
+   * to renew with.
+   */
+  if (o.canRenew) return { do: 'renew' }
+
+  /**
    * The token died while they were working. Offer the passkey and let them
    * choose when to lose the page, rather than deciding it for them.
    *
@@ -200,6 +219,36 @@ export function decideBoot(o: BootObservation): BootAction {
   }
 
   return { do: 'probe_silently' }
+}
+
+/**
+ * What follows a `renew` boot action, from the renewal's outcome.
+ *
+ * A refusal asks for the passkey on the page at once, with no silent trip
+ * first: the sign-in has ended (SPEC §4.4, "asks the person to sign in on the
+ * page they are on"), and the Continue it offers comes back without a tap if
+ * Estiva ID's own sign-in happens to outlive this app's chain. No answer is
+ * not an ended sign-in, nor anything for the person to act on: the app enters
+ * with what the device already holds, and `scheduleRenewal` keeps trying until
+ * the network is back (Miky, 17 Oct, AUT-3: a laptop opened before its wifi
+ * shows the workspace, not an error). A refusal on that later try ends it then.
+ * `none` — the refresh token went between the observation and the renewal —
+ * decides again as a device with nothing to renew with.
+ */
+export function decideAfterRenewal(
+  outcome: Renewal['outcome'],
+  o: BootObservation,
+): BootAction {
+  switch (outcome) {
+    case 'renewed':
+      return { do: 'enter' }
+    case 'refused':
+      return { do: 'prompt_passkey', reason: 'session_expired' }
+    case 'unreachable':
+      return { do: 'enter' }
+    case 'none':
+      return decideBoot({ ...o, hasValidToken: false, canRenew: false })
+  }
 }
 
 /**
