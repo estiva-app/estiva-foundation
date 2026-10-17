@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.12.0'
+export const CONVERSATION_VERSION = '0.13.0'
 
 export {
   KIND_MESSAGE,
@@ -65,6 +65,16 @@ export { decorationsOf, type Decoration, type Decorations, type Resolution, type
 export { buildComment, buildReply, offersEditAndDelete, type CommentRef } from './builders.js'
 
 export { eventsNamedInBody, mentionText, messageReference, quoteTagsFor, URGENT_TAG, urgentTagsFor } from './compose.js'
+
+export {
+  composerDocument,
+  composerDraft,
+  composerText,
+  withoutNewUrgency,
+  type ComposerDraft,
+  type ComposerLabels,
+  type ComposerText,
+} from './composer.js'
 
 export {
   FILE_TIER,
