@@ -880,7 +880,9 @@ export function createEstivaId(config: EstivaIdConfig): EstivaIdClient {
             return
           }
           retryMs = null
-          if (result.outcome !== 'renewed') {
+          // A token already out of date (a clock ahead of Estiva ID's) is no
+          // renewal: re-arming on it would fire at once, against `/token`, forever.
+          if (result.outcome !== 'renewed' || result.token.expiresAt <= now()) {
             stop()
             handlers.onEnded?.()
             return
