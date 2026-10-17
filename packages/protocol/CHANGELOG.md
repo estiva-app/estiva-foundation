@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.40.0 — 2026-10-17
+
+**Wire behaviour: reading changed, nothing new written** (SPEC §13.6.2, C20,
+C25, C26, C27; WBM-10; record a-link-on-words-counts-toward-the-card). A link
+on words, `[these words](<app URL>)`, now names its file: `valuesIn` counts its
+target, so `cardsIn` draws the card a message chose for it and `defaultCardOf`
+gives it the default when it is the message's only file. Its words stay a link
+(`linksAsReferences` and `lineDrawOf` unchanged), a URL in its words still
+names nothing, and a web link that resolves to nothing still does not count.
+A link on words whose words carry a mark (`[**words**](url)`, split across
+runs) counts too, and a URL in such words now names nothing, as in plain words.
+`[](url)` is not a link on words and names nothing. A block document's link run
+counts its `href` whatever its words, code-styled words included. Old messages that chose a card on words draw it again (Miky, 17 Oct).
+
 ## 0.39.0 — 2026-10-16
 
 **Wire behaviour: changed, on edits only** (SPEC §13.6.2; Widgets 2). An edit

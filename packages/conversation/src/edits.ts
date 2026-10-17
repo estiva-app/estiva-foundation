@@ -146,7 +146,7 @@ export function foldAttachments(events: readonly SignedEvent[]): Record<string, 
  * edit removes a card. Which of these the body still names is
  * `cardsIn`'s question, asked of the folded body. Messages with none are absent.
  *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/where-a-link-sits-and-which-file-gets-the-card.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 export function foldEmbeds(events: readonly SignedEvent[]): Record<string, Embed[]> {
   const out: Record<string, Embed[]> = {}

@@ -20,7 +20,7 @@
  * in an edit can still carry a card (Miky, 2026-10-13, OPT-16 kickoff).
  * {@link cardsIn} applies that rule; {@link embedsOf} reads the tags alone.
  *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/where-a-link-sits-and-which-file-gets-the-card.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
@@ -164,7 +164,8 @@ export function valueOfReference(reference: string): string | undefined {
  * `embeds` is the message's folded set; `blocks` its folded body as a render
  * tree; `parts` its `part` pointers (§13.6.1). A value appears here only while
  * the body names it — by a `nostr:` reference, or by an app link that
- * `resolveLink` resolves to it (§7.7) — and only when no `part` names the
+ * `resolveLink` resolves to it (§7.7), bare or as a link on words' target —
+ * and only when no `part` names the
  * same address, because the live block already stands for that object. Text in
  * a code span names nothing (§13.1). Without `resolveLink` a link names nothing:
  * resolving one needs the manifests and the relay, which this package does not hold.
@@ -185,8 +186,12 @@ export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[]
 /**
  * Every address and event id a message's body names, once each, in the order
  * it first names them: by a `nostr:` reference, or by an app link that
- * `resolveLink` resolves (§7.7). A person names no value. Text in a code span
- * names nothing (§13.1). What {@link cardsIn} and {@link defaultCardOf} count.
+ * `resolveLink` resolves (§7.7), written bare or as the target of a link on
+ * words. A link on words keeps its words where it draws, but names its file;
+ * a URL in its words names nothing. A person names no value. Text in a code
+ * span names nothing (§13.1). What {@link cardsIn} and {@link defaultCardOf} count.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResolver): string[] {
   const out: string[] = []
@@ -197,17 +202,40 @@ export function valuesIn(blocks: readonly RenderBlock[], resolveLink?: LinkResol
     out.push(value)
   }
   const resolve = (url: string) => resolveLink && take(normalise(resolveLink(url) ?? ''))
-  // Run by run, by the rules {@link linksAsReferences} turns links by, so a URL names a value exactly where it draws as a reference.
+  // A bare URL names a value exactly where {@link linksAsReferences} draws it as a reference;
+  // a link on words names its target, never a URL in its words. Each is taken where it starts.
   const walk = (bs: readonly RenderBlock[]) => {
     for (const block of bs) {
       if (block.type !== 'codeBlock') {
-        for (const run of block.inline ?? []) {
-          if (run.reference) take(valueOfReference(run.reference))
-          else if (run.marks.includes('code')) continue
-          else if (run.href !== undefined) {
-            if (run.text === run.href) resolve(run.href)
-          } else for (const { url } of urlRunsIn(run.text)) resolve(url)
+        const runs = block.inline ?? []
+        const links = linksOnWordsIn(runs)
+        const named: { at: number; reference?: string; url?: string }[] = []
+        // `links` is in text order and its spans do not overlap, so two cursors keep this linear.
+        let inWords = 0
+        let byTarget = 0
+        let at = 0
+        for (const run of runs) {
+          const end = at + run.text.length
+          if (run.reference) named.push({ at, reference: run.reference })
+          else if (run.href !== undefined) named.push({ at, url: run.href })
+          else if (!run.marks.includes('code')) {
+            for (const { url, from } of urlRunsIn(run.text)) {
+              const pos = at + from
+              while (inWords < links.length && links[inWords].wordsEnd <= pos) inWords++
+              const link = links[inWords]
+              if (!link || pos < link.from) named.push({ at: pos, url })
+            }
+            while (byTarget < links.length && links[byTarget].target < at) byTarget++
+            for (; byTarget < links.length && links[byTarget].target < end; byTarget++) {
+              const link = links[byTarget]
+              // Only a target written whole in this run, `)` included, is the URL a reader draws.
+              if (link.target + link.url.length + 1 <= end) named.push({ at: link.from, url: link.url })
+            }
+          }
+          at = end
         }
+        named.sort((a, b) => a.at - b.at)
+        for (const n of named) n.reference ? take(valueOfReference(n.reference)) : resolve(n.url!)
       }
       if (block.children) walk(block.children)
     }
@@ -393,6 +421,24 @@ export function urlRunsIn(text: string): { url: string; from: number; to: number
     if (text.slice(Math.max(0, start - 2), start) === '](' || text[start - 1] === '[') continue
     const url = trimUrl(m[0])
     out.push({ url, from: start, to: start + url.length })
+  }
+  return out
+}
+
+/**
+ * Each link on words in a block of marker text, `[words](https://…)`, found
+ * over the block's runs joined, so one whose words carry a mark (split across
+ * runs) is found too. Offsets are into that joined text: `from` the `[`,
+ * `wordsEnd` the `]`, `target` where the URL starts (SPEC §13.6.2).
+ */
+function linksOnWordsIn(runs: readonly RenderInline[]): { from: number; wordsEnd: number; target: number; url: string }[] {
+  const text = runs.map((r) => r.text).join('')
+  if (!text.includes('](')) return []
+  const out: { from: number; wordsEnd: number; target: number; url: string }[] = []
+  for (const m of text.matchAll(LINK_OR_URL)) {
+    if (!m[1]) continue
+    const close = m[1].indexOf('](')
+    out.push({ from: m.index, wordsEnd: m.index + close, target: m.index + close + 2, url: m[1].slice(close + 2, -1) })
   }
   return out
 }
