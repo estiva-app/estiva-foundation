@@ -1010,13 +1010,17 @@ interface Manifest {
    * protocol change, and the field that tells a generic app from a specialized
    * one that happens to draw a card.
    *
-   * A specialized app owns kinds and says nothing here. A generic app owns no
-   * kinds and declares the one aspect it renders for everyone else's files:
-   * `conversation` (Peek) or `document` (Leaf). See {@link ASPECTS}.
+   * A specialized app owns kinds and says nothing here. A generic app declares
+   * the one aspect it renders for everyone else's files: `conversation` (Peek)
+   * or `document` (Leaf, which writes the title, summary and text of any file
+   * whose owner shares them, SPEC §7.8). It may own kinds as well, as Leaf owns
+   * documents: the `k` tags say what it owns, this says what it renders.
+   * See {@link ASPECTS}.
    *
    * What it is read for today: the bare file (§6.7) has no owner and so no
    * `web` template of its own, and the app that renders its conversation is
-   * where a link to it should land. Nothing else consults it yet.
+   * where a link to it should land. Nothing in this package consults
+   * `document` yet; Leaf reads its own role.
    */
   aspect?: string
   /**
