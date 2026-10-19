@@ -24,7 +24,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | --- | --- | --- |
 | comment or mention | §6.4 | `isCommentOn`, `strengthOn`, `threadStrength`, `anchorsOf`, `isReply`, `namedInBody` |
 | threading | §6.4 *Replies* | `parentOf`, `groupThreads` |
-| writing | §6.4 | `buildComment`, `buildReply`, `referenceTagsFor`, `mentionTagsFor` |
+| writing | §6.4, §13.6 | `buildComment`, `buildReply`, `placeOf`, `referenceTagsFor`, `mentionTagsFor` |
 | what a composer's pick writes | §13.1 | `mentionText`, `messageReference`, `urgentTagsFor`, `URGENT_TAG` |
 | what the shared comment box holds, as the message it writes, and back | §13.1 | `composerText`, `composerDocument`, `withoutNewUrgency`, `composerDraft` |
 | what `[` offers, and in what order | §13.1 | `rankReferences`, `referenceMatch`, `fileReference`, `referenceSearch`, `MESSAGE_TIER`, `FILE_TIER`, `REFERENCE_CAPS` |

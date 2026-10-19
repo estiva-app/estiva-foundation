@@ -76,16 +76,41 @@ export interface CommentRef {
    * then carries no `p`, because a wrong one notifies the wrong person.
    */
   author?: string
+  /**
+   * Where on its object the comment is: its own `block` and `quote` tags
+   * ({@link placeOf}). The reply copies them, so its thread keeps its place
+   * once the comment is deleted (§13.6). Absent when the comment is on the
+   * whole object or outside the read.
+   */
+  place?: readonly NostrTag[]
+}
+
+/** The tags that say where on its object a comment is (§13.6): `block` and `quote`. */
+const PLACE_TAGS = new Set(['block', 'quote'])
+
+/**
+ * A comment's place, as its event carries it: its `block` and `quote` tags,
+ * verbatim, for {@link CommentRef.place}. Empty when it is on the whole object.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reply-on-a-page-keeps-its-threads-place.md
+ */
+export function placeOf(comment: { tags: readonly NostrTag[] }): NostrTag[] {
+  // One of each, the first, as every reader reads it: a stranger's extra tags are not copied under the replier's key.
+  return [...PLACE_TAGS].map((name) => comment.tags.find((t) => t[0] === name)).filter((t): t is NostrTag => !!t)
 }
 
 /**
  * A reply to a comment — §6.4 *Replies*, C16. Tag order: `A`, `K`, `P`, `e`,
- * `k`, `[p]`, `h`, `ts`, `[imeta…]`, then `tags`.
+ * `k`, `[p]`, `[block, quote]`, `h`, `ts`, `[imeta…]`, then `tags`.
  *
  * **Flat, one level deep**: `e` names the thread's top-level comment, never
  * another reply. **No lowercase `a`** for the object: NIP-22 reads it as the
  * parent, so it would claim the reply is itself a top-level comment. The reply
- * is found by `#e` on the comment.
+ * is found by `#e` on the comment. **Its comment's place, copied** (§13.6):
+ * the `block` and `quote` tags of `comment.place` as written, and no other
+ * tag from it.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reply-on-a-page-keeps-its-threads-place.md
  */
 export function buildReply(
   pubkey: string,
@@ -94,7 +119,7 @@ export function buildReply(
 ): UnsignedEvent {
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.comment.anchor)
-  const earned = (args.tags ?? []).filter((t) => !(t[0] === 'a' && t[1] === args.comment.anchor))
+  const earned = (args.tags ?? []).filter((t) => !(t[0] === 'a' && t[1] === args.comment.anchor) && !PLACE_TAGS.has(t[0]))
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
@@ -106,6 +131,7 @@ export function buildReply(
       ['e', args.comment.id],
       ['k', String(KIND_COMMENT)],
       ...(args.comment.author ? [['p', args.comment.author]] : []),
+      ...(args.comment.place ? placeOf({ tags: args.comment.place }).map((t) => [...t]) : []),
       ['h', args.folder],
       ['ts', String(Math.floor(createdAtMs))],
       ...(args.files ?? []).map(imetaTag),

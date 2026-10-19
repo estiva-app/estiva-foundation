@@ -341,6 +341,47 @@ describe('C16 — reply shape', () => {
     assert.deepEqual(reply.tags.filter((t) => t[0] === 'a'), [['a', OTHER]])
     assert.equal(reply.tags.some((t) => t[0] === 'p'), false, 'no p when the comment is outside the read')
   })
+
+  it("a reply to a comment on part of a page copies that comment's block and quote verbatim, before its h", () => {
+    const block = ['block', 'b1', 'b2', 'b3']
+    const quote = ['quote', 'the plan', 'by Friday', '', ' then']
+    const top = comment(ISSUE, [block, quote, ['p', BOB]])
+    // Handed the comment's every tag: only its place may come across.
+    const reply = buildReply(BOB, 1_700_400_000_123, { comment: { id: top.id, anchor: ISSUE, author: ALICE, place: top.tags }, folder: FOLDER, body: 'yes' })
+    assert.deepEqual(reply.tags, [
+      ['A', ISSUE],
+      ['K', '30851'],
+      ['P', ALICE],
+      ['e', top.id],
+      ['k', '1111'],
+      ['p', ALICE],
+      block,
+      quote,
+      ['h', FOLDER],
+      ['ts', '1700400000123'],
+    ])
+    const threaded = groupThreads([top, { ...reply, id: 'e'.repeat(64), sig: '' }])
+    assert.deepEqual(threaded.replies[top.id].map((r) => r.id), ['e'.repeat(64)], 'still a reply, not a second comment')
+  })
+
+  it('a reply takes only block and quote from the place it is handed, and none from its earned tags', () => {
+    const top = comment(ISSUE)
+    const reply = buildReply(BOB, 1_700_400_000_000, {
+      comment: { id: top.id, anchor: ISSUE, place: [['block', 'b1'], ['p', BOB], ['block', 'b9'], ['e', 'f'.repeat(64)]] },
+      folder: FOLDER,
+      body: 'x',
+      tags: [['block', 'elsewhere'], ['quote', 'other words']],
+    })
+    assert.deepEqual(reply.tags.filter((t) => t[0] === 'block' || t[0] === 'quote'), [['block', 'b1']])
+    assert.deepEqual(reply.tags.filter((t) => t[0] === 'e'), [['e', top.id]])
+    assert.equal(reply.tags.some((t) => t[0] === 'p'), false)
+  })
+
+  it('a comment on the whole object hands a reply no place', () => {
+    const top = comment(ISSUE)
+    const reply = buildReply(BOB, 1_700_400_000_000, { comment: { id: top.id, anchor: ISSUE, place: top.tags }, folder: FOLDER, body: 'x' })
+    assert.equal(reply.tags.some((t) => t[0] === 'block' || t[0] === 'quote'), false)
+  })
 })
 
 describe('C20 — card fold (§13.6.2)', () => {

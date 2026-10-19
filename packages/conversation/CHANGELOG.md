@@ -6,6 +6,21 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.14.0 — 2026-10-19
+
+**A reply to a comment on part of a page copies that comment's place**
+(COMM-5). `CommentRef.place` takes the comment's `block` and `quote` tags, and
+`buildReply` writes them verbatim after its `p`, before its `h`; any other tag
+handed to it, and any `block` or `quote` among the reply's own `tags`, is
+dropped. `placeOf(comment)` reads a comment's place off its event. So a thread
+keeps its place on the page when its comment is deleted, and an app holding
+only a reply can place it (record *a-reply-on-a-page-keeps-its-threads-place*).
+A caller that passes no `place` writes the reply as before.
+
+SPEC: §13.6 changed — a reply now copies its top-level comment's `block` and
+`quote` instead of carrying none; a reader places a thread by its comment's
+anchor while it is readable, else by its earliest reply's.
+
 ## 0.13.0 — 2026-10-17
 
 **What the shared comment box holds, as the message it writes, and back**
