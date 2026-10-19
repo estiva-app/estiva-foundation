@@ -6,6 +6,28 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.15.0 — 2026-10-19
+
+**Search matches every typed word as the start of a word** (record
+*search-matches-every-word-as-a-word-start*). `referenceMatch` now keeps a
+text only when each typed word starts one of its words, in any order; `"…"`
+needs those whole words next to each other, in order; `-word` drops a text with
+a word starting that way; a quote with no closing partner is ignored; `or` and
+`key:value` are ordinary words; punctuation at a typed word's ends is ignored.
+A query that only leaves words out matches nothing. A match inside a word is
+gone: "ssue" no longer finds "issue". A hit where every typed word is a whole
+word now ranks above one where a word is only started, so "short" lists
+*Remove Short summary* above *Shortcuts*: the scores are 8 the whole text, 7–5
+whole words (its start, one run at a word start, every word somewhere) and 3–1
+the same for word starts; only `> 0` was ever read outside this package.
+`referenceSearch` no longer lets an empty answer for words that are only left
+out (`-draft`), or for a query with a quote still open (`"x -y`), stop a longer
+query.
+
+SPEC: §5.2 changed — a relay matches every typed word as a word start on a REQ
+and on `/query` alike, and a reader's check of a title uses the same rule, so
+it never drops a hit the relay found.
+
 ## 0.14.0 — 2026-10-19
 
 **A reply to a comment on part of a page copies that comment's place**
