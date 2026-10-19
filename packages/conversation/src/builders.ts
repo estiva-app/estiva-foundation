@@ -95,7 +95,8 @@ const PLACE_TAGS = new Set(['block', 'quote'])
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reply-on-a-page-keeps-its-threads-place.md
  */
 export function placeOf(comment: { tags: readonly NostrTag[] }): NostrTag[] {
-  return comment.tags.filter((t) => PLACE_TAGS.has(t[0]))
+  // One of each, the first, as every reader reads it: a stranger's extra tags are not copied under the replier's key.
+  return [...PLACE_TAGS].map((name) => comment.tags.find((t) => t[0] === name)).filter((t): t is NostrTag => !!t)
 }
 
 /**

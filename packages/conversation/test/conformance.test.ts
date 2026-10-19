@@ -367,7 +367,7 @@ describe('C16 — reply shape', () => {
   it('a reply takes only block and quote from the place it is handed, and none from its earned tags', () => {
     const top = comment(ISSUE)
     const reply = buildReply(BOB, 1_700_400_000_000, {
-      comment: { id: top.id, anchor: ISSUE, place: [['block', 'b1'], ['p', BOB], ['e', 'f'.repeat(64)]] },
+      comment: { id: top.id, anchor: ISSUE, place: [['block', 'b1'], ['p', BOB], ['block', 'b9'], ['e', 'f'.repeat(64)]] },
       folder: FOLDER,
       body: 'x',
       tags: [['block', 'elsewhere'], ['quote', 'other words']],

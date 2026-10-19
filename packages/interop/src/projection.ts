@@ -5824,7 +5824,10 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
               ['p', replyTo.author],
               // Only a `kind:1111` has a place (§13.6): a Ship `kind:9` parent's `block` means nothing.
               // conversation's `placeOf` filter, inline so interop's conversation floor stays where it is.
-              ...(replyTo.kind === KIND_COMMENT ? (replyTo.place ?? []).filter((t) => t[0] === 'block' || t[0] === 'quote').map((t) => [...t]) : []),
+              // One of each, the first, as readers read it: a stranger's extra tags are not copied under the replier's key.
+              ...(replyTo.kind === KIND_COMMENT
+                ? ['block', 'quote'].map((name) => replyTo.place?.find((t) => t[0] === name)).filter((t): t is string[] => !!t).map((t) => [...t])
+                : []),
             ]
           : [
               ['a', address],
