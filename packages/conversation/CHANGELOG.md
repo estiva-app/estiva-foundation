@@ -6,6 +6,30 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.16.0 — 2026-10-19
+
+**What a comment box shows under itself, for every app's box** (COMM-8; record
+*a-link-on-words-counts-toward-the-card*). `boxReadOf(doc, context)` reads the
+shared box's document as a send writes it and answers the one file that gets
+its default card, the live `part` of each block link (one per file, at most
+`MAX_PARTS`), and the URLs it names for the app's resolver to ask about.
+`embedsToSend` / `embedsToEdit` / `withoutCard` / `namedBefore` are Peek's
+`lib/boxCard.ts` rules, moved here so Leaf, and Ship on the shared box, write
+the `embed` set as Peek does. One change from Peek's copy: a link to a block of
+the file the conversation is on is its chip only and writes no `part` (Miky,
+2026-10-19).
+
+**A link on words is sent.** `composerText` writes words carrying a `link`
+mark — a URL pasted over them in the box — as `[words](url)`; until now the
+block bridge wrote the words and dropped the link. Words holding a bracket, or
+in code, keep their words only. `composerDocument` opens `[words](url)` as the
+words with a `link` mark, so an edit shows the link as it was drawn.
+
+Takes `@estiva-app/protocol` ≥ 0.40.0, where a link on words names its file.
+
+SPEC: §13.6.1, §13.6.2 — no rule changed; this package now writes what they
+already say, as Peek and Ship do.
+
 ## 0.15.1 — 2026-10-19
 
 **`-"…"` leaves a phrase out**, as the relay reads it (buzz#32).

@@ -22,6 +22,7 @@ const MSG = 'd'.repeat(64)
 const NPUB_BOB = `nostr:${encodeNpub(BOB)}`
 const NPUB_CAT = `nostr:${encodeNpub(CAT)}`
 const NEVENT = messageReference(MSG, 9)
+const ISSUE_URL = 'https://ship.estiva.app/issue/one'
 
 const paragraph = (...content: unknown[]) => ({ type: 'doc', content: [{ type: 'paragraph', content }] }) as never
 const text = (value: string) => ({ type: 'text', text: value })
@@ -55,6 +56,18 @@ describe('composerText: what a send writes from the box', () => {
     assert.equal(composerText(doc).text, '**ship** it')
     assert.deepEqual(composerText({ type: 'doc', content: [] } as never), { text: '' })
   })
+
+  it('words a URL was pasted over are sent as a link on those words', () => {
+    const linked = (value: string, href: string, marks: unknown[] = []) => ({ type: 'text', text: value, marks: [...marks, { type: 'link', attrs: { href } }] })
+    assert.equal(composerText(paragraph(text('see '), linked('the plan', ISSUE_URL), text(' now'))).text, `see [the plan](${ISSUE_URL}) now`)
+    assert.equal(composerText(paragraph(linked('the plan', ISSUE_URL, [{ type: 'bold' }]))).text, `**[the plan](${ISSUE_URL})**`)
+  })
+
+  it('a link whose words are its URL, or words a marker link cannot hold, keep their words only', () => {
+    const linked = (value: string, href: string) => ({ type: 'text', text: value, marks: [{ type: 'link', attrs: { href } }] })
+    assert.equal(composerText(paragraph(linked(ISSUE_URL, ISSUE_URL))).text, ISSUE_URL)
+    assert.equal(composerText(paragraph(linked('a [b]', ISSUE_URL))).text, 'a [b]')
+  })
 })
 
 describe('composerDocument: an edit or a draft opens with chips again', () => {
@@ -73,6 +86,14 @@ describe('composerDocument: an edit or a draft opens with chips again', () => {
     const doc = composerDocument(`ask ${NPUB_CAT}`, labels)
     assert.deepEqual(inline(doc), ['text:ask ', `reference:${NPUB_CAT}`])
     assert.equal(composerText(doc).text, `ask ${NPUB_CAT}`)
+  })
+
+  it('a link on words opens as the linked words and writes the same text back', () => {
+    const written = `see [the plan](${ISSUE_URL}) and ${ISSUE_URL}/[x](${ISSUE_URL})`
+    const doc = composerDocument(written, labels) as unknown as { content: { content: { text: string; marks?: { attrs?: { href?: string } }[] }[] }[] }
+    const runs = doc.content[0].content.map((n) => (n.marks?.length ? `link:${n.text}>${n.marks[0].attrs?.href}` : `text:${n.text}`))
+    assert.deepEqual(runs, ['text:see ', `link:the plan>${ISSUE_URL}`, `text: and ${ISSUE_URL}/[x](${ISSUE_URL})`])
+    assert.equal(composerText(doc as never).text, written)
   })
 })
 
