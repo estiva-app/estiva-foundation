@@ -192,6 +192,14 @@ describe('buildActionEvent({ replyTo }) writes NIP-22’s reply, not a second to
     ])
   })
 
+  it('copies the comment’s block and quote, and nothing else of its place, before the h', () => {
+    const block = ['block', 'b1', 'b2']
+    const quote = ['quote', 'first words', 'last words']
+    const built = buildActionEvent({ ...base, replyTo: { id: root.id, kind: COMMENT, author: SHIP, place: [['A', ADDRESS], block, ['p', CATH], quote] } })
+    assert.ok(typeof built !== 'string', String(built))
+    assert.deepEqual(built.tags, [['A', ADDRESS], ['K', String(ISSUE)], ['P', SHIP], ['e', root.id], ['k', String(COMMENT)], ['p', SHIP], block, quote, ['h', FOLDER]])
+  })
+
   it('names the parent’s kind, which for a Ship reply is 9 and not the comment kind', () => {
     const built = buildActionEvent({ ...base, replyTo: { id: shipReply.id, kind: 9, author: SHIP } })
     assert.ok(typeof built !== 'string')

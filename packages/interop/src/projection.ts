@@ -5583,8 +5583,14 @@ export interface ActionEventArgs {
    * it. `kind` is the parent's own, which for one of Ship's replies is `9`.
    *
    * Refused on any action that is not a comment: nothing else has a parent.
+   *
+   * `place` is the comment's own `block` and `quote` tags, when it is on part
+   * of the file: the reply copies them, so its thread keeps its place once the
+   * comment is deleted (SPEC §13.6, as conversation's `buildReply` does).
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reply-on-a-page-keeps-its-threads-place.md
    */
-  replyTo?: { id: string; kind: number; author: string }
+  replyTo?: { id: string; kind: number; author: string; place?: readonly string[][] }
   /**
    * The format the action's prose value is in, when it is not marker text —
    * `'estiva-blocks-1'` for a block document (SPEC §7.3's `format`, MAN-1).
@@ -5816,6 +5822,7 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
               ['e', replyTo.id],
               ['k', String(replyTo.kind)],
               ['p', replyTo.author],
+              ...(replyTo.place ?? []).filter((t) => t[0] === 'block' || t[0] === 'quote').map((t) => [...t]),
             ]
           : [
               ['a', address],

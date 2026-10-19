@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.60.0 — 2026-10-19
+
+**A reply to a comment on part of a file copies that comment's place**
+(COMM-5). `replyTo.place` takes the comment's `block` and `quote` tags, and
+the comment action writes them verbatim after the reply's `p`, before its `h`,
+as `@estiva-app/conversation` 0.14's `buildReply` does; any other tag in it is
+dropped. Without `place` the reply is written as before. So Peek's reply to a
+Leaf page's comment keeps its thread's place when the comment is deleted
+(record *a-reply-on-a-page-keeps-its-threads-place*).
+
+Manifests: none. Nothing a manifest declares, or how a declaration is read,
+changed; the comment action is NIP-22's, not the manifest's. SPEC §13.6 changed:
+a reply copies its top-level comment's `block` and `quote` instead of carrying
+none.
+
 ## 0.59.0 — 2026-10-16
 
 **`[` offers Leaf pages, and every row carries its file's summary** (SUM-7).
