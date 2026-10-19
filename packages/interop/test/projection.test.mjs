@@ -183,6 +183,14 @@ test('resolves an event that has no address at all', async () => {
   assert.equal(found.appName, 'Peek')
 })
 
+test('an event placed by buzz-channel alone writes there, and nothing scopes who reads it (LTX-4)', async () => {
+  // Stored globally by the relay: a move into a private Folder must still see no `h`.
+  const placed = event({ kind: MESSAGE_KIND, tags: [['buzz-channel', 'chan']], content: 'placed globally' })
+  const found = await resolveForeignEvent(placed.id, relay([messageManifest, placed]))
+  assert.equal(found.folder, 'chan')
+  assert.equal(found.scopedTo, undefined)
+})
+
 test('identifies it by event id, with no address and no naddr', async () => {
   const found = await resolveForeignEvent(aMessage.id, relay([messageManifest, aMessage]))
   assert.equal(found.address, undefined)
