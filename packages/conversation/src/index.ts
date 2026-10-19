@@ -62,7 +62,7 @@ export {
 
 export { decorationsOf, type Decoration, type Decorations, type Resolution, type QueryFn } from './decorations.js'
 
-export { buildComment, buildReply, offersEditAndDelete, type CommentRef } from './builders.js'
+export { buildComment, buildReply, offersEditAndDelete, placeOf, type CommentRef } from './builders.js'
 
 export { eventsNamedInBody, mentionText, messageReference, quoteTagsFor, URGENT_TAG, urgentTagsFor } from './compose.js'
 
