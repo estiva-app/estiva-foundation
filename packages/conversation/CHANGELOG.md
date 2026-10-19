@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.15.1 — 2026-10-19
+
+**`-"…"` leaves a phrase out**, as the relay reads it (buzz#32).
+`referenceMatch` drops a text that holds those whole words next to each other,
+in order, so `remov -"short summary"` no longer finds *Remove Short summary…*
+while `remov -"summary short"` still does. In 0.15.0 the `-` was dropped and
+the phrase became one to find, the opposite. A `-"` whose quote has not closed
+yet ends the query, so a phrase being typed to leave out never turns into
+words to find, and a query of only `-"…"` matches nothing.
+
+SPEC: §5.2 — the rule gains `-"phrase"` and what an unclosed `-"` means; relay
+and reader read it alike.
+
 ## 0.15.0 — 2026-10-19
 
 **Search matches every typed word as the start of a word** (record

@@ -93,22 +93,32 @@ const isWordStart = (text: string, at: number) => at === 0 || !/[\p{L}\p{N}]/u.t
 /** The words of `text`: its runs of letters and digits, so `SUM-7.` is `sum`, `7`. */
 const wordsOf = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
 
-/** One piece of a typed query: a word, `"a phrase"`, or `-a word` left out. */
+/** One piece of a typed query: a word, `"a phrase"`, `-a word` or `-"a phrase"` left out. */
 interface SearchTerm {
-  kind: 'word' | 'phrase' | 'not'
+  kind: 'word' | 'phrase' | 'not' | 'notPhrase'
   text: string
 }
 
 /**
  * Splits typed text as the relay does (buzz's `parse_word_start`): `"…"` is a
- * phrase, a word opening with `-` is left out, anything else is a word, `or`
- * and `key:value` included. A quote with no closing partner is ignored, so
- * `"short summ` finds by word starts while it is typed.
+ * phrase, `-"…"` a phrase left out, a word opening with `-` is left out,
+ * anything else is a word, `or` and `key:value` included. A quote with no
+ * closing partner is ignored, so `"short summ` finds by word starts while it
+ * is typed; after `-"` it ends the query, so a phrase being typed to leave out
+ * never turns into words to find.
  */
 function searchTerms(query: string): SearchTerm[] {
   const terms: SearchTerm[] = []
   let rest = query
   while ((rest = rest.trimStart())) {
+    if (rest.startsWith('-"')) {
+      const end = rest.indexOf('"', 2)
+      if (end < 0) break
+      const phrase = rest.slice(2, end).trim()
+      if (wordsOf(phrase).length > 0) terms.push({ kind: 'notPhrase', text: phrase })
+      rest = rest.slice(end + 1)
+      continue
+    }
     if (rest.startsWith('"')) {
       const end = rest.indexOf('"', 1)
       if (end > 0) {
@@ -146,7 +156,8 @@ const holdsPhrase = (words: readonly string[], phrase: string) => {
  * How well `text` holds `query`, by the rule every Estiva search uses (SPEC
  * §5.2): each typed word matches the start of a word, in any order; `"…"`
  * matches those whole words next to each other; `-word` leaves out a text with
- * a word starting that way. Punctuation at a typed word's ends is ignored, and
+ * a word starting that way, and `-"…"` one with those whole words next to each
+ * other. Punctuation at a typed word's ends is ignored, and
  * so is case. A query with nothing to find but words left out matches nothing.
  *
  * Of the texts that match, a hit where every typed word is a whole word ranks
@@ -166,7 +177,9 @@ export function referenceMatch(text: string, query: string): number {
   if (wanted.length === 0) return 0
   const words = wordsOf(text)
   const holds = (t: SearchTerm) => (t.kind === 'phrase' ? holdsPhrase(words, t.text) : startsWords(words, t.text))
-  if (!wanted.every(holds) || terms.some((t) => t.kind === 'not' && startsWords(words, t.text))) return 0
+  const leftOut = (t: SearchTerm) =>
+    (t.kind === 'not' && startsWords(words, t.text)) || (t.kind === 'notPhrase' && holdsPhrase(words, t.text))
+  if (!wanted.every(holds) || terms.some(leftOut)) return 0
   const whole = wanted.every((w) => w.kind === 'phrase' || wordsOf(w.text).every((piece) => words.includes(piece))) ? 4 : 0
   const t = normalize(text)
   const q = normalize(wanted.map((w) => w.text.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).join(' '))
@@ -176,8 +189,9 @@ export function referenceMatch(text: string, query: string): number {
   return whole + 1
 }
 
-/** The terms that ask for something: words and phrases with a letter or digit, not words left out. */
-const wantedOf = (terms: readonly SearchTerm[]) => terms.filter((t) => t.kind !== 'not' && wordsOf(t.text).length > 0)
+/** The terms that ask for something: words and phrases with a letter or digit, not what is left out. */
+const wantedOf = (terms: readonly SearchTerm[]) =>
+  terms.filter((t) => (t.kind === 'word' || t.kind === 'phrase') && wordsOf(t.text).length > 0)
 
 /**
  * Whether a longer query's answer is within `query`'s: it asks for a word and
