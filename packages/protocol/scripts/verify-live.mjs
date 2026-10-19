@@ -55,11 +55,11 @@ const check = (label, ok, detail = '') => {
 // ── credential ─────────────────────────────────────────────────────────────
 const tokenRes = await fetch(`${ID_BASE}/token`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    grantType: 'client_credentials',
-    clientId: process.env.ESTIVA_ID_CLIENT_ID,
-    clientSecret: process.env.ESTIVA_ID_CLIENT_SECRET,
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: process.env.ESTIVA_ID_CLIENT_ID ?? '',
+    client_secret: process.env.ESTIVA_ID_CLIENT_SECRET ?? '',
   }),
 })
 const token = await tokenRes.json()
