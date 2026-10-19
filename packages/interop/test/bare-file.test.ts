@@ -8,7 +8,7 @@
   therefore holds no `kind:31990` unless a test is specifically about one
   trying to claim the kind — and that test asserts it cannot.
 */
-import { describe, it } from 'node:test'
+import { before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BARE_FILE_MANIFEST_ADDRESS,
@@ -451,15 +451,19 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       createdAtMs: 1_700_000_000_000,
     })
   let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
+  // Read before any test, so each one runs alone and fails on its own assertion.
+  before(async () => {
+    const resolved = await resolveManifest({ kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] }, relay([]))
+    BARE_MANIFEST = resolved!.manifest
+  })
 
-  it('declares comment, rename, describe, summarize, move, archive and delete, each as the control a consumer draws', async () => {
+  it('declares comment, rename, summarize, move, archive and delete, each as the control a consumer draws', async () => {
     const found = await resolveForeignObject(TOPIC, relay([topic()]))
     assert.deepEqual(
       found?.actions.map((a) => [a.id, a.control, a.effect]),
       [
         ['comment', 'text', 'writes'],
         ['rename', 'text', 'writes'],
-        ['describe', 'text', 'writes'],
         ['summarize', 'text', 'writes'],
         ['move', 'text', 'writes'],
         ['archive', 'select', 'writes'],
@@ -468,8 +472,6 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     )
     // `rename` sets the field the title slot reads — one fact, two views (PEEK-18).
     assert.equal(found?.actions.find((a) => a.id === 'rename')?.field, found?.slots.title.field)
-    const resolved = await resolveManifest({ kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] }, relay([]))
-    BARE_MANIFEST = resolved!.manifest
   })
 
   it('renames with a title change anyone in the team may publish, and the title folds it', async () => {
@@ -488,14 +490,21 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
   })
 
   /*
-    Leaf 1: a page's text is the `description` fold, seeded from `content`
-    (SPEC §6.7). Anyone in the Folder saves it; the later save wins; the format
-    is read from the change the text came from (§13.4).
+    LTX-4: a topic is a conversation and has no text (SPEC §6.7, 2026-10-19).
+    Leaf 1 gave it a `describe` action and a body; no topic ever had a text,
+    and a document app lists only files whose owner shares one, so a topic
+    must offer neither — whatever its `content` or change stream holds.
   */
   const DOC = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', id: 'p1', content: [{ type: 'text', text: 'Written by someone else' }] }] })
 
-  it('saves text with a description change anyone in the team may publish, and the body folds it', async () => {
-    const built = buildActionEvent({
+  it('has no text: no body from content or a description change, and no action that writes one', async () => {
+    const root = topic([['content-format', 'estiva-blocks-1']])
+    root.content = DOC
+    const saved = event({ kind: CHANGE_KIND, pubkey: OTHER, tags: [['a', TOPIC], ['field', 'description'], ['value', DOC], ['h', TEAM], ['content-format', 'estiva-blocks-1'], ['ts', '1700000200000']] })
+    const found = await resolveForeignObject(TOPIC, relay([root, saved]))
+    assert.equal(found?.slots.body, undefined)
+    assert.equal(found?.actions.some((a) => a.field === 'description'), false)
+    const refused = buildActionEvent({
       manifest: BARE_MANIFEST,
       kind: KIND_BARE_FILE,
       address: TOPIC,
@@ -507,34 +516,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       pubkey: OTHER,
       createdAtMs: 1_700_000_000_000,
     })
-    assert.notEqual(typeof built, 'string', String(built))
-    const change = built as Exclude<typeof built, string>
-    assert.equal(change.kind, CHANGE_KIND)
-    assert.equal(change.pubkey, OTHER, 'a non-author saves: it is a change, not a re-publish')
-    assert.deepEqual(
-      change.tags.filter((t) => t[0] !== 'ts'),
-      [['a', TOPIC], ['field', 'description'], ['value', DOC], ['h', TEAM], ['content-format', 'estiva-blocks-1']],
-    )
-    const saved = event({ ...change, id: 'd'.repeat(64), sig: '' } as SignedEvent)
-    const found = await resolveForeignObject(TOPIC, relay([topic(), saved]))
-    assert.equal(found?.slots.body?.value, DOC)
-    assert.equal(found?.slots.body?.format, 'blocks', 'read from the change the text came from (§13.4)')
-    // `describe` sets the field the body slot reads — what lets a consumer draw it as the body.
-    assert.equal(found?.actions.find((a) => a.id === 'describe')?.field, found?.slots.body?.field)
-  })
-
-  it('reads the body from content until anyone saves, and the later save wins', async () => {
-    const ORIGINAL = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', id: 'p0', content: [{ type: 'text', text: 'First draft' }] }] })
-    const root = topic([['content-format', 'estiva-blocks-1']])
-    root.content = ORIGINAL
-    assert.equal((await resolveForeignObject(TOPIC, relay([root])))?.slots.body?.value, ORIGINAL)
-
-    // `ts` must agree with `created_at` (SPEC §6.2), or the order falls back to `created_at`.
-    const save = (value: string, ts: number, by = OTHER) =>
-      event({ kind: CHANGE_KIND, pubkey: by, created_at: Math.floor(ts / 1000), tags: [['a', TOPIC], ['field', 'description'], ['value', value], ['h', TEAM], ['content-format', 'estiva-blocks-1'], ['ts', String(ts)]] })
-    const later = save(DOC, 1_700_000_200_000)
-    const earlier = save(ORIGINAL.replace('First', 'Second'), 1_700_000_100_000, AUTHOR)
-    assert.equal((await resolveForeignObject(TOPIC, relay([root, later, earlier])))?.slots.body?.value, DOC)
+    assert.equal(typeof refused, 'string', 'no event is built for an action the manifest does not declare')
   })
 
   it('moves with a parent change that keeps the file in its team, and parentRef folds it', async () => {
@@ -672,21 +654,19 @@ describe('a change signed in another Folder is ignored (SPEC §6.2)', () => {
   const change = (field: string, value: string, h: string) =>
     event({ kind: CHANGE_KIND, pubkey: OTHER, tags: [['a', TOPIC], ['field', field], ['value', value], ['h', h], ['ts', String(1_700_000_500_000 + seq)]] })
 
-  it('keeps the title, text, parent and archive the file has in its own Folder', async () => {
-    const root = topic()
-    root.content = 'The brief'
+  it('keeps the title, summary, parent and archive the file has in its own Folder', async () => {
     const found = await resolveForeignObject(
       TOPIC,
       relay([
-        root,
+        topic([['summary', 'The brief']]),
         change('title', 'Hijacked', ELSEWHERE),
-        change('description', 'Overwritten', ELSEWHERE),
+        change('summary', 'Overwritten', ELSEWHERE),
         change('parent', '', ELSEWHERE),
         change('archived', 'true', ELSEWHERE),
       ]),
     )
     assert.equal(found?.slots.title.value, 'Launch naming')
-    assert.equal(found?.slots.body?.value, 'The brief')
+    assert.equal(found?.slots.subtitle?.value, 'The brief')
     assert.equal(found?.parentRef, PROJECT)
     assert.equal(isArchived(found!), false)
   })
@@ -694,10 +674,10 @@ describe('a change signed in another Folder is ignored (SPEC §6.2)', () => {
   it('takes the same changes signed in the file’s own Folder — the negative control', async () => {
     const found = await resolveForeignObject(
       TOPIC,
-      relay([topic(), change('title', 'Renamed', TEAM), change('description', 'Rewritten', TEAM)]),
+      relay([topic([['summary', 'The brief']]), change('title', 'Renamed', TEAM), change('summary', 'Rewritten', TEAM)]),
     )
     assert.equal(found?.slots.title.value, 'Renamed')
-    assert.equal(found?.slots.body?.value, 'Rewritten')
+    assert.equal(found?.slots.subtitle?.value, 'Rewritten')
   })
 
   it('ignores a change that names no Folder at all', async () => {

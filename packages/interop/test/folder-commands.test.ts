@@ -38,7 +38,7 @@ const commandsTo = (events: Shape[], folder: string) =>
 const file = (address: string, parent?: string, folder: string = A) => ({
   ref: address,
   address,
-  folder,
+  scopedTo: folder,
   ...(parent ? { parentRef: parent } : {}),
 })
 
@@ -160,7 +160,7 @@ describe('planMoveFile', () => {
 
   it('walks from the listing’s own entry, whatever ref the caller holds', () => {
     const listing = [file(FILE), file(CHILD, FILE)]
-    const plan = planMoveFile(PUB, MS, { file: { ref: 'naddr1-something-else', address: FILE, folder: A }, from, to, listing })
+    const plan = planMoveFile(PUB, MS, { file: { ref: 'naddr1-something-else', address: FILE, scopedTo: A }, from, to, listing })
     assert.ok(plan.ok)
     assert.deepEqual(plan.moved, [FILE, CHILD])
   })
@@ -178,6 +178,16 @@ describe('planMoveFile', () => {
 
   it('refuses a move into a private Folder of a file with no h — readable by the whole workspace', () => {
     const project = { ref: `30850:${PUB}:p1`, address: `30850:${PUB}:p1` }
+    assert.deepEqual(planMoveFile(PUB, MS, { listing: null, file: project, from, to: { ...to, private: true } }), {
+      ok: false,
+      reason: 'target-is-private',
+    })
+  })
+
+  it('refuses a move into a private Folder of a globally stored file, even one that writes there', () => {
+    // A `buzz-channel` project: since LTX-4 its `folder` is that channel, but the
+    // relay stores the root globally, so only its `h` (none) says who can read it.
+    const project = { ref: `30850:${PUB}:p1`, address: `30850:${PUB}:p1`, folder: B }
     assert.deepEqual(planMoveFile(PUB, MS, { listing: null, file: project, from, to: { ...to, private: true } }), {
       ok: false,
       reason: 'target-is-private',

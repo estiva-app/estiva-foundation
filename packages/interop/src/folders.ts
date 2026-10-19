@@ -219,13 +219,15 @@ export function planArchiveFolder(
 /**
  * A file as a move needs it. A `ForeignObject` from `resolveFolderContents` is
  * one: `ref` is its identity, `parentRef` the file it is drawn beneath, and
- * `folder` the `h` of its root — absent for a root placed by `buzz-channel`.
+ * `scopedTo` the `h` of its root — absent for a root placed by `buzz-channel`,
+ * which the relay stores globally. Not `folder`, which since LTX-4 also reads
+ * `buzz-channel`: that is where writes go, not who can read the root.
  */
 export interface MovableFile {
   ref: string
   address?: string
   parentRef?: string
-  folder?: string
+  scopedTo?: string
 }
 
 /**
@@ -334,7 +336,7 @@ export function planMoveFile(
   const listed = listing?.find((candidate) => candidate.ref === file.ref || (!!file.address && candidate.address === file.address))
   const set = listing ? [...(listed ? [listed] : []), ...listedBeneath(listing, listed ?? file)] : [file]
   const moving = set.filter((candidate) => candidate.address)
-  if (args.to.private && moving.some((candidate) => candidate.folder !== args.to.id)) return { ok: false, reason: 'target-is-private' }
+  if (args.to.private && moving.some((candidate) => candidate.scopedTo !== args.to.id)) return { ok: false, reason: 'target-is-private' }
   const moved = [...new Set(moving.map((candidate) => candidate.address!))]
   if (!moved.length) return { ok: true, events: [], moved }
   return {
@@ -426,7 +428,7 @@ export function planMoveFromFolders(
   }
   if (!to.hasState) return { ok: false, reason: 'target-has-no-state' }
   if (moved.size === 0) {
-    if (to.private && file.folder !== to.id) return { ok: false, reason: 'target-is-private' }
+    if (to.private && file.scopedTo !== to.id) return { ok: false, reason: 'target-is-private' }
     if (!file.address) return { ok: true, removes: [], moved: [] }
     const [add] = planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true })
     return { ok: true, add, removes: [], moved: [file.address] }

@@ -1010,13 +1010,17 @@ interface Manifest {
    * protocol change, and the field that tells a generic app from a specialized
    * one that happens to draw a card.
    *
-   * A specialized app owns kinds and says nothing here. A generic app owns no
-   * kinds and declares the one aspect it renders for everyone else's files:
-   * `conversation` (Peek) or `document` (Leaf). See {@link ASPECTS}.
+   * A specialized app owns kinds and says nothing here. A generic app declares
+   * the one aspect it renders for everyone else's files: `conversation` (Peek)
+   * or `document` (Leaf, which writes the title, summary and text of any file
+   * whose owner shares them, SPEC §7.8). It may own kinds as well, as Leaf owns
+   * documents: the `k` tags say what it owns, this says what it renders.
+   * See {@link ASPECTS}.
    *
    * What it is read for today: the bare file (§6.7) has no owner and so no
    * `web` template of its own, and the app that renders its conversation is
-   * where a link to it should land. Nothing else consults it yet.
+   * where a link to it should land. Nothing in this package consults
+   * `document` yet; Leaf reads its own role.
    */
   aspect?: string
   /**
@@ -1212,6 +1216,16 @@ export function folderOf(root: SignedEvent): string | null {
     return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel') ?? tagValue(root, 'd') ?? null
   }
   return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel') ?? null
+}
+
+/**
+ * {@link ForeignObject.folder}: `h`, then `buzz-channel` (LTX-4) — where a
+ * change or a comment on the file goes. Not {@link folderOf}'s `d` fallback for
+ * a `kind:39000`: a Folder drawn as a file kept no `folder` before, and
+ * consumers gate "start inside" and membership on it.
+ */
+function writeFolderOf(root: SignedEvent): string | undefined {
+  return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel')
 }
 
 /**
@@ -1422,13 +1436,10 @@ const BARE_FILE_MANIFEST: Manifest = {
       slots: {
         title: { tag: 'title', fold: 'title' },
         /*
-          The text is the `description` fold, seeded from `content` (SPEC §6.7,
-          Leaf 1): anyone in the Folder saves it with the `describe` action
-          below, the author included — a republished root would lose silently
-          to an older change. Ship's body slot is the same fold, minus the
-          `tag`: a `30840` carries its text in `content`, never in a tag.
+          No `body`: a topic is a conversation and has no text (SPEC §6.7,
+          2026-10-19), so nothing draws one and no document app lists it.
+          why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-document-app-writes-what-a-files-app-shares.md
         */
-        body: { fold: 'description', field: 'content' },
         // A bare file may hold bare files — a sub-topic under a topic. Children
         // of *other* kinds are found the other way round, by their own `a`
         // (`parentRefOf` below), which is FOL-4's generic direction; this slot
@@ -1480,7 +1491,8 @@ const BARE_FILE_MANIFEST: Manifest = {
   },
   /*
     The manifest is the only place a consumer learns of any of these actions
-    (FOL-33; `move` from FOL-4, `describe` from Leaf 1). A Peek page offering Rename and Delete on a bare file and
+    (FOL-33; `move` from FOL-4). No `describe`: Leaf 1 added one and LTX took
+    it out again, since a topic has no text (SPEC §6.7). A Peek page offering Rename and Delete on a bare file and
     nothing on a Ship issue does so because *this* list says `rename` and
     `delete` and Ship's does not — never because the kind is 30840. The rule is
     the one FOL-31 set for `comment`: a control is drawn from a declaration.
@@ -1516,25 +1528,6 @@ const BARE_FILE_MANIFEST: Manifest = {
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: 'title' },
       input: { type: 'string' },
-    },
-    /*
-      `describe` replaces the file's text with a whole §13.3 block document —
-      a snapshot, last save wins (SPEC §6.7, decided 2026-10-13; live merging
-      between open windows is a later layer). The shape of Ship's
-      `describe-issue`, so a consumer that edits one edits both, and finds it
-      by `emits.field` rather than by this id. Every save is a full copy, so a
-      writer saves on leave, never per keystroke.
-    */
-    {
-      id: 'describe',
-      label: 'Edit',
-      description:
-        "Replace this file's text with new text. A change event, so anyone in the Folder may, and every app " +
-        'reading the file folds it over the text it was made with; the later save wins.',
-      effect: 'writes',
-      appliesTo: [String(KIND_BARE_FILE)],
-      emits: { kind: 1851, field: 'description' },
-      input: { type: 'string', format: BLOCK_DOCUMENT_FORMAT },
     },
     /*
       `summarize` sets the file's one-line summary (SPEC §6.12): plain text, so
@@ -3233,14 +3226,25 @@ export interface ForeignObject {
   meta: ResolvedSlot[]
   comments: { id: string; author: string; body: string; createdAt: number }[]
   /**
-   * The Folder this object lives in, from the root event's `h` tag.
+   * The Folder this object lives in: the root's `h`, or `buzz-channel` on a
+   * record that names its Folder that way, as Ship's projects do
+   * ({@link folderOf}, SPEC §7.3).
    *
-   * Needed to *write*: a change event carries the same `h`, and without it the
-   * relay rejects the write outright. Reading it off the object rather than
-   * asking the user is the difference between an action that works and a form
-   * with a "Folder id" box in it.
+   * Needed to *write*: a change event carries it as `h` (SPEC §6.10), and
+   * without it the relay rejects the write outright. Reading it off the object
+   * rather than asking the user is the difference between an action that works
+   * and a form with a "Folder id" box in it. Until LTX-4 it read `h` only, so a
+   * Ship project had none and no other app could save or comment on it.
    */
   folder?: string
+  /**
+   * The channel that gates who can read the root itself: its `h`, and absent
+   * for a record stored globally (a `buzz-channel` project, whose name anyone
+   * can read). Not where writes go — that is {@link folder}. A move into a
+   * private Folder reads this (`planMoveFile`), because a listing never changes
+   * who can read a file (SPEC §3.1).
+   */
+  scopedTo?: string
   /**
    * Where to open this object in the app that owns it, from NIP-89's `web` tag.
    *
@@ -3351,7 +3355,8 @@ function buildObject(args: {
     listsChildren: listsChildrenOf(projection, manifest),
     parentRef: parentRefOf(manifest, pointer.kind, root, folded),
     ...parentFieldsOf(manifest, pointer.kind),
-    folder: tagValue(root, 'h'),
+    folder: writeFolderOf(root),
+    scopedTo: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
     openUrl: args.webTemplate?.replace('<bech32>', naddr),
@@ -4716,7 +4721,8 @@ function buildChildObject(args: {
     // should be able to trust.
     parentRef: parentRefOf(manifest, root.kind, root, folded),
     ...parentFieldsOf(manifest, root.kind),
-    folder: tagValue(root, 'h'),
+    folder: writeFolderOf(root),
+    scopedTo: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
 
