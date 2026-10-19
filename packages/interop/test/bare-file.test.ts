@@ -8,7 +8,7 @@
   therefore holds no `kind:31990` unless a test is specifically about one
   trying to claim the kind — and that test asserts it cannot.
 */
-import { describe, it } from 'node:test'
+import { before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BARE_FILE_MANIFEST_ADDRESS,
@@ -451,6 +451,11 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       createdAtMs: 1_700_000_000_000,
     })
   let BARE_MANIFEST: Parameters<typeof buildActionEvent>[0]['manifest']
+  // Read before any test, so each one runs alone and fails on its own assertion.
+  before(async () => {
+    const resolved = await resolveManifest({ kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] }, relay([]))
+    BARE_MANIFEST = resolved!.manifest
+  })
 
   it('declares comment, rename, summarize, move, archive and delete, each as the control a consumer draws', async () => {
     const found = await resolveForeignObject(TOPIC, relay([topic()]))
@@ -467,8 +472,6 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     )
     // `rename` sets the field the title slot reads — one fact, two views (PEEK-18).
     assert.equal(found?.actions.find((a) => a.id === 'rename')?.field, found?.slots.title.field)
-    const resolved = await resolveManifest({ kind: KIND_BARE_FILE, pubkey: AUTHOR, identifier: 'naming', relays: [] }, relay([]))
-    BARE_MANIFEST = resolved!.manifest
   })
 
   it('renames with a title change anyone in the team may publish, and the title folds it', async () => {

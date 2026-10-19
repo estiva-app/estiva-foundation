@@ -15,7 +15,8 @@ manifests already published still mean what they meant.
   `describe` action. A topic resolves with no body, whatever its `content` or
   change stream holds, and `buildActionEvent` refuses `describe` on it. None of
   the 32 topics on the relay ever had a text (2026-10-19).
-- `ForeignObject.folder` reads `h`, then `buzz-channel` (`folderOf`), so a
+- `ForeignObject.folder` reads `h`, then `buzz-channel` (as `folderOf` does,
+  without its `d` fallback for a Folder's own `39000`), so a
   Ship project placed the way Ship places it has the Folder a change or a
   comment goes into. It read `h` only, which left about half of Ship's
   projects with nowhere to write from another app.

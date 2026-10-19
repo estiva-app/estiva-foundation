@@ -1219,6 +1219,16 @@ export function folderOf(root: SignedEvent): string | null {
 }
 
 /**
+ * {@link ForeignObject.folder}: `h`, then `buzz-channel` (LTX-4) — where a
+ * change or a comment on the file goes. Not {@link folderOf}'s `d` fallback for
+ * a `kind:39000`: a Folder drawn as a file kept no `folder` before, and
+ * consumers gate "start inside" and membership on it.
+ */
+function writeFolderOf(root: SignedEvent): string | undefined {
+  return tagValue(root, 'h') ?? tagValue(root, 'buzz-channel')
+}
+
+/**
  * Does the event carry this tag with this value — on **any** of them?
  *
  * `tagValue` reads the first tag with a given name, which is the wrong test for
@@ -3345,7 +3355,7 @@ function buildObject(args: {
     listsChildren: listsChildrenOf(projection, manifest),
     parentRef: parentRefOf(manifest, pointer.kind, root, folded),
     ...parentFieldsOf(manifest, pointer.kind),
-    folder: folderOf(root) ?? undefined,
+    folder: writeFolderOf(root),
     scopedTo: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
@@ -4711,7 +4721,7 @@ function buildChildObject(args: {
     // should be able to trust.
     parentRef: parentRefOf(manifest, root.kind, root, folded),
     ...parentFieldsOf(manifest, root.kind),
-    folder: folderOf(root) ?? undefined,
+    folder: writeFolderOf(root),
     scopedTo: tagValue(root, 'h'),
     /*
       `<bech32>` is whichever form this object actually has.
