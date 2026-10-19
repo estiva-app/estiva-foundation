@@ -116,6 +116,11 @@ function normalise(value: string): string | undefined {
  * holds that `d` — or undefined. Never a match on the link's trailing
  * identifier alone: that resolves any site's URL as somebody's object, and puts
  * a real issue's card under a link that does not open it (§7.7).
+ *
+ * A link to one block (`#block-<id>`, §13.6.1) resolves to the object the block
+ * is in: it reads as that file's chip, and its `part`, when the message carries
+ * one, draws the block and keeps the file's card off ({@link cardsIn},
+ * {@link defaultCardOf}, {@link lineDrawOf}).
  */
 export type LinkResolver = (url: string) => string | undefined
 

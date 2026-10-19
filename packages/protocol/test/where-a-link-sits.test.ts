@@ -43,7 +43,9 @@ const messageRef = `nostr:${encodeNevent({ id: MESSAGE, relays: [] })}`
 const personRef = `nostr:${encodeNpub(PK)}`
 const ISSUE_URL = 'https://ship.estiva.app/issue/f78c3b96-2a3b-4d92-910a-ac25aba672cd'
 const PROJECT_URL = 'https://ship.estiva.app/project/15e9b50a-825a-4537-8b4a-df46efb9c7e4'
-const resolve: LinkResolver = (url) => (url === ISSUE_URL ? ISSUE : url === PROJECT_URL ? PROJECT : undefined)
+// A link to one block names its file (§7.7), as Peek's and Ship's resolvers answer it (WBM-11).
+const BLOCK_URL = `${ISSUE_URL}#block-p1`
+const resolve: LinkResolver = (url) => (url === ISSUE_URL || url === BLOCK_URL ? ISSUE : url === PROJECT_URL ? PROJECT : undefined)
 
 const tree = (text: string) => toRenderTree(text, 'marker')
 
@@ -190,6 +192,29 @@ describe('C21 — where a link sits (§13.2, §13.6.2)', () => {
     assert.deepEqual(lineDrawOf(linesOf(block)[0], block, { resolveLink: resolve }), { draw: 'row', value: ISSUE, url: ISSUE_URL })
     const [refBlock] = tree(ref(ISSUE))
     assert.deepEqual(lineDrawOf(linesOf(refBlock)[0], refBlock), { draw: 'row', value: ISSUE })
+  })
+})
+
+describe('a link to one block reads as its file (§7.7, §13.6.1; WBM-11)', () => {
+  const PART = [{ address: ISSUE, block: 'p1' }]
+
+  it('in a sentence it is its file’s chip, the run keeping the URL as written, and its part keeps the card off', () => {
+    const text = `see ${BLOCK_URL} here`
+    assert.deepEqual(draw(text, [{ value: ISSUE, layout: 'detailed' }], PART), ['sentence'])
+    const run = linksAsReferences(tree(text), resolve)[0].inline!.find((r) => r.reference)
+    assert.deepEqual(run, { text: BLOCK_URL, marks: [], reference: ref(ISSUE) })
+    assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'detailed' }], tree(text), PART, resolve), [])
+  })
+
+  it('alone on its line it draws nothing while its part shows the block (C26), and its file’s row with no part', () => {
+    assert.deepEqual(draw(BLOCK_URL, [], PART), ['nothing'])
+    assert.deepEqual(draw(BLOCK_URL), [`row ${ISSUE}`])
+  })
+
+  it('counts as its file: with its part it takes no default card, and beside another file neither gets one (C27)', () => {
+    assert.deepEqual(valuesIn(tree(BLOCK_URL), resolve), [ISSUE])
+    assert.equal(defaultCardOf(valuesIn(tree(BLOCK_URL), resolve), PART), undefined)
+    assert.equal(defaultCardOf(valuesIn(tree(`${BLOCK_URL} and ${PROJECT_URL}`), resolve), PART), undefined)
   })
 })
 
