@@ -27,6 +27,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | writing | §6.4, §13.6 | `buildComment`, `buildReply`, `placeOf`, `referenceTagsFor`, `mentionTagsFor` |
 | what a composer's pick writes | §13.1 | `mentionText`, `messageReference`, `urgentTagsFor`, `URGENT_TAG` |
 | what the shared comment box holds, as the message it writes, and back | §13.1 | `composerText`, `composerDocument`, `withoutNewUrgency`, `composerDraft` |
+| what a box shows under itself while a comment is written: the one file's card and each block link's part, and the `embed` a send or an edit writes | §13.6.1, §13.6.2 | `boxReadOf`, `boxLinksOf`, `embedsToSend`, `embedsToEdit`, `namedBefore`, `withoutCard`, `linkTargetOf` |
 | what `[` offers, and in what order | §13.1 | `rankReferences`, `referenceMatch`, `fileReference`, `referenceSearch`, `MESSAGE_TIER`, `FILE_TIER`, `REFERENCE_CAPS` |
 | ordering | §6.2, §6.3 | `trustedTs`, `orderingMs`, `byOrder` |
 | edits and attachments | §6.8 | `editTargetOf`, `foldEdits`, `foldAttachments` |

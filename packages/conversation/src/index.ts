@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.15.1'
+export const CONVERSATION_VERSION = '0.16.0'
 
 export {
   KIND_MESSAGE,
@@ -75,6 +75,19 @@ export {
   type ComposerLabels,
   type ComposerText,
 } from './composer.js'
+
+export {
+  MAX_PARTS,
+  boxLinksOf,
+  boxReadOf,
+  embedsToEdit,
+  embedsToSend,
+  linkTargetOf,
+  namedBefore,
+  withoutCard,
+  type BoxLinkContext,
+  type BoxLinks,
+} from './boxCard.js'
 
 export {
   FILE_TIER,

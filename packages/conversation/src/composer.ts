@@ -45,12 +45,59 @@ const keyOf = (node: EditorNode): string | null => {
 }
 
 /**
+ * A link on words as the marker format writes it, `[words](url)`, and back:
+ * the same alternation protocol's `valuesIn` and ui's `RichText` read, so a
+ * URL starting earlier swallows a bracket inside it here as it does there.
+ * Words hold no bracket and no line break (COMM-8; Peek's rule).
+ */
+const LINK_OR_URL = /(\[([^[\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\))|(https?:\/\/[^\s<>"'`]+)/g
+const LINK_TARGET = /^(?:https?:\/\/|mailto:)[^\s)]+$/
+const LINK_WORDS = /^[^[\]\n]+$/
+
+const linkMarkOf = (node: EditorNode) => node.marks?.find((m) => m.type === 'link')
+
+/**
+ * Words the box holds as a link (a URL pasted over them) written as
+ * `[words](url)`. The block bridge draws and writes no link on words, so
+ * without this the words would be sent and the link dropped. A link whose
+ * words are its URL is the URL itself; words that cannot be a marker link (a
+ * bracket, code) keep their words and lose the link, as the bridge did.
+ */
+function linkOnWordsAsMarker(node: EditorNode): EditorNode {
+  const link = linkMarkOf(node)
+  const href = link?.attrs?.href
+  if (!link || node.text === undefined) return node
+  const marks = (node.marks ?? []).filter((m) => m !== link)
+  const kept = marks.length ? { marks } : {}
+  const written = typeof href === 'string' && node.text !== href && LINK_TARGET.test(href) && LINK_WORDS.test(node.text) && !marks.some((m) => m.type === 'code')
+  return { type: 'text', text: written ? `[${node.text}](${href})` : node.text, ...kept }
+}
+
+/** Marker text's `[words](url)` in a text node, as the words with a `link` mark the box draws; anything else as it was. */
+function linksOnWordsAsMarks(node: EditorNode): EditorNode[] {
+  const text = node.text ?? ''
+  if (!text.includes('](') || node.marks?.some((m) => m.type === 'code' || m.type === 'link')) return [node]
+  const out: EditorNode[] = []
+  let at = 0
+  for (const m of text.matchAll(LINK_OR_URL)) {
+    if (!m[1]) continue
+    if (m.index > at) out.push({ ...node, text: text.slice(at, m.index) })
+    out.push({ ...node, text: m[2], marks: [...(node.marks ?? []), { type: 'link', attrs: { href: m[3] } }] })
+    at = m.index + m[0].length
+  }
+  if (out.length === 0) return [node]
+  if (at < text.length) out.push({ ...node, text: text.slice(at) })
+  return out
+}
+
+/**
  * The chips as the block bridge can write them. `fromEditorDocument` knows a
  * `reference` and drops any inline node it does not, so a picked person would
  * vanish from the message: a chip becomes the `reference` its `nostr:` text
  * names (§13.1), or `@Name` / `!@Name` for somebody with no key.
  */
 function chipsAsReferences(node: EditorNode): EditorNode {
+  if (node.type === 'text') return linkOnWordsAsMarker(node)
   if (node.type === 'mention' || node.type === 'urgentMention') {
     const pubkey = keyOf(node)
     const written = mentionText({ pubkey, label: String(node.attrs?.label ?? '') }, node.type === 'urgentMention')
@@ -110,7 +157,8 @@ const plainReference = (node: EditorNode): string | null => {
  * tag, so marker text alone cannot say it); a message or a file becomes its
  * `captionedReference` chip. Whatever `labels` does not know stays the
  * `reference` it was, and so does one with marks or a card, which a chip
- * would lose.
+ * would lose. A link on words, `[words](url)`, opens as the words with a
+ * `link` mark, as the box drew it while it was written.
  */
 export function composerDocument(text: string, labels: ComposerLabels = {}, urgent?: readonly string[]): EditorDocument {
   const keys = new Set(urgent ?? [])
@@ -132,7 +180,7 @@ export function composerDocument(text: string, labels: ComposerLabels = {}, urge
       if (caption) return { type: 'captionedReference', attrs: { id: uri, label: caption.label, snippet: caption.snippet, uri } }
       return node
     }
-    return node.content ? { ...node, content: node.content.map(walk) } : node
+    return node.content ? { ...node, content: node.content.flatMap((child) => (child.type === 'text' ? linksOnWordsAsMarks(child) : [walk(child)])) } : node
   }
   return walk(toEditorDocument(documentForEditing(text, 'marker')) as EditorNode) as EditorDocument
 }
