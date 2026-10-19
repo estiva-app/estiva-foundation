@@ -105,7 +105,21 @@ describe('referenceMatch', () => {
     assert.ok(referenceMatch(title, 'remov -') > 0)
   })
 
+  it('a minus before a quoted phrase leaves out a text with those whole words next to each other', () => {
+    assert.equal(referenceMatch(title, 'remov -"short summary"'), 0)
+    assert.ok(referenceMatch(title, 'remov -"summary short"') > 0)
+    assert.ok(referenceMatch('Drafted notes', 'drafted -"draft"') > 0)
+    const leaf = ['Leaf 1', 'Leaf probe kit'].filter((t) => referenceMatch(t, 'leaf -"leaf probe"') > 0)
+    assert.deepEqual(leaf, ['Leaf 1'])
+  })
+
+  it('a minus phrase whose quote is still open leaves nothing out, and is not words to find', () => {
+    assert.ok(referenceMatch(title, 'remov -"short summ') > 0)
+    assert.ok(referenceMatch(title, 'remov -"zqxj') > 0)
+  })
+
   it('a query that only leaves words out matches nothing', () => {
+    assert.equal(referenceMatch(title, '-"short summary"'), 0)
     assert.equal(referenceMatch(title, '-draft'), 0)
     assert.equal(referenceMatch(title, '"" ...'), 0)
   })

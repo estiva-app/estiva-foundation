@@ -6,6 +6,20 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.15.1 — 2026-10-19
+
+**`-"…"` leaves a phrase out**, as the relay reads it (buzz#32).
+`referenceMatch` drops a text that holds those whole words next to each other,
+in order, so `remov -"short summary"` no longer finds *Remove Short summary…*
+while `remov -"summary short"` still does. In 0.15.0 the `-` was dropped and
+the phrase became one to find, the opposite. A `-"` whose quote has not closed
+yet ends the query, so a phrase being typed to leave out never turns into
+words to find, and a query of only `-"…"` matches nothing.
+
+SPEC: §5.2 — no rule of §6 or §9 changed. §5.2's text does not name
+`-"phrase"` or an unclosed `-"` yet; an estiva-docs follow-up adds both, and
+until then buzz#32 and this package are where the rule is written down.
+
 ## 0.15.0 — 2026-10-19
 
 **Search matches every typed word as the start of a word** (record
