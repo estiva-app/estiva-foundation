@@ -153,8 +153,9 @@ const searchedChange = (field: string | undefined, address: string | undefined) 
  * it is called now matches what was typed.
  *
  * Roots and renames are asked for separately, so a burst of renames cannot
- * crowd every root out of the answer, and with buzz's prefix mode, so the word
- * being typed matches before it is finished. A relay that indexes none of these
+ * crowd every root out of the answer. Every typed word matches the start of a
+ * word (SPEC §5.2), so a word matches before it is finished; `search_mode` is
+ * still sent for a relay from before that rule. A relay that indexes none of these
  * kinds answers nothing, and so does this. A failed read rejects, for
  * `referenceSearch` to answer no hits for a while.
  */

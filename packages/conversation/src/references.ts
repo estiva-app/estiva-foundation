@@ -90,30 +90,88 @@ const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim
 
 const isWordStart = (text: string, at: number) => at === 0 || !/[\p{L}\p{N}]/u.test(text[at - 1]!)
 
+/** The words of `text`: its runs of letters and digits, so `SUM-7.` is `sum`, `7`. */
+const wordsOf = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+
+/** One piece of a typed query: a word, `"a phrase"`, or `-a word` left out. */
+interface SearchTerm {
+  kind: 'word' | 'phrase' | 'not'
+  text: string
+}
+
 /**
- * How well `text` holds `query`: 4 the whole of it, 3 its start, 2 the start of
- * a word, 1 anywhere — or every word of the query at a word's start. 0 is no
- * match. Case and runs of spaces are ignored.
+ * Splits typed text as the relay does (buzz's `parse_word_start`): `"…"` is a
+ * phrase, a word opening with `-` is left out, anything else is a word, `or`
+ * and `key:value` included. A quote with no closing partner is ignored, so
+ * `"short summ` finds by word starts while it is typed.
  */
+function searchTerms(query: string): SearchTerm[] {
+  const terms: SearchTerm[] = []
+  let rest = query
+  while ((rest = rest.trimStart())) {
+    if (rest.startsWith('"')) {
+      const end = rest.indexOf('"', 1)
+      if (end > 0) {
+        const phrase = rest.slice(1, end).trim()
+        if (phrase) terms.push({ kind: 'phrase', text: phrase })
+        rest = rest.slice(end + 1)
+      } else rest = rest.slice(1)
+      continue
+    }
+    const end = rest.search(/[\s"]/u)
+    const token = end < 0 ? rest : rest.slice(0, end)
+    rest = end < 0 ? '' : rest.slice(end)
+    if (token.startsWith('-')) {
+      if (token.length > 1) terms.push({ kind: 'not', text: token.slice(1) })
+    } else terms.push({ kind: 'word', text: token })
+  }
+  return terms
+}
+
+/** Whether `words` holds every word of `typed` at the start of one of its words. */
+const startsWords = (words: readonly string[], typed: string) => {
+  const wanted = wordsOf(typed)
+  return wanted.length > 0 && wanted.every((w) => words.some((word) => word.startsWith(w)))
+}
+
+/** Whether `words` holds the whole words of `phrase`, next to each other and in order. */
+const holdsPhrase = (words: readonly string[], phrase: string) => {
+  const wanted = wordsOf(phrase)
+  if (wanted.length === 0) return false
+  for (let at = 0; at + wanted.length <= words.length; at++) if (wanted.every((w, i) => words[at + i] === w)) return true
+  return false
+}
+
+/**
+ * How well `text` holds `query`, by the rule every Estiva search uses (SPEC
+ * §5.2): each typed word matches the start of a word, in any order; `"…"`
+ * matches those whole words next to each other; `-word` leaves out a text with
+ * a word starting that way. Punctuation at a typed word's ends is ignored, and
+ * so is case. A query with nothing to find but words left out matches nothing.
+ *
+ * Of the texts that match, 4 is the whole of it, 3 its start, 2 what was typed
+ * as one run at the start of a word, 1 every word somewhere. 0 is no match.
+ * The relay may find more than this (stemming, accents); it never finds less,
+ * so a title it found is never dropped by this check.
+ */
+// why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/search-matches-every-word-as-a-word-start.md
 export function referenceMatch(text: string, query: string): number {
+  const terms = searchTerms(query)
+  const wanted = terms.filter((t) => t.kind !== 'not' && wordsOf(t.text).length > 0)
+  if (wanted.length === 0) return 0
+  const words = wordsOf(text)
+  const holds = (t: SearchTerm) => (t.kind === 'phrase' ? holdsPhrase(words, t.text) : startsWords(words, t.text))
+  if (!wanted.every(holds) || terms.some((t) => t.kind === 'not' && startsWords(words, t.text))) return 0
   const t = normalize(text)
-  const q = normalize(query)
-  if (!q) return 0
+  const q = normalize(wanted.map((w) => w.text.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).join(' '))
   if (t === q) return 4
   if (t.startsWith(q)) return 3
-  let at = t.indexOf(q)
-  if (at < 0) {
-    const words = q.split(' ')
-    if (words.length < 2) return 0
-    const starts = (w: string) => {
-      for (let i = t.indexOf(w); i >= 0; i = t.indexOf(w, i + 1)) if (isWordStart(t, i)) return true
-      return false
-    }
-    return words.every(starts) ? 1 : 0
-  }
-  for (; at >= 0; at = t.indexOf(q, at + 1)) if (isWordStart(t, at)) return 2
+  for (let at = t.indexOf(q); at >= 0; at = t.indexOf(q, at + 1)) if (isWordStart(t, at)) return 2
   return 1
 }
+
+/** Whether `query` asks for anything, rather than only leaving words out. */
+const findsWords = (query: string) => searchTerms(query).some((t) => t.kind !== 'not' && wordsOf(t.text).length > 0)
 
 /**
  * How well an issue's ref (`CON-33`) holds `query`: only from its start, and
@@ -218,9 +276,8 @@ export interface ReferenceSearch {
 
 export interface ReferenceSearchOptions {
   /**
-   * Must find no more for `q + " words"` than for `q` (every word, the last as
-   * a prefix: buzz's prefix mode), since a longer query after an empty answer
-   * is not asked.
+   * Must find no more for `q + " words"` than for `q` (every word must match,
+   * SPEC §5.2), since a longer query after an empty answer is not asked.
    */
   search: ReferenceSearchFn
   /** The pause after a keystroke before asking. Default 200ms. */
@@ -247,7 +304,7 @@ export interface ReferenceSearchOptions {
  * keeps its answer, which is still true of that query.
  *
  * Once a query found nothing, adding whole words to it is not asked (08d7f243):
- * relay search is every word, the last as a prefix, so `see [the fig` cannot
+ * relay search needs every word to match (SPEC §5.2), so `see [the fig` cannot
  * find what `the` did not, and a sentence typed after an unmatched `[` would
  * otherwise spend the rate limit on every longer version of itself. A failure
  * is not "nothing", so it never stops a longer query.
@@ -258,8 +315,8 @@ export function referenceSearch({ search, delayMs = 200, retryMs = 5000, minLeng
   const foundNothing = (query: string) => {
     for (let at = query.indexOf(' '); at >= 0; at = query.indexOf(' ', at + 1)) {
       const prefix = query.slice(0, at)
-      // `--` searches no word at all, so its empty answer says nothing of `-- budget`.
-      if (!/[\p{L}\p{N}]/u.test(prefix)) continue
+      // `--` or `-draft` asks for no word at all, so its empty answer says nothing of `-draft budget`.
+      if (!findsWords(prefix)) continue
       const shorter = answered.get(prefix)
       if (shorter && shorter.length === 0 && !failures.has(shorter)) return true
     }

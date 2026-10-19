@@ -43,14 +43,68 @@ const message = (id: string, author: string, text: string, tier: number, at: num
 const titles = (rows: readonly ReferenceCandidate[]) => rows.map((r) => r.title)
 
 describe('referenceMatch', () => {
-  it('ranks whole, start, word start, anywhere', () => {
+  it('ranks whole, start, word start, every word somewhere', () => {
     assert.equal(referenceMatch('Unread dots', 'unread dots'), 4)
     assert.equal(referenceMatch('Unread dots', 'unr'), 3)
     assert.equal(referenceMatch('Typing [ finds the issue', 'finds'), 2)
-    assert.equal(referenceMatch('Typing [ finds the issue', 'ssue'), 1)
     assert.equal(referenceMatch('Typing [ finds the issue', 'issue typing'), 1)
-    assert.equal(referenceMatch('Typing [ finds the issue', 'ssue yping'), 0)
     assert.equal(referenceMatch('Anything', '   '), 0)
+  })
+
+  // SPEC §5.2: the reader's check never drops a hit the relay found.
+  const title = 'Remove Short summary from few places'
+
+  it('finds by the start of every typed word, in any order', () => {
+    assert.ok(referenceMatch(title, 'Remov') > 0)
+    assert.ok(referenceMatch(title, 'remov short') > 0)
+    assert.ok(referenceMatch(title, 'short remov') > 0)
+    assert.ok(referenceMatch('sum7 202455', 'sum7 20') > 0)
+    assert.ok(referenceMatch(title, 'pl few fr') > 0)
+  })
+
+  it('finds nothing by the middle of a word', () => {
+    assert.equal(referenceMatch(title, 'emove'), 0)
+    assert.equal(referenceMatch('Typing [ finds the issue', 'ssue'), 0)
+    assert.equal(referenceMatch(title, 'remov hort'), 0)
+    assert.equal(referenceMatch(title, 'zqxj'), 0)
+  })
+
+  it('ignores punctuation at a typed word’s ends, and a word starts after any', () => {
+    assert.ok(referenceMatch(title, 'remov, "short') > 0)
+    assert.ok(referenceMatch(title, '(summary)') > 0)
+    assert.ok(referenceMatch('Leaf (draft): notes', 'draft notes') > 0)
+    assert.ok(referenceMatch('SUM-7 summary', 'sum-7') > 0)
+  })
+
+  it('a quoted phrase is those whole words, next to each other and in order', () => {
+    assert.ok(referenceMatch(title, '"short summary"') > 0)
+    assert.ok(referenceMatch(title, 'remov "short summary"') > 0)
+    assert.equal(referenceMatch(title, '"summary short"'), 0)
+    assert.equal(referenceMatch(title, '"short summ"'), 0)
+    assert.equal(referenceMatch(title, '"remove summary"'), 0)
+  })
+
+  it('a quote still open finds by word starts while it is typed', () => {
+    assert.ok(referenceMatch(title, '"short summ') > 0)
+  })
+
+  it('a minus leaves out a text with a word starting that way', () => {
+    assert.equal(referenceMatch(title, 'remov -short'), 0)
+    assert.equal(referenceMatch(title, 'remov -sh'), 0)
+    assert.ok(referenceMatch(title, 'remov -hort') > 0)
+    assert.ok(referenceMatch(title, 'remov -draft') > 0)
+    assert.ok(referenceMatch(title, 'remov -') > 0)
+  })
+
+  it('a query that only leaves words out matches nothing', () => {
+    assert.equal(referenceMatch(title, '-draft'), 0)
+    assert.equal(referenceMatch(title, '"" ...'), 0)
+  })
+
+  it('or and key:value are ordinary words', () => {
+    assert.equal(referenceMatch('Leaf ship', 'leaf or ship'), 0)
+    assert.ok(referenceMatch('Leaf or ship', 'leaf or ship') > 0)
+    assert.ok(referenceMatch('Moved in: hq', 'in:hq') > 0)
   })
 })
 
@@ -276,6 +330,27 @@ describe('referenceSearch', () => {
     source.hits('-- budget')
     await tick(10)
     assert.deepEqual(asked, ['--', '-- budget'])
+  })
+
+  it('an empty answer for only words left out does not stop the words after it', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const asked: string[] = []
+    const source = referenceSearch({
+      delayMs: 1,
+      search: async (query) => {
+        asked.push(query)
+        return []
+      },
+    })
+    // setImmediate is not mocked: it lets the empty answer land.
+    const settle = () => new Promise((done) => setImmediate(done))
+    source.hits('-draft')
+    t.mock.timers.tick(1)
+    await settle()
+    source.hits('-draft budget')
+    t.mock.timers.tick(1)
+    await settle()
+    assert.deepEqual(asked, ['-draft', '-draft budget'])
   })
 
   it('a failure does not stop a longer query', async () => {
