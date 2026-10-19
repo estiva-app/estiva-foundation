@@ -6,6 +6,30 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.61.0 — 2026-10-19
+
+**A topic has no text, and a Ship project has a Folder to write into**
+(LTX-4; record *a-document-app-writes-what-a-files-app-shares*).
+
+- The bare file's built-in projection (SPEC §6.7) drops its `body` slot and its
+  `describe` action. A topic resolves with no body, whatever its `content` or
+  change stream holds, and `buildActionEvent` refuses `describe` on it. None of
+  the 32 topics on the relay ever had a text (2026-10-19).
+- `ForeignObject.folder` reads `h`, then `buzz-channel` (`folderOf`), so a
+  Ship project placed the way Ship places it has the Folder a change or a
+  comment goes into. It read `h` only, which left about half of Ship's
+  projects with nowhere to write from another app.
+- **New: `ForeignObject.scopedTo`**, the root's `h` alone: the channel that
+  gates who can read the root itself, absent for a globally stored record.
+  `MovableFile` now carries `scopedTo` instead of `folder`, and a move into a
+  private Folder reads it, so a `buzz-channel` project is still refused there.
+  A consumer building a `MovableFile` by hand renames the field; one passing a
+  `ForeignObject` changes nothing. A file with no `scopedTo` is refused a
+  private target, as one with no `folder` was.
+
+Manifests: the built-in bare-file manifest changed as above (SPEC §6.7). What a
+published manifest may declare, and how a declaration is read, did not.
+
 ## 0.60.0 — 2026-10-19
 
 **A reply to a comment on part of a file copies that comment's place**

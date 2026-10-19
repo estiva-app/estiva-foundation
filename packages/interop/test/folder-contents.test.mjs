@@ -194,6 +194,11 @@ describe('the folder that has no state yet', () => {
     const query = relay([ringingManifest, channel, global])
     const { files } = await resolveFolderContents(FOLDER, query, async () => ({}))
     assert.deepEqual(files.map((f) => f.slots.title?.value), ['Far colony'])
+    // LTX-4: and it has that Folder to write into, so another app can save or
+    // comment on it; but nothing scopes the root itself, which the relay stores
+    // globally — so a move into a private Folder is still refused.
+    assert.equal(files[0].folder, FOLDER)
+    assert.equal(files[0].scopedTo, undefined)
   })
 })
 
