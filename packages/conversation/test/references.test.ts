@@ -44,11 +44,20 @@ const titles = (rows: readonly ReferenceCandidate[]) => rows.map((r) => r.title)
 
 describe('referenceMatch', () => {
   it('ranks whole, start, word start, every word somewhere', () => {
-    assert.equal(referenceMatch('Unread dots', 'unread dots'), 4)
+    assert.equal(referenceMatch('Unread dots', 'unread dots'), 8)
     assert.equal(referenceMatch('Unread dots', 'unr'), 3)
-    assert.equal(referenceMatch('Typing [ finds the issue', 'finds'), 2)
-    assert.equal(referenceMatch('Typing [ finds the issue', 'issue typing'), 1)
+    assert.equal(referenceMatch('Typing [ finds the issue', 'finds'), 6)
+    assert.equal(referenceMatch('Typing [ finds the issue', 'issue typing'), 5)
     assert.equal(referenceMatch('Anything', '   '), 0)
+  })
+
+  it('a title holding a typed word whole ranks above one where it only starts a word', () => {
+    const { files } = rankReferences({
+      messages: [],
+      files: [file('a', 'Shortcuts in Peek', FILE_TIER.search), file('b', 'Remove Short summary from few places', FILE_TIER.search)],
+      query: 'short',
+    })
+    assert.deepEqual(titles(files), ['Remove Short summary from few places', 'Shortcuts in Peek'])
   })
 
   // SPEC §5.2: the reader's check never drops a hit the relay found.
@@ -351,6 +360,27 @@ describe('referenceSearch', () => {
     t.mock.timers.tick(1)
     await settle()
     assert.deepEqual(asked, ['-draft', '-draft budget'])
+  })
+
+  it('an empty answer while a quote is open does not stop the phrase that closes it', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    const asked: string[] = []
+    const source = referenceSearch({
+      delayMs: 1,
+      search: async (query) => {
+        asked.push(query)
+        return []
+      },
+    })
+    const settle = () => new Promise((done) => setImmediate(done))
+    // `"x -y` leaves y out; `"x -y z"` needs y, so it is not narrower.
+    source.hits('"x -y')
+    t.mock.timers.tick(1)
+    await settle()
+    source.hits('"x -y z"')
+    t.mock.timers.tick(1)
+    await settle()
+    assert.deepEqual(asked, ['"x -y', '"x -y z"'])
   })
 
   it('a failure does not stop a longer query', async () => {

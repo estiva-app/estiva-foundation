@@ -15,10 +15,14 @@ needs those whole words next to each other, in order; `-word` drops a text with
 a word starting that way; a quote with no closing partner is ignored; `or` and
 `key:value` are ordinary words; punctuation at a typed word's ends is ignored.
 A query that only leaves words out matches nothing. A match inside a word is
-gone: "ssue" no longer finds "issue". The scores of a match keep their order
-(4 the whole text, 3 its start, 2 one run at a word start, 1 every word
-somewhere). `referenceSearch` no longer lets an empty answer for words that are
-only left out (`-draft`) stop the query that adds a word to them.
+gone: "ssue" no longer finds "issue". A hit where every typed word is a whole
+word now ranks above one where a word is only started, so "short" lists
+*Remove Short summary* above *Shortcuts*: the scores are 8 the whole text, 7–5
+whole words (its start, one run at a word start, every word somewhere) and 3–1
+the same for word starts; only `> 0` was ever read outside this package.
+`referenceSearch` no longer lets an empty answer for words that are only left
+out (`-draft`), or for a query with a quote still open (`"x -y`), stop a longer
+query.
 
 SPEC: §5.2 changed — a relay matches every typed word as a word start on a REQ
 and on `/query` alike, and a reader's check of a title uses the same rule, so
