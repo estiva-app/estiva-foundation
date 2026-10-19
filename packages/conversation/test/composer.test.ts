@@ -67,6 +67,8 @@ describe('composerText: what a send writes from the box', () => {
     const linked = (value: string, href: string) => ({ type: 'text', text: value, marks: [{ type: 'link', attrs: { href } }] })
     assert.equal(composerText(paragraph(linked(ISSUE_URL, ISSUE_URL))).text, ISSUE_URL)
     assert.equal(composerText(paragraph(linked('a [b]', ISSUE_URL))).text, 'a [b]')
+    const inCode = { type: 'text', text: 'plan', marks: [{ type: 'code' }, { type: 'link', attrs: { href: ISSUE_URL } }] }
+    assert.equal(composerText(paragraph(inCode)).text, '`plan`')
   })
 })
 
