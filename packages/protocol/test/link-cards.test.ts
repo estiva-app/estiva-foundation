@@ -186,9 +186,13 @@ describe('a URL in a document, edited (C24)', () => {
     const d = doc({ type: 'paragraph', id: 'p1', content: [text('the issue', [{ type: 'link', attrs: { href: URL_ } }])] })
     assert.deepEqual(roundTrip(d).content[0].content, [text('the issue')])
   })
-  it('an editor with links writes a link on words back, link and embed included, after an edit to another block', () => {
+  it('an editor with links writes an app link and a web link on words back, link and embed included, after an edit to another block', () => {
     const d = doc(
-      { type: 'paragraph', id: 'p1', content: [text('Read '), words('the plan', { embed: 'detailed', later: { x: 1 } }), text(' and '), text('this', [{ type: 'bold' }, { type: 'link', attrs: { href: URL_ } }])] },
+      { type: 'paragraph', id: 'p1', content: [
+        text('Read '), words('the plan', { embed: 'detailed', later: { x: 1 } }), text(' and '),
+        text('this', [{ type: 'bold' }, { type: 'link', attrs: { href: URL_ } }]), text(', then '),
+        text('the docs', [{ type: 'link', attrs: { href: 'https://example.com/docs', target: '_blank' } }]),
+      ] },
       { type: 'paragraph', id: 'p2', content: [text('other words')] },
     )
     const editor = toEditorDocument(d, { links: true })
