@@ -51,8 +51,8 @@ const add = (by: string, person: string, at: number) =>
 
 /** What Bob's app shows for the file: member or not, and its unread Add. */
 const bobSees = (events: SignedEvent[], merged: Record<string, number> = {}) => {
-  const member = membershipOf(ISSUE, BOB, events).member
-  return { member, unread: unreadAddIn(events, merged, { stream: ISSUE, me: BOB, member })?.id }
+  const { member, since } = membershipOf(ISSUE, BOB, events)
+  return { member, unread: unreadAddIn(events, merged, { stream: ISSUE, me: BOB, member, since })?.id }
 }
 
 describe('C28 — a mention in a file’s text', () => {
@@ -111,6 +111,12 @@ describe('C28 — a mention in a file’s text', () => {
     assert.deepEqual(bobSees([root, add(BOB, BOB, T0 + 10)]), { member: true, unread: undefined })
   })
 
+  it('an Add Bob left does not light again when he is later assigned', () => {
+    const assigned = signed({ pubkey: CAROL, kind: 1851, tags: [['a', ISSUE], ['field', 'assignee'], ['value', BOB], ['h', FOLDER], ['p', BOB]], content: '' }, T0 + 30)
+    const events = [root, add(ALICE, BOB, T0 + 10), leave(BOB, T0 + 20), assigned]
+    assert.deepEqual(bobSees(events), { member: true, unread: undefined })
+  })
+
   it('an Add on another file, or for another person, is not Bob’s unread here', () => {
     const elsewhere = signed({ ...buildMembershipChange(ALICE, T0 * 1000, { file: `30851:${ALICE}:other`, folder: FOLDER, person: BOB, member: true }) }, T0 + 5)
     const carol = add(ALICE, CAROL, T0 + 6)
@@ -139,6 +145,7 @@ describe('who a file’s text names', () => {
       ],
     })
     assert.deepEqual([...peopleNamedInText({ content, format: BLOCKS })], [])
+    assert.deepEqual([...peopleNamedInText({ content: `key: \`${uri(BOB)}\`` })], [])
   })
 
   it('marker text, a parsed document and a mislabelled one all read', () => {

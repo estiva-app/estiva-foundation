@@ -16,6 +16,7 @@
  */
 import {
   BLOCK_DOCUMENT_FORMAT,
+  markersToInlineNodes,
   parseBlockDocument,
   type Block,
   type BlockDocument,
@@ -53,11 +54,15 @@ function namedInBlocks(blocks: readonly Block[], out: Set<string>): void {
       namedInBlocks(block.content as Block[], out)
       continue
     }
-    for (const node of block.content) {
-      if (node.marks?.some((m) => m.type === 'code')) continue
-      // A reference run's text is its label; the person is in its `uri`.
-      for (const person of peopleNamedInBody(referenceUri(node) ?? node.text)) out.add(person)
-    }
+    namedInRuns(block.content, out)
+  }
+}
+
+function namedInRuns(nodes: readonly InlineTextNode[], out: Set<string>): void {
+  for (const node of nodes) {
+    if (node.marks?.some((m) => m.type === 'code')) continue
+    // A reference run's text is its label; the person is in its `uri`.
+    for (const person of peopleNamedInBody(referenceUri(node) ?? node.text)) out.add(person)
   }
 }
 
@@ -74,11 +79,12 @@ export function peopleNamedInText(text: FileText): Set<string> {
     try {
       doc = parseBlockDocument(text.content)
     } catch {
-      // A tag that lies about its content: read the string for keys, as a message is read.
+      // A tag that lies about its content: read the string as marker text, as a message is read.
     }
   }
   if (doc) namedInBlocks(doc.content, out)
-  else if (typeof text.content === 'string') for (const person of peopleNamedInBody(text.content)) out.add(person)
+  // Marker text through §13.2's own parse, so a key inside `code` stays code.
+  else if (typeof text.content === 'string') namedInRuns(markersToInlineNodes(text.content), out)
   return out
 }
 

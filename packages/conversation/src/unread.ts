@@ -21,7 +21,7 @@
 import type { SignedEvent } from '@estiva-app/protocol'
 import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, threadContext } from './readState.js'
 import { KIND_CHANGE } from './kinds.js'
-import { MEMBER_FIELD_PREFIX } from './membership.js'
+import { memberField } from './membership.js'
 import { peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 
@@ -79,8 +79,9 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
  * `kind:1851` changes on `judge.stream` setting `member:<me>` to `true` count:
  *
  * 1. not signed by `me` (a Join tells nobody);
- * 2. `me` is a member now (`judge.member`, from {@link membershipOf}), so a
- *    leave after it ends it;
+ * 2. `me` is a member now and the change is at or after `judge.since`
+ *    ({@link membershipOf}), so a leave after it ends it, and a later
+ *    placement does not bring back an Add that was left;
  * 3. newer than `me`'s marker for the file's own stream; no marker, unread.
  *
  * A mention in the file's text and the Add button write the same change, and
@@ -93,16 +94,17 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
 export function unreadAddIn<E extends Pick<SignedEvent, 'pubkey' | 'kind' | 'created_at' | 'tags'>>(
   events: readonly E[],
   merged: Readonly<Record<string, number>>,
-  judge: Pick<StreamJudge, 'stream' | 'me' | 'member'>,
+  judge: Pick<StreamJudge, 'stream' | 'me' | 'member' | 'since'>,
 ): E | undefined {
   if (!judge.member) return undefined
   const marker = merged[judge.stream]
-  const field = `${MEMBER_FIELD_PREFIX}${judge.me}`
+  const field = memberField(judge.me)
   let newest: E | undefined
   for (const event of events) {
     if (event.kind !== KIND_CHANGE || event.pubkey === judge.me) continue
     if (!event.tags.some((t) => t[0] === 'a' && t[1] === judge.stream)) continue
     if (tagOf(event, 'field') !== field || tagOf(event, 'value') !== 'true') continue
+    if (judge.since !== undefined && event.created_at < judge.since) continue
     if (marker !== undefined && event.created_at <= marker) continue
     if (!newest || event.created_at > newest.created_at) newest = event
   }
