@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.42.0 — 2026-10-20
+
+**Wire behaviour: reading changed; writing unchanged** (SPEC §13.2; PEE-57;
+Miky, 2026-10-20). A message's indented list item nests under the item above,
+as a description's text already reads it (d98a5636): two spaces a level,
+relative to the item above, a tab counting four. `toRenderTree(…, 'marker')`
+gives such an item its `indent`, which `RichText` already draws, and
+`markerTextToBlockDocument` without `description` gives it `attrs.indent`, so
+an edit opens the list nested. Before, `  - b` under `- a` read as a line of
+text that split the list in two. The writer has always spelled the indent
+(`blockDocumentToMarkerText`), so nothing published changes; 0 of 1,017
+messages on the relay carried one. A box, a callout and the `\` escape stay a
+description's only.
+
 ## 0.41.0 — 2026-10-20
 
 **Wire behaviour: reading changed; writing changed only for an editor that

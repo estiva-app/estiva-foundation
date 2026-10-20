@@ -195,20 +195,21 @@ const inlineFromMarkers = (text: string): RenderInline[] =>
 /** One inline run per line, joined by the `\n` the interface documents. */
 const inlineFromLines = (lines: string[]): RenderInline[] => inlineFromMarkers(lines.join('\n'))
 
+/** A list's items, flat, each indented item carrying its depth as a block document's does. */
+const itemsFromSegment = (items: string[], depths?: number[]): RenderBlock[] =>
+  items.map((item, i) => ({ type: 'listItem' as const, inline: inlineFromMarkers(item), ...(depths?.[i] ? { indent: depths[i] } : {}) }))
+
 function blockFromSegment(seg: BodySegment): RenderBlock {
   switch (seg.type) {
     case 'heading':
       return { type: 'heading', level: seg.level, inline: inlineFromMarkers(seg.text) }
     case 'bullet':
-      return {
-        type: 'bulletList',
-        children: seg.items.map((item) => ({ type: 'listItem' as const, inline: inlineFromMarkers(item) })),
-      }
+      return { type: 'bulletList', children: itemsFromSegment(seg.items, seg.depths) }
     case 'numbered':
       return {
         type: 'orderedList',
         ...(seg.start ? { start: seg.start } : {}),
-        children: seg.items.map((item) => ({ type: 'listItem' as const, inline: inlineFromMarkers(item) })),
+        children: itemsFromSegment(seg.items, seg.depths),
       }
     case 'quote':
       return { type: 'blockquote', inline: inlineFromLines(seg.lines) }
@@ -313,7 +314,8 @@ export function toRenderTree(value: string, format: RenderFormat): RenderBlock[]
     }
     return doc.content.map(blockFromDocument)
   }
-  return parseBodySegments(value).map(blockFromSegment)
+  // An indented item nests in a message (§13.2, Miky 2026-10-20).
+  return parseBodySegments(value, { indentedItems: true }).map(blockFromSegment)
 }
 
 function plainParagraph(value: string): RenderBlock[] {

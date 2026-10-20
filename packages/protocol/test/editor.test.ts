@@ -751,14 +751,16 @@ describe("an indented item and an escape in a description's text — d98a5636", 
     assert.match(text, /^- \\\[ \] brackets\n {2}- \\\[x\] too\n- \\\\\[ \] a backslash\n- \[ \] \[ \] a real box\n\n> \\\[!NOTE\]\n> not a callout\n\n> \\\\\[!TIP\]\n\n> \[!NOTE\]\n> \[!NOTE\]$/)
   })
 
-  it("leaves a message's text, and an untagged description's, exactly as §13.2 reads it", () => {
+  it("nests a message's indented item, and leaves its box and callout text as §13.2 reads it", () => {
     const text = '- a\n  - b\n- \\[ ] c\n\n> \\[!NOTE]'
     const back = markerTextToBlockDocument(text)
-    assert.deepEqual(back.content.map((b) => b.type), ['bulletList', 'paragraph', 'bulletList', 'blockquote'])
-    assert.equal(inlineTextOf((back.content[2].content as Block[])[0]), '\\[ ] c')
-    assert.equal(inlineTextOf(back.content[3]), '\\[!NOTE]')
-    assert.ok(!JSON.stringify(back).includes('indent'))
-    assert.deepEqual(parseBodySegments(text), parseBodySegments(text, {}))
+    assert.deepEqual(back.content.map((b) => b.type), ['bulletList', 'blockquote'])
+    const items = back.content[0].content as Block[]
+    assert.deepEqual(items.map(inlineTextOf), ['a', 'b', '\\[ ] c'])
+    assert.deepEqual(items.map((i) => i.attrs?.indent ?? 0), [0, 1, 0])
+    assert.ok(items.every((i) => i.attrs?.checked === undefined))
+    assert.equal(inlineTextOf(back.content[1]), '\\[!NOTE]')
+    assert.equal(back.content[1].attrs?.tone, undefined)
   })
 
   it('reads a list line holding \\r, U+2028 or U+2029, and a box with nothing after it, without looping or losing the escape', () => {

@@ -69,11 +69,12 @@ const keyOf = (block: Block) => `${block.type}\u0000${textOf(block)}`
  * quote whose first line is `[!NOTE]`, GitHub's alert. **Descriptions only**
  * (Miky, 2026-10-13): a message stays §13.2's dialect, where `[x]` is text.
  *
- * Two more, so every list and quote reads back as it printed (d98a5636): an
- * indented item (`attrs.indent`) is spelled two spaces a level and read
- * relative to the item above; and a plain item or quote whose text would read
- * as one of the above is escaped with one more `\` in front, which reading
- * takes off again — `- \[ ] brackets` is a plain item whose text is `[ ] brackets`.
+ * One more, so every list and quote reads back as it printed (d98a5636): a
+ * plain item or quote whose text would read as one of the above is escaped
+ * with one more `\` in front, which reading takes off again — `- \[ ] brackets`
+ * is a plain item whose text is `[ ] brackets`. An indented item
+ * (`attrs.indent`), two spaces a level and read relative to the item above, is
+ * §13.2's own, so a message keeps it too (Miky, 2026-10-20).
  */
 export interface DescriptionTextOptions {
   description?: boolean
@@ -166,7 +167,8 @@ function blockFromSegment(seg: BodySegment, description: boolean): Block {
  */
 export function markerTextToBlockDocument(text: string, previous?: BlockDocument, options: DescriptionTextOptions = {}): BlockDocument {
   const description = options.description === true
-  const fresh = parseBodySegments(text, { indentedItems: description }).map((seg) => blockFromSegment(seg, description))
+  // An indented item nests in a message as in a description (§13.2, Miky 2026-10-20).
+  const fresh = parseBodySegments(text, { indentedItems: true }).map((seg) => blockFromSegment(seg, description))
   const old = previous?.content ?? []
   const takenIds = new Set<string>()
   const usedOld = new Set<number>()
@@ -254,9 +256,8 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
       case 'orderedList': {
         /*
           An indented item (MAN-13) is spelled two spaces a level, as Markdown
-          does. A description's text reads it back at its depth (d98a5636); a
-          message's §13.2 has no nesting, so there it reads back level — still
-          every item.
+          does, and reads back at its depth: in a description (d98a5636) and,
+          since §13.2 took it (Miky, 2026-10-20), in a message.
         */
         const items = (block.content as Block[]) ?? []
         const depths = listItemDepths(items)

@@ -6,6 +6,14 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.18.0 — 2026-10-20
+
+**An edit opens a nested list nested** (SPEC §13.2; PEE-57; Miky,
+2026-10-20). `composerDocument` reads a message's indented list item under the
+item above, through protocol 0.42's reading, so editing a message with a
+second-level item keeps it there and `composerText` writes the same text back.
+It needs protocol 0.42.0 or later. What a send writes is unchanged.
+
 ## 0.17.0 — 2026-10-20
 
 **A mention in a file's text adds the person** (WBD-2; record
