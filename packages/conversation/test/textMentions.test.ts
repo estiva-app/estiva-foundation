@@ -1,12 +1,11 @@
 /*
-  SPEC §11.8 *A mention in a file's text* and *Being added is one unread item*
-  — C28 in §9, as fixtures: the writer's Adds on the wire, then the fold and
-  the unread judge reading them back.
+  SPEC §11.8 *A mention in a file's text* — C28 in §9, as fixtures: the
+  writer's Adds on the wire, then the membership fold reading them back.
 */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeNpub, type SignedEvent } from '@estiva-app/protocol'
-import { buildMembershipChange, mentionAddsFor, membershipOf, peopleNamedInText, unreadAddIn } from '../dist/index.js'
+import { buildMembershipChange, mentionAddsFor, membershipOf, peopleNamedInText } from '../dist/index.js'
 
 const ALICE = 'a'.repeat(64)
 const BOB = 'b'.repeat(64)
@@ -46,14 +45,9 @@ const save = (writer: string, at: number, saved: ReturnType<typeof text>, edited
   mentionAddsFor(writer, at * 1000, { file: ISSUE, folder: FOLDER, saved, editedFrom }).map((e) => signed(e, at))
 const leave = (person: string, at: number) =>
   signed(buildMembershipChange(person, at * 1000, { file: ISSUE, folder: FOLDER, person, member: false }), at)
-const add = (by: string, person: string, at: number) =>
-  signed(buildMembershipChange(by, at * 1000, { file: ISSUE, folder: FOLDER, person, member: true }), at)
 
-/** What Bob's app shows for the file: member or not, and its unread Add. */
-const bobSees = (events: SignedEvent[], merged: Record<string, number> = {}) => {
-  const { member, since } = membershipOf(ISSUE, BOB, events)
-  return { member, unread: unreadAddIn(events, merged, { stream: ISSUE, folder: FOLDER, me: BOB, member, since })?.id }
-}
+/** Whether Bob's app lists him as a member of the file. */
+const bobIsMember = (events: SignedEvent[]) => membershipOf(ISSUE, BOB, events).member
 
 describe('C28 — a mention in a file’s text', () => {
   it('a save that newly names Bob writes one Add for him, signed by the writer, with his p', () => {
@@ -71,61 +65,31 @@ describe('C28 — a mention in a file’s text', () => {
     ])
   })
 
-  it('Bob is then a member with one unread on a file whose stream holds no message, until his file marker passes it', () => {
-    const events = [root, ...save(ALICE, T0 + 10, text(BOB), text())]
-    const [added] = events.slice(1)
-    assert.deepEqual(bobSees(events), { member: true, unread: added.id })
-    assert.deepEqual(bobSees(events, { [ISSUE]: T0 + 10 }), { member: true, unread: undefined })
-    // A thread or message key is not the file's marker.
-    assert.deepEqual(bobSees(events, { [`thread:${'f'.repeat(64)}`]: T0 + 99 }), { member: true, unread: added.id })
+  it('Bob is then a member of the file', () => {
+    assert.equal(bobIsMember([root]), false)
+    assert.equal(bobIsMember([root, ...save(ALICE, T0 + 10, text(BOB), text())]), true)
   })
 
   it('Bob leaves; a typo fix that still names him writes no Add, and he stays out', () => {
     const first = save(ALICE, T0 + 10, text(BOB), text())
     const typo = save(CAROL, T0 + 30, text(BOB), text(BOB))
     assert.deepEqual(typo, [])
-    const events = [root, ...first, leave(BOB, T0 + 20), ...typo]
-    assert.deepEqual(bobSees(events), { member: false, unread: undefined })
+    assert.equal(bobIsMember([root, ...first, leave(BOB, T0 + 20), ...typo]), false)
   })
 
-  it('a save that drops Bob removes nobody, and naming him again adds him again with one unread', () => {
+  it('a save that drops Bob removes nobody, and naming him again adds him again', () => {
     const first = save(ALICE, T0 + 10, text(BOB), text())
     const dropped = save(ALICE, T0 + 30, text(), text(BOB))
     assert.deepEqual(dropped, [])
-    assert.deepEqual(bobSees([root, ...first, ...dropped]).member, true)
+    assert.equal(bobIsMember([root, ...first, ...dropped]), true)
     const again = save(CAROL, T0 + 40, text(BOB), text())
     assert.equal(again.length, 1)
-    const events = [root, ...first, leave(BOB, T0 + 20), ...dropped, ...again]
-    assert.deepEqual(bobSees(events, { [ISSUE]: T0 + 20 }), { member: true, unread: again[0].id })
+    assert.equal(bobIsMember([root, ...first, leave(BOB, T0 + 20), ...dropped, ...again]), true)
   })
 
   it('a creation naming Bob adds him; one naming only its writer adds nobody', () => {
     assert.deepEqual(save(ALICE, T0, text(BOB), null).map((e) => e.tags.find((t) => t[0] === 'p')?.[1]), [BOB])
     assert.deepEqual(save(ALICE, T0, text(ALICE), null), [])
-  })
-
-  it('the Add button is one unread too, and two Adds are still one item; Bob’s own Join is none', () => {
-    const first = add(ALICE, BOB, T0 + 10)
-    const second = add(CAROL, BOB, T0 + 20)
-    assert.deepEqual(bobSees([root, first, second]), { member: true, unread: second.id })
-    assert.deepEqual(bobSees([root, add(BOB, BOB, T0 + 10)]), { member: true, unread: undefined })
-  })
-
-  it('an Add Bob left does not light again when he is later assigned', () => {
-    const assigned = signed({ pubkey: CAROL, kind: 1851, tags: [['a', ISSUE], ['field', 'assignee'], ['value', BOB], ['h', FOLDER], ['p', BOB]], content: '' }, T0 + 30)
-    const events = [root, add(ALICE, BOB, T0 + 10), leave(BOB, T0 + 20), assigned]
-    assert.deepEqual(bobSees(events), { member: true, unread: undefined })
-  })
-
-  it('an Add on another file, or for another person, is not Bob’s unread here', () => {
-    const elsewhere = signed({ ...buildMembershipChange(ALICE, T0 * 1000, { file: `30851:${ALICE}:other`, folder: FOLDER, person: BOB, member: true }) }, T0 + 5)
-    const carol = add(ALICE, CAROL, T0 + 6)
-    assert.equal(unreadAddIn([root, elsewhere, carol], {}, { stream: ISSUE, folder: FOLDER, me: BOB, member: true }), undefined)
-  })
-
-  it('an Add on this file filed in another Folder lights nothing', () => {
-    const other = signed(buildMembershipChange(ALICE, (T0 + 5) * 1000, { file: ISSUE, folder: '0b7e2a4c-1111-4c3e-9d2f-2a1f0c9e8b7d', person: BOB, member: true }), T0 + 5)
-    assert.equal(unreadAddIn([root, other], {}, { stream: ISSUE, folder: FOLDER, me: BOB, member: true }), undefined)
   })
 })
 

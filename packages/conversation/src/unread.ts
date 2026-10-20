@@ -20,8 +20,6 @@
  */
 import type { SignedEvent } from '@estiva-app/protocol'
 import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, threadContext } from './readState.js'
-import { KIND_CHANGE } from './kinds.js'
-import { memberField } from './membership.js'
 import { peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 
@@ -72,49 +70,6 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
   }
   return out
 }
-
-/**
- * The change that added `me` to a file and is still unread — §11.8 *Being
- * added is one unread item* — or undefined. `events` may hold anything; only
- * `kind:1851` changes on `judge.stream` setting `member:<me>` to `true` count:
- *
- * 1. not signed by `me` (a Join tells nobody);
- * 2. `me` is a member now and the change is at or after `judge.since`
- *    ({@link membershipOf}), so a leave after it ends it, and a later
- *    placement does not bring back an Add that was left;
- * 3. newer than `me`'s marker for the file's own stream; no marker, unread;
- * 4. its `h` is the file's Folder (`folder`, the root's `h`), so an Add filed
- *    in another Folder lights nothing.
- *
- * A mention in the file's text and the Add button write the same change, and
- * either counts for a member who muted the file, as a mention does. However
- * many there are, they are one item for the file: the newest is returned, and
- * reading the file's stream (§11.2) clears it.
- *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-mention-in-a-files-text-adds-the-person.md
- */
-export function unreadAddIn<E extends Pick<SignedEvent, 'pubkey' | 'kind' | 'created_at' | 'tags'>>(
-  events: readonly E[],
-  merged: Readonly<Record<string, number>>,
-  judge: Pick<StreamJudge, 'stream' | 'me' | 'member' | 'since'> & { folder: string },
-): E | undefined {
-  if (!judge.member) return undefined
-  const marker = merged[judge.stream]
-  const field = memberField(judge.me)
-  let newest: E | undefined
-  for (const event of events) {
-    if (event.kind !== KIND_CHANGE || event.pubkey === judge.me) continue
-    if (!event.tags.some((t) => t[0] === 'a' && t[1] === judge.stream)) continue
-    if (tagOf(event, 'field') !== field || tagOf(event, 'value') !== 'true') continue
-    if (tagOf(event, 'h') !== judge.folder) continue
-    if (judge.since !== undefined && event.created_at < judge.since) continue
-    if (marker !== undefined && event.created_at <= marker) continue
-    if (!newest || event.created_at > newest.created_at) newest = event
-  }
-  return newest
-}
-
-const tagOf = (event: Pick<SignedEvent, 'tags'>, name: string): string | undefined => event.tags.find((t) => t[0] === name)?.[1]
 
 /** Whether one message is unread: §11.8's four conditions. `root` is its thread's root id when it is a reply. */
 export function isUnread(message: Message, root: string | undefined, merged: Readonly<Record<string, number>>, judge: StreamJudge): boolean {

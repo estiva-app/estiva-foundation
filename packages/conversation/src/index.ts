@@ -179,7 +179,7 @@ export {
   type FetchedReadState,
 } from './readState.js'
 
-export { unreadIn, isUnread, unreadAddIn, type StreamJudge } from './unread.js'
+export { unreadIn, isUnread, type StreamJudge } from './unread.js'
 
 export { peopleNamedInText, newlyNamedPeople, mentionAddsFor, type FileText } from './textMentions.js'
 

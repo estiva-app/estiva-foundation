@@ -3,16 +3,16 @@
  *
  * A file's text (its root's content, or a prose field's value, §7.3) is not a
  * message: a save of it carries no `p` for the people it names (§13.1). What
- * tells a person is the membership change the writer signs when its save names
+ * adds a person is the membership change the writer signs when its save names
  * them and the version it edited from did not, the same Add a Members button
  * writes. A typo fix names nobody new, so it writes nothing, and a person who
- * left stays out.
+ * left stays out. Being added shows no unread by itself.
  *
  * The writer compares the two versions it holds, the one it loaded and the one
  * it saves; nothing is kept between edits. Leaf, Ship, Peek's panel and the
  * agent's description writes all use {@link mentionAddsFor}.
  *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-mention-in-a-files-text-adds-the-person.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-mention-in-a-files-text-adds-the-person-with-no-unread.md
  */
 import {
   BLOCK_DOCUMENT_FORMAT,

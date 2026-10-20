@@ -38,7 +38,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | membership | §11.8 | `membershipOf`, `membersOf`, `streamOf`, `membershipFilters`, `candidateFilesOf`, `buildMembershipChange` |
 | muting | §11.8 | `parseMutedBlob`, `serializeMutedBlob`, `buildMutedEvent`, `mutedFilter`, `mutedFromFollowed` |
 | read state | §11.1–§11.6 | `channelContext`, `fileContext`, `threadContext`, `loadSlotIdentity`, `advanceContexts`, `fetchReadState`, `publishReadState`, `mergeSlots`, `effectiveReadAt`, `THREAD_RULE_FROM`, `REPLY_FLOOR_CONTEXT`, `capReadStateContexts` |
-| unread | §11.3, §11.8 | `unreadIn`, `isUnread`, `unreadAddIn` (being added) |
+| unread | §11.3, §11.8 | `unreadIn`, `isUnread` |
 | a mention in a file's text | §11.8, §13.1 | `mentionAddsFor`, `newlyNamedPeople`, `peopleNamedInText` |
 
 Chat, an edit, a reaction and a deletion are built with
