@@ -9,8 +9,8 @@
  * `matchObjectUrl` is new, and the cases that matter most are the refusals.
  * §7.2 as originally written told a consumer to ignore everything before the
  * final uuid, which resolves any host's URL as the app's object. The amendment
- * makes the host and the `<type>` segment significant, and the tests below are
- * what hold it there.
+ * makes the `<type>` segment significant and the host one some app declares
+ * (SPEC §7.7, LTX-6), and the tests below are what hold it there.
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -191,6 +191,119 @@ describe('urlPatternsOf', () => {
 
   it('is empty for a manifest that declares none, which is most of them today', () => {
     assert.deepEqual(urlPatternsOf({ tags: [['d', 'app']] }), [])
+  })
+
+  it('drops a shape off the manifest\'s own origin, so a manifest adds only its own host (§7.7, LTX-6)', () => {
+    const event = {
+      tags: [
+        ['web', 'https://lookalike.example/o/<bech32>', 'naddr'],
+        ['urls', 'https://ship.estiva.app/issue/<slug>-<d>', '30851'],
+        ['urls', 'http://lookalike.example/issue/<slug>-<d>', '30851'],
+        ['urls', 'https://lookalike.example:8443/issue/<slug>-<d>', '30851'],
+        ['urls', 'https://lookalike.example/note/<slug>-<d>', '30023'],
+      ],
+    }
+    assert.deepEqual(urlPatternsOf(event), [{ pattern: 'https://lookalike.example/note/<slug>-<d>', kind: 30023 }])
+  })
+
+  it('declares no shape for a manifest with no web template', () => {
+    assert.deepEqual(urlPatternsOf({ tags: [['urls', 'https://ship.estiva.app/issue/<slug>-<d>', '30851']] }), [])
+  })
+
+  it('keeps shapes on any of several web templates', () => {
+    const event = {
+      tags: [
+        ['web', 'https://a.example/o/<bech32>', 'naddr'],
+        ['web', 'https://b.example/e/<bech32>', 'nevent'],
+        ['urls', 'https://a.example/issue/<slug>-<d>', '30851'],
+        ['urls', 'https://b.example/message/<id>', '9'],
+      ],
+    }
+    assert.equal(urlPatternsOf(event).length, 2)
+  })
+})
+
+describe('a path on any declared origin — SPEC §7.7, LTX-6', () => {
+  // The production manifests' shapes, each on its own app's origin.
+  const ALL = [
+    { pattern: 'https://ship.estiva.app/issue/<slug>-<d>#block-<block>', kind: 30851 },
+    { pattern: 'https://ship.estiva.app/project/<slug>-<d>#block-<block>', kind: 30850 },
+    { pattern: 'https://ship.estiva.app/#/issue/<d>', kind: 30851 },
+    { pattern: 'https://peek.estiva.app/topic/<slug>-<d>', kind: 30840 },
+    { pattern: 'https://peek.estiva.app/topic/<slug>-<d>?thread=<id>', kind: 1111 },
+    { pattern: 'https://peek.estiva.app/message/<id>', kind: 9 },
+    { pattern: 'https://leaf.estiva.app/document/<slug>-<d>#block-<block>', kind: 30842 },
+  ]
+  const EVENT = 'b7'.repeat(32)
+
+  it("reads Leaf's address for a Ship issue as that issue", () => {
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, ALL), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30851,
+    })
+    assert.deepEqual(matchObjectUrl(`https://peek.estiva.app/issue/billing-${UUID}#block-a1`, ALL), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30851,
+      block: 'a1',
+    })
+  })
+
+  it('swaps an event-id shape and a thread shape too', () => {
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/message/${EVENT}`, ALL), { identifier: EVENT, by: 'id', kind: 9 })
+    assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/topic/design-${UUID}?thread=${EVENT}`, ALL), {
+      identifier: EVENT,
+      by: 'id',
+      within: { identifier: UUID, by: 'd' },
+      kind: 1111,
+    })
+  })
+
+  it('names nothing on an origin no shape is written on, nor on another scheme or port of a declared host', () => {
+    assert.equal(matchObjectUrl(`https://lookalike.example/issue/billing-${UUID}`, ALL), null)
+    assert.equal(matchObjectUrl(`http://leaf.estiva.app/issue/billing-${UUID}`, ALL), null)
+    assert.equal(matchObjectUrl(`https://leaf.estiva.app:8443/issue/billing-${UUID}`, ALL), null)
+  })
+
+  it('matches a fragment route only on its own origin, which alone serves it', () => {
+    assert.equal(matchObjectUrl(`https://ship.estiva.app/#/issue/${UUID}`, ALL)?.kind, 30851)
+    assert.equal(matchObjectUrl(`https://leaf.estiva.app/#/issue/${UUID}`, ALL), null)
+  })
+
+  it("lets the link's own origin win over a more specific shape elsewhere", () => {
+    // A relay member's manifest on its own host claims Peek's word, with a
+    // block fragment Peek's shape lacks. On Peek's origin, Peek's shape names it.
+    const claimed = [...ALL, { pattern: 'https://other.example/topic/<slug>-<d>#block-<block>', kind: 30023 }]
+    assert.deepEqual(matchObjectUrl(`https://peek.estiva.app/topic/design-${UUID}#block-a1`, claimed), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30840,
+    })
+  })
+
+  it('resolves under every kind that shapes elsewhere claim for the path, so one author must hold it', () => {
+    const claimed = [...ALL, { pattern: 'https://other.example/issue/<slug>-<d>', kind: 30023 }]
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, claimed), {
+      identifier: UUID,
+      by: 'd',
+      kinds: [30023, 30851],
+    })
+  })
+
+  it('does not let a more specific claim elsewhere narrow the kinds to its own', () => {
+    const claimed = [...ALL, { pattern: 'https://other.example/topic/<slug>-<d>#block-<block>', kind: 30023 }]
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/topic/design-${UUID}#block-a1`, claimed), {
+      identifier: UUID,
+      by: 'd',
+      kinds: [30023, 30840],
+      block: 'a1',
+    })
+  })
+
+  it('leaves the kinds open when a claim elsewhere names none', () => {
+    const claimed = [...ALL, { pattern: 'https://other.example/issue/<slug>-<d>' }]
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, claimed), { identifier: UUID, by: 'd' })
   })
 })
 

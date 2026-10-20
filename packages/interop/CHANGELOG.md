@@ -6,6 +6,30 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.62.0 — 2026-10-20
+
+**A file's address on any Estiva app's host is that file**
+(LTX-6; record *a-files-path-is-the-same-on-every-apps-host*, SPEC §7.7).
+
+- `matchObjectUrl` matches a link's path against every shape passed, whatever
+  origin the shape is written on, when the link's origin (scheme, host and
+  port) is one some shape is written on. `leaf.estiva.app/issue/<slug>-<d>`
+  now names Ship's issue. A link on no declared origin still names nothing. A
+  fragment route (`/#/…`) matches only on its own origin.
+- A match on the link's own origin wins, as before. From shapes on other
+  origins, every shape reading the same identity adds its kind: **new
+  `MatchedObjectUrl.kinds`**, present (and `kind` absent) when they name more
+  than one. A reader resolves under all of them and keeps the one-author rule,
+  so a second claim to a word turns the link plain. A consumer that ignores
+  `kinds` asks by `#d` alone, which the one-author rule still guards.
+- `urlPatternsOf` drops a `urls` shape whose origin is not one of the
+  manifest's `web` templates, and a manifest with no `web` declares none. That
+  is consistency, not authentication.
+
+Manifests: how a published `urls` declaration is read changed as above. Every
+production manifest's shapes sit on its own `web` origin (checked 2026-10-20),
+so none loses a shape.
+
 ## 0.61.0 — 2026-10-19
 
 **A topic has no text, and a Ship project has a Folder to write into**
