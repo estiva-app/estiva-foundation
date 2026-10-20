@@ -173,7 +173,20 @@ function cardAndExtra(embed: unknown, rest: Record<string, unknown>): { card: { 
   return { card: {}, extra: embed === undefined ? rest : { ...rest, embed } }
 }
 
-function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
+/** How a document opens in an editor ({@link toEditorDocument}). */
+export interface EditorOptions {
+  /**
+   * Keep a link on words as a `link` mark on its words (§13.3, C23): its
+   * `href`, and every other key it carries in `extra`, which a save writes
+   * back. For an editor whose schema has a `link` mark with `href` and `extra`
+   * attributes. Off, the words stay and the link does not: TipTap loads a
+   * document holding a mark its schema lacks as empty, and a save would
+   * then wipe it.
+   */
+  links?: boolean
+}
+
+function inlineToEditor(runs: readonly InlineTextNode[], options: EditorOptions): EditorNode[] {
   return runs.flatMap((run) => {
     const marks = run.marks ?? []
     // The marks a run keeps as marks; `reference` and `link` become the chip, or nothing when malformed.
@@ -227,12 +240,21 @@ function inlineToEditor(runs: readonly InlineTextNode[]): EditorNode[] {
         },
       ]
     }
-    // A link on other words is not one these editors write or draw: its words stay, the link does not.
+    if (link && options.links) {
+      // A link on words: its words, linked, in the order the run's marks came.
+      const { href, ...extra } = link
+      const first = marks.findIndex((m) => m.type === 'link')
+      const linked = marks.flatMap((m, i): NonNullable<EditorNode['marks']> =>
+        i === first ? [{ type: 'link', attrs: { href, ...(Object.keys(extra).length ? { extra } : {}) } }] : m.type === 'link' ? [] : [{ type: m.type }],
+      )
+      return textNodes(run.text, linked)
+    }
+    // Without `links`, a link on other words is not one the editor can hold: its words stay, the link does not.
     return textNodes(run.text, carried.map((type) => ({ type })))
   })
 }
 
-function blockToEditor(block: Block): EditorNode {
+function blockToEditor(block: Block, options: EditorOptions): EditorNode {
   if (!EDITOR_BLOCK_TYPES.has(block.type)) {
     // `text` is §13.3's inline text, worked out here so the node view that
     // shows it needs nothing from this package.
@@ -253,7 +275,7 @@ function blockToEditor(block: Block): EditorNode {
       the quote's text was read as no text at all — typed into a description or
       a message, a quote saved empty (found 30 September).
     */
-    const inline = isInlineRun(block.content) ? inlineToEditor(block.content) : []
+    const inline = isInlineRun(block.content) ? inlineToEditor(block.content, options) : []
     return { type: 'blockquote', attrs, content: [{ type: 'paragraph', content: inline }] }
   }
 
@@ -270,16 +292,16 @@ function blockToEditor(block: Block): EditorNode {
       save hands it back unchanged rather than erasing what another app wrote.
     */
     const { indent: _depth, ...itemAttrs } = attrs
-    const inline = isInlineRun(block.content) ? inlineToEditor(block.content) : []
+    const inline = isInlineRun(block.content) ? inlineToEditor(block.content, options) : []
     return { type: 'listItem', attrs: itemAttrs, content: [{ type: 'paragraph', content: inline }] }
   }
 
-  if (LISTS.has(block.type)) return listToEditor(block, attrs)
+  if (LISTS.has(block.type)) return listToEditor(block, attrs, options)
 
   if (block.content === undefined) return { type: block.type, attrs }
   const content = isInlineRun(block.content)
-    ? inlineToEditor(block.content)
-    : (block.content as Block[]).map(blockToEditor)
+    ? inlineToEditor(block.content, options)
+    : (block.content as Block[]).map((child) => blockToEditor(child, options))
   return { type: block.type, attrs, ...(content.length ? { content } : {}) }
 }
 
@@ -292,7 +314,7 @@ function blockToEditor(block: Block): EditorNode {
  * editor's alone: they have no id because the wire has no such block, and
  * each takes the type of the list it sits in (Miky, 2026-10-12).
  */
-function listToEditor(block: Block, attrs: Record<string, unknown>): EditorNode {
+function listToEditor(block: Block, attrs: Record<string, unknown>, options: EditorOptions): EditorNode {
   const items = Array.isArray(block.content) && !isInlineRun(block.content) ? (block.content as Block[]) : []
   const depths = listItemDepths(items)
   const root: EditorNode = { type: block.type, attrs, content: [] }
@@ -316,7 +338,7 @@ function listToEditor(block: Block, attrs: Record<string, unknown>): EditorNode 
         depth -= 1
       }
     }
-    open[depth].content!.push(blockToEditor(item))
+    open[depth].content!.push(blockToEditor(item, options))
   })
   if (root.content!.length === 0) delete root.content
   return root
@@ -343,8 +365,8 @@ export function documentForEditing(value: string, format: ContentFormat): BlockD
   }
 }
 
-export function toEditorDocument(document: BlockDocument): EditorDocument {
-  return { type: 'doc', content: document.content.map(blockToEditor) }
+export function toEditorDocument(document: BlockDocument, options: EditorOptions = {}): EditorDocument {
+  return { type: 'doc', content: document.content.map((block) => blockToEditor(block, options)) }
 }
 
 // ── Editor → document ────────────────────────────────────────────────────────
@@ -473,7 +495,15 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
       continue
     }
     if (node.type !== 'text' || node.text === undefined) continue
-    const marks = (node.marks ?? []).map((m) => ({ type: m.type }) as InlineMarkNode)
+    const marks = (node.marks ?? []).flatMap((m): InlineMarkNode[] => {
+      if (m.type !== 'link') return [{ type: m.type } as InlineMarkNode]
+      // A link on words (`EditorOptions.links`): `href` first, as writers put it, then what it carried. One with no `href` is no link.
+      const href = m.attrs?.href
+      if (typeof href !== 'string' || href === '') return []
+      const extra = m.attrs?.extra
+      const { href: _ignored, ...kept } = extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}
+      return [{ type: 'link', attrs: { href, ...kept } }]
+    })
     const last = out[out.length - 1]
     /*
       Merge runs that carry the same marks. ProseMirror splits a text node

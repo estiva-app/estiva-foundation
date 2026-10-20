@@ -55,8 +55,10 @@ export interface RenderInline {
   reference?: string
   /**
    * The card its writer chose for this reference in a block document (§13.3,
-   * "A reference's card"): absent for none. A message's cards are its `embed`
-   * tags instead (§13.6.2), so a marker body never has one.
+   * "A reference's card"), as `cardLayout` reads it: absent for none. Only
+   * `detailed` draws one, and only alone on its line (`documentLineDrawOf`). A
+   * message's cards are its `embed` tags instead (§13.6.2), so a marker body
+   * never has one.
    */
   embed?: 'compact' | 'detailed'
   /**
@@ -352,8 +354,7 @@ export function renderTreeText(blocks: readonly RenderBlock[]): string {
  * @deprecated A whole paragraph is not the unit: since 0.38.0 a message's line
  * that is only a reference draws its row (§13.2, §13.6.2), which
  * `isOnlyReferenceLine` decides per line, list items and app URLs included. A
- * block document reads a reference as its chip (§13.3); use {@link blockCards}
- * for its cards.
+ * block document draws by the same line rule (§13.3): `documentLineDrawOf`.
  */
 export function standaloneReference(block: RenderBlock): string | undefined {
   if (block.type !== 'paragraph' || block.children?.length) return undefined
@@ -370,6 +371,9 @@ export function standaloneReference(block: RenderBlock): string | undefined {
  * no card. A string this reader does not know is `compact` — the writer asked
  * for a card, and the smallest is the safe reading, as for a message's `embed`
  * tag (§13.6.2). `none`, a non-string and absence are all no card.
+ *
+ * In a block document only `detailed` draws a card, in its lone link's row's
+ * place; everything else draws the row (§13.3, `documentLineDrawOf`).
  */
 export function cardLayout(raw: unknown): 'compact' | 'detailed' | undefined {
   // An empty string names no layout: no card, as an editor saves it.
@@ -400,6 +404,11 @@ export interface BlockCard {
  *
  * Inside a card's body or a part a reader asks nothing: there every reference
  * is its chip (§13.3), or two objects that card each other nest forever.
+ *
+ * @deprecated Since 0.41.0 a document's card is drawn in its lone link's row's
+ * place, never after the block, and only for `detailed` (§13.3, C22): a link
+ * in a sentence draws its chip, and a link on words draws its words. Draw each
+ * line by {@link documentLineDrawOf}. Kept until Ship's and Peek's readers move.
  */
 export function blockCards(block: RenderBlock, resolveLink?: LinkResolver): BlockCard[] {
   const out: BlockCard[] = []

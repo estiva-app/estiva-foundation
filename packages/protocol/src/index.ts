@@ -285,6 +285,7 @@ export {
   selectionAnchorTags,
 } from './comment-anchor.js'
 export {
+  type DocumentLineDraw,
   type Embed,
   type EmbedLayout,
   type LineDraw,
@@ -292,6 +293,7 @@ export {
   EMBED_TAG,
   cardsIn,
   defaultCardOf,
+  documentLineDrawOf,
   embedTag,
   embedTagsOf,
   embedsOf,
