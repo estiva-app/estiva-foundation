@@ -30,9 +30,9 @@
  * That second sentence is the amended one. §7.2 used to say a consumer MUST
  * ignore *everything* before the final uuid, which contradicted the paragraph
  * above it and, read literally, resolves `evil.example.com/issue/<uuid>` as a
- * Ship issue. The host and the `<type>` segment are exactly what select the app
- * and the kind; only the slug is decoration. `matchObjectUrl` implements the
- * corrected rule.
+ * Ship issue. The `<type>` segment is what selects the kind, and the host must
+ * be one some app declares; only the slug is decoration. `matchObjectUrl`
+ * implements the corrected rule.
  */
 
 /**
@@ -139,11 +139,27 @@ export interface UrlPattern {
   kind?: number
 }
 
-/** The `urls` shapes a manifest event declares. */
+/**
+ * The `urls` shapes a manifest event declares, on its own origin.
+ *
+ * **A manifest declares `urls` only on its own origin** (SPEC §7.7, LTX-6): a
+ * shape whose scheme, host and port are not those of one of the manifest's
+ * `web` templates is dropped, and a manifest with no `web` declares none.
+ * Every declared origin is one some manifest serves from, which is what lets
+ * {@link matchObjectUrl} read a path on any of them.
+ *
+ * That keeps declarations consistent; it is not authentication. A reader
+ * trusts a manifest's hosts as far as it trusts the manifest.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-path-is-the-same-on-every-apps-host.md
+ */
 export function urlPatternsOf(event: { tags: string[][] }): UrlPattern[] {
+  const own = new Set(event.tags.filter((tag) => tag[0] === 'web' && tag[1]).map((tag) => originOfUrl(tag[1])))
   const out: UrlPattern[] = []
   for (const tag of event.tags) {
     if (tag[0] !== 'urls' || !tag[1]) continue
+    const origin = originOfUrl(tag[1])
+    if (origin === null || !own.has(origin)) continue
     const kind = tag[2] ? Number(tag[2]) : undefined
     out.push({ pattern: tag[1], ...(Number.isInteger(kind) ? { kind } : {}) })
   }
@@ -166,6 +182,13 @@ export interface MatchedObjectUrl {
   /** Present only when the matched pattern named one. */
   kind?: number
   /**
+   * The kinds to resolve under when shapes on other origins claim the path for
+   * different kinds (SPEC §7.7, LTX-6); `kind` is then absent. One author must
+   * hold the identity across all of them, so a second app's claim to the same
+   * word turns the link plain rather than taking it over.
+   */
+  kinds?: number[]
+  /**
    * The object the path names, when the identity came from the query — the
    * topic a `?thread=<id>` link opens, read off `/topic/<slug>-<d>`. Absent
    * when the path *is* the identity. A consumer resolving the thread needs
@@ -186,12 +209,26 @@ export interface MatchedObjectUrl {
 const BLOCK_PLACEHOLDER = '<block>'
 
 /**
- * Match a pasted URL against one app's declared shapes.
+ * Match a pasted URL against the shapes every manifest declares.
  *
- * **The host and the `<type>` segment are significant; the slug is not.** That
- * is §7.2 as amended, and it is the whole of the security story here: a
- * consumer that matched on the trailing uuid alone would resolve any URL from
- * anywhere as that app's object.
+ * **The `<type>` segment is significant; the slug is not.** That is §7.2 as
+ * amended: a consumer that matched on the trailing uuid alone would resolve
+ * any URL from anywhere as some app's object.
+ *
+ * **The path is the same on every declared host** (SPEC §7.7, LTX-6). A link
+ * whose origin (scheme, host and port) is one some shape is written on matches
+ * every path shape by its path and query, whatever origin the shape is on, so
+ * `leaf.estiva.app/issue/<slug>-<d>` is Ship's issue as `ship.estiva.app`'s is.
+ * A link on no declared origin matches nothing. A fragment route
+ * (`/#/issue/<d>`) matches only on its own origin, since no other app serves
+ * it, and so does a shape that names no kind.
+ * A match on the link's own origin wins whatever the specificity of others.
+ * On either side, when shapes claim the path for different kinds, the match
+ * carries all of them in `kinds`, and the reader's one-author rule decides.
+ * Pass the shapes of every manifest, each read through {@link urlPatternsOf}
+ * so that a manifest adds only its own origin.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-path-is-the-same-on-every-apps-host.md
  *
  * **A query parameter may carry the identity too** (FOL-38). Peek opens a
  * thread as `/topic/<slug>-<d>?thread=<id>`: the path names the topic, the
@@ -211,14 +248,23 @@ const BLOCK_PLACEHOLDER = '<block>'
 export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObjectUrl | null {
   const target = splitUrl(url)
   if (!target) return null
-
-  let best: { specificity: number; match: MatchedObjectUrl } | null = null
-  for (const { pattern, kind } of patterns) {
+  const origin = `${target.scheme}://${target.host}`
+  const shapes = patterns.flatMap(({ pattern, kind }) => {
     const shape = splitUrl(pattern)
-    if (!shape) continue
-    if (shape.scheme !== target.scheme || shape.host !== target.host) continue
-    // A fragment route and a path route are different shapes, not one.
+    return shape ? [{ shape, kind, own: `${shape.scheme}://${shape.host}` === origin }] : []
+  })
+  // A link on an origin no shape is written on names nothing, whatever its path.
+  if (!shapes.some(({ own }) => own)) return null
+
+  const onOwn: Candidate[] = []
+  const elsewhere: Candidate[] = []
+  for (const { shape, kind, own } of shapes) {
+    // A fragment route and a path route are different shapes, not one. Off its
+    // own origin a shape matches only as a path route that names its kind: no
+    // other app serves a fragment route, and a kindless shape would let any
+    // manifest turn every swapped link of its word into a bare `#d` lookup.
     if (shape.fragmented !== target.fragmented) continue
+    if (!own && (shape.fragmented || kind === undefined)) continue
 
     // The pattern's path up to its final segment: `/issue/` out of
     // `/issue/<slug>-<d>`. Compared literally and at equal depth, so `/issues`
@@ -267,9 +313,51 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
     // A filled `<block>` breaks a tie, so an app that declares the block shape
     // beside its older shape loses no block to declaration order.
     const specificity = declared.length * 2 + (block === undefined ? 0 : 1)
-    if (!best || specificity > best.specificity) best = { specificity, match }
+    ;(own ? onOwn : elsewhere).push({ specificity, match })
   }
-  return best?.match ?? null
+  return onOwn.length > 0 ? chosen(onOwn) : chosen(elsewhere)
+}
+
+interface Candidate {
+  specificity: number
+  match: MatchedObjectUrl
+}
+
+/**
+ * The match a link earns from the shapes that read it on one side: its own
+ * origin, or, when none does, the others.
+ *
+ * The most specific reading names the object. Its kind is not trusted alone:
+ * every shape that reads the same identity adds its kind, whatever its
+ * specificity and whatever order the manifests came in, so a second manifest
+ * that claims a word — with a `<block>` fragment the owner's shape lacks, say
+ * — can only widen the lookup, where the one-author rule turns the link plain.
+ * Two equally specific readings of different identities name nothing. A shape
+ * that names no kind (only ever on its own origin) leaves the kinds open.
+ */
+function chosen(candidates: Candidate[]): MatchedObjectUrl | null {
+  if (candidates.length === 0) return null
+  const top = Math.max(...candidates.map((c) => c.specificity))
+  const [first, ...rest] = candidates.filter((c) => c.specificity === top).map((c) => c.match)
+  if (rest.some((match) => identityOf(match) !== identityOf(first))) return null
+
+  const same = candidates.map((c) => c.match).filter((match) => identityOf(match) === identityOf(first))
+  const named: MatchedObjectUrl = { ...first }
+  delete named.kind
+  if (same.some((match) => match.kind === undefined)) return named
+  const kinds = [...new Set(same.map((match) => match.kind as number))].sort((a, b) => a - b)
+  return kinds.length === 1 ? { ...named, kind: kinds[0] } : { ...named, kinds }
+}
+
+/** What a match names, apart from its kind and block. */
+function identityOf(match: MatchedObjectUrl): string {
+  return [match.by, match.identifier, match.within?.by ?? '', match.within?.identifier ?? ''].join(' ')
+}
+
+/** `scheme://host[:port]` of a URL or a pattern, lowercased; null when it has none. */
+function originOfUrl(raw: string): string | null {
+  const parts = splitUrl(raw)
+  return parts ? `${parts.scheme}://${parts.host}` : null
 }
 
 /**
