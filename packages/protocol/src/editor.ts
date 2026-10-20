@@ -8,7 +8,7 @@ import {
   type BlockDocument,
 } from './blocks.js'
 import { markerTextToBlockDocument } from './bridge-content.js'
-import { targetMark, type InlineMarkNode, type InlineTextNode } from './content.js'
+import { isAllowedHref, targetMark, type InlineMarkNode, type InlineTextNode } from './content.js'
 import { BLOCK_DOCUMENT_FORMAT, type ContentFormat } from './render.js'
 
 /**
@@ -499,7 +499,7 @@ function inlineFromEditor(nodes: readonly EditorNode[]): InlineTextNode[] {
       if (m.type !== 'link') return [{ type: m.type } as InlineMarkNode]
       // A link on words (`EditorOptions.links`): `href` first, as writers put it, then what it carried. One with no `href` is no link.
       const href = m.attrs?.href
-      if (typeof href !== 'string' || href === '') return []
+      if (typeof href !== 'string' || !isAllowedHref(href)) return []
       const extra = m.attrs?.extra
       const { href: _ignored, ...kept } = extra && typeof extra === 'object' && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {}
       return [{ type: 'link', attrs: { href, ...kept } }]

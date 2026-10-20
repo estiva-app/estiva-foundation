@@ -212,6 +212,18 @@ describe('a URL in a document, edited (C24)', () => {
     const editor = toEditorDocument(doc({ type: 'paragraph', id: 'p1', content: [link(URL_, { embed: 'detailed' })] }), { links: true })
     assert.equal(editor.content[0].content?.[0].type, 'reference')
   })
+  it('a link on words to a scheme §13.1 does not allow is neither held nor written, its words kept', () => {
+    const d = doc({ type: 'paragraph', id: 'p1', content: [text('the plan', [{ type: 'link', attrs: { href: 'javascript:alert(1)', embed: 'detailed' } }])] })
+    assert.deepEqual(toEditorDocument(d, { links: true }).content[0].content, [{ type: 'text', text: 'the plan' }])
+    const editor: EditorDocument = {
+      type: 'doc',
+      content: [{ type: 'paragraph', attrs: { blockId: 'p1' }, content: [
+        { type: 'text', text: 'the plan', marks: [{ type: 'link', attrs: { href: 'java\tscript:alert(1)' } }] },
+        { type: 'text', text: ' and a call', marks: [{ type: 'link', attrs: { href: 'tel:+420123' } }] },
+      ] }],
+    }
+    assert.deepEqual(fromEditorDocument(editor).content[0].content, [text('the plan and a call')])
+  })
   it('a link mark an editor hands back with no href is dropped, its words kept', () => {
     const editor: EditorDocument = {
       type: 'doc',
@@ -229,6 +241,10 @@ describe('a malformed mark (security review)', () => {
     { type: 'link', attrs: { href: 3 } },
     { type: 'reference', attrs: null },
     { type: 'reference', attrs: [] },
+    // §13.1: only http, https, mailto and nostr.
+    { type: 'link', attrs: { href: 'javascript:alert(1)' } },
+    { type: 'link', attrs: { href: 'java\tscript:alert(1)' } },
+    { type: 'link', attrs: { href: 'data:text/html,<script>alert(1)</script>' } },
   ]
   for (const mark of bad) {
     it(`reads ${JSON.stringify(mark)} as no mark, in the reader and the editor`, () => {

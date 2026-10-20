@@ -25,6 +25,10 @@ link on words as a `link` mark (`href`, the rest in `extra`) and
 `fromEditorDocument` writes it back, `embed` included; without the option the
 words stay and the link does not, as before — TipTap loads a document holding
 a mark its schema lacks as empty, so only an editor with that mark opts in.
+A `link` whose `href` is not `http`, `https`, `mailto` or `nostr` (§13.1,
+`isAllowedHref`, tabs and spaces stripped as a URL parser does) is now no mark
+for every reader and the editor, both ways: its words stay, as text, and a save
+never writes it.
 
 ## 0.40.0 — 2026-10-17
 
