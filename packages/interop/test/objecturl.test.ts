@@ -301,9 +301,15 @@ describe('a path on any declared origin — SPEC §7.7, LTX-6', () => {
     })
   })
 
-  it('leaves the kinds open when a claim elsewhere names none', () => {
+  it('does not let a claim elsewhere that names no kind open the lookup to every kind', () => {
     const claimed = [...ALL, { pattern: 'https://other.example/issue/<slug>-<d>' }]
-    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, claimed), { identifier: UUID, by: 'd' })
+    assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, claimed), {
+      identifier: UUID,
+      by: 'd',
+      kind: 30851,
+    })
+    // On its own origin it still matches, with no kind, as before.
+    assert.deepEqual(matchObjectUrl(`https://other.example/issue/billing-${UUID}`, claimed), { identifier: UUID, by: 'd' })
   })
 })
 

@@ -220,7 +220,8 @@ const BLOCK_PLACEHOLDER = '<block>'
  * every path shape by its path and query, whatever origin the shape is on, so
  * `leaf.estiva.app/issue/<slug>-<d>` is Ship's issue as `ship.estiva.app`'s is.
  * A link on no declared origin matches nothing. A fragment route
- * (`/#/issue/<d>`) matches only on its own origin: no other app serves it.
+ * (`/#/issue/<d>`) matches only on its own origin, since no other app serves
+ * it, and so does a shape that names no kind.
  * A match on the link's own origin wins whatever the specificity of others;
  * when shapes on other origins claim the path for different kinds, the match
  * carries all of them in `kinds`, and the reader's one-author rule decides.
@@ -258,10 +259,12 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
   let best: Candidate | null = null
   const elsewhere: Candidate[] = []
   for (const { shape, kind, own } of shapes) {
-    // A fragment route and a path route are different shapes, not one; and a
-    // fragment route is served only by its own origin.
+    // A fragment route and a path route are different shapes, not one. Off its
+    // own origin a shape matches only as a path route that names its kind: no
+    // other app serves a fragment route, and a kindless shape would let any
+    // manifest turn every swapped link of its word into a bare `#d` lookup.
     if (shape.fragmented !== target.fragmented) continue
-    if (shape.fragmented && !own) continue
+    if (!own && (shape.fragmented || kind === undefined)) continue
 
     // The pattern's path up to its final segment: `/issue/` out of
     // `/issue/<slug>-<d>`. Compared literally and at equal depth, so `/issues`
@@ -329,8 +332,8 @@ interface Candidate {
  * its kind, whatever its specificity, so a relay member's manifest that claims
  * Ship's word — with a `<block>` fragment Ship's shape lacks, say — can only
  * widen the lookup, where the one-author rule turns the link plain. Two equally
- * specific readings of different identities name nothing; a shape that names
- * no kind leaves the kinds open, as it does on its own origin.
+ * specific readings of different identities name nothing. Every candidate here
+ * names its kind (`matchObjectUrl` skips the rest).
  */
 function fromElsewhere(candidates: Candidate[]): MatchedObjectUrl | null {
   if (candidates.length === 0) return null
@@ -341,7 +344,6 @@ function fromElsewhere(candidates: Candidate[]): MatchedObjectUrl | null {
   const same = candidates.map((c) => c.match).filter((match) => identityOf(match) === identityOf(first))
   const named: MatchedObjectUrl = { ...first }
   delete named.kind
-  if (same.some((match) => match.kind === undefined)) return named
   const kinds = [...new Set(same.map((match) => match.kind as number))].sort((a, b) => a - b)
   return kinds.length === 1 ? { ...named, kind: kinds[0] } : { ...named, kinds }
 }

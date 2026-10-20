@@ -15,7 +15,8 @@ manifests already published still mean what they meant.
   origin the shape is written on, when the link's origin (scheme, host and
   port) is one some shape is written on. `leaf.estiva.app/issue/<slug>-<d>`
   now names Ship's issue. A link on no declared origin still names nothing. A
-  fragment route (`/#/…`) matches only on its own origin.
+  fragment route (`/#/…`), and a shape that names no kind, match only on their
+  own origin.
 - A match on the link's own origin wins, as before. From shapes on other
   origins, every shape reading the same identity adds its kind: **new
   `MatchedObjectUrl.kinds`**, present (and `kind` absent) when they name more
