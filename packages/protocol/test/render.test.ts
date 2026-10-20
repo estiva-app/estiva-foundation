@@ -50,6 +50,29 @@ describe('marker text resolves to the tree', () => {
     assert.deepEqual(fence.inline, [{ text: 'const a = 1', marks: [] }])
   })
 
+  it("nests a message's indented list item under the one above — §13.2 (PEE-57)", () => {
+    const [list, ...rest] = toRenderTree('- Agenda\n  - budget\n    - Q4\n  - hiring\n- Next steps', 'marker')
+    assert.equal(rest.length, 0)
+    assert.equal(list.type, 'bulletList')
+    assert.deepEqual(list.children?.map((item) => [renderTreeText([item]), item.indent ?? 0]), [
+      ['Agenda', 0],
+      ['budget', 1],
+      ['Q4', 2],
+      ['hiring', 1],
+      ['Next steps', 0],
+    ])
+    const numbered = toRenderTree('3. c\n  - c.1\n4. d', 'marker')
+    assert.equal(numbered.length, 1)
+    assert.equal(numbered[0].start, 3)
+    assert.deepEqual(numbered[0].children?.map((item) => item.indent ?? 0), [0, 1, 0])
+  })
+
+  it('leaves an indented item with no list open above it as text', () => {
+    const [para] = toRenderTree('a line\n  - not an item', 'marker')
+    assert.equal(para.type, 'paragraph')
+    assert.equal(renderTreeText([para]), 'a line\n  - not an item')
+  })
+
   it('gives a marker body no block ids, because it has no addressable sub-unit', () => {
     for (const block of toRenderTree('# h\n\npara\n\n- x', 'marker')) {
       assert.equal(block.id, undefined)

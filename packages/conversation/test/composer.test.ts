@@ -97,6 +97,17 @@ describe('composerDocument: an edit or a draft opens with chips again', () => {
     assert.deepEqual(runs, ['text:see ', `link:the plan>${ISSUE_URL}`, `text: and ${ISSUE_URL}/[x](${ISSUE_URL})`])
     assert.equal(composerText(doc as never).text, written)
   })
+
+  it('a nested list item opens nested under its item, and writes the same text back (PEE-57)', () => {
+    const written = '- Agenda\n  - budget\n- Next steps'
+    const doc = composerDocument(written, labels)
+    assert.deepEqual(doc.content?.map((b) => b.type), ['bulletList'])
+    const [agenda, next] = doc.content?.[0].content ?? []
+    assert.deepEqual(agenda.content?.map((b) => b.type), ['paragraph', 'bulletList'])
+    assert.equal(agenda.content?.[1].content?.[0].content?.[0].content?.[0].text, 'budget')
+    assert.equal(next.content?.[0].content?.[0].text, 'Next steps')
+    assert.equal(composerText(doc).text, written)
+  })
 })
 
 describe('withoutNewUrgency: an edit makes nobody newly urgent', () => {
