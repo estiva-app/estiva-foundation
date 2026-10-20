@@ -361,16 +361,19 @@ export type DocumentLineDraw = Exclude<LineDraw, { draw: 'nothing' }> | { draw: 
  * document, so `nothing` never comes back. Only a paragraph's and a list item's
  * lines can be a link alone, a checklist item's included (a list item on the
  * wire); a heading, a quote, a callout (a quote with a tone) and a paragraph in
- * a table cell are sentences. The reader says when `block` is in a table cell,
- * because the tree holds a cell as a block this package does not name.
+ * a table cell are sentences. Where `block` sits is the caller's to say
+ * (`inTableCell`), because the tree holds a cell as a block this package does
+ * not name: {@link documentLineDraws} walks a whole document and says it.
  *
  * Anything else on the mark — no `embed`, `compact`, `none`, a value this
- * reader does not know or one that is not a string — draws the row, and in a sentence every value draws the chip only. A link on
+ * reader does not know or one that is not a string — draws the row, and in a
+ * sentence every value draws the chip only. A link on
  * words (a `link` mark whose text is not its `href`) is a sentence: its words,
  * a link, and its `embed` draws nothing. Read the tree through
  * {@link linksAsReferences} first, or pass `resolveLink`, so an app URL draws
  * as what it names.
  *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-lone-links-chip-menu-offers-row-or-card.md
  */
 export function documentLineDrawOf(
@@ -384,6 +387,32 @@ export function documentLineDrawOf(
   // The line is one run: the link, its `embed` read off its mark by `cardLayout`.
   const only = line.find((run) => run.reference || run.text.trim() !== '')
   return { ...drawn, draw: only?.embed === 'detailed' ? 'card' : 'row' }
+}
+
+/**
+ * Every line of a block document as a reader draws it ({@link documentLineDrawOf}),
+ * per block of `blocks`, keyed by the block object itself — pass the tree you
+ * draw, after {@link linksAsReferences} if you use it.
+ *
+ * Only a top-level paragraph and a list's items keep the line rule. Inside
+ * anything else — a table's cells, a quote or a block this reader does not
+ * know that holds blocks — every line is a sentence, so no reader has to
+ * remember where it is.
+ */
+export function documentLineDraws(
+  blocks: readonly RenderBlock[],
+  context: { resolveLink?: LinkResolver } = {},
+): Map<RenderBlock, DocumentLineDraw[]> {
+  const out = new Map<RenderBlock, DocumentLineDraw[]>()
+  // `inside`: under a block that is not a list, where every line is a sentence.
+  const walk = (bs: readonly RenderBlock[], inside: boolean) => {
+    for (const block of bs) {
+      if (block.inline) out.set(block, linesOf(block).map((line) => documentLineDrawOf(line, { type: block.type, inTableCell: inside }, context)))
+      if (block.children) walk(block.children, inside || (block.type !== 'bulletList' && block.type !== 'orderedList'))
+    }
+  }
+  walk(blocks, false)
+  return out
 }
 
 /**

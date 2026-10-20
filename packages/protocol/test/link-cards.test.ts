@@ -8,10 +8,10 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import * as protocol from '../dist/index.js'
 import {
   addrToNaddr,
   blockCards,
-  documentLineDrawOf,
   fromEditorDocument,
   linesOf,
   linksAsReferences,
@@ -31,6 +31,8 @@ const ADDR = `30851:${PK}:an-issue`
 const V = `nostr:${addrToNaddr(ADDR)}`
 const URL_ = 'https://ship.estiva.app/i/an-issue'
 const BLOCK_URL = `${URL_}#block-b1`
+// Read off the namespace, so this file still loads on a version without it and its editor cases run there.
+const { documentLineDrawOf } = protocol
 // An app names a link to one block of a file by the file (§7.7, C21).
 const resolve = (url: string) => (url === URL_ || url === BLOCK_URL ? ADDR : undefined)
 

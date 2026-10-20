@@ -13,16 +13,14 @@ import {
   addrToNaddr,
   blockCards,
   cardLayout,
-  documentLineDrawOf,
+  documentLineDraws,
   fromEditorDocument,
-  linesOf,
   parseBlockDocument,
   serializeBlockDocument,
   toEditorDocument,
   toRenderTree,
   type BlockDocument,
   type DocumentLineDraw,
-  type RenderBlock,
 } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
@@ -41,18 +39,8 @@ const text = (t: string) => ({ type: 'text' as const, text: t })
 const doc = (...content: unknown[]): BlockDocument => ({ type: 'doc', content }) as BlockDocument
 const render = (d: BlockDocument) => toRenderTree(serializeBlockDocument(d), 'blocks')
 
-/** Every line of a document as a reader draws it, walking into lists, quotes and tables. */
-const draws = (d: BlockDocument): DocumentLineDraw[] => {
-  const out: DocumentLineDraw[] = []
-  const walk = (blocks: readonly RenderBlock[], inTableCell: boolean) => {
-    for (const block of blocks) {
-      if (block.inline) for (const line of linesOf(block)) out.push(documentLineDrawOf(line, { type: block.type, inTableCell }))
-      if (block.children) walk(block.children, inTableCell || block.type === 'table')
-    }
-  }
-  walk(render(d), false)
-  return out
-}
+/** Every line of a document as a reader draws it, in document order. */
+const draws = (d: BlockDocument): DocumentLineDraw[] => [...documentLineDraws(render(d)).values()].flat()
 const row = { draw: 'row', value: ADDR }
 const card = { draw: 'card', value: ADDR }
 const sentence = { draw: 'sentence' }
@@ -94,6 +82,12 @@ describe('a document\'s lone link (C22)', () => {
     ))
     assert.deepEqual(drawn, drawn.map(() => sentence))
     assert.equal(drawn.length, 7)
+  })
+  it('a paragraph another writer nested in a quote or an unknown block is a sentence', () => {
+    assert.deepEqual(draws(doc(
+      { type: 'blockquote', id: 'q1', content: [{ type: 'paragraph', id: 'p1', content: [ref(V, { embed: 'detailed' })] }] },
+      { type: 'columns', id: 'c1', content: [{ type: 'paragraph', id: 'p2', content: [ref(V)] }] },
+    )), [sentence, sentence])
   })
   it('two links on one line are a sentence', () => {
     assert.deepEqual(draws(doc({ type: 'paragraph', id: 'p1', content: [ref(V, { embed: 'detailed' }), text(' '), ref(W)] })), [sentence])

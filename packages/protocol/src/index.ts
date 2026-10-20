@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.40.0'
+export const PROTOCOL_VERSION = '0.41.0'
 
 export {
   // types
@@ -294,6 +294,7 @@ export {
   cardsIn,
   defaultCardOf,
   documentLineDrawOf,
+  documentLineDraws,
   embedTag,
   embedTagsOf,
   embedsOf,

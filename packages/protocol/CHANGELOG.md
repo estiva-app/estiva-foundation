@@ -8,7 +8,7 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 
 **Wire behaviour: reading changed; writing changed only for an editor that
 opts in** (SPEC §13.3 "A reference's card", C22, C24; WBD-1; records
-a-lone-links-chip-menu-offers-row-or-card,
+a-link-on-words-counts-toward-the-card, a-lone-links-chip-menu-offers-row-or-card,
 every-app-edits-a-document-with-one-shared-editor). A block document now draws
 its links by the line rule a message uses: `documentLineDrawOf(line, block)`
 says, per line (`linesOf`), whether it is a sentence, a lone link's row, or —
