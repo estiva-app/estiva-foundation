@@ -6,6 +6,26 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.17.0 — 2026-10-20
+
+**A mention in a file's text adds the person** (WBD-2; record
+*a-mention-in-a-files-text-adds-the-person-with-no-unread*).
+`mentionAddsFor(writer, atMs, { file, folder, saved, editedFrom })` is the one
+helper every writer of a page or a description uses: it returns the Add
+(`member:<P>` = `true`, `buildMembershipChange`'s event) for each person the
+saved text names by `nostr:npub` and the version it was edited from did not. A
+creation passes `editedFrom: null`. A typo fix returns nothing, the writer is
+never added, and a run in code or a code block names nobody.
+`peopleNamedInText` reads a block document (a `reference` mark's `uri` only)
+or marker text. Being added shows no unread: that belongs to a document's own
+read state, shaped later.
+
+Nothing in how a conversation is read changed, so an app on 0.16 reads
+everything as before, and folds the Add as a join.
+
+SPEC: §11.8 *A mention in a file's text*, *Being added is not unread by
+itself*; §13.1 *A file's text is not a message*; §7.3 `format`; C28.
+
 ## 0.16.0 — 2026-10-19
 
 **What a comment box shows under itself, for every app's box** (COMM-8; record

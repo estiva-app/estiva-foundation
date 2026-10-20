@@ -7,7 +7,7 @@ and estiva-agent read conversations through it.
 **A convenience, never a requirement.** SPEC §9's conversation checks
 (C10–C18) are written so an app can build conversations from the specification
 alone, and this package's tests are those checks
-(`test/conformance.test.ts` for C10–C16, `test/membership.test.ts` for C17 and C18). If you find this package disagreeing with the
+(`test/conformance.test.ts` for C10–C16, `test/membership.test.ts` for C17 and C18, `test/textMentions.test.ts` for C28). If you find this package disagreeing with the
 SPEC, the package is wrong.
 
 ```bash
@@ -39,6 +39,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | muting | §11.8 | `parseMutedBlob`, `serializeMutedBlob`, `buildMutedEvent`, `mutedFilter`, `mutedFromFollowed` |
 | read state | §11.1–§11.6 | `channelContext`, `fileContext`, `threadContext`, `loadSlotIdentity`, `advanceContexts`, `fetchReadState`, `publishReadState`, `mergeSlots`, `effectiveReadAt`, `THREAD_RULE_FROM`, `REPLY_FLOOR_CONTEXT`, `capReadStateContexts` |
 | unread | §11.3, §11.8 | `unreadIn`, `isUnread` |
+| a mention in a file's text | §11.8, §13.1 | `mentionAddsFor`, `newlyNamedPeople`, `peopleNamedInText` |
 
 Chat, an edit, a reaction and a deletion are built with
 `@estiva-app/protocol`'s `buildMessage`, `buildEdit`, `buildReaction` and
