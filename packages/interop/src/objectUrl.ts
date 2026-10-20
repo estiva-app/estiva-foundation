@@ -222,8 +222,8 @@ const BLOCK_PLACEHOLDER = '<block>'
  * A link on no declared origin matches nothing. A fragment route
  * (`/#/issue/<d>`) matches only on its own origin, since no other app serves
  * it, and so does a shape that names no kind.
- * A match on the link's own origin wins whatever the specificity of others;
- * when shapes on other origins claim the path for different kinds, the match
+ * A match on the link's own origin wins whatever the specificity of others.
+ * On either side, when shapes claim the path for different kinds, the match
  * carries all of them in `kinds`, and the reader's one-author rule decides.
  * Pass the shapes of every manifest, each read through {@link urlPatternsOf}
  * so that a manifest adds only its own origin.
@@ -256,7 +256,7 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
   // A link on an origin no shape is written on names nothing, whatever its path.
   if (!shapes.some(({ own }) => own)) return null
 
-  let best: Candidate | null = null
+  const onOwn: Candidate[] = []
   const elsewhere: Candidate[] = []
   for (const { shape, kind, own } of shapes) {
     // A fragment route and a path route are different shapes, not one. Off its
@@ -313,10 +313,9 @@ export function matchObjectUrl(url: string, patterns: UrlPattern[]): MatchedObje
     // A filled `<block>` breaks a tie, so an app that declares the block shape
     // beside its older shape loses no block to declaration order.
     const specificity = declared.length * 2 + (block === undefined ? 0 : 1)
-    if (!own) elsewhere.push({ specificity, match })
-    else if (!best || specificity > best.specificity) best = { specificity, match }
+    ;(own ? onOwn : elsewhere).push({ specificity, match })
   }
-  return best?.match ?? fromElsewhere(elsewhere)
+  return onOwn.length > 0 ? chosen(onOwn) : chosen(elsewhere)
 }
 
 interface Candidate {
@@ -325,17 +324,18 @@ interface Candidate {
 }
 
 /**
- * The match a link on one app's origin earns from shapes written on others.
+ * The match a link earns from the shapes that read it on one side: its own
+ * origin, or, when none does, the others.
  *
- * The most specific reading names the object, as on the shape's own origin.
- * Its kind is not trusted alone: every shape that reads the same identity adds
- * its kind, whatever its specificity, so a relay member's manifest that claims
- * Ship's word — with a `<block>` fragment Ship's shape lacks, say — can only
- * widen the lookup, where the one-author rule turns the link plain. Two equally
- * specific readings of different identities name nothing. Every candidate here
- * names its kind (`matchObjectUrl` skips the rest).
+ * The most specific reading names the object. Its kind is not trusted alone:
+ * every shape that reads the same identity adds its kind, whatever its
+ * specificity and whatever order the manifests came in, so a second manifest
+ * that claims a word — with a `<block>` fragment the owner's shape lacks, say
+ * — can only widen the lookup, where the one-author rule turns the link plain.
+ * Two equally specific readings of different identities name nothing. A shape
+ * that names no kind (only ever on its own origin) leaves the kinds open.
  */
-function fromElsewhere(candidates: Candidate[]): MatchedObjectUrl | null {
+function chosen(candidates: Candidate[]): MatchedObjectUrl | null {
   if (candidates.length === 0) return null
   const top = Math.max(...candidates.map((c) => c.specificity))
   const [first, ...rest] = candidates.filter((c) => c.specificity === top).map((c) => c.match)
@@ -344,6 +344,7 @@ function fromElsewhere(candidates: Candidate[]): MatchedObjectUrl | null {
   const same = candidates.map((c) => c.match).filter((match) => identityOf(match) === identityOf(first))
   const named: MatchedObjectUrl = { ...first }
   delete named.kind
+  if (same.some((match) => match.kind === undefined)) return named
   const kinds = [...new Set(same.map((match) => match.kind as number))].sort((a, b) => a - b)
   return kinds.length === 1 ? { ...named, kind: kinds[0] } : { ...named, kinds }
 }

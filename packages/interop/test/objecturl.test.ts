@@ -301,6 +301,17 @@ describe('a path on any declared origin — SPEC §7.7, LTX-6', () => {
     })
   })
 
+  it('resolves under every kind claimed on the link\'s own origin too, whatever order the manifests came in', () => {
+    const second = { pattern: 'https://ship.estiva.app/issue/<slug>-<d>#block-<block>', kind: 30023 }
+    for (const shapes of [[second, ...ALL], [...ALL, second]]) {
+      assert.deepEqual(matchObjectUrl(`https://ship.estiva.app/issue/pay-${UUID}`, shapes), {
+        identifier: UUID,
+        by: 'd',
+        kinds: [30023, 30851],
+      })
+    }
+  })
+
   it('does not let a claim elsewhere that names no kind open the lookup to every kind', () => {
     const claimed = [...ALL, { pattern: 'https://other.example/issue/<slug>-<d>' }]
     assert.deepEqual(matchObjectUrl(`https://leaf.estiva.app/issue/billing-${UUID}`, claimed), {

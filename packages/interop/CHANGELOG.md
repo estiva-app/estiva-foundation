@@ -17,8 +17,9 @@ manifests already published still mean what they meant.
   now names Ship's issue. A link on no declared origin still names nothing. A
   fragment route (`/#/…`), and a shape that names no kind, match only on their
   own origin.
-- A match on the link's own origin wins, as before. From shapes on other
-  origins, every shape reading the same identity adds its kind: **new
+- A match on the link's own origin wins, as before. On either side, every
+  shape reading the same identity adds its kind, whatever order the manifests
+  came in (on the own origin the first shape listed used to win a tie): **new
   `MatchedObjectUrl.kinds`**, present (and `kind` absent) when they name more
   than one. A reader resolves under all of them and keeps the one-author rule,
   so a second claim to a word turns the link plain. A consumer that ignores
