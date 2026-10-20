@@ -2,8 +2,10 @@
  * A reference's card in a block document — SPEC §13.3, conformance C22 and C23.
  *
  * The writer's choice is `attrs.embed` on the reference mark itself, so it
- * moves and goes with its link. A reader draws it after the block holding the
- * reference; an editor carries it, and any key it does not know, through a save.
+ * moves and goes with its link. A reader draws each line by where the link
+ * sits: alone on its line, its row, or with `detailed` its card in the row's
+ * place; in a sentence, its chip. An editor carries the choice, and any key it
+ * does not know, through a save.
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -11,17 +13,22 @@ import {
   addrToNaddr,
   blockCards,
   cardLayout,
+  documentLineDraws,
   fromEditorDocument,
   parseBlockDocument,
   serializeBlockDocument,
   toEditorDocument,
   toRenderTree,
   type BlockDocument,
+  type DocumentLineDraw,
 } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
-const V = `nostr:${addrToNaddr(`30851:${PK}:an-issue`)}`
+const ADDR = `30851:${PK}:an-issue`
+const V = `nostr:${addrToNaddr(ADDR)}`
 const W = `nostr:${addrToNaddr(`30851:${PK}:another-issue`)}`
+const FOLDER = `nostr:${addrToNaddr(`39000:${PK}:a-folder`)}`
+const PERSON = 'nostr:npub1kw8ay6rm0jlt6tsq09r03e4syxmfk5eyvwnx2edp2nq0v5zxc28s7tadn4'
 
 const ref = (uri: string, attrs: Record<string, unknown> = {}, marks: { type: string }[] = []) => ({
   type: 'text' as const,
@@ -31,6 +38,72 @@ const ref = (uri: string, attrs: Record<string, unknown> = {}, marks: { type: st
 const text = (t: string) => ({ type: 'text' as const, text: t })
 const doc = (...content: unknown[]): BlockDocument => ({ type: 'doc', content }) as BlockDocument
 const render = (d: BlockDocument) => toRenderTree(serializeBlockDocument(d), 'blocks')
+
+/** Every line of a document as a reader draws it, in document order. */
+const draws = (d: BlockDocument): DocumentLineDraw[] => [...documentLineDraws(render(d)).values()].flat()
+const row = { draw: 'row', value: ADDR }
+const card = { draw: 'card', value: ADDR }
+const sentence = { draw: 'sentence' }
+
+describe('a document\'s lone link (C22)', () => {
+  it('a paragraph, a list item and a checklist item that are only V draw its row', () => {
+    assert.deepEqual(draws(doc(
+      { type: 'paragraph', id: 'p1', content: [text('  '), ref(V), text(' ')] },
+      { type: 'bulletList', id: 'l1', content: [{ type: 'listItem', id: 'i1', content: [ref(V)] }] },
+      { type: 'bulletList', id: 'l2', content: [{ type: 'listItem', id: 'i2', attrs: { checked: false }, content: [ref(V)] }] },
+    )), [row, row, row])
+  })
+  it('with embed detailed, its card in the row\'s place', () => {
+    assert.deepEqual(draws(doc(
+      { type: 'paragraph', id: 'p1', content: [ref(V, { embed: 'detailed' })] },
+      { type: 'orderedList', id: 'l1', content: [{ type: 'listItem', id: 'i1', attrs: { checked: true }, content: [ref(V, { embed: 'detailed' })] }] },
+    )), [card, card])
+  })
+  it('with no embed, none, compact, an unknown value or a non-string, the row', () => {
+    const lone = [{}, { embed: 'none' }, { embed: 'compact' }, { embed: 'huge' }, { embed: { layout: 'detailed' } }, { embed: 3 }]
+    assert.deepEqual(
+      draws(doc(...lone.map((attrs, i) => ({ type: 'paragraph', id: `p${i}`, content: [ref(V, attrs)] })))),
+      lone.map(() => row),
+    )
+  })
+  it('a second line after a hard break that is only V draws its row, and the first stays a sentence', () => {
+    assert.deepEqual(draws(doc({ type: 'paragraph', id: 'p1', content: [text('Blocked by:\n'), ref(V, { embed: 'detailed' }), text('\n'), ref(V)] })), [sentence, card, row])
+  })
+  it('detailed beside other words, inside bold, in a heading, a quote, a callout or a table cell draws the chip only', () => {
+    const detailed = (marks: { type: string }[] = []) => ref(V, { embed: 'detailed' }, marks)
+    const drawn = draws(doc(
+      { type: 'paragraph', id: 'p1', content: [text('Blocked by '), detailed(), text(' for now')] },
+      { type: 'paragraph', id: 'p2', content: [detailed(), text('.')] },
+      { type: 'paragraph', id: 'p3', content: [detailed([{ type: 'bold' }])] },
+      { type: 'heading', id: 'h1', attrs: { level: 2 }, content: [detailed()] },
+      { type: 'blockquote', id: 'q1', content: [detailed()] },
+      { type: 'blockquote', id: 'q2', attrs: { tone: 'warning' }, content: [detailed()] },
+      { type: 'table', id: 't1', content: [{ type: 'tableRow', id: 'r1', content: [{ type: 'tableCell', id: 'c1', content: [{ type: 'paragraph', id: 'p4', content: [detailed()] }] }] }] },
+    ))
+    assert.deepEqual(drawn, drawn.map(() => sentence))
+    assert.equal(drawn.length, 7)
+  })
+  it('a paragraph another writer nested in a quote or an unknown block is a sentence', () => {
+    assert.deepEqual(draws(doc(
+      { type: 'blockquote', id: 'q1', content: [{ type: 'paragraph', id: 'p1', content: [ref(V, { embed: 'detailed' })] }] },
+      { type: 'columns', id: 'c1', content: [{ type: 'paragraph', id: 'p2', content: [ref(V)] }] },
+    )), [sentence, sentence])
+  })
+  it('two links on one line are a sentence', () => {
+    assert.deepEqual(draws(doc({ type: 'paragraph', id: 'p1', content: [ref(V, { embed: 'detailed' }), text(' '), ref(W)] })), [sentence])
+  })
+  it('a person or a Folder alone on its line draws its chip, embed or not', () => {
+    assert.deepEqual(draws(doc(
+      { type: 'paragraph', id: 'p1', content: [ref(PERSON, { embed: 'detailed' })] },
+      { type: 'paragraph', id: 'p2', content: [ref(FOLDER, { embed: 'detailed' })] },
+    )), [sentence, sentence])
+  })
+  it('a lone reference to nothing readable draws the unreadable row, never a card', () => {
+    assert.deepEqual(draws(doc({ type: 'paragraph', id: 'p1', content: [ref('nostr:naddr1garbage', { embed: 'detailed' })] })), [
+      { draw: 'unreadable', reference: 'nostr:naddr1garbage' },
+    ])
+  })
+})
 
 describe('cardLayout', () => {
   it('reads compact and detailed as written, and none, absent and a non-string as no card', () => {
@@ -45,7 +118,8 @@ describe('cardLayout', () => {
   })
 })
 
-describe('blockCards (C22)', () => {
+// The rule before 0.41.0, deprecated: Ship and Peek still draw cards by it until their readers move.
+describe('blockCards (deprecated)', () => {
   it('a detailed reference in a sentence asks for its card after the paragraph', () => {
     const [p] = render(doc({ type: 'paragraph', id: 'p1', content: [text('Blocked by '), ref(V, { embed: 'detailed' }), text(' for now')] }))
     assert.deepEqual(blockCards(p), [{ reference: V, layout: 'detailed' }])

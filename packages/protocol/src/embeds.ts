@@ -277,7 +277,9 @@ const PERSON = /^nostr:(npub1|nprofile1)/i
  *
  * Whitespace around it is trimmed. Anything else makes it a sentence: other
  * words or punctuation (trailing `.` included), a second reference, a marker
- * around it, a code span, or `[words](url)`. A person (`npub`, `nprofile`)
+ * around it, a code span, or a link on words (`[words](url)`, or a block
+ * document's `link` mark whose text is not its `href`). A `link` mark whose
+ * text is exactly its `href` is the bare URL (§13.3). A person (`npub`, `nprofile`)
  * alone on a line stays a chip, so it is not returned. A Folder stays a chip
  * too, but whether a URL names one is known only once it resolves: the reader
  * checks the value ({@link isFolderValue}). A URL returned here still has to
@@ -287,9 +289,11 @@ const PERSON = /^nostr:(npub1|nprofile1)/i
 export function isOnlyReferenceLine(line: readonly RenderInline[], block: Pick<RenderBlock, 'type'>): string | undefined {
   if (block.type !== 'paragraph' && block.type !== 'listItem') return undefined
   const runs = line.filter((run) => run.reference || run.text.trim() !== '')
-  if (runs.length !== 1 || runs[0].marks.length > 0 || runs[0].href !== undefined) return undefined
+  if (runs.length !== 1 || runs[0].marks.length > 0) return undefined
   const [run] = runs
   if (run.reference) return PERSON.test(run.reference) ? undefined : run.reference
+  // A link mark bounds its URL, so nothing around it is trimmed off as punctuation.
+  if (run.href !== undefined) return run.text === run.href && LONE_URL.test(run.href) ? run.href : undefined
   const text = run.text.trim()
   return LONE_URL.test(text) && trimUrl(text) === text ? text : undefined
 }
@@ -341,6 +345,74 @@ export function lineDrawOf(
     (context.cards ?? []).some((e) => e.value === value && e.layout !== 'none') ||
     (context.parts ?? []).some((p) => normalise(p.address) === value)
   return { draw: carded ? 'nothing' : 'row', value, ...(isReference ? {} : { url: only }) }
+}
+
+/**
+ * What one line of a block document draws (§13.3, "A reference's card"): a
+ * message's {@link LineDraw} but `nothing` (a document has no card under it), or
+ * - `card` — the line is only a link to the file `value`, and its writer chose
+ *   its card (`embed` `detailed` on the link's mark): the card, in the row's place.
+ */
+export type DocumentLineDraw = Exclude<LineDraw, { draw: 'nothing' }> | { draw: 'card'; value: string; url?: string }
+
+/**
+ * How a reader draws one line ({@link linesOf}) of a block document's `block`.
+ * The line rule is the message's ({@link lineDrawOf}), with no card under the
+ * document, so `nothing` never comes back. Only a paragraph's and a list item's
+ * lines can be a link alone, a checklist item's included (a list item on the
+ * wire); a heading, a quote, a callout (a quote with a tone) and a paragraph in
+ * a table cell are sentences. Where `block` sits is the caller's to say
+ * (`inTableCell`), because the tree holds a cell as a block this package does
+ * not name: {@link documentLineDraws} walks a whole document and says it.
+ *
+ * Anything else on the mark — no `embed`, `compact`, `none`, a value this
+ * reader does not know or one that is not a string — draws the row, and in a
+ * sentence every value draws the chip only. A link on
+ * words (a `link` mark whose text is not its `href`) is a sentence: its words,
+ * a link, and its `embed` draws nothing. Read the tree through
+ * {@link linksAsReferences} first, or pass `resolveLink`, so an app URL draws
+ * as what it names.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-lone-links-chip-menu-offers-row-or-card.md
+ */
+export function documentLineDrawOf(
+  line: readonly RenderInline[],
+  block: Pick<RenderBlock, 'type'> & { inTableCell?: boolean },
+  context: { resolveLink?: LinkResolver } = {},
+): DocumentLineDraw {
+  if (block.inTableCell) return { draw: 'sentence' }
+  const drawn = lineDrawOf(line, block, { resolveLink: context.resolveLink })
+  if (drawn.draw !== 'row' && drawn.draw !== 'nothing') return drawn
+  // The line is one run: the link, its `embed` read off its mark by `cardLayout`.
+  const only = line.find((run) => run.reference || run.text.trim() !== '')
+  return { ...drawn, draw: only?.embed === 'detailed' ? 'card' : 'row' }
+}
+
+/**
+ * Every line of a block document as a reader draws it ({@link documentLineDrawOf}),
+ * per block of `blocks`, keyed by the block object itself — pass the tree you
+ * draw, after {@link linksAsReferences} if you use it.
+ *
+ * Only a top-level paragraph and a list's items keep the line rule. Inside
+ * anything else — a table's cells, a quote or a block this reader does not
+ * know that holds blocks — every line is a sentence, so no reader has to
+ * remember where it is.
+ */
+export function documentLineDraws(
+  blocks: readonly RenderBlock[],
+  context: { resolveLink?: LinkResolver } = {},
+): Map<RenderBlock, DocumentLineDraw[]> {
+  const out = new Map<RenderBlock, DocumentLineDraw[]>()
+  // `inside`: under a block that is not a list, where every line is a sentence.
+  const walk = (bs: readonly RenderBlock[], inside: boolean) => {
+    for (const block of bs) {
+      if (block.inline) out.set(block, linesOf(block).map((line) => documentLineDrawOf(line, { type: block.type, inTableCell: inside }, context)))
+      if (block.children) walk(block.children, inside || (block.type !== 'bulletList' && block.type !== 'orderedList'))
+    }
+  }
+  walk(blocks, false)
+  return out
 }
 
 /**

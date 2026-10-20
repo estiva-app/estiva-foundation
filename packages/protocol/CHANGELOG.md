@@ -4,6 +4,32 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.41.0 — 2026-10-20
+
+**Wire behaviour: reading changed; writing changed only for an editor that
+opts in** (SPEC §13.3 "A reference's card", C22, C24; WBD-1; records
+a-link-on-words-counts-toward-the-card, a-lone-links-chip-menu-offers-row-or-card,
+every-app-edits-a-document-with-one-shared-editor). A block document now draws
+its links by the line rule a message uses: `documentLineDrawOf(line, block)`
+says, per line (`linesOf`), whether it is a sentence, a lone link's row, or —
+when the link's mark carries `embed` `detailed` — its `card` in the row's
+place. Every other `embed` value draws the row, and in a sentence any value
+draws the chip only, so an old document that chose a card for a link in a
+sentence stops drawing it (Miky, 15 Oct). A heading, a quote, a callout and a
+table cell (`inTableCell`) are sentences; a checklist item is a line. A `link`
+mark whose text is exactly its `href` is the bare URL in `isOnlyReferenceLine`
+too (messages have no such mark, so they read as before); a link on words is a
+sentence, and its `embed` draws nothing. `blockCards` is deprecated (Ship's and
+Peek's readers still call it). `toEditorDocument(doc, { links: true })` keeps a
+link on words as a `link` mark (`href`, the rest in `extra`) and
+`fromEditorDocument` writes it back, `embed` included; without the option the
+words stay and the link does not, as before — TipTap loads a document holding
+a mark its schema lacks as empty, so only an editor with that mark opts in.
+A `link` whose `href` is not `http`, `https`, `mailto` or `nostr` (§13.1,
+`isAllowedHref`, tabs and spaces stripped as a URL parser does) is now no mark
+for every reader and the editor, both ways: its words stay, as text, and a save
+never writes it.
+
 ## 0.40.0 — 2026-10-17
 
 **Wire behaviour: reading changed, nothing new written** (SPEC §13.6.2, C20,

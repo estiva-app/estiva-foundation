@@ -8,11 +8,14 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import * as protocol from '../dist/index.js'
 import {
   addrToNaddr,
   blockCards,
   fromEditorDocument,
+  linesOf,
   linksAsReferences,
+  parseBlockDocument,
   referenceOfLink,
   serializeBlockDocument,
   toEditorDocument,
@@ -20,13 +23,18 @@ import {
   urlRunsIn,
   type BlockDocument,
   type EditorDocument,
+  type RenderBlock,
 } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
 const ADDR = `30851:${PK}:an-issue`
 const V = `nostr:${addrToNaddr(ADDR)}`
 const URL_ = 'https://ship.estiva.app/i/an-issue'
-const resolve = (url: string) => (url === URL_ ? ADDR : undefined)
+const BLOCK_URL = `${URL_}#block-b1`
+// Read off the namespace, so this file still loads on a version without it and its editor cases run there.
+const { documentLineDrawOf } = protocol
+// An app names a link to one block of a file by the file (§7.7, C21).
+const resolve = (url: string) => (url === URL_ || url === BLOCK_URL ? ADDR : undefined)
 
 const text = (t: string, marks?: unknown[]) => ({ type: 'text' as const, text: t, ...(marks ? { marks } : {}) })
 const link = (href: string, attrs: Record<string, unknown> = {}, marks: unknown[] = []) =>
@@ -34,6 +42,43 @@ const link = (href: string, attrs: Record<string, unknown> = {}, marks: unknown[
 const doc = (...content: unknown[]): BlockDocument => ({ type: 'doc', content }) as BlockDocument
 const render = (d: BlockDocument) => toRenderTree(serializeBlockDocument(d), 'blocks')
 const roundTrip = (d: BlockDocument) => fromEditorDocument(toEditorDocument(d))
+
+/** Each line of a one-paragraph document as a reader draws it: by `resolveLink`, or after `linksAsReferences`. */
+const drawn = (content: unknown[], via: 'resolver' | 'linksAsReferences') => {
+  const tree = render(doc({ type: 'paragraph', id: 'p1', content }))
+  const [p]: RenderBlock[] = via === 'resolver' ? tree : linksAsReferences(tree, resolve)
+  return linesOf(p).map((line) => documentLineDrawOf(line, p, via === 'resolver' ? { resolveLink: resolve } : {}))
+}
+const words = (t: string, attrs: Record<string, unknown> = {}) => text(t, [{ type: 'link', attrs: { href: URL_, ...attrs } }])
+
+describe('a URL and a link on words in a document, drawn (C24)', () => {
+  for (const via of ['resolver', 'linksAsReferences'] as const) {
+    const url = via === 'resolver' ? { url: URL_ } : {}
+    it(`a plain URL alone on its line draws V's row (${via})`, () => {
+      assert.deepEqual(drawn([text(` ${URL_} `)], via), [{ draw: 'row', value: ADDR, ...url }])
+    })
+    it(`the URL marked with a link whose embed is detailed draws V's card in the row's place (${via})`, () => {
+      assert.deepEqual(drawn([link(URL_, { embed: 'detailed' })], via), [{ draw: 'card', value: ADDR, ...url }])
+      assert.deepEqual(drawn([link(URL_, { embed: 'compact' })], via), [{ draw: 'row', value: ADDR, ...url }])
+    })
+    it(`the same link beside other words draws no card (${via})`, () => {
+      assert.deepEqual(drawn([text('See '), link(URL_, { embed: 'detailed' })], via), [{ draw: 'sentence' }])
+    })
+    it(`a link on words draws its words, alone on its line too: no row, no card (${via})`, () => {
+      assert.deepEqual(drawn([words('the plan', { embed: 'detailed' })], via), [{ draw: 'sentence' }])
+      assert.deepEqual(drawn([words(' the plan ')], via), [{ draw: 'sentence' }])
+    })
+  }
+  it('a link to one block of V alone on its line draws V\'s row, which opens that URL', () => {
+    const [p] = render(doc({ type: 'paragraph', id: 'p1', content: [text(BLOCK_URL)] }))
+    assert.deepEqual(documentLineDrawOf(linesOf(p)[0], p, { resolveLink: resolve }), { draw: 'row', value: ADDR, url: BLOCK_URL })
+  })
+  it('a URL no app claims stays the URL, its embed drawing nothing', () => {
+    const other = 'https://example.com/x'
+    const [p] = render(doc({ type: 'paragraph', id: 'p1', content: [link(other, { embed: 'detailed' })] }))
+    assert.deepEqual(documentLineDrawOf(linesOf(p)[0], p, { resolveLink: resolve }), { draw: 'url', url: other })
+  })
+})
 
 describe('a URL in a document, read (C24)', () => {
   it('a plain URL alone on its line reads as its chip, with no card', () => {
@@ -139,9 +184,52 @@ describe('a URL in a document, edited (C24)', () => {
     const [p] = render(doc({ type: 'paragraph', id: 'p1', content: [link(URL_, { embed: '' })] }))
     assert.equal(p.inline?.[0].embed, undefined)
   })
-  it('a link on words keeps its words', () => {
+  it('an editor with no link mark keeps a link on words\' words only, so it never loads a mark it lacks', () => {
     const d = doc({ type: 'paragraph', id: 'p1', content: [text('the issue', [{ type: 'link', attrs: { href: URL_ } }])] })
     assert.deepEqual(roundTrip(d).content[0].content, [text('the issue')])
+  })
+  it('an editor with links writes an app link and a web link on words back, link and embed included, after an edit to another block', () => {
+    const d = doc(
+      { type: 'paragraph', id: 'p1', content: [
+        text('Read '), words('the plan', { embed: 'detailed', later: { x: 1 } }), text(' and '),
+        text('this', [{ type: 'bold' }, { type: 'link', attrs: { href: URL_ } }]), text(', then '),
+        text('the docs', [{ type: 'link', attrs: { href: 'https://example.com/docs', target: '_blank' } }]),
+      ] },
+      { type: 'paragraph', id: 'p2', content: [text('other words')] },
+    )
+    const editor = toEditorDocument(d, { links: true })
+    assert.deepEqual(editor.content[0].content?.[1], {
+      type: 'text',
+      text: 'the plan',
+      marks: [{ type: 'link', attrs: { href: URL_, extra: { embed: 'detailed', later: { x: 1 } } } }],
+    })
+    editor.content[1].content = [{ type: 'text', text: 'changed words' }]
+    const back = parseBlockDocument(serializeBlockDocument(fromEditorDocument(editor)))
+    assert.deepEqual(back.content[0], d.content[0])
+    assert.equal(back.content[0].id, 'p1')
+  })
+  it('an editor with links still opens a URL marked with its own link as the URL chip', () => {
+    const editor = toEditorDocument(doc({ type: 'paragraph', id: 'p1', content: [link(URL_, { embed: 'detailed' })] }), { links: true })
+    assert.equal(editor.content[0].content?.[0].type, 'reference')
+  })
+  it('a link on words to a scheme §13.1 does not allow is neither held nor written, its words kept', () => {
+    const d = doc({ type: 'paragraph', id: 'p1', content: [text('the plan', [{ type: 'link', attrs: { href: 'javascript:alert(1)', embed: 'detailed' } }])] })
+    assert.deepEqual(toEditorDocument(d, { links: true }).content[0].content, [{ type: 'text', text: 'the plan' }])
+    const editor: EditorDocument = {
+      type: 'doc',
+      content: [{ type: 'paragraph', attrs: { blockId: 'p1' }, content: [
+        { type: 'text', text: 'the plan', marks: [{ type: 'link', attrs: { href: 'java\tscript:alert(1)' } }] },
+        { type: 'text', text: ' and a call', marks: [{ type: 'link', attrs: { href: 'tel:+420123' } }] },
+      ] }],
+    }
+    assert.deepEqual(fromEditorDocument(editor).content[0].content, [text('the plan and a call')])
+  })
+  it('a link mark an editor hands back with no href is dropped, its words kept', () => {
+    const editor: EditorDocument = {
+      type: 'doc',
+      content: [{ type: 'paragraph', attrs: { blockId: 'p1' }, content: [{ type: 'text', text: 'the plan', marks: [{ type: 'link', attrs: { href: '', extra: { href: URL_ } } }] }] }],
+    }
+    assert.deepEqual(fromEditorDocument(editor).content[0].content, [text('the plan')])
   })
 })
 
@@ -153,6 +241,10 @@ describe('a malformed mark (security review)', () => {
     { type: 'link', attrs: { href: 3 } },
     { type: 'reference', attrs: null },
     { type: 'reference', attrs: [] },
+    // §13.1: only http, https, mailto and nostr.
+    { type: 'link', attrs: { href: 'javascript:alert(1)' } },
+    { type: 'link', attrs: { href: 'java\tscript:alert(1)' } },
+    { type: 'link', attrs: { href: 'data:text/html,<script>alert(1)</script>' } },
   ]
   for (const mark of bad) {
     it(`reads ${JSON.stringify(mark)} as no mark, in the reader and the editor`, () => {

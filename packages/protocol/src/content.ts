@@ -482,7 +482,9 @@ export type InlineMarkNode =
  * well formed: an object holding the string the mark points at (`uri`, `href`).
  * A document is somebody else's JSON and the validator checks only a mark's
  * `type`, so a mark with `"attrs": null` is read as no mark rather than taking
- * every reader of the document down with it.
+ * every reader of the document down with it. A `link` whose `href` has a
+ * scheme §13.1 does not allow ({@link isAllowedHref}) is no mark either: its
+ * words stay, as text.
  */
 export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'reference'): { uri: string; embed?: unknown; [key: string]: unknown } | undefined
 export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: 'link'): { href: string; embed?: unknown; [key: string]: unknown } | undefined
@@ -491,7 +493,23 @@ export function targetMark(marks: readonly InlineMarkNode[] | undefined, type: '
   const attrs = mark?.attrs
   if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs)) return undefined
   const target = (attrs as Record<string, unknown>)[type === 'reference' ? 'uri' : 'href']
-  return typeof target === 'string' && target !== '' ? (attrs as Record<string, unknown>) : undefined
+  if (typeof target !== 'string' || target === '') return undefined
+  return type === 'reference' || isAllowedHref(target) ? (attrs as Record<string, unknown>) : undefined
+}
+
+const ALLOWED_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'nostr:'])
+
+/**
+ * Whether a `link` mark may point at `href` (§13.1): `http`, `https`, `mailto`
+ * or `nostr`, as a URL parser reads it, so `java\tscript:` is `javascript:`.
+ * Anything else — `javascript:`, `data:`, a relative path — a reader draws as
+ * text and an editor neither holds nor writes.
+ */
+export function isAllowedHref(href: string): boolean {
+  // What the WHATWG parser does before it reads a scheme: trim C0 controls and spaces, drop every tab and newline.
+  const cleaned = href.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '')
+  const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(cleaned)?.[0]
+  return scheme !== undefined && ALLOWED_SCHEMES.has(scheme.toLowerCase())
 }
 
 /** One run of text and its marks — §13.3's `{"type":"text","text":…,"marks":[…]}`. */
