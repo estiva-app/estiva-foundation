@@ -16,10 +16,11 @@ helper every writer of a page or a description uses: it returns the Add
 saved text names by `nostr:npub` and the version it was edited from did not. A
 creation passes `editedFrom: null`. A typo fix returns nothing, the writer is
 never added, and a run in code or a code block names nobody.
-`peopleNamedInText` reads a block document (a `reference` mark's `uri`, or a
-key in a plain run) or marker text. `unreadAddIn(events, merged, judge)`
-returns the Add that is still unread for `judge.me` on the file: signed by
-someone else, `me` still a member, newer than the file's own marker. However
+`peopleNamedInText` reads a block document (a `reference` mark's `uri` only)
+or marker text. `unreadAddIn(events, merged, judge)` returns the Add that is
+still unread for `judge.me` on the file: signed by someone else, filed in the
+file's Folder (`judge.folder`), at or after `me` became a member, newer than
+the file's own marker. However
 many Adds there are, they count as one item.
 
 Nothing in how a conversation is read changed, so an app on 0.16 reads

@@ -82,7 +82,9 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
  * 2. `me` is a member now and the change is at or after `judge.since`
  *    ({@link membershipOf}), so a leave after it ends it, and a later
  *    placement does not bring back an Add that was left;
- * 3. newer than `me`'s marker for the file's own stream; no marker, unread.
+ * 3. newer than `me`'s marker for the file's own stream; no marker, unread;
+ * 4. its `h` is the file's Folder (`folder`, the root's `h`), so an Add filed
+ *    in another Folder lights nothing.
  *
  * A mention in the file's text and the Add button write the same change, and
  * either counts for a member who muted the file, as a mention does. However
@@ -94,7 +96,7 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
 export function unreadAddIn<E extends Pick<SignedEvent, 'pubkey' | 'kind' | 'created_at' | 'tags'>>(
   events: readonly E[],
   merged: Readonly<Record<string, number>>,
-  judge: Pick<StreamJudge, 'stream' | 'me' | 'member' | 'since'>,
+  judge: Pick<StreamJudge, 'stream' | 'me' | 'member' | 'since'> & { folder: string },
 ): E | undefined {
   if (!judge.member) return undefined
   const marker = merged[judge.stream]
@@ -104,6 +106,7 @@ export function unreadAddIn<E extends Pick<SignedEvent, 'pubkey' | 'kind' | 'cre
     if (event.kind !== KIND_CHANGE || event.pubkey === judge.me) continue
     if (!event.tags.some((t) => t[0] === 'a' && t[1] === judge.stream)) continue
     if (tagOf(event, 'field') !== field || tagOf(event, 'value') !== 'true') continue
+    if (tagOf(event, 'h') !== judge.folder) continue
     if (judge.since !== undefined && event.created_at < judge.since) continue
     if (marker !== undefined && event.created_at <= marker) continue
     if (!newest || event.created_at > newest.created_at) newest = event

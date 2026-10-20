@@ -58,18 +58,20 @@ function namedInBlocks(blocks: readonly Block[], out: Set<string>): void {
   }
 }
 
+/** Only a `reference` mark names a person (§13.1); a bare key in a run's text is text, as a reader draws it. */
 function namedInRuns(nodes: readonly InlineTextNode[], out: Set<string>): void {
   for (const node of nodes) {
     if (node.marks?.some((m) => m.type === 'code')) continue
-    // A reference run's text is its label; the person is in its `uri`.
-    for (const person of peopleNamedInBody(referenceUri(node) ?? node.text)) out.add(person)
+    const uri = referenceUri(node)
+    if (uri) for (const person of peopleNamedInBody(uri)) out.add(person)
   }
 }
 
 /**
  * The people a version of a file's text names by `nostr:npub…`: a `reference`
- * mark in a block document (§13.3), or the URI itself in marker text or in a
- * document's plain run. A run marked `code`, and a code block, name nobody.
+ * mark in a block document (§13.3), or the URI itself in marker text (§13.2).
+ * A bare key in a document's plain run, a run marked `code`, and a code block
+ * name nobody.
  */
 export function peopleNamedInText(text: FileText): Set<string> {
   const out = new Set<string>()

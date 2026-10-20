@@ -52,7 +52,7 @@ const add = (by: string, person: string, at: number) =>
 /** What Bob's app shows for the file: member or not, and its unread Add. */
 const bobSees = (events: SignedEvent[], merged: Record<string, number> = {}) => {
   const { member, since } = membershipOf(ISSUE, BOB, events)
-  return { member, unread: unreadAddIn(events, merged, { stream: ISSUE, me: BOB, member, since })?.id }
+  return { member, unread: unreadAddIn(events, merged, { stream: ISSUE, folder: FOLDER, me: BOB, member, since })?.id }
 }
 
 describe('C28 — a mention in a file’s text', () => {
@@ -120,12 +120,17 @@ describe('C28 — a mention in a file’s text', () => {
   it('an Add on another file, or for another person, is not Bob’s unread here', () => {
     const elsewhere = signed({ ...buildMembershipChange(ALICE, T0 * 1000, { file: `30851:${ALICE}:other`, folder: FOLDER, person: BOB, member: true }) }, T0 + 5)
     const carol = add(ALICE, CAROL, T0 + 6)
-    assert.equal(unreadAddIn([root, elsewhere, carol], {}, { stream: ISSUE, me: BOB, member: true }), undefined)
+    assert.equal(unreadAddIn([root, elsewhere, carol], {}, { stream: ISSUE, folder: FOLDER, me: BOB, member: true }), undefined)
+  })
+
+  it('an Add on this file filed in another Folder lights nothing', () => {
+    const other = signed(buildMembershipChange(ALICE, (T0 + 5) * 1000, { file: ISSUE, folder: '0b7e2a4c-1111-4c3e-9d2f-2a1f0c9e8b7d', person: BOB, member: true }), T0 + 5)
+    assert.equal(unreadAddIn([root, other], {}, { stream: ISSUE, folder: FOLDER, me: BOB, member: true }), undefined)
   })
 })
 
 describe('who a file’s text names', () => {
-  it('reads a reference run’s uri, not its label, and a bare key in a plain run', () => {
+  it('reads a reference run’s uri, not its label; a bare key in a document’s plain run names nobody', () => {
     const content = JSON.stringify({
       type: 'doc',
       content: [
@@ -133,7 +138,7 @@ describe('who a file’s text names', () => {
         { type: 'bulletList', id: 'b', content: [{ type: 'listItem', id: 'c', content: [{ type: 'text', text: `ask ${uri(CAROL)}` }] }] },
       ],
     })
-    assert.deepEqual([...peopleNamedInText({ content, format: BLOCKS })].sort(), [BOB, CAROL])
+    assert.deepEqual([...peopleNamedInText({ content, format: BLOCKS })], [BOB])
   })
 
   it('a key in code or a code block names nobody', () => {
