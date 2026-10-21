@@ -3292,6 +3292,21 @@ export interface ForeignObject {
    * See {@link Archive} and {@link isArchived}.
    */
   archived?: Archive
+  /**
+   * When this file last changed, in seconds: the newest of its root's
+   * `created_at` and every folded field's winning change (5ebf2756).
+   *
+   * For a card that lists some of a file's children rather than all of them —
+   * a project's most recently changed issues. Its comments are not changes to
+   * it. A regular event, which nothing changes by address, has its own
+   * `created_at`. Absent on an unreachable stub, which has no root to read.
+   */
+  changedAt?: number
+}
+
+/** The newest of a root's `created_at` and its folded fields' changes. */
+function changedAtOf(root: SignedEvent, folded: Record<string, { at?: number }>): number {
+  return Math.max(root.created_at, ...Object.values(folded).map((f) => f.at ?? 0))
 }
 
 
@@ -3306,7 +3321,7 @@ function buildObject(args: {
   pointer: AddressPointer
   manifest: Manifest
   projection: Projection
-  folded: Record<string, { value: string; format?: ContentFormat }>
+  folded: Record<string, { value: string; format?: ContentFormat; at?: number }>
   viaRecommendation: boolean
   webTemplate?: string
   comments?: ForeignObject['comments']
@@ -3341,6 +3356,7 @@ function buildObject(args: {
     actions: actionsOfFile(manifest, projection, root, folded),
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
+    changedAt: changedAtOf(root, folded),
   }
 }
 
@@ -4761,7 +4777,7 @@ function buildChildObject(args: {
    * The child's own fold, when {@link childChangeFilters} read its changes
    * (MAN-7). Empty for a regular event, which nothing can change by address.
    */
-  folded?: Record<string, { value: string; format?: ContentFormat }>
+  folded?: Record<string, { value: string; format?: ContentFormat; at?: number }>
   /**
    * Whether `manifest` is the one this child's kind resolves to for its author,
    * as {@link childOwnersOf} found. Its actions are offered only then.
@@ -4819,6 +4835,7 @@ function buildChildObject(args: {
     // A child drawn through an app that does not own its kind gets none: they are not its owner's (`childOwnersOf`).
     actions: addressable && !nevent && ownsKind ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
+    changedAt: changedAtOf(root, folded),
   }
 }
 
