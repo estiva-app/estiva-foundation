@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.64.0 — 2026-10-21
+
+**Every resolved file says when it last changed** (5ebf2756).
+
+- `ForeignObject.changedAt`, in seconds: the newest of the root's `created_at`
+  and each folded field's winning change. Set on a file read by address, on
+  each child of a `list` slot and on a Folder's files; a regular event's is its
+  own `created_at`; absent on an unreachable stub. For a card that lists a
+  project's most recently changed issues rather than all of them. Comments are
+  not changes to the file and do not move it.
+- Manifest: nothing new may be declared, and no declaration is read
+  differently.
+
 ## 0.63.0 — 2026-10-21
 
 **An issue read under its project carries its actions** (LTX-2; record

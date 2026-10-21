@@ -370,3 +370,31 @@ describe('what the fold costs', () => {
     }
   })
 })
+
+describe('when a child last changed — 5ebf2756', () => {
+  test('is its newest folded change, or its root when nothing changed it', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), plant('tomato', 'east'), plant('basil', 'east'), plant('mint', 'east')]
+    const mintRoot = events[4]
+    const basilChange = change(plantAddress('basil'), 'stage', 'flowering')
+    const tomatoChange = change(plantAddress('tomato'), 'stage', 'fruiting')
+    events.push(basilChange, tomatoChange)
+    const { query } = countingRelay(events)
+
+    const east = await resolveForeignObject(bedAddress('east'), query)
+    const at = Object.fromEntries(east.children.map((c) => [c.slots.title.value, c.changedAt]))
+    assert.equal(at.tomato, tomatoChange.created_at, 'planted first, changed last')
+    assert.equal(at.basil, basilChange.created_at)
+    assert.equal(at.mint, mintRoot.created_at, 'nothing changed the mint: its root')
+    const newestFirst = [...east.children].sort((a, b) => b.changedAt - a.changedAt).map((c) => c.slots.title.value)
+    assert.deepEqual(newestFirst, ['tomato', 'basil', 'mint'])
+  })
+
+  test('a file read by address carries its newest change too', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), plant('tomato', 'east')]
+    const late = change(plantAddress('tomato'), 'title', 'cherry tomato')
+    events.push(late)
+    const { query } = countingRelay(events)
+    const tomato = await resolveForeignObject(plantAddress('tomato'), query)
+    assert.equal(tomato.changedAt, late.created_at)
+  })
+})
