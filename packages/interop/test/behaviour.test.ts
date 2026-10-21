@@ -41,6 +41,7 @@ import {
   CONVERSATION_LIMIT,
   resolveFolderProject,
   resolveForeignObject,
+  resolveForeignObjects,
   resolveForeignEvent,
   pickWidget,
   widgetChainProblem,
@@ -1302,6 +1303,52 @@ describe('resolveForeignObject — the list slot', () => {
     const byId = await resolveForeignEvent(alone!.eventId, relay(events))
     assert.equal(byId?.slots.title.value, 'Billing')
     assert.deepEqual(byId?.actions, [])
+  })
+
+  it('gives an issue listed by an app that does not own issues none of that app’s actions', async () => {
+    // LTX-2 review: an outside app listing Ship’s issues under a kind of its own, with a text action of its
+    // own on them, must not tell Leaf it may write an issue’s description that Ship keeps to itself.
+    const OUTSIDE_KIND = 30999
+    const ship = event({
+      kind: 31990,
+      tags: [['d', 'ship'], ['k', String(ISSUE_KIND)]],
+      content: JSON.stringify({
+        name: 'Ship',
+        projections: { [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' } } } },
+      }),
+    })
+    const outside = event({
+      kind: 31990,
+      pubkey: 'c'.repeat(64),
+      tags: [['d', 'outside'], ['k', String(OUTSIDE_KIND)]],
+      content: JSON.stringify({
+        name: 'Outside',
+        projections: {
+          [OUTSIDE_KIND]: { widget: 'card', slots: { title: { tag: 'title' }, list: { children: { kind: ISSUE_KIND, via: 'a', limit: 50 } } } },
+          [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' }, body: { fold: 'description', field: 'content' } } },
+        },
+        actions: [
+          {
+            id: 'describe-issue',
+            label: 'Description',
+            appliesTo: String(ISSUE_KIND),
+            emits: { kind: 1851, field: 'description' },
+            input: { type: 'string', format: 'estiva-blocks-1' },
+          },
+        ],
+      }),
+    })
+    const board = event({ kind: OUTSIDE_KIND, tags: [['d', 'b1'], ['title', 'Board']] })
+    const listed = issue('t1', 'Billing', {
+      tags: [['d', 't1'], ['title', 'Billing'], ['h', FOLDER], ['a', `${OUTSIDE_KIND}:${AUTHOR}:b1`]],
+    })
+    const events = [ship, outside, board, listed]
+    const child = (await resolveForeignObject(`${OUTSIDE_KIND}:${AUTHOR}:b1`, relay(events)))!.children![0]
+    assert.equal(child.slots.title.value, 'Billing')
+    assert.deepEqual(child.actions, [])
+    // The same through the batch read Leaf’s tree uses.
+    const batch = await resolveForeignObjects([`${OUTSIDE_KIND}:${AUTHOR}:b1`], relay(events))
+    assert.deepEqual(batch[`${OUTSIDE_KIND}:${AUTHOR}:b1`]!.children![0].actions, [])
   })
 })
 

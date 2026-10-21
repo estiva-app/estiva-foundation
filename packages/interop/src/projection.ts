@@ -3501,7 +3501,11 @@ export async function resolveForeignObject(
       : undefined,
   ])
   const followUp = childChangeFilters(plan, answered)
-  const assembled = assembleObject(plan, answered, followUp.length ? await queryChunked(followUp, query) : [])
+  const [childChanges, childOwners] = await Promise.all([
+    followUp.length ? queryChunked(followUp, query) : [],
+    childOwnersOf(plan, answered, query, cache),
+  ])
+  const assembled = assembleObject(plan, answered, childChanges, childOwners)
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
   return withFiles(
@@ -3636,12 +3640,15 @@ export async function resolveForeignObjects(
     followed.add(plan.address)
     followUp.push(...childChangeFilters(plan, events))
   }
-  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+  const [childChanges, ownerLists] = await Promise.all([
+    followUp.length ? queryChunked(followUp, query) : [],
+    Promise.all(plans.map(({ plan }) => childOwnersOf(plan, events, query, cache))),
+  ])
 
-  const assembled = plans.map(({ reference, plan }) => ({
+  const assembled = plans.map(({ reference, plan }, i) => ({
     reference,
     plan,
-    built: assembleObject(plan, events, childChanges),
+    built: assembleObject(plan, events, childChanges, ownerLists[i]),
   }))
   if (options.archivedWith) {
     await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query)
@@ -4180,7 +4187,12 @@ interface AssembledObject {
  * filters match — a comment naming two files in the set, a `kind:9` that is a
  * Topic's child and its comment — would otherwise be drawn twice.
  */
-function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges: SignedEvent[] = []): AssembledObject {
+function assembleObject(
+  plan: ObjectPlan,
+  answered: SignedEvent[],
+  childChanges: SignedEvent[] = [],
+  childOwners: Set<string> = new Set(),
+): AssembledObject {
   const { naddr, pointer, address, resolved, projection, commentKinds, childFilter, openUrl } = plan
   const { manifest, viaRecommendation } = resolved
   const seen = new Set<string>()
@@ -4272,6 +4284,7 @@ function assembleObject(plan: ObjectPlan, answered: SignedEvent[], childChanges:
     webTemplate: resolved.webTemplate,
     viaRecommendation,
     childChanges,
+    childOwners,
   })
 
   return { object, ...(children ? { children } : {}) }
@@ -4536,8 +4549,10 @@ function childrenFrom(args: {
   viaRecommendation: boolean
   /** What {@link childChangeFilters} asked for; empty when it asked nothing. */
   childChanges?: SignedEvent[]
+  /** What {@link childOwnersOf} answered: the authors whose children carry actions. */
+  childOwners?: Set<string>
 }): ForeignObject[] | undefined {
-  const { events, childFilter, manifest, webTemplate, viaRecommendation, childChanges = [] } = args
+  const { events, childFilter, manifest, webTemplate, viaRecommendation, childChanges = [], childOwners = new Set() } = args
   if (childFilter === undefined) return undefined
   if (childFilter === null) return []
 
@@ -4587,9 +4602,56 @@ function childrenFrom(args: {
     if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
     if (address && manifest.records && archiveOf(childChanges, address, records, event)) return []
     return [
-      buildChildObject({ root: event, manifest, projection: childProjection, records, webTemplate, viaRecommendation, folded }),
+      buildChildObject({
+        root: event,
+        manifest,
+        projection: childProjection,
+        records,
+        webTemplate,
+        viaRecommendation,
+        folded,
+        ownsKind: childOwners.has(event.pubkey),
+      }),
     ]
   })
+}
+
+/**
+ * The authors of a card's children whose kind the card's own app owns — the
+ * only children that carry actions (LTX-2).
+ *
+ * A child is drawn through its parent's manifest, and that need not be the
+ * manifest its kind resolves to: an outside app may list Ship's issues under a
+ * kind of its own and declare text actions on them that Ship keeps to itself.
+ * Offered on the child, they would tell Leaf it may write a field Ship never
+ * shared, with no `declaredBy` to say whose they are. So a child carries
+ * actions only when its kind, resolved for its author as a file read on its
+ * own is, lands on the parent's manifest. Per author, because an author's
+ * recommendation is part of that answer, and through the cache, so a project's
+ * issues by three people cost three lookups once. Nothing is asked when the
+ * parent's app declares no action on the child's kind.
+ */
+async function childOwnersOf(
+  plan: ObjectPlan,
+  answered: SignedEvent[],
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<Set<string>> {
+  const { childFilter, resolved } = plan
+  if (!childFilter || resolveActions(resolved.manifest, childFilter.kind, {}).length === 0) return new Set()
+  const authors = new Set([
+    ...childRootsOf(answered, childFilter).map((e) => e.pubkey),
+    ...movedInAddressesOf(answered, childFilter, resolved.manifest.records).map((address) => address.split(':')[1]),
+  ])
+  const owners = await Promise.all(
+    [...authors].map(async (pubkey) => {
+      const owner = await resolveManifest({ kind: childFilter.kind, pubkey, identifier: '', relays: [] }, query, cache).catch(
+        () => null,
+      )
+      return owner?.address === resolved.address ? [pubkey] : []
+    }),
+  )
+  return new Set(owners.flat())
 }
 
 /** The child roots a `list` filter asked for, picked back out of a pooled answer on its own criteria. */
@@ -4673,7 +4735,8 @@ const CHILD_CHANGE_GROUP = 10
  * changes, and a regular event cannot be named that way. An addressable child —
  * a Ship issue read under its project — carries the actions its own app
  * declares for its kind, as it does when read on its own, so whether its app
- * shares its text is the same answer either way (LTX-2). Borrowed creations
+ * shares its text is the same answer either way (LTX-2) — when the parent's app
+ * is that app; listed by another, it carries none (`childOwnersOf`). Borrowed creations
  * (`declaredBy`) are added only on a file read on its own.
  */
 function buildChildObject(args: {
@@ -4697,8 +4760,13 @@ function buildChildObject(args: {
    * (MAN-7). Empty for a regular event, which nothing can change by address.
    */
   folded?: Record<string, { value: string; format?: ContentFormat }>
+  /**
+   * Whether `manifest` is the one this child's kind resolves to for its author,
+   * as {@link childOwnersOf} found. Its actions are offered only then.
+   */
+  ownsKind?: boolean
 }): ForeignObject {
-  const { root, manifest, projection, webTemplate, viaRecommendation, nevent, folded = {} } = args
+  const { root, manifest, projection, webTemplate, viaRecommendation, nevent, folded = {}, ownsKind = false } = args
   const identifier = tagValue(root, 'd')
   const addressable = identifier !== undefined
   const pointer: AddressPointer = {
@@ -4746,7 +4814,8 @@ function buildChildObject(args: {
     openUrl: (naddr ?? nevent) ? webTemplate?.replace('<bech32>', (naddr ?? nevent) as string) : undefined,
     // See the note above: nothing can be declared to act on a regular event, and an event read by its id
     // (`nevent`) may be an older version of its file, its changes unread, so it is offered none either.
-    actions: addressable && !nevent ? actionsOfFile(manifest, projection, root, folded) : [],
+    // A child drawn through an app that does not own its kind gets none: they are not its owner's (`childOwnersOf`).
+    actions: addressable && !nevent && ownsKind ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
   }
 }

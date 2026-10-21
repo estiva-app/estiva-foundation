@@ -18,7 +18,10 @@ manifests already published still mean what they meant.
   on its own). It carried none, so a consumer asking "does this file's app
   share its text?" got no for every issue in a project's list. A child with no
   address (a `kind:9` message), and an event read by its id through
-  `resolveForeignEvent`, still carry none.
+  `resolveForeignEvent`, still carry none. Nor does a child listed by an app
+  that is not its kind's owner for its author (resolved per author, through
+  the cache): an outside app listing Ship's issues cannot offer its own text
+  actions on them.
 - Manifest: nothing new may be declared. How a declaration is read changes: an
   action now reaches an addressable child it `appliesTo`, which it never did
   before. A consumer that drew every child's actions now draws them for issues
