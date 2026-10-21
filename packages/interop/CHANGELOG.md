@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.63.0 — 2026-10-21
+
+**An issue read under its project carries its actions** (LTX-2; record
+*a-document-app-writes-what-a-files-app-shares*, SPEC §7.3).
+
+- A child reached through a `list` slot that has an address of its own — a
+  Ship issue under its project — now carries the actions its app declares for
+  its kind, each with what its field holds, exactly as it does when resolved on
+  its own. It carried none, so a consumer asking "does this file's app share
+  its text?" got no for every issue in a project's list. A child with no
+  address (a `kind:9` message) still carries none.
+- Manifest: nothing new may be declared. How a declaration is read changes: an
+  action now reaches an addressable child it `appliesTo`, which it never did
+  before. A consumer that drew every child's actions now draws them for issues
+  in a project's list too.
+
 ## 0.62.0 — 2026-10-20
 
 **A file's address on any Estiva app's host is that file**

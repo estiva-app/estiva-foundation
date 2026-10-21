@@ -3315,28 +3315,6 @@ function buildObject(args: {
   const { root, pointer, manifest, projection, folded } = args
   const naddr = encodeNaddr(pointer)
   const { slots, meta } = resolveSlots(projection, root, folded, manifest)
-
-  /**
-   * What each field holds now, however it got there.
-   *
-   * `resolveActions` reads the fold alone, which is right for a field that only
-   * ever exists as a change — but a project's lead is seeded by a tag on the
-   * root event. Without this, the assign control on a project nobody has
-   * reassigned reads "Assign to me" while a lead is plainly set, and the one
-   * control that is supposed to both report and set the field (PEEK-18) reports
-   * nothing.
-   */
-  const held: Record<string, string> = {}
-  // The built-in subtitle too, or a summary seeded at creation shows on the
-  // card while `summarize` offers a blank to edit (SPEC §6.12).
-  for (const spec of Object.values(withDefaultSubtitle(projection.slots, root.kind)).flat()) {
-    // `tag` may name several spellings (see `SlotSpec`); the field this slot
-    // *is* keyed on is the first, which is the one the app writes today. The
-    // rest are only there to keep older records rendering.
-    const field = spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
-    const raw = field ? rawSlotValue(spec, root, folded, false)?.value : undefined
-    if (field && raw !== undefined) held[field] = raw
-  }
   const objectAddress = pointerToAddress(pointer)
   return {
     // An addressable object's `ref` is its address: stable across the author
@@ -3360,14 +3338,43 @@ function buildObject(args: {
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
     openUrl: args.webTemplate?.replace('<bech32>', naddr),
-    actions: resolveActions(manifest, pointer.kind, folded).map((action) =>
-      action.current === undefined && action.field
-        ? { ...action, current: held[action.field] }
-        : action,
-    ),
+    actions: actionsOfFile(manifest, projection, root, folded),
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
   }
+}
+
+/**
+ * An addressable file's actions, each with what its field holds now, however
+ * it got there.
+ *
+ * `resolveActions` reads the fold alone, which is right for a field that only
+ * ever exists as a change — but a project's lead is seeded by a tag on the
+ * root event. Without this, the assign control on a project nobody has
+ * reassigned reads "Assign to me" while a lead is plainly set, and the one
+ * control that is supposed to both report and set the field (PEEK-18) reports
+ * nothing.
+ */
+function actionsOfFile(
+  manifest: Manifest,
+  projection: Projection,
+  root: SignedEvent,
+  folded: Record<string, { value: string; format?: ContentFormat }>,
+): ResolvedAction[] {
+  const held: Record<string, string> = {}
+  // The built-in subtitle too, or a summary seeded at creation shows on the
+  // card while `summarize` offers a blank to edit (SPEC §6.12).
+  for (const spec of Object.values(withDefaultSubtitle(projection.slots, root.kind)).flat()) {
+    // `tag` may name several spellings (see `SlotSpec`); the field this slot
+    // *is* keyed on is the first, which is the one the app writes today. The
+    // rest are only there to keep older records rendering.
+    const field = spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
+    const raw = field ? rawSlotValue(spec, root, folded, false)?.value : undefined
+    if (field && raw !== undefined) held[field] = raw
+  }
+  return resolveActions(manifest, root.kind, folded).map((action) =>
+    action.current === undefined && action.field ? { ...action, current: held[action.field] } : action,
+  )
 }
 
 /**
@@ -4661,9 +4668,12 @@ const CHILD_CHANGE_GROUP = 10
  * event id. That is the whole of PRO-6's finding (6), and it is why `ref` and
  * `eventId` exist alongside `address`.
  *
- * An object built this way carries **no actions**, and that is correct rather
- * than a limitation: an action emits a change carrying an `a` tag naming what
- * it changes, and a regular event cannot be named that way.
+ * A regular event carries **no actions**, and that is correct rather than a
+ * limitation: an action emits a change carrying an `a` tag naming what it
+ * changes, and a regular event cannot be named that way. An addressable child —
+ * a Ship issue read under its project — carries the same actions it has when
+ * read on its own, so whether its app shares its text is the same answer
+ * either way (LTX-2).
  */
 function buildChildObject(args: {
   root: SignedEvent
@@ -4734,7 +4744,7 @@ function buildChildObject(args: {
     */
     openUrl: (naddr ?? nevent) ? webTemplate?.replace('<bech32>', (naddr ?? nevent) as string) : undefined,
     // See the note above: nothing can be declared to act on a regular event.
-    actions: [],
+    actions: addressable ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
   }
 }

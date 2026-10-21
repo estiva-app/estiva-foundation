@@ -1268,6 +1268,36 @@ describe('resolveForeignObject — the list slot', () => {
     assert.equal(child.address, `${ISSUE_KIND}:${AUTHOR}:t1`)
     assert.equal(child.ref, child.address)
   })
+
+  it('gives an issue read under its project the actions it has when read on its own', async () => {
+    // LTX-2: Leaf lists a file whose app shares its text, decided from its actions. Read under its
+    // project with none, every Ship issue was taken for a file Leaf cannot write.
+    const describing = event({
+      kind: 31990,
+      tags: [['d', 'ship'], ['k', String(PROJECT_KIND)], ['k', String(ISSUE_KIND)]],
+      content: JSON.stringify({
+        name: 'Linear-lite',
+        projections: {
+          [PROJECT_KIND]: { widget: 'card', slots: { title: { tag: 'title' }, list: { children: { kind: ISSUE_KIND, via: 'a', limit: 50 } } } },
+          [ISSUE_KIND]: { widget: 'row', slots: { title: { tag: 'title' }, body: { fold: 'description', field: 'content' } } },
+        },
+        actions: [
+          {
+            id: 'describe-issue',
+            label: 'Description',
+            appliesTo: String(ISSUE_KIND),
+            emits: { kind: 1851, field: 'description' },
+            input: { type: 'string', format: 'estiva-blocks-1' },
+          },
+        ],
+      }),
+    })
+    const events = [describing, project('p1'), issue('t1', 'Billing')]
+    const child = (await resolveForeignObject(`${PROJECT_KIND}:${AUTHOR}:p1`, relay(events)))!.children![0]
+    const alone = await resolveForeignObject(`${ISSUE_KIND}:${AUTHOR}:t1`, relay(events))
+    assert.deepEqual(child.actions.map((a) => a.field), ['description'])
+    assert.deepEqual(child.actions, alone!.actions)
+  })
 })
 
 /**
