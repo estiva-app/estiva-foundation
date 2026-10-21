@@ -177,6 +177,22 @@ describe('a file the reader cannot see is absent, not “unavailable”', () => 
   })
 })
 
+describe('a listed file says when it last changed — 5ebf2756', () => {
+  test('its newest change, and its root for a file nothing changed', async () => {
+    const counted = event({
+      kind: 1851,
+      pubkey: RINGER,
+      tags: [['a', addressOf(colony)], ['f', 'size'], ['v', '40'], ['h', FOLDER]],
+    })
+    const query = relay([ringingManifest, tidesManifest, channel, colony, reading, counted, state([addressOf(colony), addressOf(reading)])])
+    const { files } = await resolveFolderContents(FOLDER, query, async () => ({}))
+    assert.deepEqual(
+      files.map((f) => [f.slots.title?.value, f.changedAt]),
+      [['Weir colony', counted.created_at], ['Spring tides', reading.created_at]],
+    )
+  })
+})
+
 describe('the folder that has no state yet', () => {
   test('containment by h still lists an app’s records', async () => {
     const query = relay([ringingManifest, tidesManifest, channel, colony, reading])
