@@ -4671,9 +4671,10 @@ const CHILD_CHANGE_GROUP = 10
  * A regular event carries **no actions**, and that is correct rather than a
  * limitation: an action emits a change carrying an `a` tag naming what it
  * changes, and a regular event cannot be named that way. An addressable child —
- * a Ship issue read under its project — carries the same actions it has when
- * read on its own, so whether its app shares its text is the same answer
- * either way (LTX-2).
+ * a Ship issue read under its project — carries the actions its own app
+ * declares for its kind, as it does when read on its own, so whether its app
+ * shares its text is the same answer either way (LTX-2). Borrowed creations
+ * (`declaredBy`) are added only on a file read on its own.
  */
 function buildChildObject(args: {
   root: SignedEvent
@@ -4743,8 +4744,9 @@ function buildChildObject(args: {
       single template serve both, and what stops a message linking to nothing.
     */
     openUrl: (naddr ?? nevent) ? webTemplate?.replace('<bech32>', (naddr ?? nevent) as string) : undefined,
-    // See the note above: nothing can be declared to act on a regular event.
-    actions: addressable ? actionsOfFile(manifest, projection, root, folded) : [],
+    // See the note above: nothing can be declared to act on a regular event, and an event read by its id
+    // (`nevent`) may be an older version of its file, its changes unread, so it is offered none either.
+    actions: addressable && !nevent ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
   }
 }

@@ -41,6 +41,7 @@ import {
   CONVERSATION_LIMIT,
   resolveFolderProject,
   resolveForeignObject,
+  resolveForeignEvent,
   pickWidget,
   widgetChainProblem,
   CLOSED_WIDGETS,
@@ -1297,6 +1298,10 @@ describe('resolveForeignObject — the list slot', () => {
     const alone = await resolveForeignObject(`${ISSUE_KIND}:${AUTHOR}:t1`, relay(events))
     assert.deepEqual(child.actions.map((a) => a.field), ['description'])
     assert.deepEqual(child.actions, alone!.actions)
+    // Read by its event id, the issue may be an older version whose changes were not read: it offers nothing.
+    const byId = await resolveForeignEvent(alone!.eventId, relay(events))
+    assert.equal(byId?.slots.title.value, 'Billing')
+    assert.deepEqual(byId?.actions, [])
   })
 })
 

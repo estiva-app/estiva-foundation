@@ -12,11 +12,13 @@ manifests already published still mean what they meant.
 *a-document-app-writes-what-a-files-app-shares*, SPEC §7.3).
 
 - A child reached through a `list` slot that has an address of its own — a
-  Ship issue under its project — now carries the actions its app declares for
-  its kind, each with what its field holds, exactly as it does when resolved on
-  its own. It carried none, so a consumer asking "does this file's app share
-  its text?" got no for every issue in a project's list. A child with no
-  address (a `kind:9` message) still carries none.
+  Ship issue under its project — now carries the actions its own app declares
+  for its kind, each with what its field holds, as it does when resolved on its
+  own (borrowed creations, `declaredBy`, still come only with a file resolved
+  on its own). It carried none, so a consumer asking "does this file's app
+  share its text?" got no for every issue in a project's list. A child with no
+  address (a `kind:9` message), and an event read by its id through
+  `resolveForeignEvent`, still carry none.
 - Manifest: nothing new may be declared. How a declaration is read changes: an
   action now reaches an addressable child it `appliesTo`, which it never did
   before. A consumer that drew every child's actions now draws them for issues
