@@ -251,6 +251,22 @@ describe('a child moved in (FOL-45)', () => {
     assert.ok(calls[1].some((f) => f['#d']?.[0] === 'basil' && f.kinds[0] === PLANT), 'the root is read with the changes')
   })
 
+  test('carries its own app’s actions, and a move naming a child that never came back costs no lookup', async () => {
+    // LTX-2 review: a child’s actions are offered once its author’s kind resolves to the card’s app; that lookup
+    // is asked only for a root the relay returned, since a move naming this parent is anyone’s to write.
+    const staged = { ...GARDEN, actions: [{ id: 'stage', label: 'Stage', appliesTo: String(PLANT), emits: { kind: 1851, field: 'stage' }, input: { type: 'string' } }] }
+    const STRANGER = 'd'.repeat(64)
+    const events = [manifestOf(staged), bed('east'), bed('west'), plant('basil', 'east')]
+    events.push(move(plantAddress('basil'), bedAddress('west'), HELPER))
+    events.push(move(`${PLANT}:${STRANGER}:ghost`, bedAddress('west'), HELPER))
+    const relay = countingRelay(events)
+    const west = await resolveForeignObject(bedAddress('west'), relay.query)
+    assert.deepEqual(titles(west), ['basil'])
+    assert.deepEqual(west.children[0].actions.map((a) => a.field), ['stage'])
+    const askedOf = relay.calls.flat().filter((f) => f.kinds?.includes(31989)).flatMap((f) => f.authors ?? [])
+    assert.ok(!askedOf.includes(STRANGER), 'no manifest lookup for the author of a child that never came back')
+  })
+
   test('in a batched set too', async () => {
     const events = [manifestOf(GARDEN), bed('east'), bed('west'), plant('basil', 'east')]
     events.push(move(plantAddress('basil'), bedAddress('west')))

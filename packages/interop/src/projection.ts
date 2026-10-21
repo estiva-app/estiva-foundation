@@ -3501,10 +3501,8 @@ export async function resolveForeignObject(
       : undefined,
   ])
   const followUp = childChangeFilters(plan, answered)
-  const [childChanges, childOwners] = await Promise.all([
-    followUp.length ? queryChunked(followUp, query) : [],
-    childOwnersOf(plan, answered, query, cache),
-  ])
+  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+  const childOwners = await childOwnersOf(plan, answered, childChanges, query, cache)
   const assembled = assembleObject(plan, answered, childChanges, childOwners)
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
@@ -3640,10 +3638,8 @@ export async function resolveForeignObjects(
     followed.add(plan.address)
     followUp.push(...childChangeFilters(plan, events))
   }
-  const [childChanges, ownerLists] = await Promise.all([
-    followUp.length ? queryChunked(followUp, query) : [],
-    Promise.all(plans.map(({ plan }) => childOwnersOf(plan, events, query, cache))),
-  ])
+  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+  const ownerLists = await Promise.all(plans.map(({ plan }) => childOwnersOf(plan, events, childChanges, query, cache)))
 
   const assembled = plans.map(({ reference, plan }, i) => ({
     reference,
@@ -4629,19 +4625,25 @@ function childrenFrom(args: {
  * own is, lands on the parent's manifest. Per author, because an author's
  * recommendation is part of that answer, and through the cache, so a project's
  * issues by three people cost three lookups once. Nothing is asked when the
- * parent's app declares no action on the child's kind.
+ * parent's app declares no action on the child's kind, and only for authors of
+ * roots that came back: a move naming the parent is anyone's to write, and the
+ * addresses it lists would otherwise cost a lookup each, root or not.
  */
 async function childOwnersOf(
   plan: ObjectPlan,
   answered: SignedEvent[],
+  childChanges: SignedEvent[],
   query: QueryFn,
   cache?: ProjectionCache,
 ): Promise<Set<string>> {
   const { childFilter, resolved } = plan
   if (!childFilter || resolveActions(resolved.manifest, childFilter.kind, {}).length === 0) return new Set()
+  const movedIn = new Set(movedInAddressesOf(answered, childFilter, resolved.manifest.records))
   const authors = new Set([
     ...childRootsOf(answered, childFilter).map((e) => e.pubkey),
-    ...movedInAddressesOf(answered, childFilter, resolved.manifest.records).map((address) => address.split(':')[1]),
+    ...childChanges
+      .filter((e) => e.kind === childFilter.kind && movedIn.has(childAddressOf(e) ?? ''))
+      .map((e) => e.pubkey),
   ])
   const owners = await Promise.all(
     [...authors].map(async (pubkey) => {
