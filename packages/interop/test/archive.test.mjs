@@ -271,6 +271,43 @@ describe('a link still opens an archived file, and says so', () => {
   })
 })
 
+describe('reached by address, a file is archived with the closest archived file above it (SPEC §6.5, PEEKM-2)', () => {
+  // Pages A > B > C, as a document app nests them.
+  const page = (d, parent) =>
+    event({ kind: KIND_BARE_FILE, tags: [['d', d], ['title', d.toUpperCase()], ['h', APIARY], ...(parent ? [['a', addressOf(parent)]] : [])] })
+  const a = page('a')
+  const b = page('b', a)
+  const c = page('c', b)
+  const withParent = { archivedWith: true }
+  const open = (events) => resolveForeignObject(addressOf(c), relay(events), noPeople, 0, undefined, withParent)
+
+  test('a page two levels under an archived page is archived with it', async () => {
+    const found = await open([a, b, c, archive(addressOf(a))])
+    assert.equal(found.archived?.with, addressOf(a))
+  })
+
+  test('with two archived above it, the closer one is named; unarchived, the next one is', async () => {
+    const both = [a, b, c, archive(addressOf(a)), archive(addressOf(b))]
+    assert.equal((await open(both)).archived?.with, addressOf(b))
+    const bBack = [...both, archive(addressOf(b), { archived: false })]
+    assert.equal((await open(bBack)).archived?.with, addressOf(a))
+  })
+
+  test('nothing above it archived, or the archive taken back: open', async () => {
+    assert.equal(isArchived(await open([a, b, c])), false)
+    assert.equal(isArchived(await open([a, b, c, archive(addressOf(a)), archive(addressOf(a), { archived: false })])), false)
+  })
+
+  test('an archive of an ancestor signed in another Folder is ignored, at every level (SPEC §6.2)', async () => {
+    assert.equal(isArchived(await open([a, b, c, archive(addressOf(b), { folder: ORCHARD })])), false, 'its parent')
+    assert.equal(isArchived(await open([a, b, c, archive(addressOf(a), { folder: ORCHARD })])), false, 'its grandparent')
+  })
+
+  test('an ancestor this reader cannot see ends the walk, as not archived', async () => {
+    assert.equal(isArchived(await open([b, c, archive(addressOf(a))])), false)
+  })
+})
+
 describe('a Folder is archived the way any file is', () => {
   const topic = event({ kind: KIND_BARE_FILE, tags: [['d', 'queens'], ['title', 'Queens'], ['h', APIARY]] })
   const both = [addressOf(hive), addressOf(topic)]
