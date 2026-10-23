@@ -187,6 +187,27 @@ describe('an archived parent hides what is under it, and unarchiving restores it
     )
   })
 
+  test('a parent in another Folder is not archived by a change signed from a third Folder (SPEC §6.2)', async () => {
+    // The hive's root is in Hive talk; an archive signed from the orchard is not its Folder's word.
+    const elsewhere = archive(addressOf(hive), { folder: ORCHARD })
+    const events = [hiveLog, apiary, hive, spring, elsewhere, stateOf(APIARY, 'Apiary', [addressOf(spring)])]
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, relay(events), noPeople)), ['Spring inspection'])
+  })
+
+  test('above another Folder’s parent, the closest archived file still hides the child, by name (SPEC §6.5)', async () => {
+    // Page C is listed in the apiary; B and A live in Hive talk, and only A is archived.
+    const page = (d, parent) =>
+      event({ kind: KIND_BARE_FILE, tags: [['d', d], ['title', d.toUpperCase()], ['h', HIVE_TALK], ...(parent ? [['a', parent]] : [])] })
+    const a = page('a')
+    const b = page('b', addressOf(a))
+    const c = page('c', addressOf(b))
+    const archived = archive(addressOf(a), { folder: HIVE_TALK })
+    const events = [apiary, hiveTalk, a, b, c, archived, stateOf(APIARY, 'Apiary', [addressOf(c)])]
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, relay(events), noPeople)), [])
+    const all = await resolveFolderContents(APIARY, relay(events), noPeople, undefined, { includeArchived: true })
+    assert.equal(all.files[0].archived.with, addressOf(a))
+  })
+
   test('two files under each other do not loop', async () => {
     const a = event({ kind: KIND_BARE_FILE, tags: [['d', 'a'], ['title', 'A'], ['h', APIARY], ['a', `${KIND_BARE_FILE}:${KEEPER}:b`]] })
     const b = event({ kind: KIND_BARE_FILE, tags: [['d', 'b'], ['title', 'B'], ['h', APIARY], ['a', `${KIND_BARE_FILE}:${KEEPER}:a`]] })

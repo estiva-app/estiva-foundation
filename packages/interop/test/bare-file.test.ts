@@ -262,7 +262,12 @@ describe('a bare file opens in the app that renders its conversation', () => {
       assert.equal(file.appName, 'Peek')
       assert.equal(file.noun, 'topic')
     }
-    const sweeps = sent.flat().filter((f) => Array.isArray(f.kinds) && (f.kinds as number[]).includes(31990))
+    // The topic's project is in no Folder here, so its own app is read to walk
+    // above it (SPEC §6.5); that read is the project's, not the topics'.
+    const sweeps = sent
+      .flat()
+      .filter((f) => Array.isArray(f.kinds) && (f.kinds as number[]).includes(31990))
+      .filter((f) => !(f['#k'] as string[] | undefined)?.includes(String(PROJECT_KIND)))
     // One from the containment read's own kind list, one to find the opener —
     // not one per author.
     assert.equal(sweeps.length, 2)
