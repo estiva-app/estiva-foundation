@@ -314,6 +314,13 @@ describe('reached by address, a file is archived with the closest archived file 
     assert.equal((await open(bBack)).archived?.with, addressOf(a))
   })
 
+  test('a page archived itself keeps its own archive when a page above is archived too', async () => {
+    const own = archive(addressOf(c), { note: 'Done with C.' })
+    const found = await open([a, b, c, archive(addressOf(a)), own])
+    assert.equal(found.archived?.with, undefined)
+    assert.equal(found.archived?.resolution, 'Done with C.')
+  })
+
   test('nothing above it archived, or the archive taken back: open', async () => {
     assert.equal(isArchived(await open([a, b, c])), false)
     assert.equal(isArchived(await open([a, b, c, archive(addressOf(a)), archive(addressOf(a), { archived: false })])), false)
