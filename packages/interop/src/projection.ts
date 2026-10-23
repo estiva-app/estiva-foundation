@@ -4065,7 +4065,6 @@ async function walkArchivedAbove(
   cache?: ProjectionCache,
 ): Promise<void> {
   type Walk = (typeof starts)[number]
-  const plain = plainAddress
   let walking: Walk[] = starts
   while (walking.length) {
     // Each child's ancestor is read by that child's app when it draws the
@@ -4133,7 +4132,7 @@ async function walkArchivedAbove(
         continue
       }
       walk.seen.add(walk.at)
-      const parent = found.parent && plain(found.parent)
+      const parent = found.parent && plainAddress(found.parent)
       if (parent && !walk.seen.has(parent)) {
         next.push({ ...walk, manifest: found.manifest, at: parent })
       }
@@ -6916,7 +6915,8 @@ export async function resolveFolderContents(
     const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest), root, nestedAdmins)
     archiveByAddress.set(address, archive)
     const parent = parentRefOf(resolved.manifest, pointer.kind, root, folded)
-    parentByAddress.set(address, parent)
+    // Plain, as the listing's own addresses are, so an `naddr` parent listed here is found here.
+    parentByAddress.set(address, parent && (plainAddress(parent) ?? parent))
     manifestByAddress.set(address, resolved.manifest)
     // An app hiding a record from its own lists is saying it is not part of the
     // folder any more. `hiddenWhen` is the app's own declaration of that — the
