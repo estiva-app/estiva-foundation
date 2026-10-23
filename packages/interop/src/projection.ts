@@ -1438,7 +1438,7 @@ const BARE_FILE_MANIFEST: Manifest = {
         /*
           No `body`: a topic is a conversation and has no text (SPEC §6.7,
           2026-10-19), so nothing draws one and no document app lists it.
-          why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-document-app-writes-what-a-files-app-shares.md
+          why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-card-changes-what-a-files-app-shares.md
         */
         // A bare file may hold bare files — a sub-topic under a topic. Children
         // of *other* kinds are found the other way round, by their own `a`
@@ -2519,10 +2519,16 @@ function archiveOf(
 /**
  * The first archived ancestor of `address`, walking `parentOf`, with its archive.
  *
+ * SPEC §6.5's rule for a file archived with something above it, for an app
+ * that folds its own files: the closest archived ancestor, with `with` its
+ * address, so every app names the same thing to unarchive (PEEKM-2). A file
+ * read through {@link resolveForeignObject}'s `archivedWith` is marked by the
+ * same rule. `archiveAt` gives a file's own archive only.
+ *
  * Stops at a cycle rather than looping: `parentRef` is written by people, and
  * two files each moved under the other is a state the relay accepts.
  */
-function archivedAncestorOf(
+export function archivedAncestorOf(
   address: string,
   parentOf: (address: string) => string | undefined,
   archiveAt: (address: string) => Archive | undefined,
@@ -3521,7 +3527,7 @@ export async function resolveForeignObject(
   const childOwners = await childOwnersOf(plan, answered, childChanges, query, cache)
   const assembled = assembleObject(plan, answered, childChanges, childOwners)
   if (assembled.object.unreachable) return assembled.object
-  if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query)
+  if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query, cache)
   return withFiles(
     withBorrowed(
       withPeople(assembled, await (lookupPeople ?? peopleViaRelay(query))(peopleOf(assembled))),
@@ -3663,7 +3669,7 @@ export async function resolveForeignObjects(
     built: assembleObject(plan, events, childChanges, ownerLists[i]),
   }))
   if (options.archivedWith) {
-    await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query)
+    await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query, cache)
   }
   const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
   const reachable = assembled.some(({ built }) => !built.object.unreachable)
@@ -4004,31 +4010,114 @@ function withFiles(object: ForeignObject, files: ForeignObject[] | undefined): F
  * rather than drawing live work. The cascade is computed here and never written
  * to the issue, so unarchiving the project restores it exactly.
  *
- * **One read for the whole set, and only when some object has a parent**, so a
- * topic page or a project page pays nothing. One level: the parent's own
- * parent is not followed, because the page is about this file and its
- * container, and a deeper walk is a round trip per level. A Folder listing
- * walks the whole chain it holds ({@link resolveFolderContents}).
+ * **The whole parent chain, the closest archived file named** (SPEC §6.5,
+ * PEEKM-2): a page under a page under an archived page is archived with the
+ * one nearest it, as a Folder listing reads it ({@link archivedAncestorOf}), so
+ * every app closes the same box and names the same thing to unarchive. One
+ * read per level for the whole set, and only while some file still has a
+ * parent, so a topic page or a project page pays nothing.
  *
- * The parent is folded by the child's app's rule when that app also draws the
- * parent's kind — a project is Ship's as its issue is — and by SPEC's rule
- * otherwise, since the parent's own manifest is not in hand ({@link relatedRuleOf}).
+ * Each ancestor is read with its root, so its archive is folded by SPEC §6.2's
+ * `h` rule like any other change, and its own parent is read by its own kind:
+ * an issue's moved `project`, a page's `parent`. An ancestor whose root this
+ * reader cannot see ends the walk there, as not archived. Stops at a cycle.
+ *
+ * Each ancestor's rule is its own app's: the child's when that app also draws
+ * the ancestor's kind — a project is Ship's as its issue is — otherwise the
+ * ancestor's manifest, read through `cache`.
  */
 async function markArchivedParents(
-  entries: { object: ForeignObject; manifest?: Pick<Manifest, 'records' | 'projections'> }[],
+  entries: { object: ForeignObject; manifest?: Manifest }[],
   query: QueryFn,
+  cache?: ProjectionCache,
 ): Promise<void> {
-  const waiting = entries.filter(
-    ({ object: o }) => !o.unreachable && !o.archived && o.parentRef && addressPointerOf(o.parentRef),
-  )
-  if (waiting.length === 0) return
-  const rules = waiting.map(({ object, manifest }) => relatedRuleOf(manifest, object.parentRef!))
-  const parents = [...new Set(waiting.map(({ object }) => object.parentRef!))]
-  const changes = await readArchiveChanges(parents, query, rules)
-  for (const [index, { object }] of waiting.entries()) {
-    // Only the parent's address is held here, not its root (SPEC §6.2's exception).
-    const archive = archiveOf(changes, object.parentRef!, rules[index]!, undefined)
-    if (archive) object.archived = { ...archive, with: object.parentRef! }
+  type Walk = { object: ForeignObject; manifest?: Manifest; at: string; seen: Set<string> }
+  // An `naddr` parent names the same file as its plain address (FEE-2), and
+  // only the plain one is what a change's target tag and `with` carry.
+  const plain = (reference: string) => {
+    const pointer = addressPointerOf(reference)
+    return pointer ? `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}` : undefined
+  }
+  let walking: Walk[] = entries
+    .filter(({ object: o }) => !o.unreachable && !o.archived && o.parentRef && plain(o.parentRef))
+    .map(({ object, manifest }) => ({
+      object,
+      manifest,
+      at: plain(object.parentRef!)!,
+      seen: new Set([plain(object.address ?? '') ?? '']),
+    }))
+  while (walking.length) {
+    // Each child's ancestor is read by that child's app when it draws the
+    // ancestor's kind — a project is Ship's as its issue is — and by the
+    // ancestor's own manifest otherwise, so one file in a batch never sets the
+    // rule another file's ancestor is read by.
+    const drawnBy: Manifest[] = []
+    const keyed = walking.map((walk) => {
+      const own = walk.manifest?.projections?.[String(addressPointerOf(walk.at)!.kind)] ? walk.manifest : undefined
+      if (own && !drawnBy.includes(own)) drawnBy.push(own)
+      return { walk, key: `${walk.at}|${own ? drawnBy.indexOf(own) : ''}`, own }
+    })
+    // A manifest that cannot be read is an ancestor read by SPEC's rule with no
+    // parent: the walk ends there rather than the whole open failing.
+    const theirOwn = new Map<string, Promise<Manifest | undefined>>()
+    const ancestors = await Promise.all(
+      [...new Map(keyed.map((entry) => [entry.key, entry])).values()].map(async ({ key, walk, own }) => {
+        const pointer = addressPointerOf(walk.at)!
+        if (!own && !theirOwn.has(walk.at)) {
+          theirOwn.set(walk.at, resolveManifest(pointer, query, cache).then((r) => r?.manifest, () => undefined))
+        }
+        return { key, address: walk.at, pointer, manifest: own ?? (await theirOwn.get(walk.at)) }
+      }),
+    )
+    const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
+    const addresses = [...new Set(ancestors.map(({ address }) => address))]
+    const roots = new Map<string, { kinds: number[]; authors: string[]; '#d': string[] }>()
+    for (const address of addresses) {
+      const pointer = addressPointerOf(address)!
+      const group = `${pointer.kind}:${pointer.pubkey}`
+      const filter = roots.get(group) ?? { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [] }
+      filter['#d'].push(pointer.identifier)
+      roots.set(group, filter)
+    }
+    const filters = [
+      ...[...roots.values()].flatMap((filter) => {
+        const groups: Record<string, unknown>[] = []
+        for (let start = 0; start < filter['#d'].length; start += PARENT_ROOT_GROUP) {
+          groups.push({ ...filter, '#d': filter['#d'].slice(start, start + PARENT_ROOT_GROUP) })
+        }
+        return groups
+      }),
+      ...archiveFilters(addresses, rules),
+    ]
+    const events = await queryChunked(filters, query)
+    const read = new Map<string, { archive?: Archive; parent?: string; manifest?: Manifest }>()
+    for (const [index, { key, address, pointer, manifest }] of ancestors.entries()) {
+      const root = events
+        .filter((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)
+        .sort(byOrder)
+        .at(-1)
+      // Not readable here: the walk ends, and nothing above it is claimed.
+      if (!root) continue
+      const parent = manifest?.projections?.[String(pointer.kind)]
+        ? parentRefOf(manifest, pointer.kind, root, foldOf(events, address, manifest, root))
+        : undefined
+      read.set(key, { archive: archiveOf(events, address, rules[index]!, root), parent, manifest })
+    }
+    const next: Walk[] = []
+    for (const { walk, key } of keyed) {
+      const found = read.get(key)
+      if (!found) continue
+      if (found.archive) {
+        walk.object.archived = { ...found.archive, with: walk.at }
+        continue
+      }
+      walk.seen.add(walk.at)
+      const parent = found.parent && plain(found.parent)
+      if (parent && !walk.seen.has(parent)) {
+        next.push({ ...walk, manifest: found.manifest, at: parent })
+      }
+    }
+    walking = next
   }
 }
 

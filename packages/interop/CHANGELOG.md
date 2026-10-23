@@ -6,6 +6,27 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.65.0 — 2026-10-23
+
+**A file reached by address is archived with the closest archived file above
+it, at any depth** (PEEKM-2, SPEC §6.5; record
+*an-archived-file-is-read-only-in-every-app*).
+
+- `archivedWith` now walks the whole parent chain, one read per level, and
+  `archived.with` names the closest archived ancestor: a page under a page
+  under an archived page is archived with it, and with two archived above it
+  the nearer one is named. Before, only the direct parent was read.
+- Each ancestor is read with its root, so an archive signed in another Folder's
+  `h` is ignored at every level (SPEC §6.2), and its own parent is read by its
+  own kind (an issue's moved `project`). An ancestor this reader cannot see
+  ends the walk, as not archived.
+- `archivedAncestorOf` is exported: the same rule for an app that folds its own
+  files (Ship).
+- A Folder's archive is not part of this rule yet (parked with
+  Folders-as-labels, Miky, 2026-10-23).
+- Manifest: nothing new may be declared, and no declaration is read
+  differently.
+
 ## 0.64.0 — 2026-10-21
 
 **Every resolved file says when it last changed** (5ebf2756).

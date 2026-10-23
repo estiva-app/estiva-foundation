@@ -40,6 +40,7 @@ export {
   ARCHIVED_FIELD,
   SUMMARY_FIELD,
   isArchived,
+  archivedAncestorOf,
   isClosedStatus,
   archiveImpact,
   type Archive,
