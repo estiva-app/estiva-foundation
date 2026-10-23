@@ -17,7 +17,11 @@ manifests already published still mean what they meant.
   any depth, the closest archived file named. Before, the parent outside was
   read by address only, one level.
 - Such a parent's own app is read when the child's app does not draw its kind,
-  once per kind through `cache`.
+  once per kind and author through `cache`. Two children of one outside parent,
+  drawn by different apps, each read it by their own app's rule.
+- A level whose app cannot be found ends the walk, and its own archive no
+  longer counts by SPEC's default rule (SPEC §6.5), in a listing and through
+  a link alike. A bare file's built-in app always counts.
 - Manifest: nothing new may be declared, and no declaration is read
   differently.
 

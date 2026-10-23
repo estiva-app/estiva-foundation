@@ -4077,18 +4077,26 @@ async function walkArchivedAbove(
       if (own && !drawnBy.includes(own)) drawnBy.push(own)
       return { walk, key: `${walk.at}|${own ? drawnBy.indexOf(own) : ''}`, own }
     })
-    // A manifest that cannot be read is an ancestor read by SPEC's rule with no
-    // parent: the walk ends there rather than the whole open failing.
+    // A level whose manifest cannot be read ends the walk, its own archive
+    // uncounted (SPEC §6.5): which change archives it is the manifest's to say.
+    // A bare file's is a constant, so a refused opener sweep never ends it.
     const theirOwn = new Map<string, Promise<Manifest | undefined>>()
-    const ancestors = await Promise.all(
+    const resolved = await Promise.all(
       [...new Map(keyed.map((entry) => [entry.key, entry])).values()].map(async ({ key, walk, own }) => {
         const pointer = addressPointerOf(walk.at)!
         if (!own && !theirOwn.has(walk.at)) {
-          theirOwn.set(walk.at, resolveManifest(pointer, query, cache).then((r) => r?.manifest, () => undefined))
+          theirOwn.set(
+            walk.at,
+            resolveManifest(pointer, query, cache).then(
+              (r) => r?.manifest,
+              () => (pointer.kind === KIND_BARE_FILE ? bareFileManifest().manifest : undefined),
+            ),
+          )
         }
         return { key, address: walk.at, pointer, manifest: own ?? (await theirOwn.get(walk.at)) }
       }),
     )
+    const ancestors = resolved.filter((a): a is typeof a & { manifest: Manifest } => !!a.manifest)
     const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
     const addresses = [...new Set(ancestors.map(({ address }) => address))]
     const roots = new Map<string, { kinds: number[]; authors: string[]; '#d': string[] }>()
@@ -6979,14 +6987,26 @@ export async function resolveFolderContents(
        *other* Folder that lists it is archived — that is what lets a file
        placed in two Folders stay visible in the one that is not archived.
   */
-  const exits = new Map<string, { manifest: Manifest | undefined; seen: Set<string> }>()
+  // One walk per exit and the app reading it, as walkArchivedAbove keys its
+  // reads: two children of one outside parent, drawn by different apps, each
+  // read it by their own app's rule.
+  const exits = new Map<string, { at: string; manifest: Manifest | undefined; seen: Set<string>; archive?: Archive }>()
+  const exitOf = new Map<string, string>()
+  const drawnBy: Manifest[] = []
   for (const { file, archive } of listed) {
     if (archive || !file.address) continue
     const seen = new Set([file.address])
     let child = file.address
     for (let at = parentByAddress.get(child); at && !seen.has(at); child = at, at = parentByAddress.get(at)) {
       if (!archiveByAddress.has(at)) {
-        if (plainAddress(at) && !exits.has(at)) exits.set(at, { manifest: manifestByAddress.get(child), seen })
+        const plain = plainAddress(at)
+        if (!plain) break
+        const manifest = manifestByAddress.get(child)
+        const own = manifest?.projections?.[String(addressPointerOf(plain)!.kind)] ? manifest : undefined
+        if (own && !drawnBy.includes(own)) drawnBy.push(own)
+        const key = `${plain}|${own ? drawnBy.indexOf(own) : ''}`
+        if (!exits.has(key)) exits.set(key, { at: plain, manifest, seen })
+        exitOf.set(file.address, key)
         break
       }
       if (archiveByAddress.get(at)) break
@@ -6994,22 +7014,26 @@ export async function resolveFolderContents(
     }
   }
   await walkArchivedAbove(
-    [...exits].map(([at, { manifest, seen }]) => ({
-      at: plainAddress(at)!,
-      manifest,
-      seen,
-      mark: (found: Archive) => archiveByAddress.set(at, found),
+    [...exits.values()].map((exit) => ({
+      at: exit.at,
+      manifest: exit.manifest,
+      seen: exit.seen,
+      mark: (found: Archive) => {
+        exit.archive = found
+      },
     })),
     query,
     cache,
   )
   const files: ForeignObject[] = []
   for (const { file, archive } of listed) {
+    const exit = file.address ? exitOf.get(file.address) : undefined
     const effective =
       archive ??
       (file.address
         ? archivedAncestorOf(file.address, (a) => parentByAddress.get(a), (a) => archiveByAddress.get(a))
-        : undefined)
+        : undefined) ??
+      (exit ? exits.get(exit)?.archive : undefined)
     if (!effective) files.push(file)
     else if (options.includeArchived) files.push({ ...file, archived: effective })
   }

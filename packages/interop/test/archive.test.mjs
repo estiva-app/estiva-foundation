@@ -208,6 +208,37 @@ describe('an archived parent hides what is under it, and unarchiving restores it
     assert.equal(all.files[0].archived.with, addressOf(a))
   })
 
+  test('above another Folder’s parent, a level no app can read ends the walk and its archive does not count (SPEC §6.5)', async () => {
+    // Page C is listed in the apiary; its parent is a kind no app claims, archived in SPEC's shape.
+    const unclaimed = event({ kind: 30899, tags: [['d', 'ledger'], ['title', 'Ledger'], ['h', HIVE_TALK]] })
+    const c = event({ kind: KIND_BARE_FILE, tags: [['d', 'c'], ['title', 'C'], ['h', HIVE_TALK], ['a', addressOf(unclaimed)]] })
+    const archived = archive(addressOf(unclaimed), { folder: HIVE_TALK })
+    const events = [apiary, hiveTalk, unclaimed, c, archived, stateOf(APIARY, 'Apiary', [addressOf(c)])]
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, relay(events), noPeople)), ['C'])
+  })
+
+  test('one parent in another Folder, two children drawn by two apps: each app reads it by its own rule', async () => {
+    // A second app draws the hive too, with notes under it, and archives with a change kind of its own.
+    const NOTE = 30873
+    const beeBoard = event({
+      kind: 31990,
+      tags: [['d', 'bee-board'], ['k', String(HIVE)], ['k', String(NOTE)]],
+      content: JSON.stringify({
+        name: 'Bee board',
+        records: { ...JSON.parse(hiveLog.content).records, changeKind: 1852 },
+        projections: {
+          [HIVE]: { widget: 'card', slots: { title: { tag: 'title' }, list: { children: { kind: NOTE, via: 'a', limit: 200 } } } },
+          [NOTE]: { widget: 'card', slots: { title: { tag: 'title' } } },
+        },
+      }),
+    })
+    const note = event({ kind: NOTE, tags: [['d', 'swarm'], ['title', 'Swarm note'], ['a', addressOf(hive)], ['h', HIVE_TALK]] })
+    const boardArchive = { ...archive(addressOf(hive), { folder: HIVE_TALK }), kind: 1852 }
+    // The inspection is listed first, so a walk keyed by the parent alone reads it by the hive log's rule for both.
+    const events = [hiveLog, beeBoard, apiary, hiveTalk, hive, spring, note, boardArchive, stateOf(APIARY, 'Apiary', [addressOf(spring), addressOf(note)])]
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, relay(events), noPeople)), ['Spring inspection'])
+  })
+
   test('two files under each other do not loop', async () => {
     const a = event({ kind: KIND_BARE_FILE, tags: [['d', 'a'], ['title', 'A'], ['h', APIARY], ['a', `${KIND_BARE_FILE}:${KEEPER}:b`]] })
     const b = event({ kind: KIND_BARE_FILE, tags: [['d', 'b'], ['title', 'B'], ['h', APIARY], ['a', `${KIND_BARE_FILE}:${KEEPER}:a`]] })
