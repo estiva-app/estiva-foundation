@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.65.1 — 2026-10-23
+
+**A Folder's listing reads a parent in another Folder as a link does**
+(PEEKM-2, SPEC §6.5).
+
+- `resolveFolderContents`: where a listed file's parent chain leaves the
+  Folder, the rest is walked as `archivedWith` walks it: each ancestor with its
+  root, so an archive signed in another Folder's `h` is ignored (SPEC §6.2), at
+  any depth, the closest archived file named. Before, the parent outside was
+  read by address only, one level.
+- Such a parent's own app is read when the child's app does not draw its kind,
+  once per kind and author through `cache`. Two children of one outside parent,
+  drawn by different apps, each read it by their own app's rule.
+- A level whose app cannot be found ends the walk, and its own archive no
+  longer counts by SPEC's default rule (SPEC §6.5), in a listing and through
+  a link alike. A bare file's built-in app always counts.
+- Manifest: nothing new may be declared, and no declaration is read
+  differently.
+
 ## 0.65.0 — 2026-10-23
 
 **A file reached by address is archived with the closest archived file above

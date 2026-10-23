@@ -4031,21 +4031,41 @@ async function markArchivedParents(
   query: QueryFn,
   cache?: ProjectionCache,
 ): Promise<void> {
-  type Walk = { object: ForeignObject; manifest?: Manifest; at: string; seen: Set<string> }
-  // An `naddr` parent names the same file as its plain address (FEE-2), and
-  // only the plain one is what a change's target tag and `with` carry.
-  const plain = (reference: string) => {
-    const pointer = addressPointerOf(reference)
-    return pointer ? `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}` : undefined
-  }
-  let walking: Walk[] = entries
-    .filter(({ object: o }) => !o.unreachable && !o.archived && o.parentRef && plain(o.parentRef))
-    .map(({ object, manifest }) => ({
-      object,
-      manifest,
-      at: plain(object.parentRef!)!,
-      seen: new Set([plain(object.address ?? '') ?? '']),
-    }))
+  await walkArchivedAbove(
+    entries
+      .filter(({ object: o }) => !o.unreachable && !o.archived && o.parentRef && plainAddress(o.parentRef))
+      .map(({ object, manifest }) => ({
+        manifest,
+        at: plainAddress(object.parentRef!)!,
+        seen: new Set([plainAddress(object.address ?? '') ?? '']),
+        mark: (archive: Archive) => {
+          object.archived = archive
+        },
+      })),
+    query,
+    cache,
+  )
+}
+
+// An `naddr` parent names the same file as its plain address (FEE-2), and
+// only the plain one is what a change's target tag and `with` carry.
+function plainAddress(reference: string) {
+  const pointer = addressPointerOf(reference)
+  return pointer ? `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}` : undefined
+}
+
+/**
+ * {@link markArchivedParents}'s walk, from `at` upwards: `mark` is called with
+ * the closest archived file's archive, `with` its address, and not at all when
+ * none is. `manifest` is the app of the file below `at`, `seen` what is below.
+ */
+async function walkArchivedAbove(
+  starts: { at: string; manifest?: Manifest; seen: Set<string>; mark: (archive: Archive) => void }[],
+  query: QueryFn,
+  cache?: ProjectionCache,
+): Promise<void> {
+  type Walk = (typeof starts)[number]
+  let walking: Walk[] = starts
   while (walking.length) {
     // Each child's ancestor is read by that child's app when it draws the
     // ancestor's kind — a project is Ship's as its issue is — and by the
@@ -4057,18 +4077,26 @@ async function markArchivedParents(
       if (own && !drawnBy.includes(own)) drawnBy.push(own)
       return { walk, key: `${walk.at}|${own ? drawnBy.indexOf(own) : ''}`, own }
     })
-    // A manifest that cannot be read is an ancestor read by SPEC's rule with no
-    // parent: the walk ends there rather than the whole open failing.
+    // A level whose manifest cannot be read ends the walk, its own archive
+    // uncounted (SPEC §6.5): which change archives it is the manifest's to say.
+    // A bare file's is a constant, so a refused opener sweep never ends it.
     const theirOwn = new Map<string, Promise<Manifest | undefined>>()
-    const ancestors = await Promise.all(
+    const resolved = await Promise.all(
       [...new Map(keyed.map((entry) => [entry.key, entry])).values()].map(async ({ key, walk, own }) => {
         const pointer = addressPointerOf(walk.at)!
         if (!own && !theirOwn.has(walk.at)) {
-          theirOwn.set(walk.at, resolveManifest(pointer, query, cache).then((r) => r?.manifest, () => undefined))
+          theirOwn.set(
+            walk.at,
+            resolveManifest(pointer, query, cache).then(
+              (r) => r?.manifest,
+              () => (pointer.kind === KIND_BARE_FILE ? bareFileManifest().manifest : undefined),
+            ),
+          )
         }
         return { key, address: walk.at, pointer, manifest: own ?? (await theirOwn.get(walk.at)) }
       }),
     )
+    const ancestors = resolved.filter((a): a is typeof a & { manifest: Manifest } => !!a.manifest)
     const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
     const addresses = [...new Set(ancestors.map(({ address }) => address))]
     const roots = new Map<string, { kinds: number[]; authors: string[]; '#d': string[] }>()
@@ -4108,27 +4136,17 @@ async function markArchivedParents(
       const found = read.get(key)
       if (!found) continue
       if (found.archive) {
-        walk.object.archived = { ...found.archive, with: walk.at }
+        walk.mark({ ...found.archive, with: walk.at })
         continue
       }
       walk.seen.add(walk.at)
-      const parent = found.parent && plain(found.parent)
+      const parent = found.parent && plainAddress(found.parent)
       if (parent && !walk.seen.has(parent)) {
         next.push({ ...walk, manifest: found.manifest, at: parent })
       }
     }
     walking = next
   }
-}
-
-/**
- * The rule another file's archive is read by, from an app known to hold it:
- * that app's own, when it draws the file's kind — an issue's project is Ship's,
- * a hive's inspection the hive log's — and SPEC's otherwise.
- */
-function relatedRuleOf(manifest: Pick<Manifest, 'records' | 'projections'> | undefined, address: string): RecordsRule {
-  const kind = addressPointerOf(address)?.kind
-  return manifest && kind !== undefined && manifest.projections?.[String(kind)] ? archiveRuleOf(manifest) : ARCHIVE_RULE
 }
 
 /**
@@ -6873,8 +6891,8 @@ export async function resolveFolderContents(
   const listed: { file: ForeignObject; archive?: Archive }[] = []
   const archiveByAddress = new Map<string, Archive | undefined>()
   const parentByAddress = new Map<string, string | undefined>()
-  // How a parent outside this listing is read: its child's app's rule when that app draws it.
-  const parentRuleOf = new Map<string, RecordsRule>()
+  // Whose app reads a parent outside this listing: its child's, when that app draws it.
+  const manifestByAddress = new Map<string, Manifest>()
   for (const { address, pointer } of pointers) {
     const resolved = manifests.get(manifestKeyOf(pointer))
     // No app claims this kind, so there is no projection to draw it with.
@@ -6905,8 +6923,9 @@ export async function resolveFolderContents(
     const archive = archiveOf(events, address, archiveRuleOf(resolved.manifest), root, nestedAdmins)
     archiveByAddress.set(address, archive)
     const parent = parentRefOf(resolved.manifest, pointer.kind, root, folded)
-    parentByAddress.set(address, parent)
-    if (parent) parentRuleOf.set(parent, relatedRuleOf(resolved.manifest, parent))
+    // Plain, as the listing's own addresses are, so an `naddr` parent listed here is found here.
+    parentByAddress.set(address, parent && (plainAddress(parent) ?? parent))
+    manifestByAddress.set(address, resolved.manifest)
     // An app hiding a record from its own lists is saying it is not part of the
     // folder any more. `hiddenWhen` is the app's own declaration of that — the
     // archive above is the same statement for a kind whose app declared none.
@@ -6958,36 +6977,63 @@ export async function resolveFolderContents(
        never written to the children, so unarchiving the parent restores
        exactly what was there.
 
-       The chain is walked through everything this Folder lists. A parent that
-       lives in another Folder is read once for all such parents, one level: a
-       project whose record channel lists its issues is the case that matters,
-       and there the project is listed too.
+       The chain is walked through everything this Folder lists. Where it
+       leaves the Folder, the rest is walked as a link reads it (SPEC §6.5,
+       PEEKM-2): each ancestor with its root, so its archive is folded by
+       §6.2's `h` rule, at any depth. One read per level for every such exit,
+       and none when the chain stays here or meets an archived file first.
 
        Only by parent. A file this Folder lists is never hidden because some
        *other* Folder that lists it is archived — that is what lets a file
        placed in two Folders stay visible in the one that is not archived.
   */
-  const outside = [
-    ...new Set(
-      listed.flatMap(({ file }) => {
-        const parent = file.address && parentByAddress.get(file.address)
-        return parent && !archiveByAddress.has(parent) && addressPointerOf(parent) ? [parent] : []
-      }),
-    ),
-  ]
-  if (outside.length) {
-    const ruleFor = (parent: string) => parentRuleOf.get(parent) ?? ARCHIVE_RULE
-    const changes = await readArchiveChanges(outside, query, outside.map(ruleFor))
-    // A parent in another Folder is held by address only (SPEC §6.2's exception).
-    for (const parent of outside) archiveByAddress.set(parent, archiveOf(changes, parent, ruleFor(parent), undefined))
+  // One walk per exit and the app reading it, as walkArchivedAbove keys its
+  // reads: two children of one outside parent, drawn by different apps, each
+  // read it by their own app's rule.
+  const exits = new Map<string, { at: string; manifest: Manifest | undefined; seen: Set<string>; archive?: Archive }>()
+  const exitOf = new Map<string, string>()
+  const drawnBy: Manifest[] = []
+  for (const { file, archive } of listed) {
+    if (archive || !file.address) continue
+    const seen = new Set([file.address])
+    let child = file.address
+    for (let at = parentByAddress.get(child); at && !seen.has(at); child = at, at = parentByAddress.get(at)) {
+      if (!archiveByAddress.has(at)) {
+        const plain = plainAddress(at)
+        if (!plain) break
+        const manifest = manifestByAddress.get(child)
+        const own = manifest?.projections?.[String(addressPointerOf(plain)!.kind)] ? manifest : undefined
+        if (own && !drawnBy.includes(own)) drawnBy.push(own)
+        const key = `${plain}|${own ? drawnBy.indexOf(own) : ''}`
+        if (!exits.has(key)) exits.set(key, { at: plain, manifest, seen })
+        exitOf.set(file.address, key)
+        break
+      }
+      if (archiveByAddress.get(at)) break
+      seen.add(at)
+    }
   }
+  await walkArchivedAbove(
+    [...exits.values()].map((exit) => ({
+      at: exit.at,
+      manifest: exit.manifest,
+      seen: exit.seen,
+      mark: (found: Archive) => {
+        exit.archive = found
+      },
+    })),
+    query,
+    cache,
+  )
   const files: ForeignObject[] = []
   for (const { file, archive } of listed) {
+    const exit = file.address ? exitOf.get(file.address) : undefined
     const effective =
       archive ??
       (file.address
         ? archivedAncestorOf(file.address, (a) => parentByAddress.get(a), (a) => archiveByAddress.get(a))
-        : undefined)
+        : undefined) ??
+      (exit ? exits.get(exit)?.archive : undefined)
     if (!effective) files.push(file)
     else if (options.includeArchived) files.push({ ...file, archived: effective })
   }
