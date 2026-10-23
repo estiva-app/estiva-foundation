@@ -1438,7 +1438,7 @@ const BARE_FILE_MANIFEST: Manifest = {
         /*
           No `body`: a topic is a conversation and has no text (SPEC §6.7,
           2026-10-19), so nothing draws one and no document app lists it.
-          why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-document-app-writes-what-a-files-app-shares.md
+          why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-card-changes-what-a-files-app-shares.md
         */
         // A bare file may hold bare files — a sub-topic under a topic. Children
         // of *other* kinds are found the other way round, by their own `a`
@@ -4032,26 +4032,59 @@ async function markArchivedParents(
   cache?: ProjectionCache,
 ): Promise<void> {
   type Walk = { object: ForeignObject; manifest?: Manifest; at: string; seen: Set<string> }
+  // An `naddr` parent names the same file as its plain address (FEE-2), and
+  // only the plain one is what a change's target tag and `with` carry.
+  const plain = (reference: string) => {
+    const pointer = addressPointerOf(reference)
+    return pointer ? `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}` : undefined
+  }
   let walking: Walk[] = entries
-    .filter(({ object: o }) => !o.unreachable && !o.archived && o.parentRef && addressPointerOf(o.parentRef))
-    .map(({ object, manifest }) => ({ object, manifest, at: object.parentRef!, seen: new Set([object.address ?? '']) }))
+    .filter(({ object: o }) => !o.unreachable && !o.archived && o.parentRef && plain(o.parentRef))
+    .map(({ object, manifest }) => ({
+      object,
+      manifest,
+      at: plain(object.parentRef!)!,
+      seen: new Set([plain(object.address ?? '') ?? '']),
+    }))
   while (walking.length) {
-    const level = new Map<string, { pointer: AddressPointer; manifest?: Manifest }>()
+    // Any child's app that draws the ancestor's kind gives the rule, whichever
+    // child came first; otherwise the ancestor's own manifest.
+    const owned = new Map<string, Manifest | undefined>()
     for (const walk of walking) {
-      if (level.has(walk.at)) continue
-      const pointer = addressPointerOf(walk.at)!
-      const own = walk.manifest?.projections?.[String(pointer.kind)] ? walk.manifest : undefined
-      level.set(walk.at, { pointer, manifest: own ?? (await resolveManifest(pointer, query, cache))?.manifest })
+      const kind = String(addressPointerOf(walk.at)!.kind)
+      if (!owned.get(walk.at)) owned.set(walk.at, walk.manifest?.projections?.[kind] ? walk.manifest : undefined)
     }
-    const ancestors = [...level.entries()]
-    const rules = ancestors.map(([, { manifest }]) => archiveRuleOf(manifest))
+    // A manifest that cannot be read is an ancestor read by SPEC's rule with no
+    // parent: the walk ends there rather than the whole open failing.
+    const ancestors = await Promise.all(
+      [...owned].map(async ([address, own]) => {
+        const pointer = addressPointerOf(address)!
+        const manifest = own ?? (await resolveManifest(pointer, query, cache).catch(() => null))?.manifest
+        return { address, pointer, manifest }
+      }),
+    )
+    const level = new Map(ancestors.map((ancestor) => [ancestor.address, ancestor]))
+    const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
+    const roots = new Map<string, { kinds: number[]; authors: string[]; '#d': string[] }>()
+    for (const { pointer } of ancestors) {
+      const key = `${pointer.kind}:${pointer.pubkey}`
+      const filter = roots.get(key) ?? { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [] }
+      filter['#d'].push(pointer.identifier)
+      roots.set(key, filter)
+    }
     const filters = [
-      ...ancestors.map(([, { pointer }]) => ({ kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier] })),
-      ...archiveFilters(ancestors.map(([address]) => address), rules),
+      ...[...roots.values()].flatMap((filter) => {
+        const groups: Record<string, unknown>[] = []
+        for (let start = 0; start < filter['#d'].length; start += PARENT_ROOT_GROUP) {
+          groups.push({ ...filter, '#d': filter['#d'].slice(start, start + PARENT_ROOT_GROUP) })
+        }
+        return groups
+      }),
+      ...archiveFilters(ancestors.map(({ address }) => address), rules),
     ]
     const events = await queryChunked(filters, query)
     const read = new Map<string, { archive?: Archive; parent?: string }>()
-    for (const [index, [address, { pointer, manifest }]] of ancestors.entries()) {
+    for (const [index, { address, pointer, manifest }] of ancestors.entries()) {
       const root = events
         .filter((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)
         .sort(byOrder)
@@ -4072,8 +4105,9 @@ async function markArchivedParents(
         continue
       }
       walk.seen.add(walk.at)
-      if (found.parent && !walk.seen.has(found.parent) && addressPointerOf(found.parent)) {
-        next.push({ ...walk, manifest: level.get(walk.at)!.manifest, at: found.parent })
+      const parent = found.parent && plain(found.parent)
+      if (parent && !walk.seen.has(parent)) {
+        next.push({ ...walk, manifest: level.get(walk.at)!.manifest, at: parent })
       }
     }
     walking = next

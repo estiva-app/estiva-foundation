@@ -304,7 +304,18 @@ describe('reached by address, a file is archived with the closest archived file 
   })
 
   test('an ancestor this reader cannot see ends the walk, as not archived', async () => {
-    assert.equal(isArchived(await open([b, c, archive(addressOf(a))])), false)
+    assert.equal(isArchived(await open([c, archive(addressOf(b))])), false, 'its parent')
+    assert.equal(isArchived(await open([b, c, archive(addressOf(a))])), false, 'its grandparent')
+  })
+
+  test('a page moved out from under the archived page reopens what is under it', async () => {
+    clock += 10
+    const bMovedToTop = event({
+      kind: 1851,
+      created_at: clock,
+      tags: [['a', addressOf(b)], ['field', 'parent'], ['value', ''], ['h', APIARY], ['ts', String(clock * 1000)]],
+    })
+    assert.equal(isArchived(await open([a, b, c, archive(addressOf(a)), bMovedToTop])), false)
   })
 })
 
