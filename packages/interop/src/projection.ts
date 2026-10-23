@@ -4047,30 +4047,37 @@ async function markArchivedParents(
       seen: new Set([plain(object.address ?? '') ?? '']),
     }))
   while (walking.length) {
-    // Any child's app that draws the ancestor's kind gives the rule, whichever
-    // child came first; otherwise the ancestor's own manifest.
-    const owned = new Map<string, Manifest | undefined>()
-    for (const walk of walking) {
-      const kind = String(addressPointerOf(walk.at)!.kind)
-      if (!owned.get(walk.at)) owned.set(walk.at, walk.manifest?.projections?.[kind] ? walk.manifest : undefined)
-    }
+    // Each child's ancestor is read by that child's app when it draws the
+    // ancestor's kind — a project is Ship's as its issue is — and by the
+    // ancestor's own manifest otherwise, so one file in a batch never sets the
+    // rule another file's ancestor is read by.
+    const drawnBy: Manifest[] = []
+    const keyed = walking.map((walk) => {
+      const own = walk.manifest?.projections?.[String(addressPointerOf(walk.at)!.kind)] ? walk.manifest : undefined
+      if (own && !drawnBy.includes(own)) drawnBy.push(own)
+      return { walk, key: `${walk.at}|${own ? drawnBy.indexOf(own) : ''}`, own }
+    })
     // A manifest that cannot be read is an ancestor read by SPEC's rule with no
     // parent: the walk ends there rather than the whole open failing.
+    const theirOwn = new Map<string, Promise<Manifest | undefined>>()
     const ancestors = await Promise.all(
-      [...owned].map(async ([address, own]) => {
-        const pointer = addressPointerOf(address)!
-        const manifest = own ?? (await resolveManifest(pointer, query, cache).catch(() => null))?.manifest
-        return { address, pointer, manifest }
+      [...new Map(keyed.map((entry) => [entry.key, entry])).values()].map(async ({ key, walk, own }) => {
+        const pointer = addressPointerOf(walk.at)!
+        if (!own && !theirOwn.has(walk.at)) {
+          theirOwn.set(walk.at, resolveManifest(pointer, query, cache).then((r) => r?.manifest, () => undefined))
+        }
+        return { key, address: walk.at, pointer, manifest: own ?? (await theirOwn.get(walk.at)) }
       }),
     )
-    const level = new Map(ancestors.map((ancestor) => [ancestor.address, ancestor]))
     const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
+    const addresses = [...new Set(ancestors.map(({ address }) => address))]
     const roots = new Map<string, { kinds: number[]; authors: string[]; '#d': string[] }>()
-    for (const { pointer } of ancestors) {
-      const key = `${pointer.kind}:${pointer.pubkey}`
-      const filter = roots.get(key) ?? { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [] }
+    for (const address of addresses) {
+      const pointer = addressPointerOf(address)!
+      const group = `${pointer.kind}:${pointer.pubkey}`
+      const filter = roots.get(group) ?? { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [] }
       filter['#d'].push(pointer.identifier)
-      roots.set(key, filter)
+      roots.set(group, filter)
     }
     const filters = [
       ...[...roots.values()].flatMap((filter) => {
@@ -4080,11 +4087,11 @@ async function markArchivedParents(
         }
         return groups
       }),
-      ...archiveFilters(ancestors.map(({ address }) => address), rules),
+      ...archiveFilters(addresses, rules),
     ]
     const events = await queryChunked(filters, query)
-    const read = new Map<string, { archive?: Archive; parent?: string }>()
-    for (const [index, { address, pointer, manifest }] of ancestors.entries()) {
+    const read = new Map<string, { archive?: Archive; parent?: string; manifest?: Manifest }>()
+    for (const [index, { key, address, pointer, manifest }] of ancestors.entries()) {
       const root = events
         .filter((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)
         .sort(byOrder)
@@ -4094,11 +4101,11 @@ async function markArchivedParents(
       const parent = manifest?.projections?.[String(pointer.kind)]
         ? parentRefOf(manifest, pointer.kind, root, foldOf(events, address, manifest, root))
         : undefined
-      read.set(address, { archive: archiveOf(events, address, rules[index]!, root), parent })
+      read.set(key, { archive: archiveOf(events, address, rules[index]!, root), parent, manifest })
     }
     const next: Walk[] = []
-    for (const walk of walking) {
-      const found = read.get(walk.at)
+    for (const { walk, key } of keyed) {
+      const found = read.get(key)
       if (!found) continue
       if (found.archive) {
         walk.object.archived = { ...found.archive, with: walk.at }
@@ -4107,7 +4114,7 @@ async function markArchivedParents(
       walk.seen.add(walk.at)
       const parent = found.parent && plain(found.parent)
       if (parent && !walk.seen.has(parent)) {
-        next.push({ ...walk, manifest: level.get(walk.at)!.manifest, at: parent })
+        next.push({ ...walk, manifest: found.manifest, at: parent })
       }
     }
     walking = next
