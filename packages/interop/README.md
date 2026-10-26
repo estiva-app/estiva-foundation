@@ -575,6 +575,26 @@ Reuse one `ProjectionCache` across folders. Round trips are flat in the number
 of files and linear in the number of *apps*: 24, 25 and 9 files measured at 5, 5
 and 4 requests warm.
 
+### A whole tree: one load query
+
+A sidebar reads `listFolders`, then each Folder's contents, and both read every
+change naming every listed file. Pass both the same `createLoadQuery(query)`
+and each change is asked of the relay once: a value whose changes came back
+whole is not asked again, and a read already in flight is joined.
+
+```ts
+import { listFolders, resolveFolderContents, createLoadQuery } from '@estiva-app/interop'
+
+const load = createLoadQuery(query) // one per load: a refresh makes a new one
+const folders = await listFolders(load)
+const contents = await Promise.all(folders.map((f) => resolveFolderContents(f.id, load, undefined, cache)))
+```
+
+It holds the relay's answer at the moment of the load, so it is dropped after:
+kept across loads, a live list would stop seeing changes. Measured as the agent
+on production, 26 Oct: 70.7 MB and 39 requests became 23.9 MB and 31, the same
+listing byte for byte.
+
 ### A file you cannot see is absent, not greyed out
 
 **The count is the disclosure.** A folder that renders three rows and two

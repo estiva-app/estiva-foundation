@@ -6,6 +6,26 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.67.0 — 2026-10-26
+
+**Manifests: nothing changes.** A load reads each change once (APP-2).
+
+- `createLoadQuery(query)` wraps a query for one load — `listFolders`, then
+  each Folder's `resolveFolderContents`. A filter of one kind, one tag and a
+  limit whose page came back short is complete for each value it named, and a
+  later filter in the same load gets those events without asking; a value
+  still being read, or an identical request in flight, is joined. A refused
+  read fails every caller waiting on it and is forgotten. Make one per load:
+  it never sees a change made after its read.
+- `resolveFolderContents` no longer asks for SPEC's change kind in a 500-limit
+  filter beside the per-file change filters: those already return its 500
+  newest, and the relay sends an event once per filter it matches, so it was a
+  second copy of every recent change. An app's own change kind is still asked.
+- Measured as the agent on production: the tree read 70.7 MB in 39 requests,
+  70.1 MB of it changes of which 23.4 MB distinct; with this, 23.9 MB in 31,
+  and `listFolders` and every Folder's contents (archived included) the same
+  JSON byte for byte.
+
 ## 0.66.0 — 2026-10-26
 
 **Manifests: nothing changes.** `listFolderRecords(query)` lists every Folder
