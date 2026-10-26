@@ -195,8 +195,9 @@ export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
   const mark = unusedCharacter(text)
   if (!mark) return parseInlineMarks(text)
   const urls: string[] = []
-  const masked = text.replace(LINK_ON_WORDS, (whole, link: string | undefined, url: string | undefined) => {
-    if (!link || !url) return whole
+  const masked = text.replace(LINK_ON_WORDS, (whole, link: string | undefined, url: string | undefined, at: number) => {
+    // `![alt](url)` is a picture's syntax, which a description's text does not read: it stays as written.
+    if (!link || !url || text[at - 1] === '!') return whole
     urls.push(url)
     return `${link.slice(0, link.length - url.length - 1)}${mark})`
   })
@@ -232,7 +233,7 @@ export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
 }
 
 /** A private-use character `text` does not hold, or undefined in text that holds them all. */
-function unusedCharacter(text: string): string | undefined {
+export function unusedCharacter(text: string): string | undefined {
   for (let code = 0xe000; code <= 0xf8ff; code++) {
     const ch = String.fromCharCode(code)
     if (!text.includes(ch)) return ch

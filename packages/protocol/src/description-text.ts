@@ -15,7 +15,7 @@
  */
 import { type Block, type BlockDocument, inlineTextOf, newBlockId } from './blocks.js'
 import { blockDocumentToMarkerText, markerTextToBlockDocument } from './bridge-content.js'
-import { fenceCloses } from './content.js'
+import { fenceCloses, unusedCharacter } from './content.js'
 
 const DESCRIPTION = { description: true }
 
@@ -99,10 +99,8 @@ export function descriptionTextToBlockDocument(text: string, previous?: BlockDoc
  * holds every one of them, one followed by a counter.
  */
 function placeholderFor(text: string): string {
-  for (let code = 0xe000; code <= 0xf8ff; code++) {
-    const mark = String.fromCharCode(code)
-    if (!text.includes(mark)) return mark
-  }
+  const mark = unusedCharacter(text)
+  if (mark) return mark
   let n = 0
   while (text.includes(`${n}x`)) n++
   return `${n}x`

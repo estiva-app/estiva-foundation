@@ -190,7 +190,7 @@ describe('a link on words in a description’s text (§13.1, §13.3)', () => {
   })
 
   it('leaves as text a link in code, a scheme §13.1 refuses, and words in brackets with no url', () => {
-    for (const text of ['`[a](https://x.example)`', '[a](javascript:alert(1))', '[a](ftp://x.example)', '[a] (https://x.example)']) {
+    for (const text of ['`[a](https://x.example)`', '[a](javascript:alert(1))', '[a](ftp://x.example)', '[a] (https://x.example)', 'A picture: ![a](https://x.example/a.png)']) {
       const all = runs(descriptionTextToBlockDocument(text).content[0])
       assert.equal(all.map((r) => r.text).join(''), text.replace(/`/g, ''), text)
       assert.ok(!JSON.stringify(all).includes('"link"'), text)
@@ -203,10 +203,16 @@ describe('a link on words in a description’s text (§13.1, §13.3)', () => {
       '- [x] [done](https://x.example/d)\n  - [nested](https://x.example/n)',
       '[https://x.example/u](https://x.example/u)',
     ]) {
+      assert.match(JSON.stringify(descriptionTextToBlockDocument(text)), /"type":"link"/, text)
       assert.equal(printed(text), text)
     }
     const table = '| A |\n| --- |\n| [cell](https://x.example/c) |'
     assert.equal(tableToDescriptionText(descriptionTextToBlockDocument(table).content[0]), table)
+  })
+
+  it('prints a link whose words hold a bracket as its words, never as text that would read back as other words', () => {
+    const bracketed: BlockDocument = { type: 'doc', content: [{ type: 'paragraph', id: 'p', content: [{ type: 'text', text: 'see [draft] notes', marks: [{ type: 'link', attrs: { href: 'https://x.example/d' } }] }] } as Block] }
+    assert.equal(blockDocumentToMarkerText(bracketed, { description: true }), 'see [draft] notes')
   })
 
   it('prints a card’s link as its url alone, as before: §13.3 gives a card no spelling', () => {
