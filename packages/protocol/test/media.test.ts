@@ -649,13 +649,12 @@ describe('the files a block document places (SPEC §13.3)', () => {
     assert.deepEqual(attachmentsInDocument('{not json', 'estiva-blocks-1'), [])
   })
 
-  // A JSON attrs may hold a length as a number, as it holds `size`.
-  it('keeps a document file\'s blurhash, length and fallback in the tag it derives', () => {
-    const attrs = { ...file, blurhash: 'LEHV6nWB2yk8', duration: 3.5, bitrate: '800000', fallback: ['https://cdn.example/a.png'] }
+  // A description is re-saved under whoever saves it; attrs the editor never writes must not become their signed tag.
+  it('derives no tag field from an attrs the editor does not write', () => {
+    const attrs = { ...file, fallback: 'https://tracker.example/a.png', image: `/media/${'d'.repeat(64)}.jpg`, duration: 'x' }
     const doc = JSON.stringify({ type: 'doc', content: [{ type: 'attachment', id: 'a1', attrs }] })
     assert.deepEqual(imetaTag(attachmentsInDocument(doc, 'estiva-blocks-1')[0]), [
-      'imeta', `url /media/${SHA}.png`, 'm image/png', `x ${SHA}`, 'size 42', 'blurhash LEHV6nWB2yk8', 'alt a chart',
-      'fallback https://cdn.example/a.png', 'duration 3.5', 'bitrate 800000',
+      'imeta', `url /media/${SHA}.png`, 'm image/png', `x ${SHA}`, 'size 42', 'alt a chart',
     ])
   })
 

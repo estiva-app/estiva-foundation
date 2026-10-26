@@ -14,9 +14,11 @@ the one key the relay lets repeat. Since an edit carries
 every file the message keeps (§6.8, amended 2026-10-26), each writer re-lists
 a message's files by reading them and writing them back, and before this an
 edit of a file Buzz desktop sent (it writes `blurhash` and `duration`) dropped
-both. `imetaFromAttrs`, and so `attachmentsInDocument`, keep the same five
-from an `attachment` block's `attrs`, taking a number for `duration` and
-`bitrate` as it takes one for `size`. An `Imeta` read off a file without them
+both. `imetaFromAttrs`, and so `attachmentsInDocument`, stay at the eight the
+editor's `attachment` block holds: a description is re-saved under whoever
+saves it, so an attr the editor never wrote must not become their signed tag.
+`fallback` is unchecked by the relay (any scheme, any host): carry it, never
+draw it as a link or a source without checking. An `Imeta` read off a file without them
 has the shape it had, with no new keys. A tag the app writes itself is
 byte-for-byte unchanged; the order is `url m x size dim blurhash alt thumb
 fallback duration bitrate image filename`. No message on production carried

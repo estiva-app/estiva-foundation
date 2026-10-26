@@ -133,7 +133,12 @@ export interface Imeta {
   bitrate?: string
   /** A poster frame's `/media/` path; the relay checks that blob too. */
   image?: string
-  /** Other places the same blob can be fetched from — the one key that may repeat (NIP-94). */
+  /**
+   * Other places the same blob can be fetched from — the one key that may
+   * repeat (NIP-94). **Unchecked**: the relay accepts any scheme and host here,
+   * so it is carried through on a re-list and never used as an `href` or `src`
+   * without an https and host check.
+   */
   fallback?: string[]
 }
 
@@ -222,15 +227,16 @@ export function imetaFromAttrs(attrs: Record<string, unknown> | undefined): Imet
   if (typeof x !== 'string' || !x) return undefined
   if (typeof size !== 'number' || !Number.isFinite(size)) return undefined
   const meta: Imeta = { url, m, x, size }
-  for (const key of OPTIONAL_FIELDS) {
-    if (key === 'fallback') continue
+  /*
+    Only the fields the editor's attachment block holds. A description is
+    re-saved under whoever saves it, and attrs nothing in the editor wrote
+    (a hand-published `fallback` URL, an `image` not stored) would become
+    their signed tag, or a save the relay refuses.
+  */
+  for (const key of ['dim', 'thumb', 'alt', 'filename'] as const) {
     const value = attrs[key]
-    // A JSON attrs may hold a number where the tag holds its digits, as `size` does.
     if (typeof value === 'string' && value) meta[key] = value
-    else if ((key === 'duration' || key === 'bitrate') && typeof value === 'number' && Number.isFinite(value)) meta[key] = String(value)
   }
-  const fallback = [attrs.fallback].flat().filter((v): v is string => typeof v === 'string' && v !== '')
-  if (fallback.length) meta.fallback = fallback
   return meta
 }
 
