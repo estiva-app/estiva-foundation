@@ -119,7 +119,9 @@ describe('the imeta tag', () => {
   it('writes back every field the relay allows, so re-listing a file keeps it whole', () => {
     const tag = [
       'imeta', `url /media/${SHA}.mp4`, 'm video/mp4', `x ${SHA}`, 'size 9000', 'dim 640x360',
-      'blurhash LEHV6nWB2yk8', 'alt a clip', `thumb /media/${SHA}.thumb.jpg`, 'fallback https://cdn.example/clip.mp4',
+      'blurhash LEHV6nWB2yk8', 'alt a clip', `thumb /media/${SHA}.thumb.jpg`,
+      // The one key the relay lets repeat.
+      'fallback https://cdn.example/clip.mp4', 'fallback https://mirror.example/clip.mp4',
       'duration 12.5', 'bitrate 800000', `image /media/${'d'.repeat(64)}.jpg`, 'filename clip.mp4',
     ]
     assert.deepEqual(imetaTag(imetaOf({ tags: [tag] })[0]), tag)
@@ -647,10 +649,13 @@ describe('the files a block document places (SPEC §13.3)', () => {
     assert.deepEqual(attachmentsInDocument('{not json', 'estiva-blocks-1'), [])
   })
 
-  it('keeps a document file\'s blurhash and duration in the tag it derives', () => {
-    const doc = JSON.stringify({ type: 'doc', content: [{ type: 'attachment', id: 'a1', attrs: { ...file, blurhash: 'LEHV6nWB2yk8', duration: '3' } }] })
+  // A JSON attrs may hold a length as a number, as it holds `size`.
+  it('keeps a document file\'s blurhash, length and fallback in the tag it derives', () => {
+    const attrs = { ...file, blurhash: 'LEHV6nWB2yk8', duration: 3.5, bitrate: '800000', fallback: ['https://cdn.example/a.png'] }
+    const doc = JSON.stringify({ type: 'doc', content: [{ type: 'attachment', id: 'a1', attrs }] })
     assert.deepEqual(imetaTag(attachmentsInDocument(doc, 'estiva-blocks-1')[0]), [
-      'imeta', `url /media/${SHA}.png`, 'm image/png', `x ${SHA}`, 'size 42', 'blurhash LEHV6nWB2yk8', 'alt a chart', 'duration 3',
+      'imeta', `url /media/${SHA}.png`, 'm image/png', `x ${SHA}`, 'size 42', 'blurhash LEHV6nWB2yk8', 'alt a chart',
+      'fallback https://cdn.example/a.png', 'duration 3.5', 'bitrate 800000',
     ])
   })
 

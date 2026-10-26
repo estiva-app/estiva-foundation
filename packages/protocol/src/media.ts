@@ -121,7 +121,7 @@ export interface Imeta {
   /*
     The rest of the relay's allowlist. No Estiva app writes these yet, but
     Buzz desktop does (blurhash, duration), and an edit re-lists a message's
-    files (SPEC §13.3): a field this did not read back is one an edit would
+    files (SPEC §6.8): a field this did not read back is one an edit would
     silently strip. Kept as the strings the tag held, so a re-listed file is
     the file it was.
   */
@@ -133,12 +133,14 @@ export interface Imeta {
   bitrate?: string
   /** A poster frame's `/media/` path; the relay checks that blob too. */
   image?: string
-  /** Another place the same blob can be fetched from. */
-  fallback?: string
+  /** Other places the same blob can be fetched from — the one key that may repeat (NIP-94). */
+  fallback?: string[]
 }
 
 /** The optional {@link Imeta} fields, in the order {@link imetaTag} writes them. */
 const OPTIONAL_FIELDS = ['dim', 'blurhash', 'alt', 'thumb', 'fallback', 'duration', 'bitrate', 'image', 'filename'] as const
+/** The ones {@link imetaOf} adds only when present, so a file without them reads as it always did. */
+const ADDED_FIELDS = ['blurhash', 'duration', 'bitrate', 'image'] as const
 
 /**
  * One `imeta` tag — NIP-92, as Buzz validates it.
@@ -147,7 +149,7 @@ const OPTIONAL_FIELDS = ['dim', 'blurhash', 'alt', 'thumb', 'fallback', 'duratio
  * inside a single tag, not one tag per field.
  *
  * The relay's allowlist is `url m x size dim blurhash alt thumb fallback
- * duration bitrate image filename`, each at most once, and it checks two things
+ * duration bitrate image filename`, each at most once but `fallback`, and it checks two things
  * this cannot: that `url` is a **local** `/media/` path, and — through
  * `verify_imeta_blobs` — that **the blob is already stored**. So the upload has
  * to land before the message that names it, and a dangling reference cannot be
@@ -155,7 +157,9 @@ const OPTIONAL_FIELDS = ['dim', 'blurhash', 'alt', 'thumb', 'fallback', 'duratio
  */
 export function imetaTag(meta: Imeta): NostrTag {
   const parts = [`url ${meta.url}`, `m ${meta.m}`, `x ${meta.x}`, `size ${meta.size}`]
-  for (const key of OPTIONAL_FIELDS) if (meta[key]) parts.push(`${key} ${meta[key]}`)
+  for (const key of OPTIONAL_FIELDS) {
+    for (const value of [meta[key]].flat()) if (value) parts.push(`${key} ${value}`)
+  }
   return ['imeta', ...parts]
 }
 
@@ -172,17 +176,20 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
   for (const tag of event.tags) {
     if (tag[0] !== 'imeta') continue
     const fields: Record<string, string> = {}
+    const fallback: string[] = []
     for (const part of tag.slice(1)) {
       const space = part.indexOf(' ')
       if (space <= 0) continue
       const key = part.slice(0, space)
-      // First wins: the relay rejects duplicates, so a second is a malformed
-      // event rather than an override.
-      if (!(key in fields)) fields[key] = part.slice(space + 1)
+      const value = part.slice(space + 1)
+      // First wins: the relay rejects duplicates of every key but `fallback`,
+      // so a second is a malformed event rather than an override.
+      if (key === 'fallback') fallback.push(value)
+      else if (!(key in fields)) fields[key] = value
     }
     const size = Number.parseInt(fields.size ?? '', 10)
     if (!fields.url || !fields.m || !fields.x || !Number.isFinite(size)) continue
-    out.push({
+    const meta: Imeta = {
       url: fields.url,
       m: fields.m,
       x: fields.x,
@@ -191,13 +198,10 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
       alt: fields.alt,
       thumb: fields.thumb,
       filename: fields.filename,
-      // Only when present, so an Imeta read off an ordinary file keeps the shape it always had.
-      ...(fields.blurhash ? { blurhash: fields.blurhash } : {}),
-      ...(fields.duration ? { duration: fields.duration } : {}),
-      ...(fields.bitrate ? { bitrate: fields.bitrate } : {}),
-      ...(fields.image ? { image: fields.image } : {}),
-      ...(fields.fallback ? { fallback: fields.fallback } : {}),
-    })
+    }
+    for (const key of ADDED_FIELDS) if (fields[key]) meta[key] = fields[key]
+    if (fallback.length) meta.fallback = fallback
+    out.push(meta)
   }
   return out
 }
@@ -219,9 +223,14 @@ export function imetaFromAttrs(attrs: Record<string, unknown> | undefined): Imet
   if (typeof size !== 'number' || !Number.isFinite(size)) return undefined
   const meta: Imeta = { url, m, x, size }
   for (const key of OPTIONAL_FIELDS) {
+    if (key === 'fallback') continue
     const value = attrs[key]
+    // A JSON attrs may hold a number where the tag holds its digits, as `size` does.
     if (typeof value === 'string' && value) meta[key] = value
+    else if ((key === 'duration' || key === 'bitrate') && typeof value === 'number' && Number.isFinite(value)) meta[key] = String(value)
   }
+  const fallback = [attrs.fallback].flat().filter((v): v is string => typeof v === 'string' && v !== '')
+  if (fallback.length) meta.fallback = fallback
   return meta
 }
 

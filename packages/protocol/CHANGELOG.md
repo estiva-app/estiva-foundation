@@ -8,13 +8,15 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 
 **Wire behaviour: a re-listed file keeps every field; nothing else changes**
 (SPEC §6.8, §13.3; 8de3e4b4). `imetaOf` now reads, and `imetaTag` writes back,
-the rest of the relay's `imeta` allowlist: `blurhash`, `duration`, `bitrate`,
-`image` and `fallback`, as the strings the tag held. Since an edit carries
+the rest of the relay's `imeta` allowlist: `blurhash`, `duration`, `bitrate`
+and `image`, as the strings the tag held, and `fallback` as a list, since it is
+the one key the relay lets repeat. Since an edit carries
 every file the message keeps (§6.8, amended 2026-10-26), each writer re-lists
 a message's files by reading them and writing them back, and before this an
 edit of a file Buzz desktop sent (it writes `blurhash` and `duration`) dropped
 both. `imetaFromAttrs`, and so `attachmentsInDocument`, keep the same five
-from an `attachment` block's `attrs`. An `Imeta` read off a file without them
+from an `attachment` block's `attrs`, taking a number for `duration` and
+`bitrate` as it takes one for `size`. An `Imeta` read off a file without them
 has the shape it had, with no new keys. A tag the app writes itself is
 byte-for-byte unchanged; the order is `url m x size dim blurhash alt thumb
 fallback duration bitrate image filename`. No message on production carried
