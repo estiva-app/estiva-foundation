@@ -4154,8 +4154,14 @@ async function walkArchivedAbove(
  * every change naming its addresses — titles, statuses, moves — not only the
  * archives, and a relay answers newest first, so a small group keeps the
  * archive change inside the page.
+ *
+ * Ten, because the relay slows sharply past about twelve values in one `#a`
+ * on `kind:1851`, while many small filters in one request do not. Measured as
+ * the agent on production 2026-10-26, 49 Folder channels with no change among
+ * them: one filter of 49 took 15–20 s, of 25 3.5 s, of 12 0.3 s, and 49
+ * filters of one 0.3–0.5 s (43e9a775). `kind:1111` stayed under a second at 49.
  */
-const ARCHIVE_READ_GROUP = 25
+const ARCHIVE_READ_GROUP = 10
 
 /**
  * Identifiers per root filter in {@link resolveParents}. A root read answers
@@ -6320,7 +6326,24 @@ export interface FolderContents extends FolderSummary {
  * goes; a sidebar built by walking something else would inherit exactly that.
  * This asks for folders by kind.
  */
-export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
+export async function listFolders(
+  query: QueryFn,
+  options: {
+    /**
+     * `false` leaves out what only a record's channel needs — a Ship project's
+     * conversation placed under the Folder that lists the project, and archived
+     * with it — and so reads only the Folders' own archives. Those channels have
+     * no state, so {@link topLevelFolders} is the same either way.
+     *
+     * For a reader that walks Folders for their files and draws no dots (the
+     * agent's Peek topics): placing them reads every change to every file a
+     * Folder lists, and a text save is a whole document. Measured as the agent
+     * on production 2026-10-26: 149 s and 22.8 MB with them, where the Folders'
+     * records alone were 0.9 s.
+     */
+    recordChannels?: boolean
+  } = {},
+): Promise<FolderSummary[]> {
   const { events, byId } = await readFolderRecords(query)
   /*
     A folder listed in another folder's state is a file there. Read off the
@@ -6342,7 +6365,17 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
       listedIn.set(identifier, containers)
     }
   }
-  const { recordsOf, archives, rootOf } = await placeRecordChannels(events, byId, listedIn, query)
+  const { recordsOf, archives, rootOf } =
+    options.recordChannels === false
+      ? {
+          recordsOf: new Map<string, string[]>(),
+          archives: await readArchiveChanges(
+            [...byId.values()].flatMap((folder) => (folder.channel ? [folder.channel] : [])),
+            query,
+          ),
+          rootOf: new Map<string, SignedEvent>(),
+        }
+      : await placeRecordChannels(events, byId, listedIn, query)
   for (const [id, containers] of listedIn) {
     const folder = byId.get(id)
     if (folder) folder.listedIn = containers
@@ -6802,6 +6835,17 @@ export async function resolveFolderContents(
      * card ({@link ArchiveReadOptions.folderFiles}).
      */
     listedOnly?: boolean
+    /**
+     * Only the listed files of these kinds: the rest are neither read nor
+     * returned, as if no app drew them. Every rule above still holds for the
+     * ones kept — a parent of another kind is read as a link reads it.
+     *
+     * For a reader that draws only some kinds (the agent's Peek topics: bare
+     * files and nested Folders), since every listed file is read with its whole
+     * change history: Estiva HQ cost 75 s and 11 MB on 2026-10-26, nearly all
+     * of it project descriptions.
+     */
+    kinds?: readonly number[]
   } = {},
 ): Promise<FolderContents> {
   // 1. The folder itself. Both kinds in one trip: the state is the model and
@@ -6833,7 +6877,7 @@ export async function resolveFolderContents(
       : {}),
   }
 
-  const { addresses, placed } = state
+  const { addresses: everyAddress, placed } = state
     ? // §5.2: one tag type lists every file, topics included, with no special
       //  case. The order is the folder's, so it is preserved rather than sorted.
       {
@@ -6843,6 +6887,10 @@ export async function resolveFolderContents(
     : options.listedOnly
       ? { addresses: [], placed: new Map<string, SignedEvent[]>() }
       : await addressesByContainment(folder, query)
+  const { kinds } = options
+  const addresses = kinds
+    ? everyAddress.filter((address) => kinds.includes(addressPointerOf(address)?.kind ?? NaN))
+    : everyAddress
 
   if (addresses.length === 0) {
     // Nothing listed, so no change query to ride on: the Folder's own archive

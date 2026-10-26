@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.68.0 — 2026-10-26
+
+**Manifests: nothing changes.** A reader pays only for the kinds it draws
+(43e9a775).
+
+- `listFolders(query, { recordChannels: false })` reads the Folders' own
+  archives and nothing a Folder lists: a record's channel is neither placed
+  under the Folder listing its record nor archived with it. Such a channel has
+  no state, so `topLevelFolders` gives the same Folders.
+- `resolveFolderContents(…, { kinds })` reads and returns only the listed files
+  of those kinds. The archive cascade, `hiddenWhen` and superseded placements
+  hold as before; a parent of a kind left out is read as a link reads it.
+- Measured as the agent listing Peek topics on production: `listFolders` took
+  149 s and 22.8 MB of changes, Estiva HQ's contents 75 s and 11 MB, nearly all
+  of it project and document descriptions the topic list never drew.
+
 ## 0.67.0 — 2026-10-26
 
 **Manifests: nothing changes.** A load reads each change once (APP-2).

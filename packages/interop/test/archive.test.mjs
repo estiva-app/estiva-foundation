@@ -495,6 +495,58 @@ describe('a Folder is archived the way any file is', () => {
     assert.equal(folders.find((f) => f.id === HIVE_TALK).archived.with, addressOf(hive))
     assert.equal(folders.find((f) => f.id === APIARY).archived, undefined, 'a topic’s `h` is its team, which it does not own')
   })
+
+  test('without record channels, a listing reads no listed file, and its top-level Folders are the same (43e9a775)', async () => {
+    const asked = []
+    const spy = (events) => async (filters) => {
+      asked.push(...filters)
+      return relay(events)(filters)
+    }
+    const files = [hiveTalk, hive, topic, apiaryAdmins]
+    const archivedApiary = [apiary, orchard, ...files, stateOf(APIARY, 'Apiary', both), stateOf(ORCHARD, 'Orchard', []), archive(addressOf(apiary))]
+    const light = await listFolders(spy(archivedApiary), { recordChannels: false })
+    const named = (filter) => Object.entries(filter).filter(([key]) => key.startsWith('#')).flatMap(([, values]) => values)
+    assert.ok(
+      asked.every((filter) => !named(filter).some((value) => [addressOf(hive), addressOf(topic), 'north', 'queens'].includes(value))),
+      'nothing a Folder lists is asked for',
+    )
+    assert.equal(light.find((f) => f.id === APIARY).archived?.by, HELPER, 'a Folder’s own archive is still read')
+    const full = await listFolders(relay(archivedApiary))
+    assert.deepEqual(topLevelFolders(light).map((f) => f.id), topLevelFolders(full).map((f) => f.id))
+    assert.deepEqual(topLevelFolders(light).map((f) => f.id), [ORCHARD])
+
+    const nested = await listFolders(relay([apiary, orchard, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [addressOf(apiary)])]), {
+      recordChannels: false,
+    })
+    assert.deepEqual(nested.find((f) => f.id === APIARY).listedIn, [ORCHARD], 'a nested Folder is still not top-level')
+  })
+})
+
+describe('a Folder read for some kinds only (43e9a775)', () => {
+  const topic = event({ kind: KIND_BARE_FILE, tags: [['d', 'queens'], ['title', 'Queens'], ['h', APIARY]] })
+  const listing = stateOf(APIARY, 'Apiary', [addressOf(hive), addressOf(spring), addressOf(topic)])
+  const base = [hiveLog, apiary, hiveTalk, hive, spring, topic, listing]
+
+  test('the other kinds are neither asked for nor returned', async () => {
+    const asked = []
+    const query = async (filters) => {
+      asked.push(...filters)
+      return relay(base)(filters)
+    }
+    const contents = await resolveFolderContents(APIARY, query, noPeople, undefined, { kinds: [KIND_BARE_FILE] })
+    assert.deepEqual(titles(contents), ['Queens'])
+    const named = asked.flatMap((filter) => Object.entries(filter).filter(([key]) => key.startsWith('#')).flatMap(([, values]) => values))
+    assert.ok(!named.includes(addressOf(hive)) && !named.includes('north'), 'the hive is not read')
+    assert.ok(!named.includes(addressOf(spring)), 'nor its inspection')
+  })
+
+  test('a parent of a kind left out still hides its child when archived', async () => {
+    const live = await resolveFolderContents(APIARY, relay(base), noPeople, undefined, { kinds: [INSPECTION] })
+    assert.deepEqual(titles(live), ['Spring inspection'])
+    const archived = archive(addressOf(hive), { folder: HIVE_TALK })
+    const hidden = await resolveFolderContents(APIARY, relay([...base, archived]), noPeople, undefined, { kinds: [INSPECTION] })
+    assert.deepEqual(titles(hidden), [])
+  })
 })
 
 describe('archiveImpact counts what would be hidden', () => {
