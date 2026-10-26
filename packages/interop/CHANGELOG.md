@@ -18,6 +18,11 @@ manifests already published still mean what they meant.
 - `resolveFolderContents(…, { kinds })` reads and returns only the listed files
   of those kinds. The archive cascade, `hiddenWhen` and superseded placements
   hold as before; a parent of a kind left out is read as a link reads it.
+- Every app's change reads (archives, and since 0.67 all of SPEC's change kind)
+  name at most 10 addresses per filter, down from 25, more filters in the same
+  request. The relay slows sharply past about twelve values in one `#a` on
+  `kind:1851`: 49 Folder channels with no change among them took 15–20 s in one
+  filter, 3.5 s at 25, 0.3 s at 12, and 0.3 s as 49 filters of one.
 - Measured as the agent listing Peek topics on production: `listFolders` took
   149 s and 22.8 MB of changes, Estiva HQ's contents 75 s and 11 MB, nearly all
   of it project and document descriptions the topic list never drew.
