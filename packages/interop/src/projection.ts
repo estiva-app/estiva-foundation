@@ -6321,6 +6321,63 @@ export interface FolderContents extends FolderSummary {
  * This asks for folders by kind.
  */
 export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
+  const { events, byId } = await readFolderRecords(query)
+  /*
+    A folder listed in another folder's state is a file there. Read off the
+    states already in hand: an `a` naming a `kind:39000` is a channel, and its
+    `d` is the folder's id. Both `KIND_CHANNEL` and the state's own `d` are
+    uuids, so no address has to be built to compare them.
+  */
+  const listedIn = new Map<string, string[]>()
+  for (const event of events) {
+    if (event.kind !== KIND_FOLDER_STATE) continue
+    const container = tagValue(event, 'd')
+    if (!container) continue
+    for (const tag of event.tags) {
+      if (tag[0] !== 'a' || !tag[1]) continue
+      const [kind, , identifier] = tag[1].split(':')
+      if (Number(kind) !== KIND_CHANNEL || !identifier || identifier === container) continue
+      const containers: string[] = listedIn.get(identifier) ?? []
+      if (!containers.includes(container)) containers.push(container)
+      listedIn.set(identifier, containers)
+    }
+  }
+  const { recordsOf, archives, rootOf } = await placeRecordChannels(events, byId, listedIn, query)
+  for (const [id, containers] of listedIn) {
+    const folder = byId.get(id)
+    if (folder) folder.listedIn = containers
+  }
+  markArchivedFolders(byId, recordsOf, archives, rootOf)
+  return [...byId.values()].sort(byFolderName)
+}
+
+/** A Folder as its own records say it: a {@link FolderSummary} before anything is read about the files Folders list. */
+export type FolderRecord = Omit<FolderSummary, 'listedIn' | 'archived'>
+
+/**
+ * Every Folder this identity can see, from the Folders' own records only — one
+ * request: the name, privacy and admins (§3.2), the state's list and the
+ * channel's address, as {@link listFolders} gives them.
+ *
+ * **Without `listedIn` and `archived`**, which are what {@link listFolders}
+ * pays for: placing a record's channel and reading archives fetches every
+ * change to every file a Folder lists, and a text save is a whole document.
+ * Measured as the agent on production 2026-10-26: 22.9 MB and 112 s, of which
+ * the `archived` changes it looks for were 44 KB; the Folders' records were
+ * 66 KB in 0.7 s. So this is for finding a Folder by its name or id (the
+ * agent's `file create`), never for a sidebar, which must leave archived and
+ * nested Folders out. The full cost goes when a file's text moves out of its
+ * change log (record a-files-type-is-a-shared-meaning-any-app-extends).
+ */
+export async function listFolderRecords(query: QueryFn): Promise<FolderRecord[]> {
+  const { byId } = await readFolderRecords(query)
+  return [...byId.values()].sort(byFolderName)
+}
+
+const byFolderName = (a: FolderRecord, b: FolderRecord) => (a.name ?? a.id).localeCompare(b.name ?? b.id)
+
+/** The Folders' own records, read in one request, as summaries without `listedIn` and `archived`. */
+async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[]; byId: Map<string, FolderSummary> }> {
   const events = await query([
     { kinds: [KIND_FOLDER_STATE], limit: 500 },
     { kinds: [KIND_CHANNEL], limit: 500 },
@@ -6355,33 +6412,7 @@ export async function listFolders(query: QueryFn): Promise<FolderSummary[]> {
     if (admins.length) folder.admins = admins
     folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: id, relays: [] })
   }
-  /*
-    A folder listed in another folder's state is a file there. Read off the
-    states already in hand: an `a` naming a `kind:39000` is a channel, and its
-    `d` is the folder's id. Both `KIND_CHANNEL` and the state's own `d` are
-    uuids, so no address has to be built to compare them.
-  */
-  const listedIn = new Map<string, string[]>()
-  for (const event of events) {
-    if (event.kind !== KIND_FOLDER_STATE) continue
-    const container = tagValue(event, 'd')
-    if (!container) continue
-    for (const tag of event.tags) {
-      if (tag[0] !== 'a' || !tag[1]) continue
-      const [kind, , identifier] = tag[1].split(':')
-      if (Number(kind) !== KIND_CHANNEL || !identifier || identifier === container) continue
-      const containers: string[] = listedIn.get(identifier) ?? []
-      if (!containers.includes(container)) containers.push(container)
-      listedIn.set(identifier, containers)
-    }
-  }
-  const { recordsOf, archives, rootOf } = await placeRecordChannels(events, byId, listedIn, query)
-  for (const [id, containers] of listedIn) {
-    const folder = byId.get(id)
-    if (folder) folder.listedIn = containers
-  }
-  markArchivedFolders(byId, recordsOf, archives, rootOf)
-  return [...byId.values()].sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id))
+  return { events, byId }
 }
 
 /**

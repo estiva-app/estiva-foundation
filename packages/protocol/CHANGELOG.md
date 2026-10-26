@@ -4,6 +4,27 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.43.0 — 2026-10-26
+
+**Wire behaviour: a description written from text changes; a message
+unchanged** (SPEC §13.1, §13.3 "A description as text"; e0e3e907). A
+description's text reads `[words](url)` as §13.1 has it: the words marked
+`{"type":"link","attrs":{"href":url}}`, the shape the editors save a link on
+words in (46 of 46 such runs on production, 2026-10-26). Before, it stayed
+plain text, so a page the agent wrote, or a markdown paste into an editor that
+spells blocks (a paste of paragraphs only does not reach this reader), stored
+the brackets and the URL as words. The URL grammar is the one readers already
+find links by (`http`, `https`, `mailto`, no space or `)`); a link in `code`,
+any other scheme, a picture's `![alt](url)` and a URL with an unclosed `(`
+stay text, and a `*` or `__` in a URL is never a marker. Words in backticks
+inside a link are the link without `code`, which §13.1 lets combine with no
+other mark. `blockDocumentToMarkerText(…, { description: true })` and
+`tableToDescriptionText` print such a link back as `[words](url)`, so the text
+reads back to the same document; a card's link (`embed`) still prints as its
+URL, which §13.3 gives no spelling. `markersToInlineNodes` and
+`inlineNodesToMarkers` take `{ links: true }` for this; without it, as in a
+message, `[words](url)` stays text for its readers to find.
+
 ## 0.42.0 — 2026-10-20
 
 **Wire behaviour: reading changed; writing unchanged** (SPEC §13.2; PEE-57;

@@ -6,6 +6,16 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.66.0 — 2026-10-26
+
+**Manifests: nothing changes.** `listFolderRecords(query)` lists every Folder
+from the Folders' own records, in one request (e0e3e907): what `listFolders`
+gives, less `listedIn` and `archived` (`FolderRecord`). Those two are what
+`listFolders` pays for: it reads every change to every file a Folder lists,
+and a text save is a whole document — measured as the agent on production,
+22.9 MB and 112 s, against 66 KB and 0.7 s for the records. For finding a
+Folder by name or id (the agent's `file create`), never for a sidebar.
+
 ## 0.65.1 — 2026-10-23
 
 **A Folder's listing reads a parent in another Folder as a link does**

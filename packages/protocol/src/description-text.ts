@@ -15,7 +15,7 @@
  */
 import { type Block, type BlockDocument, inlineTextOf, newBlockId } from './blocks.js'
 import { blockDocumentToMarkerText, markerTextToBlockDocument } from './bridge-content.js'
-import { fenceCloses } from './content.js'
+import { fenceCloses, unusedCharacter } from './content.js'
 
 const DESCRIPTION = { description: true }
 
@@ -99,10 +99,8 @@ export function descriptionTextToBlockDocument(text: string, previous?: BlockDoc
  * holds every one of them, one followed by a counter.
  */
 function placeholderFor(text: string): string {
-  for (let code = 0xe000; code <= 0xf8ff; code++) {
-    const mark = String.fromCharCode(code)
-    if (!text.includes(mark)) return mark
-  }
+  const mark = unusedCharacter(text)
+  if (mark) return mark
   let n = 0
   while (text.includes(`${n}x`)) n++
   return `${n}x`
@@ -145,7 +143,7 @@ function tableBlock(rows: string[][], old: Block | undefined): Block {
 
 /** A cell as an editor saves one: one paragraph, the text's inline marks kept. */
 function tableCell(type: string, text: string, old: Block | undefined): Block {
-  const [parsed, ...more] = text ? markerTextToBlockDocument(text).content : []
+  const [parsed, ...more] = text ? markerTextToBlockDocument(text, undefined, DESCRIPTION).content : []
   const paragraph: Block =
     parsed?.type === 'paragraph' && !more.length ? parsed : text ? { type: 'paragraph', id: '', content: [{ type: 'text', text }] } : { type: 'paragraph', id: '' }
   const oldParagraph = old ? childBlocks(old)?.[0] : undefined

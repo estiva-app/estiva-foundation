@@ -75,6 +75,11 @@ const keyOf = (block: Block) => `${block.type}\u0000${textOf(block)}`
  * is a plain item whose text is `[ ] brackets`. An indented item
  * (`attrs.indent`), two spaces a level and read relative to the item above, is
  * §13.2's own, so a message keeps it too (Miky, 2026-10-20).
+ *
+ * And a link on words, `[words](url)`, is read as the words marked
+ * `{"type":"link","attrs":{"href":url}}` and printed back so (e0e3e907): an
+ * editor saves a link on words that way, while a message keeps the text and
+ * its readers find the link in it.
  */
 export interface DescriptionTextOptions {
   description?: boolean
@@ -106,13 +111,13 @@ function itemFromText(item: string, description: boolean, depth = 0): Block {
   const task = description ? TASK.exec(item) : null
   if (!task) {
     const text = description ? unescaped(item, ESCAPED_TASK) : item
-    return { type: 'listItem', id: '', ...(indent ? { attrs: indent } : {}), content: markersToInlineNodes(text) }
+    return { type: 'listItem', id: '', ...(indent ? { attrs: indent } : {}), content: markersToInlineNodes(text, { links: description }) }
   }
   return {
     type: 'listItem',
     id: '',
     attrs: { ...indent, checked: task[1] !== ' ' },
-    content: markersToInlineNodes(item.slice(task[0].length)),
+    content: markersToInlineNodes(item.slice(task[0].length), { links: description }),
   }
 }
 
@@ -120,19 +125,19 @@ function quoteFromLines(lines: string[], description: boolean): Block {
   const alert = description && lines.length > 0 ? ALERT.exec(lines[0].trim()) : null
   if (!alert) {
     const text = description && lines.length > 0 ? [unescaped(lines[0], ESCAPED_ALERT), ...lines.slice(1)] : lines
-    return { type: 'blockquote', id: '', content: markersToInlineNodes(text.join('\n')) }
+    return { type: 'blockquote', id: '', content: markersToInlineNodes(text.join('\n'), { links: description }) }
   }
   /*
     The kind is kept as written, lowercased: a tone this version does not know
     is still a callout, and the next save must not turn it into a `note`.
   */
-  return { type: 'blockquote', id: '', attrs: { tone: alert[1].toLowerCase() }, content: markersToInlineNodes(lines.slice(1).join('\n')) }
+  return { type: 'blockquote', id: '', attrs: { tone: alert[1].toLowerCase() }, content: markersToInlineNodes(lines.slice(1).join('\n'), { links: description }) }
 }
 
 function blockFromSegment(seg: BodySegment, description: boolean): Block {
   switch (seg.type) {
     case 'heading':
-      return { type: 'heading', id: '', attrs: { level: seg.level }, content: markersToInlineNodes(seg.text) }
+      return { type: 'heading', id: '', attrs: { level: seg.level }, content: markersToInlineNodes(seg.text, { links: description }) }
     case 'bullet':
       return {
         type: 'bulletList',
@@ -157,7 +162,7 @@ function blockFromSegment(seg: BodySegment, description: boolean): Block {
         content: [{ type: 'text' as const, text: seg.lines.join('\n') }],
       }
     case 'text':
-      return { type: 'paragraph', id: '', content: markersToInlineNodes(seg.lines.join('\n')) }
+      return { type: 'paragraph', id: '', content: markersToInlineNodes(seg.lines.join('\n'), { links: description }) }
   }
 }
 
@@ -225,8 +230,8 @@ export function markerTextToBlockDocument(text: string, previous?: BlockDocument
   return { type: 'doc', content: fresh.map((block, i) => fill(block, ids[i] || undefined)) }
 }
 
-const itemText = (item: Block): string =>
-  isInlineRun(item.content) ? inlineNodesToMarkers(item.content) : ''
+const itemText = (item: Block, description: boolean): string =>
+  isInlineRun(item.content) ? inlineNodesToMarkers(item.content, { links: description }) : ''
 
 /**
  * A block document back as marker text, for an editor that edits text.
@@ -245,7 +250,7 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
   const description = options.description === true
   const lines: string[] = []
   for (const block of doc.content) {
-    const inline = isInlineRun(block.content) ? inlineNodesToMarkers(block.content) : ''
+    const inline = isInlineRun(block.content) ? inlineNodesToMarkers(block.content, { links: description }) : ''
     switch (block.type) {
       case 'heading': {
         const level = block.attrs?.level === 2 ? 2 : 1
@@ -271,7 +276,7 @@ export function blockDocumentToMarkerText(doc: BlockDocument, options: Descripti
           const marker = block.type === 'bulletList' ? '-' : `${next[depth]++}.`
           const checked = description ? listItemChecked(item) : undefined
           const task = checked === undefined ? '' : checked ? '[x] ' : '[ ] '
-          const text = description && checked === undefined ? escaped(itemText(item), ESCAPED_TASK) : itemText(item)
+          const text = description && checked === undefined ? escaped(itemText(item, description), ESCAPED_TASK) : itemText(item, description)
           lines.push(`${'  '.repeat(depth)}${marker} ${task}${text}`)
         })
         break
