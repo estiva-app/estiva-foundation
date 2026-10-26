@@ -6898,6 +6898,10 @@ export async function resolveFolderContents(
     ]),
   ]
   const nestedFolderIds = pointers.filter(({ pointer }) => pointer.kind === KIND_CHANNEL).map(({ pointer }) => pointer.identifier)
+  // SPEC's change kind is read whole by the archive filters below, so a filter
+  // for it here only repeated them: its 500 newest are among each group's page
+  // (APP-2, where it was most of a second copy of every change).
+  const otherChangeKinds = changeKinds.filter((kind) => kind !== ARCHIVE_RULE.changeKind)
   const events = await query([
     ...[...groups.values()].map(({ pointer, addresses: group }) => ({
       kinds: [pointer.kind],
@@ -6905,11 +6909,9 @@ export async function resolveFolderContents(
       '#d': group.map((a) => referenceToPointer(a).identifier),
       limit: group.length,
     })),
-    { kinds: changeKinds, '#a': addresses, limit: 500 },
-    // The archives again, in groups small enough that a busy Folder's other
-    // changes cannot push them off the page — the filter above holds 500
-    // changes for every file together, and one Folder has already had 688.
-    // Same request.
+    ...(otherChangeKinds.length ? [{ kinds: otherChangeKinds, '#a': addresses, limit: 500 }] : []),
+    // Every change, in groups small enough that a busy Folder's changes cannot
+    // push one file's off the page — one Folder has already had 688. Same request.
     ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
     // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
     ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
