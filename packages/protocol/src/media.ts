@@ -118,7 +118,34 @@ export interface Imeta {
   thumb?: string
   /** The name a person gave it. Display only — storage is content-addressed. */
   filename?: string
+  /*
+    The rest of the relay's allowlist. No Estiva app writes these yet, but
+    Buzz desktop does (blurhash, duration), and an edit re-lists a message's
+    files (SPEC §6.8): a field this did not read back is one an edit would
+    silently strip. Kept as the strings the tag held, so a re-listed file is
+    the file it was.
+  */
+  /** NIP-94 blurhash placeholder. */
+  blurhash?: string
+  /** Seconds, for audio and video. The relay checks it against the stored blob. */
+  duration?: string
+  /** Bits per second, for audio and video. */
+  bitrate?: string
+  /** A poster frame's `/media/` path; the relay checks that blob too. */
+  image?: string
+  /**
+   * Other places the same blob can be fetched from — the one key that may
+   * repeat (NIP-94). **Unchecked**: the relay accepts any scheme and host here,
+   * so it is carried through on a re-list and never used as an `href` or `src`
+   * without an https and host check.
+   */
+  fallback?: string[]
 }
+
+/** The optional {@link Imeta} fields, in the order {@link imetaTag} writes them. */
+const OPTIONAL_FIELDS = ['dim', 'blurhash', 'alt', 'thumb', 'fallback', 'duration', 'bitrate', 'image', 'filename'] as const
+/** The ones {@link imetaOf} adds only when present, so a file without them reads as it always did. */
+const ADDED_FIELDS = ['blurhash', 'duration', 'bitrate', 'image'] as const
 
 /**
  * One `imeta` tag — NIP-92, as Buzz validates it.
@@ -127,7 +154,7 @@ export interface Imeta {
  * inside a single tag, not one tag per field.
  *
  * The relay's allowlist is `url m x size dim blurhash alt thumb fallback
- * duration bitrate image filename`, each at most once, and it checks two things
+ * duration bitrate image filename`, each at most once but `fallback`, and it checks two things
  * this cannot: that `url` is a **local** `/media/` path, and — through
  * `verify_imeta_blobs` — that **the blob is already stored**. So the upload has
  * to land before the message that names it, and a dangling reference cannot be
@@ -135,10 +162,9 @@ export interface Imeta {
  */
 export function imetaTag(meta: Imeta): NostrTag {
   const parts = [`url ${meta.url}`, `m ${meta.m}`, `x ${meta.x}`, `size ${meta.size}`]
-  if (meta.dim) parts.push(`dim ${meta.dim}`)
-  if (meta.alt) parts.push(`alt ${meta.alt}`)
-  if (meta.thumb) parts.push(`thumb ${meta.thumb}`)
-  if (meta.filename) parts.push(`filename ${meta.filename}`)
+  for (const key of OPTIONAL_FIELDS) {
+    for (const value of [meta[key]].flat()) if (value) parts.push(`${key} ${value}`)
+  }
   return ['imeta', ...parts]
 }
 
@@ -155,17 +181,20 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
   for (const tag of event.tags) {
     if (tag[0] !== 'imeta') continue
     const fields: Record<string, string> = {}
+    const fallback: string[] = []
     for (const part of tag.slice(1)) {
       const space = part.indexOf(' ')
       if (space <= 0) continue
       const key = part.slice(0, space)
-      // First wins: the relay rejects duplicates, so a second is a malformed
-      // event rather than an override.
-      if (!(key in fields)) fields[key] = part.slice(space + 1)
+      const value = part.slice(space + 1)
+      // First wins: the relay rejects duplicates of every key but `fallback`,
+      // so a second is a malformed event rather than an override.
+      if (key === 'fallback') fallback.push(value)
+      else if (!(key in fields)) fields[key] = value
     }
     const size = Number.parseInt(fields.size ?? '', 10)
     if (!fields.url || !fields.m || !fields.x || !Number.isFinite(size)) continue
-    out.push({
+    const meta: Imeta = {
       url: fields.url,
       m: fields.m,
       x: fields.x,
@@ -174,7 +203,10 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
       alt: fields.alt,
       thumb: fields.thumb,
       filename: fields.filename,
-    })
+    }
+    for (const key of ADDED_FIELDS) if (fields[key]) meta[key] = fields[key]
+    if (fallback.length) meta.fallback = fallback
+    out.push(meta)
   }
   return out
 }
@@ -189,21 +221,23 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
  */
 export function imetaFromAttrs(attrs: Record<string, unknown> | undefined): Imeta | undefined {
   if (!attrs) return undefined
-  const { url, m, x, size, dim, thumb, alt, filename } = attrs
+  const { url, m, x, size } = attrs
   if (typeof url !== 'string' || !url) return undefined
   if (typeof m !== 'string' || !m) return undefined
   if (typeof x !== 'string' || !x) return undefined
   if (typeof size !== 'number' || !Number.isFinite(size)) return undefined
-  return {
-    url,
-    m,
-    x,
-    size,
-    ...(typeof dim === 'string' && dim ? { dim } : {}),
-    ...(typeof thumb === 'string' && thumb ? { thumb } : {}),
-    ...(typeof alt === 'string' && alt ? { alt } : {}),
-    ...(typeof filename === 'string' && filename ? { filename } : {}),
+  const meta: Imeta = { url, m, x, size }
+  /*
+    Only the fields the editor's attachment block holds. A description is
+    re-saved under whoever saves it, and attrs nothing in the editor wrote
+    (a hand-published `fallback` URL, an `image` not stored) would become
+    their signed tag, or a save the relay refuses.
+  */
+  for (const key of ['dim', 'thumb', 'alt', 'filename'] as const) {
+    const value = attrs[key]
+    if (typeof value === 'string' && value) meta[key] = value
   }
+  return meta
 }
 
 /**

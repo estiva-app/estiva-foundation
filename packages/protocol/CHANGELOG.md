@@ -4,6 +4,26 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.44.0 — 2026-10-26
+
+**Wire behaviour: a re-listed file keeps every field; nothing else changes**
+(SPEC §6.8, §13.3; 8de3e4b4). `imetaOf` now reads, and `imetaTag` writes back,
+the rest of the relay's `imeta` allowlist: `blurhash`, `duration`, `bitrate`
+and `image`, as the strings the tag held, and `fallback` as a list, since it is
+the one key the relay lets repeat. Since an edit carries
+every file the message keeps (§6.8, amended 2026-10-26), each writer re-lists
+a message's files by reading them and writing them back, and before this an
+edit of a file Buzz desktop sent (it writes `blurhash` and `duration`) dropped
+both. `imetaFromAttrs`, and so `attachmentsInDocument`, stay at the eight the
+editor's `attachment` block holds: a description is re-saved under whoever
+saves it, so an attr the editor never wrote must not become their signed tag.
+`fallback` is unchecked by the relay (any scheme, any host): carry it, never
+draw it as a link or a source without checking. An `Imeta` read off a file without them
+has the shape it had, with no new keys. A tag the app writes itself is
+byte-for-byte unchanged; the order is `url m x size dim blurhash alt thumb
+fallback duration bitrate image filename`. No message on production carried
+any of the five on 2026-10-26 (0 of 153).
+
 ## 0.43.0 — 2026-10-26
 
 **Wire behaviour: a description written from text changes; a message
