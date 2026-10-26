@@ -23,6 +23,8 @@ manifests already published still mean what they meant.
   request. The relay slows sharply past about twelve values in one `#a` on
   `kind:1851`: 49 Folder channels with no change among them took 15–20 s in one
   filter, 3.5 s at 25, 0.3 s at 12, and 0.3 s as 49 filters of one.
+  `resolveFolderContents` now splits its read at the relay's 128 filters a
+  request, which a Folder of about 1,200 files would otherwise pass.
 - Measured as the agent listing Peek topics on production: `listFolders` took
   149 s and 22.8 MB of changes, Estiva HQ's contents 75 s and 11 MB, nearly all
   of it project and document descriptions the topic list never drew.

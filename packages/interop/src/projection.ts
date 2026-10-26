@@ -6950,7 +6950,9 @@ export async function resolveFolderContents(
   // for it here only repeated them: its 500 newest are among each group's page
   // (APP-2, where it was most of a second copy of every change).
   const otherChangeKinds = changeKinds.filter((kind) => kind !== ARCHIVE_RULE.changeKind)
-  const events = await query([
+  // Chunked: at ten addresses per archive filter, a Folder of about 1,200 files
+  // would pass the relay's filters-per-request ceiling in one request.
+  const events = await queryChunked([
     ...[...groups.values()].map(({ pointer, addresses: group }) => ({
       kinds: [pointer.kind],
       authors: [pointer.pubkey],
@@ -6963,7 +6965,7 @@ export async function resolveFolderContents(
     ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
     // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
     ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
-  ])
+  ], query)
   const ownArchive = folderArchiveOf(events, summary)
   if (ownArchive) summary.archived = ownArchive
 

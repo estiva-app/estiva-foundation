@@ -547,6 +547,18 @@ describe('a Folder read for some kinds only (43e9a775)', () => {
     const hidden = await resolveFolderContents(APIARY, relay([...base, archived]), noPeople, undefined, { kinds: [INSPECTION] })
     assert.deepEqual(titles(hidden), [])
   })
+
+  test('a Folder of 1,300 files resolves on a relay that refuses more than 128 filters a request', async () => {
+    const topics = Array.from({ length: 1300 }, (_, n) =>
+      event({ kind: KIND_BARE_FILE, tags: [['d', `t${n}`], ['title', `Topic ${n}`], ['h', APIARY]] }),
+    )
+    const strict = (events) => async (filters) => {
+      if (filters.length > 128) throw new Error('too many explicit channels')
+      return relay(events)(filters)
+    }
+    const contents = await resolveFolderContents(APIARY, strict([apiary, ...topics, stateOf(APIARY, 'Apiary', topics.map(addressOf))]), noPeople)
+    assert.equal(contents.files.length, 1300)
+  })
 })
 
 describe('archiveImpact counts what would be hidden', () => {
