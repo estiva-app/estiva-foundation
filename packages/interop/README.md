@@ -595,6 +595,25 @@ kept across loads, a live list would stop seeing changes. Measured as the agent
 on production, 26 Oct: 70.7 MB and 39 requests became 23.9 MB and 31, the same
 listing byte for byte.
 
+### Only the kinds you draw
+
+A reader that draws some kinds and no dots, such as a list of one app's files,
+need not pay for the rest:
+
+```ts
+const folders = await listFolders(query, { recordChannels: false }) // the Folders' own archives only
+const topics = await resolveFolderContents(id, query, undefined, cache, { kinds: [KIND_BARE_FILE, KIND_CHANNEL_METADATA] })
+```
+
+`recordChannels: false` leaves out a record's channel (a Ship project's
+conversation) placed under the Folder that lists the record and archived with
+it; such a channel has no state, so `topLevelFolders` is the same. `kinds`
+reads and returns only the listed files of those kinds, every rule still
+applied — a parent of another kind is read as a link reads it. Measured as the
+agent listing Peek topics on production, 26 Oct: 149 s and 22.8 MB for the
+listing, 75 s and 11 MB for one Folder, almost all of it changes to files the
+list never drew.
+
 ### A file you cannot see is absent, not greyed out
 
 **The count is the disclosure.** A folder that renders three rows and two
