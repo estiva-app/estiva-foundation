@@ -118,7 +118,27 @@ export interface Imeta {
   thumb?: string
   /** The name a person gave it. Display only — storage is content-addressed. */
   filename?: string
+  /*
+    The rest of the relay's allowlist. No Estiva app writes these yet, but
+    Buzz desktop does (blurhash, duration), and an edit re-lists a message's
+    files (SPEC §13.3): a field this did not read back is one an edit would
+    silently strip. Kept as the strings the tag held, so a re-listed file is
+    the file it was.
+  */
+  /** NIP-94 blurhash placeholder. */
+  blurhash?: string
+  /** Seconds, for audio and video. The relay checks it against the stored blob. */
+  duration?: string
+  /** Bits per second, for audio and video. */
+  bitrate?: string
+  /** A poster frame's `/media/` path; the relay checks that blob too. */
+  image?: string
+  /** Another place the same blob can be fetched from. */
+  fallback?: string
 }
+
+/** The optional {@link Imeta} fields, in the order {@link imetaTag} writes them. */
+const OPTIONAL_FIELDS = ['dim', 'blurhash', 'alt', 'thumb', 'fallback', 'duration', 'bitrate', 'image', 'filename'] as const
 
 /**
  * One `imeta` tag — NIP-92, as Buzz validates it.
@@ -135,10 +155,7 @@ export interface Imeta {
  */
 export function imetaTag(meta: Imeta): NostrTag {
   const parts = [`url ${meta.url}`, `m ${meta.m}`, `x ${meta.x}`, `size ${meta.size}`]
-  if (meta.dim) parts.push(`dim ${meta.dim}`)
-  if (meta.alt) parts.push(`alt ${meta.alt}`)
-  if (meta.thumb) parts.push(`thumb ${meta.thumb}`)
-  if (meta.filename) parts.push(`filename ${meta.filename}`)
+  for (const key of OPTIONAL_FIELDS) if (meta[key]) parts.push(`${key} ${meta[key]}`)
   return ['imeta', ...parts]
 }
 
@@ -174,6 +191,12 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
       alt: fields.alt,
       thumb: fields.thumb,
       filename: fields.filename,
+      // Only when present, so an Imeta read off an ordinary file keeps the shape it always had.
+      ...(fields.blurhash ? { blurhash: fields.blurhash } : {}),
+      ...(fields.duration ? { duration: fields.duration } : {}),
+      ...(fields.bitrate ? { bitrate: fields.bitrate } : {}),
+      ...(fields.image ? { image: fields.image } : {}),
+      ...(fields.fallback ? { fallback: fields.fallback } : {}),
     })
   }
   return out
@@ -189,21 +212,17 @@ export function imetaOf(event: { tags: NostrTag[] }): Imeta[] {
  */
 export function imetaFromAttrs(attrs: Record<string, unknown> | undefined): Imeta | undefined {
   if (!attrs) return undefined
-  const { url, m, x, size, dim, thumb, alt, filename } = attrs
+  const { url, m, x, size } = attrs
   if (typeof url !== 'string' || !url) return undefined
   if (typeof m !== 'string' || !m) return undefined
   if (typeof x !== 'string' || !x) return undefined
   if (typeof size !== 'number' || !Number.isFinite(size)) return undefined
-  return {
-    url,
-    m,
-    x,
-    size,
-    ...(typeof dim === 'string' && dim ? { dim } : {}),
-    ...(typeof thumb === 'string' && thumb ? { thumb } : {}),
-    ...(typeof alt === 'string' && alt ? { alt } : {}),
-    ...(typeof filename === 'string' && filename ? { filename } : {}),
+  const meta: Imeta = { url, m, x, size }
+  for (const key of OPTIONAL_FIELDS) {
+    const value = attrs[key]
+    if (typeof value === 'string' && value) meta[key] = value
   }
+  return meta
 }
 
 /**
