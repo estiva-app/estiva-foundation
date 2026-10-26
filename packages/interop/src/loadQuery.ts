@@ -53,26 +53,36 @@ function byTagOf(filter: Filter): ByTag | null {
   return { kind: kinds[0], tag: tagKeys[0].slice(1), values, limit }
 }
 
-const names = (event: SignedEvent, tag: string, value: string) => event.tags.some((t) => t[0] === tag && t[1] === value)
-
 /**
- * Every event naming `value`, if this answer holds them all: fewer came back
- * for the filter than its page. The count is of everything in the pooled answer
- * the filter matches, which can only overcount — so a page is never taken as
- * complete when it was full.
+ * The events naming each of the filter's values, if this answer holds them
+ * all: fewer came back for the filter than its page. The count is of
+ * everything in the pooled answer the filter matches, which can only
+ * overcount — so a page is never taken as complete when it was full.
  */
-function completeFor(shape: ByTag, value: string, answer: SignedEvent[]): SignedEvent[] | null {
-  const page = Math.min(shape.limit, RELAY_PAGE_CEILING)
-  const matched = answer.filter((e) => e.kind === shape.kind && shape.values.some((v) => names(e, shape.tag, v)))
-  if (matched.length >= page) return null
-  return matched.filter((e) => names(e, shape.tag, value))
+function completeByValue(shape: ByTag, answer: SignedEvent[]): Map<string, SignedEvent[]> | null {
+  const byValue = new Map<string, SignedEvent[]>(shape.values.map((value) => [value, []]))
+  let matched = 0
+  for (const event of answer) {
+    if (event.kind !== shape.kind) continue
+    let hit = false
+    for (const [name, value] of event.tags) {
+      const held = name === shape.tag ? byValue.get(value) : undefined
+      if (held && !held.includes(event)) {
+        held.push(event)
+        hit = true
+      }
+    }
+    if (hit) matched++
+  }
+  return matched >= Math.min(shape.limit, RELAY_PAGE_CEILING) ? null : byValue
 }
 
 /** A query for one load: see the module's note. Make one per load and drop it after. */
 export function createLoadQuery(query: QueryFn): QueryFn {
   // Per `<kind>:<tag>:<value>`: the events naming it, `null` while unknown
-  // (the page was full), or the read still in flight.
-  const known = new Map<string, Promise<SignedEvent[] | null>>()
+  // (the page was full), or the read still in flight — and the limit it was
+  // read with, since only an ask with as large a limit would have got them all.
+  const known = new Map<string, { limit: number; events: Promise<SignedEvent[] | null> }>()
   const flights = new Map<string, Promise<SignedEvent[]>>()
 
   const ask = (filters: Filter[]): Promise<SignedEvent[]> => {
@@ -86,7 +96,7 @@ export function createLoadQuery(query: QueryFn): QueryFn {
 
   return async (filters) => {
     const send: Filter[] = []
-    const asked: { shape: ByTag; key: string; value: string }[] = []
+    const asked: ByTag[] = []
     const joined: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
     for (const filter of filters) {
       const shape = byTagOf(filter)
@@ -97,24 +107,30 @@ export function createLoadQuery(query: QueryFn): QueryFn {
       const fresh: string[] = []
       for (const value of new Set(shape.values)) {
         const entry = known.get(`${shape.kind}:${shape.tag}:${value}`)
-        if (entry) joined.push({ shape, value, entry })
+        // A smaller page than the read had might not have held them all: the relay is asked, as it was.
+        if (entry && entry.limit <= shape.limit) joined.push({ shape, value, entry: entry.events })
         else fresh.push(value)
       }
       if (fresh.length === 0) continue
-      const narrowed = { ...shape, values: fresh }
       send.push({ ...filter, [`#${shape.tag}`]: fresh })
-      for (const value of fresh) asked.push({ shape: narrowed, key: `${shape.kind}:${shape.tag}:${value}`, value })
+      asked.push({ ...shape, values: fresh })
     }
 
     const answer = send.length ? ask(send) : Promise.resolve([])
-    for (const { shape, key, value } of asked) {
-      const entry = answer.then((events) => completeFor(shape, value, events))
-      known.set(key, entry)
-      // Forget a refused read, and a page that came back full, so the next ask goes to the relay.
-      const forget = () => {
-        if (known.get(key) === entry) known.delete(key)
+    for (const shape of asked) {
+      const split = answer.then((events) => completeByValue(shape, events))
+      for (const value of shape.values) {
+        const key = `${shape.kind}:${shape.tag}:${value}`
+        // A larger read of the same value, in flight or done, is kept.
+        if ((known.get(key)?.limit ?? -1) > shape.limit) continue
+        const entry = { limit: shape.limit, events: split.then((byValue) => byValue?.get(value) ?? null) }
+        known.set(key, entry)
+        // Forget a refused read, and a page that came back full, so the next ask goes to the relay.
+        const forget = () => {
+          if (known.get(key) === entry) known.delete(key)
+        }
+        entry.events.then((events) => events ?? forget(), forget)
       }
-      entry.then((events) => events ?? forget(), forget)
     }
 
     const out = [...(await answer)]

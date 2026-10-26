@@ -163,6 +163,15 @@ describe('a load query answers from what it has read only when that read was com
     assert.equal(again.length, 2)
   })
 
+  test('a smaller page than the first read goes to the relay, so "the newest one" stays the newest one', async () => {
+    const relay = countingRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query(F([N], 10))
+    const newest = await query(F([N], 1))
+    assert.equal(relay.requests.length, 2)
+    assert.deepEqual(newest.map((e) => e.id), [changes[1].id])
+  })
+
   test('another load reads afresh: a change made between loads is seen', async () => {
     const events = world()
     const relay = countingRelay(events)
