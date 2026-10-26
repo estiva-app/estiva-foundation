@@ -47,6 +47,8 @@ export interface InlineMarkSpan {
    * form, never blank").
    */
   reference?: string
+  /** The URL a link on words goes to — §13.1's `link`, read only from a description's text ({@link parseInlineMarksAndLinks}). */
+  href?: string
 }
 
 /** A block-level run, parsed from line prefixes. */
@@ -166,6 +168,76 @@ function scanMarks(text: string, active: InlineMark[]): InlineMarkSpan[] {
  */
 export function parseInlineMarks(text: string): InlineMarkSpan[] {
   return scanMarks(text, []).flatMap(splitReferences)
+}
+
+/**
+ * A link on words as text spells it, `[words](url)`, or a bare URL: the
+ * alternation protocol's `embeds.ts` and the ui package's `RichText` find links
+ * by, so what reads as a link here is what a reader draws as one. The bare-URL
+ * alternative keeps it linear: it swallows a URL, so a `[` inside one starts
+ * no new match.
+ */
+const LINK_ON_WORDS = /(\[[^[\]\n]+\]\(((?:https?:\/\/|mailto:)[^\s)]+)\))|(?:https?:\/\/|mailto:)[^\s)]+/g
+
+/**
+ * One run of a description's text, marks and links on words both (SPEC §13.3
+ * "A description as text", which reads §13.2's markers, `[label](url)`
+ * included). A message keeps `[words](url)` as text: its readers find the link
+ * in the text ({@link parseInlineMarks}).
+ *
+ * Each link's URL is swapped for a mark the text does not hold before the marks
+ * are read, so a `*` or `__` in a URL is never read as a marker; the k-th mark
+ * left is the k-th URL, since reading marks only drops markers. A link inside
+ * `code` stays its text (§13.1: code is literal).
+ */
+export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
+  if (!text.includes('](')) return parseInlineMarks(text)
+  const mark = unusedCharacter(text)
+  if (!mark) return parseInlineMarks(text)
+  const urls: string[] = []
+  const masked = text.replace(LINK_ON_WORDS, (whole, link: string | undefined, url: string | undefined) => {
+    if (!link || !url) return whole
+    urls.push(url)
+    return `${link.slice(0, link.length - url.length - 1)}${mark})`
+  })
+  if (!urls.length) return parseInlineMarks(text)
+
+  // One entry per character, so a link whose words carry marks (split across spans) is found over the joined text.
+  const chars: { ch: string; span: InlineMarkSpan; url?: string }[] = []
+  let k = 0
+  for (const span of parseInlineMarks(masked)) {
+    for (const ch of span.text) chars.push(ch === mark ? { ch, span, url: urls[k++] } : { ch, span })
+  }
+  const joined = chars.map((c) => c.ch).join('')
+  const out: { text: string; span: InlineMarkSpan; href?: string }[] = []
+  const push = (text: string, span: InlineMarkSpan, href?: string) => {
+    const last = out[out.length - 1]
+    if (last && last.span === span && last.href === href) last.text += text
+    else out.push({ text, span, href })
+  }
+  let at = 0
+  const keep = (to: number) => {
+    for (; at < to; at++) push(chars[at].url ?? chars[at].ch, chars[at].span)
+  }
+  for (const m of joined.matchAll(new RegExp(`\\[([^[\\]\\n]+)\\]\\(${mark}\\)`, 'g'))) {
+    const end = m.index + m[0].length
+    if (m[1].includes(mark) || chars.slice(m.index, end).some((c) => c.span.code)) continue
+    keep(m.index)
+    const href = chars[end - 2].url
+    for (let i = m.index + 1; i <= m.index + m[1].length; i++) push(chars[i].ch, chars[i].span, href)
+    at = end
+  }
+  keep(chars.length)
+  return out.map(({ text, span, href }) => ({ ...span, text, ...(href ? { href } : {}) }))
+}
+
+/** A private-use character `text` does not hold, or undefined in text that holds them all. */
+function unusedCharacter(text: string): string | undefined {
+  for (let code = 0xe000; code <= 0xf8ff; code++) {
+    const ch = String.fromCharCode(code)
+    if (!text.includes(ch)) return ch
+  }
+  return undefined
 }
 
 /**
@@ -470,10 +542,10 @@ export type InlineMarkNode =
    */
   | { type: 'reference'; attrs: { uri: string; embed?: unknown; [key: string]: unknown } }
   /**
-   * §13.3's `link`, block documents only: a run that links to `href`. Estiva
-   * writes it on a run whose text is the URL itself, and only to carry the card
-   * its writer chose for the link (`embed`, §13.3 "A reference's card"); a URL
-   * with no card is plain text.
+   * §13.3's `link`, block documents only: a run that links to `href`. On a run
+   * whose text is the URL itself it carries the card its writer chose (`embed`,
+   * §13.3 "A reference's card"), and a URL with no card is plain text; on other
+   * words it is a link on words, `[words](url)` in a description's text.
    */
   | { type: 'link'; attrs: { href: string; embed?: unknown; [key: string]: unknown } }
 
@@ -525,13 +597,28 @@ export interface InlineTextNode {
  *  downstream — a diff, a dedupe, a cache key — would be wrong about it. */
 const MARK_ORDER: InlineMark[] = ['bold', 'italic', 'underline', 'code']
 
-/** Marker text → inline JSON nodes. */
-export function markersToInlineNodes(text: string): InlineTextNode[] {
-  return parseInlineMarks(text).map((span) => {
+/** Whether a run's links are read and spelled: in a description's text yes, in a message's no (§13.3 "A description as text"). */
+export interface InlineLinkOptions {
+  links?: boolean
+}
+
+/** Marker text → inline JSON nodes. With `{ links: true }`, `[words](url)` is the words marked `{"type":"link","attrs":{"href":url}}`. */
+export function markersToInlineNodes(text: string, options: InlineLinkOptions = {}): InlineTextNode[] {
+  return (options.links ? parseInlineMarksAndLinks(text) : parseInlineMarks(text)).map((span) => {
     const marks: InlineMarkNode[] = MARK_ORDER.filter((m) => span[m]).map((type) => ({ type }))
     if (span.reference) marks.push({ type: 'reference', attrs: { uri: span.reference } })
+    if (span.href) marks.push({ type: 'link', attrs: { href: span.href } })
     return marks.length ? { type: 'text' as const, text: span.text, marks } : { type: 'text' as const, text: span.text }
   })
+}
+
+/** The URL a link on words spells, `[words](url)`: a `link` whose only attr is an `href` text can carry. A card's link (`embed`) has no spelling. */
+function spelledHref(node: InlineTextNode): string | undefined {
+  const link = node.marks?.find((m) => m.type === 'link') as { attrs?: Record<string, unknown> } | undefined
+  const href = link?.attrs?.href
+  if (typeof href !== 'string' || Object.keys(link?.attrs ?? {}).length !== 1) return undefined
+  if (!/^(?:https?:\/\/|mailto:)[^\s)]+$/.test(href) || node.marks?.some((m) => m.type === 'code')) return undefined
+  return href
 }
 
 /**
@@ -542,11 +629,24 @@ export function markersToInlineNodes(text: string): InlineTextNode[] {
  * outside the markers by `wrapInlineMarks`, because §13.2 rule 1 would not
  * parse it back otherwise — so this round-trips the *marks on each character*
  * rather than the span boundaries. See the corpus tests.
+ *
+ * With `{ links: true }` a link on words is spelled `[words](url)` around its
+ * runs' markers, when its words can sit in brackets; any other link prints as
+ * its text, as without it.
  */
-export function inlineNodesToMarkers(nodes: readonly InlineTextNode[]): string {
-  return nodes
-    .map((node) => wrapInlineMarks(node.text, new Set((node.marks ?? []).map((m) => m.type))))
-    .join('')
+export function inlineNodesToMarkers(nodes: readonly InlineTextNode[], options: InlineLinkOptions = {}): string {
+  const wrap = (node: InlineTextNode) => wrapInlineMarks(node.text, new Set((node.marks ?? []).map((m) => m.type)))
+  if (!options.links) return nodes.map(wrap).join('')
+  let out = ''
+  for (let i = 0; i < nodes.length; ) {
+    const href = spelledHref(nodes[i])
+    let end = i + 1
+    while (href && end < nodes.length && spelledHref(nodes[end]) === href) end++
+    const words = nodes.slice(i, end)
+    out += href && /^[^[\]\n]+$/.test(inlineNodesToText(words)) ? `[${words.map(wrap).join('')}](${href})` : words.map(wrap).join('')
+    i = end
+  }
+  return out
 }
 
 /** The plain text of a run of inline nodes, marks discarded. */

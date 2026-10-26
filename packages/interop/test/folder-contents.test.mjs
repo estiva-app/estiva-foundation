@@ -13,7 +13,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveFolderContents, listFolders, topLevelFolders, KIND_FOLDER_STATE } from '../dist/index.js'
+import { resolveFolderContents, listFolders, listFolderRecords, topLevelFolders, KIND_FOLDER_STATE } from '../dist/index.js'
 
 const RINGER = 'a'.repeat(64)
 const TIDES = 'b'.repeat(64)
@@ -329,6 +329,27 @@ describe('listFolders', () => {
       assert.equal(listed.name, name, order)
       assert.equal(listed.name, (await resolveFolderContents(FOLDER, query, async () => ({}))).name, order)
     }
+  })
+})
+
+describe('listFolderRecords: a Folder by its own records, without the files’ change history (e0e3e907)', () => {
+  test('one request, no change read, and each Folder as listFolders gives it less listedIn and archived', async () => {
+    const saves = Array.from({ length: 3 }, (_, i) =>
+      event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(colony)], ['f', 'description'], ['v', `save ${i}`], ['h', FOLDER]] }),
+    )
+    const other = event({ kind: 39000, pubkey: RELAY, tags: [['d', 'aaa'], ['name', 'Another channel']] })
+    const events = [ringingManifest, channel, other, colony, ...saves, state([addressOf(colony)])]
+    const asked = []
+    const query = async (filters) => {
+      asked.push(filters)
+      return relay(events)(filters)
+    }
+    const records = await listFolderRecords(query)
+    assert.equal(asked.length, 1)
+    assert.ok(asked.flat().every((f) => !f.kinds?.includes(1851)))
+    const full = await listFolders(relay(events))
+    assert.deepEqual(records, full.map(({ listedIn: _listed, archived: _archived, ...record }) => record))
+    assert.deepEqual(records.map((f) => [f.id, f.name, f.hasState]), [['aaa', 'Another channel', false], [FOLDER, 'The estuary', true]])
   })
 })
 

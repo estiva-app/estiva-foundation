@@ -145,7 +145,7 @@ function tableBlock(rows: string[][], old: Block | undefined): Block {
 
 /** A cell as an editor saves one: one paragraph, the text's inline marks kept. */
 function tableCell(type: string, text: string, old: Block | undefined): Block {
-  const [parsed, ...more] = text ? markerTextToBlockDocument(text).content : []
+  const [parsed, ...more] = text ? markerTextToBlockDocument(text, undefined, DESCRIPTION).content : []
   const paragraph: Block =
     parsed?.type === 'paragraph' && !more.length ? parsed : text ? { type: 'paragraph', id: '', content: [{ type: 'text', text }] } : { type: 'paragraph', id: '' }
   const oldParagraph = old ? childBlocks(old)?.[0] : undefined
