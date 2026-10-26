@@ -11,11 +11,14 @@ unchanged** (SPEC §13.1, §13.3 "A description as text"; e0e3e907). A
 description's text reads `[words](url)` as §13.1 has it: the words marked
 `{"type":"link","attrs":{"href":url}}`, the shape the editors save a link on
 words in (46 of 46 such runs on production, 2026-10-26). Before, it stayed
-plain text, so a page the agent wrote, or a markdown paste into an editor,
-stored the brackets and the URL as words. The URL grammar is the one readers
-already find links by (`http`, `https`, `mailto`, no space or `)`); a link in
-`code` and any other scheme stay text, and a `*` or `__` in a URL is never a
-marker. `blockDocumentToMarkerText(…, { description: true })` and
+plain text, so a page the agent wrote, or a markdown paste into an editor that
+spells blocks (a paste of paragraphs only does not reach this reader), stored
+the brackets and the URL as words. The URL grammar is the one readers already
+find links by (`http`, `https`, `mailto`, no space or `)`); a link in `code`,
+any other scheme, a picture's `![alt](url)` and a URL with an unclosed `(`
+stay text, and a `*` or `__` in a URL is never a marker. Words in backticks
+inside a link are the link without `code`, which §13.1 lets combine with no
+other mark. `blockDocumentToMarkerText(…, { description: true })` and
 `tableToDescriptionText` print such a link back as `[words](url)`, so the text
 reads back to the same document; a card's link (`embed`) still prints as its
 URL, which §13.3 gives no spelling. `markersToInlineNodes` and

@@ -196,8 +196,9 @@ export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
   if (!mark) return parseInlineMarks(text)
   const urls: string[] = []
   const masked = text.replace(LINK_ON_WORDS, (whole, link: string | undefined, url: string | undefined, at: number) => {
-    // `![alt](url)` is a picture's syntax, which a description's text does not read: it stays as written.
-    if (!link || !url || text[at - 1] === '!') return whole
+    // `![alt](url)` is a picture's syntax, which a description's text does not read: it stays as written. So does a
+    // URL with an unclosed `(` (`…/Foo_(bar)`): the grammar ends a URL at `)`, and the cut one would be a wrong link.
+    if (!link || !url || text[at - 1] === '!' || url.split('(').length > url.split(')').length) return whole
     urls.push(url)
     return `${link.slice(0, link.length - url.length - 1)}${mark})`
   })
@@ -225,14 +226,25 @@ export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
   }
   for (const m of joined.matchAll(new RegExp(`\\[([^[\\]\\n]+)\\]\\(${mark}\\)`, 'g'))) {
     const end = m.index + m[0].length
-    if (m[1].includes(mark) || chars.slice(m.index, end).some((c) => c.span.code)) continue
+    // A link written inside `code` is its text (§13.1); `code` inside a link's words is not, and is dropped below.
+    if (m[1].includes(mark) || chars[m.index].span.code || chars[end - 2].span.code) continue
     keep(m.index)
     const href = chars[end - 2].url
     for (let i = m.index + 1; i <= m.index + m[1].length; i++) push(chars[i].ch, chars[i].span, href)
     at = end
   }
   keep(chars.length)
-  return out.map(({ text, span, href }) => ({ ...span, text, ...(href ? { href } : {}) }))
+  // §13.1: `code` combines with no other mark, so a link's words in backticks are the link, as an editor holds them.
+  const spans = out.map(({ text, span: { code, ...span }, href }): InlineMarkSpan => (href ? { ...span, text, href } : { ...span, ...(code ? { code } : {}), text }))
+  // A link's words that were split only by a dropped `code` are one run again.
+  return spans.reduce<InlineMarkSpan[]>((merged, span) => {
+    const last = merged[merged.length - 1]
+    const { text: _a, ...lastMarks } = last ?? { text: '' }
+    const { text: _b, ...marks } = span
+    if (last?.href && JSON.stringify(lastMarks) === JSON.stringify(marks)) last.text += span.text
+    else merged.push(span)
+    return merged
+  }, [])
 }
 
 /** A private-use character `text` does not hold, or undefined in text that holds them all. */

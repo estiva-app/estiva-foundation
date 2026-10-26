@@ -183,6 +183,22 @@ describe('a link on words in a description’s text (§13.1, §13.3)', () => {
     assert.deepEqual(runs(url), [{ type: 'text', text: 'odd', marks: [link('https://x.example/*b*/__c__')] }])
   })
 
+  it('reads a link on words in backticks as the link, since code combines with no other mark', () => {
+    const doc = descriptionTextToBlockDocument('See [`estiva-agent` repo](https://github.com/estiva-app/estiva-agent).')
+    assert.deepEqual(runs(doc.content[0]), [
+      { type: 'text', text: 'See ' },
+      { type: 'text', text: 'estiva-agent repo', marks: [link('https://github.com/estiva-app/estiva-agent')] },
+      { type: 'text', text: '.' },
+    ])
+  })
+
+  it('leaves a link whose url holds an unclosed `(` as text, never a link to a cut url', () => {
+    const text = '[Foo](https://en.wikipedia.org/wiki/Foo_(bar)) is cited'
+    const all = runs(descriptionTextToBlockDocument(text).content[0])
+    assert.equal(all.map((r) => r.text).join(''), text)
+    assert.ok(!JSON.stringify(all).includes('"link"'))
+  })
+
   it('puts each link on its own words when an emoji comes before it', () => {
     const doc = descriptionTextToBlockDocument('😀😀 [Pay invoice](https://good.example) and [b](https://other.example) done')
     assert.deepEqual(runs(doc.content[0]), [
