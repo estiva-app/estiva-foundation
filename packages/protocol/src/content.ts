@@ -203,11 +203,14 @@ export function parseInlineMarksAndLinks(text: string): InlineMarkSpan[] {
   })
   if (!urls.length) return parseInlineMarks(text)
 
-  // One entry per character, so a link whose words carry marks (split across spans) is found over the joined text.
+  // One entry per UTF-16 unit, as the match offsets below count, so a link whose words carry marks (split across spans) is found over the joined text.
   const chars: { ch: string; span: InlineMarkSpan; url?: string }[] = []
   let k = 0
   for (const span of parseInlineMarks(masked)) {
-    for (const ch of span.text) chars.push(ch === mark ? { ch, span, url: urls[k++] } : { ch, span })
+    for (let i = 0; i < span.text.length; i++) {
+      const ch = span.text[i]
+      chars.push(ch === mark ? { ch, span, url: urls[k++] } : { ch, span })
+    }
   }
   const joined = chars.map((c) => c.ch).join('')
   const out: { text: string; span: InlineMarkSpan; href?: string }[] = []

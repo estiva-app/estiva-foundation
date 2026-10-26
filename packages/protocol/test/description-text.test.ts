@@ -183,6 +183,17 @@ describe('a link on words in a description’s text (§13.1, §13.3)', () => {
     assert.deepEqual(runs(url), [{ type: 'text', text: 'odd', marks: [link('https://x.example/*b*/__c__')] }])
   })
 
+  it('puts each link on its own words when an emoji comes before it', () => {
+    const doc = descriptionTextToBlockDocument('😀😀 [Pay invoice](https://good.example) and [b](https://other.example) done')
+    assert.deepEqual(runs(doc.content[0]), [
+      { type: 'text', text: '😀😀 ' },
+      { type: 'text', text: 'Pay invoice', marks: [link('https://good.example')] },
+      { type: 'text', text: ' and ' },
+      { type: 'text', text: 'b', marks: [link('https://other.example')] },
+      { type: 'text', text: ' done' },
+    ])
+  })
+
   it('reads links in a heading, a checklist item, a callout and a table cell', () => {
     const doc = descriptionTextToBlockDocument('# [H](https://x.example/h)\n\n- [ ] [task](https://x.example/t)\n\n> [!NOTE]\n> [note](https://x.example/n)\n\n| A |\n| --- |\n| [cell](https://x.example/c) |')
     const hrefs = JSON.stringify(doc).match(/"href":"[^"]+"/g)
