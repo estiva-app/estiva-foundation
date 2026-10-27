@@ -250,6 +250,17 @@ describe('opening a file’s Mentioned in asks the relay about a capped number o
     assert.deepEqual(third.map((m) => m.event.id), [comment.id])
   })
 
+  test('the newest comments’ links are asked first: an older comment’s link waits for a later read', async () => {
+    const older = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], `look: ${URL1}`, 1000)
+    const newer = Array.from({ length: 8 }, (_, i) => event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], linksOf(500 + i * 8, 8), 2000 + i))
+    const relay = relayOf([...issues, older, ...newer])
+    const { links } = counted(relay)
+    await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.equal(links.answered(URL1), false)
+    await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.equal(links.known(URL1), ISSUE1)
+  })
+
   test('a comment whose link to the file is among its first links still lists, confirmed, beside a comment holding 300 links', async () => {
     const spam = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], linksOf(0, 300), 3000)
     const comment = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], `${linksOf(1000, 3)} and ${URL1}`, 2000)
