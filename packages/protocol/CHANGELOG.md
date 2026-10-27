@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.45.0 — 2026-10-27
+
+**Wire behaviour: nothing changes** (PEEKM-7). `linksOnWordsOf(text)` reads
+each link on words in one marker text, `[words](https://…)`, with where it
+starts and ends, its words and its URL, by the same alternation `urlRunsIn`
+and `valuesIn` read. conversation's composer used to repeat that pattern; it
+now takes this one, so a box and a reader cannot disagree on which bracket
+starts a link.
+
 ## 0.44.0 — 2026-10-26
 
 **Wire behaviour: a re-listed file keeps every field; nothing else changes**

@@ -6,6 +6,39 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.69.0 — 2026-10-27
+
+**Wire behaviour: a comment built from a manifest carries the `a`, `q` and
+`part` tags its caller hands it; an edit says what the message links now**
+(PEEKM-7; SPEC §6.8, §13.1; record *an-edit-says-what-the-message-links-now*).
+
+- `linkReader({ query, manifests? })`: what an app link names (§7.7), once for
+  every app. Peek, Ship, Leaf and the agent each kept a copy; now each passes
+  its relay read. `ask`, `known` (a `LinkResolver`), `knownBlock`, `answered`,
+  `changed`/`version` for drawing again as answers land, `opener` (https only,
+  on a host an app declares, for every app; was Leaf's rule), and `tagsFor`,
+  which asks, waits at most 5 s, and returns the tags `linkTagsOf` gives. One
+  author for a `d` as before, and now only addressable kinds are asked (the
+  agent's rule): a manifest pointing a path at `kind:1` names nothing. A
+  manifest read that failed or came back empty is asked again.
+- `linkTagsOf(blocks, own, resolve, blockOf?)`: an `a` per address and a `q`
+  per message the body names, by `nostr:` reference or app link, none in code,
+  `[A](B)` naming B only; never the comment's own file nor the message it
+  answers; one `part` per file on a send, at most conversation's `MAX_PARTS`
+  as the box shows, none on an edit.
+- `buildActionEvent({ …, linkTags })`: a `comment` appends them after its
+  people, so the agent's comments list under Mentioned in as the apps' do.
+  Without `linkTags` the event is byte for byte as before.
+- `readMentionedIn(query, address, { links })` and the pure `mentionedInOf`:
+  a file's Mentioned in, read from comments, messages **and edits** pointing at
+  it (`mentionedInFilter`), each edit standing for its message and each message
+  confirmed against its latest words. A message the reader cannot read lists
+  nothing; an edit by anyone but the author is not read; a row whose link could
+  not be asked about stays while its latest version points at the file.
+- `within(work, ms)`: wait for `work`, at most `ms`, never rejecting — the
+  bound `tagsFor` and `readMentionedIn` wait by, for an app's own asks.
+- Needs conversation 0.20 and protocol 0.44.
+
 ## 0.68.0 — 2026-10-26
 
 **Manifests: nothing changes.** A reader pays only for the kinds it draws
