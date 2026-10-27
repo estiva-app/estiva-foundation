@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.69.1 — 2026-10-27
+
+**Manifest: nothing.** A security fix in reading Mentioned in (PEEKM-7's
+review); no manifest declaration or tag changes meaning.
+
+- `readMentionedIn` asks about at most `MAX_MENTIONED_IN_LINKS_ASKED` (64)
+  links a read, newest messages first; one left over stays unanswered, so a
+  message pointing at the file keeps its row, and a later read asks the next
+  ones. Before, it asked about every link in up to 200 candidates at once, one
+  relay query each: one comment of hundreds of app links made every viewer of
+  the file fire that many and draw 429s.
+- `mentionedInOf` and `readMentionedIn` read only a message's first
+  `MAX_LINKS_ASKED` (24) links, the ones a sender asks about before it tags. A
+  link past them names nothing and keeps no row, even one the reader already
+  knows.
+
 ## 0.69.0 — 2026-10-27
 
 **Wire behaviour: a comment built from a manifest carries the `a`, `q` and

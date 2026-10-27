@@ -164,7 +164,14 @@ export {
   type LinkReaderOptions,
   type OwnPlace,
 } from './links.js'
-export { mentionedInFilter, mentionedInOf, readMentionedIn, MENTIONED_IN_LIMIT, type MentionedIn } from './mentions.js'
+export {
+  mentionedInFilter,
+  mentionedInOf,
+  readMentionedIn,
+  MENTIONED_IN_LIMIT,
+  MAX_MENTIONED_IN_LINKS_ASKED,
+  type MentionedIn,
+} from './mentions.js'
 
 /**
  * RFC 0.5 §7's URL grammar — how an object is named in an address bar, and how
