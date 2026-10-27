@@ -212,6 +212,63 @@ describe('a file lists a comment while its latest words link it', () => {
   })
 })
 
+describe('opening a file’s Mentioned in asks the relay about a capped number of links', () => {
+  const page = (file) => [['A', file], ['K', file.split(':')[0]], ['P', OTHER], ['a', file], ['h', FOLDER]]
+  const appLink = (i) => `https://ship.estiva.app/issue/spam-00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+  const linksOf = (from, count) => Array.from({ length: count }, (_, i) => appLink(from + i)).join(' ')
+  /** A link reader over `relay` that counts the `#d` reads a link costs the viewer. */
+  const counted = (relay) => {
+    const reads = { d: 0 }
+    const links = linkReader({
+      query: (filters) => {
+        reads.d += filters.filter((f) => f['#d']).length
+        return relay.query(filters)
+      },
+    })
+    return { links, reads }
+  }
+
+  test('a comment holding 300 app links costs the viewer at most 24 link reads, and lists nothing when none of those names the file', async () => {
+    const spam = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], linksOf(0, 300))
+    const relay = relayOf([...issues, spam])
+    const { links, reads } = counted(relay)
+    const listed = await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.ok(reads.d <= 24, `asked the relay about ${reads.d} links`)
+    assert.deepEqual(listed, [])
+  })
+
+  test('twenty newer comments of eight links cost at most 64 link reads a read; an older comment linking the file keeps its row until asked', async () => {
+    const comment = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], `look: ${URL1}`, 1000)
+    const crowd = Array.from({ length: 20 }, (_, i) => event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], linksOf(i * 8, 8), 2000 + i))
+    const relay = relayOf([...issues, comment, ...crowd])
+    const { links, reads } = counted(relay)
+    const first = await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.ok(reads.d <= 64, `asked the relay about ${reads.d} links`)
+    assert.ok(first.some((m) => m.event.id === comment.id))
+    await readMentionedIn(relay.query, ISSUE1, { links })
+    const third = await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.deepEqual(third.map((m) => m.event.id), [comment.id])
+  })
+
+  test('a comment whose link to the file is among its first links still lists, confirmed, beside a comment holding 300 links', async () => {
+    const spam = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], linksOf(0, 300), 3000)
+    const comment = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], `${linksOf(1000, 3)} and ${URL1}`, 2000)
+    const relay = relayOf([...issues, spam, comment])
+    const { links } = counted(relay)
+    const listed = await readMentionedIn(relay.query, ISSUE1, { links })
+    assert.deepEqual(listed.map((m) => m.event.id), [comment.id])
+    assert.equal(links.known(URL1), ISSUE1)
+  })
+
+  test('a link past a comment’s first 24 names nothing, even one the reader already knows names the file', async () => {
+    const comment = event(1111, WRITER, [...page(PAGE), ['a', ISSUE1]], `${linksOf(2000, 30)} and ${URL1}`)
+    const relay = relayOf([...issues, comment])
+    const { links } = counted(relay)
+    await links.ask([URL1])
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE1, { links }), [])
+  })
+})
+
 describe('the agent’s comment carries the link tags it is handed', () => {
   test('a, q and part are written after the people; its own file and anything else are left out', () => {
     const shipManifest = {

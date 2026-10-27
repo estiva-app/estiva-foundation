@@ -17,7 +17,7 @@
  */
 import { anchorsOf, editsByTarget, editTargetOf, isCommentOn, KIND_COMMENT, KIND_EDIT, KIND_MESSAGE } from '@estiva-app/conversation'
 import { toRenderTree, valuesIn, type LinkResolver, type SignedEvent } from '@estiva-app/protocol'
-import { linksIn, within, type LinkReader } from './links.js'
+import { linksIn, within, MAX_LINKS_ASKED, type LinkReader } from './links.js'
 import type { QueryFn } from './projection.js'
 
 /** One message that mentions the file, as its latest words say. */
@@ -32,6 +32,23 @@ export interface MentionedIn {
 
 /** Enough for a list that is scanned, not read; the oldest pointers are what a cap drops. */
 export const MENTIONED_IN_LIMIT = 200
+
+/**
+ * How many links one Mentioned-in read asks about in all, newest messages
+ * first. Each asked link is a relay query, and {@link MENTIONED_IN_LIMIT}
+ * candidates at {@link MAX_LINKS_ASKED} each would be 4,800 of them for one
+ * panel (PEEKM-7's review). A link left over stays unanswered, so a message
+ * pointing at the file keeps its row; a later read asks the next ones.
+ */
+export const MAX_MENTIONED_IN_LINKS_ASKED = 64
+
+/**
+ * The links of a message's words that can name the file: the first
+ * {@link MAX_LINKS_ASKED}, the ones a sender asks about before it tags. A link
+ * past them earned no `a`, so it is never asked about and keeps no row: a body
+ * of hundreds of links costs a reader no more than a sender.
+ */
+const linksNaming = (tree: ReturnType<typeof toRenderTree>) => linksIn(tree).slice(0, MAX_LINKS_ASKED)
 
 /** The one filter for the candidates: every message, comment and edit pointing at the file. */
 export function mentionedInFilter(address: string, limit = MENTIONED_IN_LIMIT): Record<string, unknown> {
@@ -78,7 +95,10 @@ export function mentionedInOf(
     const body = edit?.content ?? event.content
     const tree = toRenderTree(body, 'marker')
     const pointsNow = (edit ?? event).tags.some((t) => t[0] === 'a' && t[1] === address)
-    if (!valuesIn(tree, resolveLink).includes(file) && !(pointsNow && linksIn(tree).some(unanswered))) continue
+    const first = linksNaming(tree)
+    const named = new Set(first)
+    const resolve: LinkResolver | undefined = resolveLink && ((url) => (named.has(url) ? resolveLink(url) : undefined))
+    if (!valuesIn(tree, resolve).includes(file) && !(pointsNow && first.some(unanswered))) continue
     out.push(edit ? { event, body, edit } : { event, body })
   }
   return out.sort((a, b) => b.event.created_at - a.event.created_at)
@@ -105,9 +125,10 @@ export async function readMentionedIn(
   const events = [...candidates, ...targets, ...edits]
   const links = options.links
   if (!links) return mentionedInOf(events, address, undefined, options.commentKinds, () => true)
-  // Every link in a candidate's latest words: read as if each named the file, so each candidate holding one is kept to ask.
-  const urls = [...new Set(mentionedInOf(events, address, () => address, options.commentKinds).flatMap((m) => linksIn(toRenderTree(m.body, 'marker'))))]
-  const waiting = urls.filter((url) => !links.answered(url))
+  // The links that can name the file in each candidate's latest words: read as if each named it, so each candidate holding one is kept to ask.
+  // At most MAX_MENTIONED_IN_LINKS_ASKED, newest messages first; one left over stays unanswered, so a message pointing at the file keeps its row.
+  const urls = [...new Set(mentionedInOf(events, address, () => address, options.commentKinds).flatMap((m) => linksNaming(toRenderTree(m.body, 'marker'))))]
+  const waiting = urls.filter((url) => !links.answered(url)).slice(0, MAX_MENTIONED_IN_LINKS_ASKED)
   if (waiting.length) await within(links.ask(waiting), options.waitMs ?? 5000)
   return mentionedInOf(events, address, links.known, options.commentKinds, (url) => !links.answered(url))
 }
