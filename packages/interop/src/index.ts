@@ -148,6 +148,25 @@ export {
 } from './folders.js'
 
 /**
+ * What an app link names, and where a file is mentioned — once for every app
+ * (SPEC §7.7, §13.1, §6.8; PEEKM-7). Each app passes its relay read; none
+ * keeps a resolver of its own.
+ */
+export {
+  linkReader,
+  linkTagsOf,
+  linksIn,
+  writtenOpenerOf,
+  within,
+  MAX_LINKS_ASKED,
+  type LinkAnswer,
+  type LinkReader,
+  type LinkReaderOptions,
+  type OwnPlace,
+} from './links.js'
+export { mentionedInFilter, mentionedInOf, readMentionedIn, MENTIONED_IN_LIMIT, type MentionedIn } from './mentions.js'
+
+/**
  * RFC 0.5 §7's URL grammar — how an object is named in an address bar, and how
  * a pasted link is matched back to one.
  *

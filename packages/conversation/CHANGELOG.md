@@ -6,6 +6,12 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.21.0 — 2026-10-27
+
+**Wire behaviour: nothing changes** (PEEKM-7). The composer reads `[words](url)`
+by protocol's `linksOnWordsOf` instead of its own copy of the pattern; the
+words and links it writes are byte for byte as before. Needs protocol 0.45.
+
 ## 0.20.0 — 2026-10-27
 
 **Who `@` offers, and a comment's opening words, once for every app**

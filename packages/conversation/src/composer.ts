@@ -23,6 +23,7 @@ import {
   decodeNpub,
   documentForEditing,
   fromEditorDocument,
+  linksOnWordsOf,
   toEditorDocument,
   type EditorDocument,
   type EditorNode,
@@ -45,12 +46,11 @@ const keyOf = (node: EditorNode): string | null => {
 }
 
 /**
- * A link on words as the marker format writes it, `[words](url)`, and back:
- * the same alternation protocol's `valuesIn` and ui's `RichText` read, so a
- * URL starting earlier swallows a bracket inside it here as it does there.
- * Words hold no bracket and no line break (COMM-8; Peek's rule).
+ * A link on words as the marker format writes it, `[words](url)`, and back.
+ * Read by protocol's `linksOnWordsOf`, the rule `valuesIn` and ui's `RichText`
+ * read by, so a URL starting earlier swallows a bracket inside it here as it
+ * does there. Words hold no bracket and no line break (COMM-8; Peek's rule).
  */
-const LINK_OR_URL = /(\[([^[\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\))|(https?:\/\/[^\s<>"'`]+)/g
 const LINK_TARGET = /^(?:https?:\/\/|mailto:)[^\s)]+$/
 const LINK_WORDS = /^[^[\]\n]+$/
 
@@ -79,11 +79,10 @@ function linksOnWordsAsMarks(node: EditorNode): EditorNode[] {
   if (!text.includes('](') || node.marks?.some((m) => m.type === 'code' || m.type === 'link')) return [node]
   const out: EditorNode[] = []
   let at = 0
-  for (const m of text.matchAll(LINK_OR_URL)) {
-    if (!m[1]) continue
-    if (m.index > at) out.push({ ...node, text: text.slice(at, m.index) })
-    out.push({ ...node, text: m[2], marks: [...(node.marks ?? []), { type: 'link', attrs: { href: m[3] } }] })
-    at = m.index + m[0].length
+  for (const link of linksOnWordsOf(text)) {
+    if (link.from > at) out.push({ ...node, text: text.slice(at, link.from) })
+    out.push({ ...node, text: link.words, marks: [...(node.marks ?? []), { type: 'link', attrs: { href: link.url } }] })
+    at = link.to
   }
   if (out.length === 0) return [node]
   if (at < text.length) out.push({ ...node, text: text.slice(at) })

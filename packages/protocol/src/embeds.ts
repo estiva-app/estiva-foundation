@@ -509,13 +509,28 @@ export function urlRunsIn(text: string): { url: string; from: number; to: number
  * `wordsEnd` the `]`, `target` where the URL starts (SPEC §13.6.2).
  */
 function linksOnWordsIn(runs: readonly RenderInline[]): { from: number; wordsEnd: number; target: number; url: string }[] {
-  const text = runs.map((r) => r.text).join('')
+  return linksOnWordsOf(runs.map((r) => r.text).join('')).map(({ from, words, url }) => ({
+    from,
+    wordsEnd: from + 1 + words.length,
+    target: from + words.length + 3,
+    url,
+  }))
+}
+
+/**
+ * Each link on words in one marker text, `[words](https://…)` (§13.2): where it
+ * starts and ends, its words and its URL. Read by the same alternation as
+ * {@link urlRunsIn}, so a URL that starts earlier swallows a bracket inside it
+ * here as it does there, and words hold no bracket and no line break. What a
+ * composer turns into words with a link mark, and back.
+ */
+export function linksOnWordsOf(text: string): { from: number; to: number; words: string; url: string }[] {
   if (!text.includes('](')) return []
-  const out: { from: number; wordsEnd: number; target: number; url: string }[] = []
+  const out: { from: number; to: number; words: string; url: string }[] = []
   for (const m of text.matchAll(LINK_OR_URL)) {
     if (!m[1]) continue
     const close = m[1].indexOf('](')
-    out.push({ from: m.index, wordsEnd: m.index + close, target: m.index + close + 2, url: m[1].slice(close + 2, -1) })
+    out.push({ from: m.index, to: m.index + m[1].length, words: m[1].slice(1, close), url: m[1].slice(close + 2, -1) })
   }
   return out
 }

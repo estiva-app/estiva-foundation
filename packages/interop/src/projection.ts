@@ -227,6 +227,9 @@ export const KIND_MESSAGE = 9
  */
 const KIND_DELETION = 5
 
+/** The tags a comment's body earns for what it names: `ActionEventArgs.linkTags`. */
+const LINK_TAG_NAMES = new Set(['a', 'q', 'part'])
+
 /**
  * Every kind an app's comments might be under — what it publishes **now**, plus
  * any it has published before.
@@ -5811,6 +5814,14 @@ export interface ActionEventArgs {
    */
   replyTo?: { id: string; kind: number; author: string; place?: readonly string[][] }
   /**
+   * The `a`, `q` and `part` tags a comment's body earns for what it names, by a
+   * `nostr:` reference or an app link — {@link LinkReader.tagsFor}, asked by
+   * the caller, which holds the relay (SPEC §13.1). Only for `comment`; any
+   * other tag here is left out, and so is one naming the comment's own file or
+   * the comment it answers.
+   */
+  linkTags?: readonly string[][]
+  /**
    * The format the action's prose value is in, when it is not marker text —
    * `'estiva-blocks-1'` for a block document (SPEC §7.3's `format`, MAN-1).
    *
@@ -6078,6 +6089,13 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
       const ps = tags.filter((t) => t[0] === 'p')
       if (ps.length >= MAX_MENTIONED_PEOPLE) break
       if (!ps.some((t) => t[1] === person)) tags.push(['p', person])
+    }
+    // What the body links, as the apps' sends tag it, after the people (§13.1, PEEKM-7).
+    for (const tag of args.linkTags ?? []) {
+      if (!LINK_TAG_NAMES.has(tag[0]) || typeof tag[1] !== 'string') continue
+      if ((tag[0] === 'a' || tag[0] === 'part') && tag[1] === address) continue
+      if (tag[0] === 'q' && tag[1] === replyTo?.id) continue
+      if (!tags.some((t) => t[0] === tag[0] && t[1] === tag[1])) tags.push([...tag])
     }
   }
   // A move also names its new parent where a relay indexes it (SPEC §7.2, FOL-45):
