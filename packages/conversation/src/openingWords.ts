@@ -24,8 +24,13 @@ const TYPE_WORDS: Record<number, string> = { 30850: 'Project', 30851: 'Issue', 3
 const FENCE = /^\s*(?:```|~~~)/
 /** A line's block prefixes: quotes and headings, then one list or task marker. */
 const LINE_PREFIX = /^\s*(?:(?:>|#{1,6})\s+)*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)?/
-/** A link on words, `[words](url)`: its words are what a reader sees. Swapped before the marks are read, so a `_` in a URL is never one. */
-const LINK_ON_WORDS = /(?<!!)\[([^[\]\n]+)\]\((?:https?:\/\/|mailto:)[^\s)]+\)/g
+/**
+ * A link on words, `[words](url)`: its words are what a reader sees. Swapped before the marks are read, so a `_` in a
+ * URL is never one. The grammar is protocol's `parseInlineMarksAndLinks`, so what reads as a link here is what a reader
+ * draws as one: a URL with an unclosed `(` (`…/Foo_(bar)`) is no link there, and stays as written here.
+ */
+const LINK_ON_WORDS = /(?<!!)\[([^[\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/g
+const linkWords = (whole: string, words: string, url: string) => (url.split('(').length > url.split(')').length ? whole : words)
 
 /** The shortened form §13.1 asks for when a reference names nobody here. */
 function shortened(uri: string): string {
@@ -61,7 +66,7 @@ export function openingWords(body: string, nameOf: (pubkey: string) => string | 
     .split('\n')
     .filter((line) => !FENCE.test(line))
     .map((line) =>
-      parseInlineMarks(line.replace(LINE_PREFIX, '').replace(LINK_ON_WORDS, '$1'))
+      parseInlineMarks(line.replace(LINE_PREFIX, '').replace(LINK_ON_WORDS, linkWords))
         .map((span) => (span.reference ? referenceWord(span.reference, nameOf) : span.text))
         .join(''),
     )

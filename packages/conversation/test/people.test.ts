@@ -45,6 +45,21 @@ describe('who @ offers', () => {
     assert.deepEqual(offered(events, ME), ['Zoë Novak'])
   })
 
+  it('picks the lowest id between two events of the same second, whatever order they came in', () => {
+    const older = { ...profile(ZOE, { display_name: 'Zoe' }, 100), id: 'a'.repeat(64) }
+    const newer = { ...profile(ZOE, { display_name: 'Zoë' }, 100), id: 'b'.repeat(64) }
+    const rosterA = { ...roster([ZOE], 100), id: 'a'.repeat(64) }
+    const rosterB = { ...roster([BOB], 100), id: 'b'.repeat(64) }
+    assert.deepEqual(offered([older, newer, rosterA, rosterB], ME), ['Zoe'])
+    assert.deepEqual(offered([newer, older, rosterB, rosterA], ME), ['Zoe'])
+  })
+
+  it('reads a roster\'s p tags as members too, and no tag value that is not a key', () => {
+    const events = [profile(ZOE, { display_name: 'Zoe' }), profile(BOB, { display_name: 'Bob' }), { ...roster([]), tags: [['p', ZOE], ['member', 'Bob']] }]
+    assert.deepEqual([...(rosterOf(events) ?? [])], [ZOE])
+    assert.deepEqual(offered(events, ME), ['Zoe'])
+  })
+
   it('offers every named profile when the relay keeps no roster', () => {
     assert.deepEqual(offered(people, ME), ['anna', 'Bob', 'Claude', 'émile', 'Zoe'])
   })
@@ -70,6 +85,10 @@ describe('a comment\'s opening words', () => {
   it('reads a project, a topic and a document by their type words', () => {
     const words = [30850, 30840, 30842].map((kind) => `nostr:${addrToNaddr(`${kind}:${key('b')}:x`)}`).join(' ')
     assert.equal(openingWords(words, nameOf), 'Project Topic Document')
+  })
+
+  it('keeps a link whose URL has an unclosed "(" as written, as a reader draws it', () => {
+    assert.equal(openingWords('see [Foo](https://example.com/Foo_(bar)) here', nameOf), 'see [Foo](https://example.com/Foo_(bar)) here')
   })
 
   it('puts lines on one line without their list, quote, heading or fence markers', () => {

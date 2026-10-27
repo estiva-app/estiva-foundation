@@ -29,8 +29,13 @@ export interface NamedProfile {
   bot?: true
 }
 
-type ProfileEvent = { kind: number; pubkey: string; created_at: number; content: string }
-type RosterEvent = { kind: number; created_at: number; tags: string[][] }
+type ProfileEvent = { kind: number; pubkey: string; created_at: number; content: string; id?: string }
+type RosterEvent = { kind: number; created_at: number; tags: string[][]; id?: string }
+
+/** Newer first; on the same second, the lowest id (NIP-01), so every app picks the same one whatever order its events came in. */
+function newerFirst(a: { created_at: number; id?: string }, b: { created_at: number; id?: string }): number {
+  return b.created_at - a.created_at || (a.id ?? '').localeCompare(b.id ?? '')
+}
 
 /**
  * Every named profile, newest `kind:0` per key, as protocol's `parseProfile`
@@ -43,7 +48,7 @@ export function namedProfilesOf(events: readonly ProfileEvent[]): Map<string, Na
   for (const e of events) {
     if (e.kind !== 0) continue
     const seen = newest.get(e.pubkey)
-    if (!seen || e.created_at > seen.created_at) newest.set(e.pubkey, e)
+    if (!seen || newerFirst(e, seen) < 0) newest.set(e.pubkey, e)
   }
   const out = new Map<string, NamedProfile>()
   for (const [pubkey, event] of newest) {
@@ -57,7 +62,7 @@ export function namedProfilesOf(events: readonly ProfileEvent[]): Map<string, Na
 
 /** The newest roster's members, or `null` when the relay keeps no roster. */
 export function rosterOf(events: readonly RosterEvent[]): Set<string> | null {
-  const roster = events.filter((e) => e.kind === KIND_MEMBERSHIP_LIST).sort((a, b) => b.created_at - a.created_at)[0]
+  const roster = events.filter((e) => e.kind === KIND_MEMBERSHIP_LIST).sort(newerFirst)[0]
   if (!roster) return null
   return new Set(roster.tags.filter((t) => (t[0] === 'member' || t[0] === 'p') && /^[0-9a-f]{64}$/.test(t[1] ?? '')).map((t) => t[1]))
 }
