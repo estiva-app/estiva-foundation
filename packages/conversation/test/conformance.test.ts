@@ -12,6 +12,7 @@ import { cardsIn, embedTag, encodeNaddr, imetaTag, toRenderTree, type SignedEven
 import {
   buildReply,
   decorationsOf,
+  foldAttachments,
   foldEdits,
   foldEmbeds,
   foldReactions,
@@ -173,7 +174,7 @@ describe('C12 — edit fold', () => {
   it('an edit byte-identical to the body does not mark the message edited, and the current text shows', () => {
     const message = comment(ISSUE, [], 'same')
     const identical = edit(message.id, 'same', message.created_at + 1)
-    assert.deepEqual(foldEdits([message, identical])[message.id], { body: 'same', edited: false })
+    assert.deepEqual(foldEdits([message, identical])[message.id], { body: 'same', edited: false, attachments: [] })
     const changed = edit(message.id, 'changed', message.created_at + 2)
     const fold = foldEdits([message, identical, changed])[message.id]
     assert.equal(fold.body, 'changed')
@@ -284,21 +285,30 @@ describe('C15 — attachment fold', () => {
   const edit = (target: string, createdAt: number, files: string[]) =>
     event({ kind: 40003, content: 'body', created_at: createdAt, tags: [['h', FOLDER], ['e', target], ...files.map(file)] })
 
-  it('an edit carrying imeta replaces the set; a later one with none leaves it; one file on a message with two leaves one', () => {
+  it("the latest edit's imeta is the set; one file on a message with two leaves one", () => {
     const message = event({ kind: 1111, content: 'body', tags: [['A', ISSUE], ['h', FOLDER], file('1'), file('2')] })
     const replaced = foldEdits([message, edit(message.id, message.created_at + 1, ['3'])])[message.id]
-    assert.deepEqual(replaced.attachments?.map((f) => f.x[0]), ['3'])
-
-    const left = foldEdits([message, edit(message.id, message.created_at + 1, ['3']), edit(message.id, message.created_at + 2, [])])[message.id]
-    assert.deepEqual(left.attachments?.map((f) => f.x[0]), ['3'])
+    assert.deepEqual(replaced.attachments.map((f) => f.x[0]), ['3'])
+    assert.deepEqual(foldAttachments([message, edit(message.id, message.created_at + 1, ['3'])])[message.id].map((f) => f.x[0]), ['3'])
 
     const one = foldEdits([message, edit(message.id, message.created_at + 1, ['1'])])[message.id]
-    assert.deepEqual(one.attachments?.map((f) => f.x[0]), ['1'])
+    assert.deepEqual(one.attachments.map((f) => f.x[0]), ['1'])
   })
 
-  it('no edit with imeta leaves the message its own set', () => {
+  it('an edit with no imeta takes every file off, even after an edit that listed some', () => {
     const message = event({ kind: 1111, content: 'body', tags: [['A', ISSUE], ['h', FOLDER], file('1')] })
-    assert.equal(foldEdits([message, edit(message.id, message.created_at + 1, [])])[message.id].attachments, undefined)
+    const emptied = [message, edit(message.id, message.created_at + 1, [])]
+    assert.deepEqual(foldEdits(emptied)[message.id].attachments, [])
+    assert.equal(foldAttachments(emptied)[message.id], undefined)
+
+    const later = [message, edit(message.id, message.created_at + 1, ['3']), edit(message.id, message.created_at + 2, [])]
+    assert.deepEqual(foldEdits(later)[message.id].attachments, [])
+    assert.equal(foldAttachments(later)[message.id], undefined)
+  })
+
+  it('a message nobody edited keeps its own set', () => {
+    const message = event({ kind: 1111, content: 'body', tags: [['A', ISSUE], ['h', FOLDER], file('1')] })
+    assert.deepEqual(foldAttachments([message])[message.id].map((f) => f.x[0]), ['1'])
   })
 })
 

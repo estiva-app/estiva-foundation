@@ -8,9 +8,9 @@
  * edits up by id.
  *
  * An edit changes the body, the attachments and the cards, and nothing else.
- * Attachments fold separately: the set is the `imeta` of the latest edit
- * carrying at least one, and a set replaces rather than appends. Cards
- * (`embed`, §13.6.2) fold the same way ({@link foldEmbeds}). The "edited" mark is about the
+ * An edit is the whole new message: the files are the `imeta` of the latest
+ * edit, and an edit with none takes every file off. Cards (`embed`, §13.6.2)
+ * keep the older fold, the latest edit carrying any ({@link foldEmbeds}). The "edited" mark is about the
  * **body**: an edit byte-identical to the body it replaces, judged against the
  * body as it then stood, does not mark the message edited.
  *
@@ -53,11 +53,12 @@ export interface EditFold {
   /** Who wrote the edit that last changed the body. Absent unless `edited`. */
   editedBy?: string
   /**
-   * The `imeta` set of the latest edit carrying at least one. Absent when no
-   * edit carries one: the message's own attachments stand, because an edit
-   * with no `imeta` means "unchanged", never "none".
+   * The `imeta` set of the latest edit, which replaces the message's own;
+   * empty when that edit lists none, and then the message has no files.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-edit-is-the-whole-new-message.md
    */
-  attachments?: Imeta[]
+  attachments: Imeta[]
 }
 
 /**
@@ -100,18 +101,16 @@ export function foldEdits(
   for (const [target, list] of editsByTarget(events)) {
     let body = bodies.get(target)
     let changed: SignedEvent | undefined
-    let attachments: Imeta[] | undefined
     for (const edit of list) {
       if (body === undefined || edit.content !== body) changed = edit
       body = edit.content
-      const files = imetaOf(edit)
-      if (files.length > 0) attachments = files
     }
+    const latest = list[list.length - 1]
     out[target] = {
-      body: list[list.length - 1].content,
+      body: latest.content,
       edited: changed !== undefined,
       ...(changed ? { editedAt: orderingMs(changed), editedBy: changed.pubkey } : {}),
-      ...(attachments ? { attachments } : {}),
+      attachments: imetaOf(latest),
     }
   }
   return out
@@ -119,7 +118,10 @@ export function foldEdits(
 
 /**
  * Every message's current attachment set: its own `imeta`, replaced by the
- * latest edit carrying any (§6.8, C15). Messages with none are absent.
+ * latest edit's, an edit with none taking every file off (§6.8, C15).
+ * Messages with none are absent.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-edit-is-the-whole-new-message.md
  */
 export function foldAttachments(events: readonly SignedEvent[]): Record<string, Imeta[]> {
   const out: Record<string, Imeta[]> = {}
@@ -129,20 +131,17 @@ export function foldAttachments(events: readonly SignedEvent[]): Record<string, 
     if (files.length > 0) out[event.id.toLowerCase()] = files
   }
   for (const [target, list] of editsByTarget(events)) {
-    for (let i = list.length - 1; i >= 0; i--) {
-      const files = imetaOf(list[i])
-      if (files.length === 0) continue
-      out[target] = files
-      break
-    }
+    const files = imetaOf(list[list.length - 1])
+    if (files.length > 0) out[target] = files
+    else delete out[target]
   }
   return out
 }
 
 /**
  * Every message's current card set: its own `embed` tags, replaced by the
- * latest edit carrying any (§6.8, §13.6.2, C20) — the same fold as
- * {@link foldAttachments}. An edit with none leaves the set; `none` is how an
+ * latest edit carrying any (§6.8, §13.6.2, C20) — the fold attachments
+ * had before an edit became the whole new message. An edit with none leaves the set; `none` is how an
  * edit removes a card. Which of these the body still names is
  * `cardsIn`'s question, asked of the folded body. Messages with none are absent.
  *
