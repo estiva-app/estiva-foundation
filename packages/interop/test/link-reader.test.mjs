@@ -164,11 +164,11 @@ describe('a manifest read that came back empty', () => {
     const relay = relayOf(issues)
     let empty = true
     const links = linkReader({ query: relay.query, manifests: async () => (empty ? [] : [manifest]) })
-    await links.ask([URL1])
-    assert.equal(links.known(URL1), undefined)
+    await assert.rejects(links.ask([URL1]))
+    assert.equal(links.answered(URL1), false)
     empty = false
-    await links.ask([URL2])
-    assert.equal(links.known(URL2), ISSUE2)
+    await links.ask([URL1])
+    assert.equal(links.known(URL1), ISSUE1)
   })
 })
 

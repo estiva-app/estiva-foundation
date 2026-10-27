@@ -148,13 +148,17 @@ export function linkReader(options: LinkReaderOptions): LinkReader {
   }
 
   const answer = async (url: string): Promise<LinkAnswer> => {
-    const hit = matchObjectUrl(url, await shapesOf())
+    const shapes = await shapesOf()
+    // No manifest read yet is no answer: kept as one, the link would name nothing for the reader's life.
+    if (shapes.length === 0) throw new Error('No app manifest has been read yet.')
+    const hit = matchObjectUrl(url, shapes)
     if (!hit) return { value: null }
     if (hit.by === 'id') return { value: EVENT_ID.test(hit.identifier) ? hit.identifier.toLowerCase() : null }
     // A path on another app's host can read as several kinds (§7.7, LTX-6): ask under each addressable one.
     const kinds = (hit.kinds ?? (hit.kind === undefined ? undefined : [hit.kind]))?.filter((kind) => kind >= 30000 && kind < 40000)
     if (kinds?.length === 0) return { value: null }
-    const found = await query([{ '#d': [hit.identifier], limit: 2, ...(kinds ? { kinds } : {}) }])
+    // A shape that names no kind asks every one; only an addressable answer counts.
+    const found = (await query([{ '#d': [hit.identifier], limit: 2, ...(kinds ? { kinds } : {}) }])).filter((event) => event.kind >= 30000 && event.kind < 40000)
     const authors = new Set(found.map((event) => `${event.kind}:${event.pubkey.toLowerCase()}`))
     if (authors.size !== 1) return { value: null }
     const address = `${[...authors][0]}:${hit.identifier}`
@@ -217,9 +221,9 @@ export function linkReader(options: LinkReaderOptions): LinkReader {
       const urls = linksIn(blocks).slice(0, MAX_LINKS_ASKED)
       const waiting = urls.filter((url) => !known.has(url))
       if (waiting.length > 0) await within(Promise.allSettled(waiting.map(answerOf)), waitMs)
-      const asked = new Set(urls)
-      const resolve: LinkResolver = (url) => (asked.has(url) ? knownValue(url) : undefined)
-      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (asked.has(url) ? knownBlock(url) : undefined))
+      const first = new Set(urls)
+      const resolve: LinkResolver = (url) => (first.has(url) ? knownValue(url) : undefined)
+      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (first.has(url) ? knownBlock(url) : undefined))
     },
     opener: (url, opens, origin) => writtenOpenerOf(url, opens, origin, origins),
     declaredOrigins: () => origins,
