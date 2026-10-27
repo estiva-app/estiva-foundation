@@ -60,16 +60,27 @@ export function referenceWord(uri: string, nameOf: (pubkey: string) => string | 
   return `@${shortened(uri)}`
 }
 
+/**
+ * One line's words. Protocol's mark reader recurses once per mark, so a line of a few thousand (anyone can post one)
+ * overflows the stack; that line then reads as its text with the marker characters dropped, rather than taking down
+ * every `[` list that captions it (Peek: Feedback & Bugs 4acb43ac is the reader's own fix).
+ */
+function lineWords(line: string, nameOf: (pubkey: string) => string | undefined): string {
+  try {
+    return parseInlineMarks(line)
+      .map((span) => (span.reference ? referenceWord(span.reference, nameOf) : span.text))
+      .join('')
+  } catch {
+    return line.replace(/[*_~`]+/g, '')
+  }
+}
+
 /** A message body's opening words on one line, as a caption: see the module's note. */
 export function openingWords(body: string, nameOf: (pubkey: string) => string | undefined): string {
   return body
     .split('\n')
     .filter((line) => !FENCE.test(line))
-    .map((line) =>
-      parseInlineMarks(line.replace(LINE_PREFIX, '').replace(LINK_ON_WORDS, linkWords))
-        .map((span) => (span.reference ? referenceWord(span.reference, nameOf) : span.text))
-        .join(''),
-    )
+    .map((line) => lineWords(line.replace(LINE_PREFIX, '').replace(LINK_ON_WORDS, linkWords), nameOf))
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()

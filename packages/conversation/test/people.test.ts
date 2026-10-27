@@ -91,6 +91,11 @@ describe('a comment\'s opening words', () => {
     assert.equal(openingWords('see [Foo](https://example.com/Foo_(bar)) here', nameOf), 'see [Foo](https://example.com/Foo_(bar)) here')
   })
 
+  it('still reads a comment of a few thousand bold words, the line as its text, rather than throwing', () => {
+    const body = `first line\n${'**b** '.repeat(5000)}`
+    assert.equal(openingWords(body, nameOf), `first line ${'b '.repeat(5000).trim()}`)
+  })
+
   it('puts lines on one line without their list, quote, heading or fence markers', () => {
     const body = '## Plan\n> quoted\n- [ ] first\n2. second\n```\nnpm test\n```'
     assert.equal(openingWords(body, nameOf), 'Plan quoted first second npm test')
