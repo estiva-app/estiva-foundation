@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.19.0 — 2026-10-27
+
+**An edit with no files takes every file off** (SPEC §6.8 as amended in
+estiva-docs#334; record *an-edit-is-the-whole-new-message*; 8de3e4b4). A
+message's files are the `imeta` of its latest edit, and an edit listing none
+leaves it with none; before, an edit with no `imeta` meant "unchanged" and the
+latest edit carrying any won. `foldAttachments` drops a message whose latest
+edit lists nothing, and `EditFold.attachments` is now always present — the
+latest edit's set, empty for none. Cards (`embed`) keep their fold. Every
+writer has listed a message's files on every edit since 27 Oct (Peek, Ship,
+Leaf, estiva-agent), and the messages whose files this would have hidden were
+re-saved first, so nothing on production changes but the ability to empty.
+
 ## 0.18.0 — 2026-10-20
 
 **An edit opens a nested list nested** (SPEC §13.2; PEE-57; Miky,

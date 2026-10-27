@@ -61,7 +61,7 @@ test('the newest edit wins, and the original is kept beside it', async () => {
   const newer = event({ kind: 40003, tags: [['h', FOLDER], ['e', c.id]], content: 'third' })
   // Answered newest first, as a relay does — the fold must not trust the order.
   const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([newer, older]))
-  assert.deepEqual(found.byId[c.id].edit, { body: 'third', edited: true, editedAt: newer.created_at * 1000, editedBy: AUTHOR })
+  assert.deepEqual(found.byId[c.id].edit, { body: 'third', edited: true, editedAt: newer.created_at * 1000, editedBy: AUTHOR, attachments: [] })
 })
 
 test('two edits in the same second are ordered by their ts tag', async () => {
@@ -136,26 +136,24 @@ test('a later edit carrying imeta replaces the set — it does not append', asyn
   assert.deepEqual(shas(found.byId[c.id]), ['ccc'])
 })
 
-test('an edit without imeta leaves the attachments as they were', async () => {
+test('an edit without imeta takes every file off, even one an earlier edit listed', async () => {
   const c = comment()
   const attach = editOf(c, 'first', [imeta('aaa')])
   const reword = editOf(c, 'reworded')
   const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([reword, attach]))
   assert.equal(found.byId[c.id].edit.body, 'reworded')
-  assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
-  // No edit carrying any: no set, so the comment's own stands.
+  assert.deepEqual(shas(found.byId[c.id]), [])
   const d = comment()
   const only = await decorationsOf([{ id: d.id, at: d.created_at }], relay([editOf(d, 'changed')]))
-  assert.equal(only.byId[d.id].edit.attachments, undefined)
+  assert.deepEqual(only.byId[d.id].edit.attachments, [])
 })
 
-test('the newest edit carrying imeta wins, ordered like the body', async () => {
+test("the newest edit's imeta wins, ordered like the body", async () => {
   const c = comment()
   const at = 1_700_019_000
   const a = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 900)], imeta('aaa')], content: 'first' })
   const b = event({ kind: 40003, created_at: at, tags: [['h', FOLDER], ['e', c.id], ['ts', String(at * 1000 + 100)], imeta('bbb')], content: 'first' })
-  const later = event({ kind: 40003, created_at: at + 60, tags: [['h', FOLDER], ['e', c.id]], content: 'changed' })
-  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([b, later, a]))
+  const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([a, b]))
   assert.deepEqual(shas(found.byId[c.id]), ['aaa'])
 })
 
