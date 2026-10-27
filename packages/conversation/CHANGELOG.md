@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.20.0 — 2026-10-27
+
+**Who `@` offers, and a comment's opening words, once for every app**
+(PEEKM-6; record *a-conversation-is-one-shared-thing-and-only-its-colours-are-the-apps*).
+`namedProfilesOf`, `rosterOf` and `mentionablePeople` map the relay's NIP-43
+roster (`kind:13534`) and each key's `kind:0` into the people `@` and `!@`
+offer: the roster's named profiles, agents included, never the viewer, by
+name ignoring case and accents (`byName`). `openingWords` is a message's
+caption on one line, as `[`'s row for a comment shows it: marks and line
+prefixes gone, a link as its words, a person as `@Name`, and any other
+reference by its type word ("Issue", "Message", "File") so it is never blank
+(SPEC §13.1). Peek, Ship and Leaf each had their own copy, and Ship's and
+Leaf's dropped a reference and kept a link's raw `[words](url)`.
+
+SPEC: none changed. These read §13.1's references and NIP-43's roster as
+before; they only move the reading into one place.
+
 ## 0.19.0 — 2026-10-27
 
 **An edit with no files takes every file off** (SPEC §6.8 as amended in
