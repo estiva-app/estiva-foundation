@@ -82,9 +82,9 @@ describe('a comment\'s opening words', () => {
     assert.equal(openingWords(`see ${message} and ${other} by ${stranger}`, nameOf), `see Message and File by @${stranger.slice(6, 18)}…`)
   })
 
-  it('reads a project, a topic and a document by their type words', () => {
-    const words = [30850, 30840, 30842].map((kind) => `nostr:${addrToNaddr(`${kind}:${key('b')}:x`)}`).join(' ')
-    assert.equal(openingWords(words, nameOf), 'Project Topic Document')
+  it('reads a project, a topic, a document and a Folder by their type words', () => {
+    const words = [30850, 30840, 30842, 39000].map((kind) => `nostr:${addrToNaddr(`${kind}:${key('b')}:x`)}`).join(' ')
+    assert.equal(openingWords(words, nameOf), 'Project Topic Document Folder')
   })
 
   it('keeps a link whose URL has an unclosed "(" as written, as a reader draws it', () => {

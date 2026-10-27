@@ -19,7 +19,7 @@
 import { decodeNpub, parseInlineMarks, referenceToPointer } from '@estiva-app/protocol'
 
 /** A file's type word by its kind, as `[`'s Files rows name it. */
-const TYPE_WORDS: Record<number, string> = { 30850: 'Project', 30851: 'Issue', 30840: 'Topic', 30842: 'Document' }
+const TYPE_WORDS: Record<number, string> = { 30850: 'Project', 30851: 'Issue', 30840: 'Topic', 30842: 'Document', 39000: 'Folder' }
 
 const FENCE = /^\s*(?:```|~~~)/
 /** A line's block prefixes: quotes and headings, then one list or task marker. */
