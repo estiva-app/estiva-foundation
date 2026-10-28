@@ -384,14 +384,18 @@ function matcherOf(filter: Record<string, unknown>): ((event: SignedEvent) => bo
 function byMatch(filters: Record<string, unknown>[]): Discriminator | null {
   const matchers = filters.map(matcherOf)
   if (matchers.some((matcher) => matcher === null)) return null
-  const apart = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-    Object.entries(a).some(([key, values]) => {
-      const other = b[key]
-      if (key === 'limit' || !Array.isArray(values) || !Array.isArray(other)) return false
-      return !values.some((value) => other.includes(value))
+  const lists = filters.map(
+    (filter) => new Map(Object.entries(filter).flatMap(([key, values]) => (Array.isArray(values) ? [[key, new Set(values)] as const] : []))),
+  )
+  const apart = (a: Map<string, Set<unknown>>, b: Map<string, Set<unknown>>) =>
+    [...a].some(([key, values]) => {
+      const other = b.get(key)
+      if (!other) return false
+      for (const value of values) if (other.has(value)) return false
+      return true
     })
-  for (let i = 0; i < filters.length; i++) {
-    for (let j = i + 1; j < filters.length; j++) if (!apart(filters[i], filters[j])) return null
+  for (let i = 0; i < lists.length; i++) {
+    for (let j = i + 1; j < lists.length; j++) if (!apart(lists[i], lists[j])) return null
   }
   return (event) => {
     let found: number | null = null

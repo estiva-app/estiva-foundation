@@ -20,7 +20,9 @@ whole kind (APP-6).
 - `createLoadQuery(query, { paged: true })` is for a query that pages every
   filter to its end, as `Relay.queryAll` does: every answer counts whatever its
   size. Counting the page never counted a read longer than one page, which every
-  workspace read is. Without it, nothing changes for a one-page query (Leaf's).
+  workspace read is. Without it, a whole-kind read counts only when it states
+  a `limit` and came back short of it, since a relay may give a filter with no
+  limit a smaller page. A one-page query's reads by value count as before.
 
 ## 0.69.1 — 2026-10-27
 

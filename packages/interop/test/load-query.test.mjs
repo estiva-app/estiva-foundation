@@ -251,6 +251,14 @@ describe('a read of a whole kind answers later reads of that kind (APP-6)', () =
     assert.equal(byValue.length, 2)
   })
 
+  test('through one page, a whole-kind read with no limit answers nothing: the relay may have cut it short', async () => {
+    const relay = countingRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query(ALL)
+    await query([{ kinds: [1851], '#a': [N], limit: 10 }])
+    assert.equal(relay.requests.length, 2)
+  })
+
   test('a read of another kind still goes to the relay', async () => {
     const relay = countingRelay(world())
     const query = createLoadQuery(relay.query)

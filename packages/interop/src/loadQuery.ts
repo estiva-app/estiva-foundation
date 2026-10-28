@@ -71,12 +71,34 @@ interface WholeKinds {
   limit: number
 }
 
-function wholeKindsOf(filter: Filter): WholeKinds | null {
+function wholeKindsOf(filter: Filter, paged: boolean): WholeKinds | null {
   const { kinds, limit, ...rest } = filter
   if (Object.keys(rest).length !== 0 || !Array.isArray(kinds) || kinds.length === 0) return null
   if (!kinds.every((kind) => typeof kind === 'number')) return null
-  if (limit !== undefined && typeof limit !== 'number') return null
+  // A relay may give a filter with no limit a smaller page than its ceiling, so
+  // through one page only a stated limit says when the answer was cut short.
+  if (typeof limit !== 'number' && !(paged && limit === undefined)) return null
   return { kinds, limit: limit ?? RELAY_PAGE_CEILING }
+}
+
+/** The events of a whole read naming each value of one tag, indexed once per read and tag. */
+const indexes = new WeakMap<SignedEvent[], Map<string, Map<string, SignedEvent[]>>>()
+function naming(events: SignedEvent[], tag: string, value: string): SignedEvent[] {
+  let byTag = indexes.get(events)
+  if (!byTag) indexes.set(events, (byTag = new Map()))
+  let byValue = byTag.get(tag)
+  if (!byValue) {
+    byTag.set(tag, (byValue = new Map()))
+    for (const event of events) {
+      for (const [name, held] of event.tags) {
+        if (name !== tag) continue
+        const list = byValue.get(held) ?? []
+        if (!list.includes(event)) list.push(event)
+        byValue.set(held, list)
+      }
+    }
+  }
+  return byValue.get(value) ?? []
 }
 
 /** Every event of the read's kinds, if this answer holds them all: see {@link completeByValue}. */
@@ -84,8 +106,6 @@ function completeWhole(shape: WholeKinds, answer: SignedEvent[], paged: boolean)
   const held = answer.filter((event) => shape.kinds.includes(event.kind))
   return paged || held.length < Math.min(shape.limit, RELAY_PAGE_CEILING) ? held : null
 }
-
-const names = (event: SignedEvent, tag: string, value: string) => event.tags.some(([name, held]) => name === tag && held === value)
 
 /**
  * The events naming each of the filter's values, if this answer holds them
@@ -163,7 +183,7 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     const joined: { again: Filter; entry: Promise<SignedEvent[] | null> }[] = []
     const joinedByTag: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
     for (const filter of filters) {
-      const whole = wholeKindsOf(filter)
+      const whole = wholeKindsOf(filter, paged)
       if (whole) {
         const held = whole.kinds.map((kind) => wholes.get(kind))
         if (held.every((entry) => answers(entry, whole.limit))) {
@@ -185,7 +205,7 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
       for (const value of new Set(shape.values)) {
         const entry = known.get(`${shape.kind}:${shape.tag}:${value}`)
         if (answers(read, shape.limit)) {
-          const events = read.events.then((all) => all && all.filter((event) => names(event, shape.tag, value)))
+          const events = read.events.then((all) => all && naming(all, shape.tag, value))
           joinedByTag.push({ shape, value, entry: events })
         } else if (answers(entry, shape.limit)) joinedByTag.push({ shape, value, entry: entry.events })
         else fresh.push(value)

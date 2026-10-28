@@ -209,15 +209,18 @@ test('changes read in groups of addresses keep their page: a short group is sett
 })
 
 test('a change naming files in two groups cannot be attributed, and the answer is still right', async () => {
+  // The shared change is what fills the first group's page: credited to the
+  // second group, the first would look short and its older changes be lost.
   const both = { ...event(99_999, 3_000_000, 1851), tags: [['a', 'f0'], ['a', 'f2']] }
-  const events = [both, ...changesTo(['f0'], 3, 0), ...changesTo(['f2'], 3, 10_000)]
-  const { relay, calls } = fakeRelay(events, 100)
+  const events = [both, ...changesTo(['f0'], 120, 0), ...changesTo(['f2'], 3, 10_000)]
+  const { relay } = fakeRelay(events, 100)
   await relay.queryAll([{ kinds: [9] }, { kinds: [1851] }], { batch: false })
-  calls.length = 0
+  const filters = [{ kinds: [1851], '#a': ['f0', 'f1'] }, { kinds: [1851], '#a': ['f2', 'f3'] }]
 
-  const got = await relay.queryAll([{ kinds: [1851], '#a': ['f0', 'f1'] }, { kinds: [1851], '#a': ['f2', 'f3'] }])
+  const got = await relay.queryAll(filters)
 
-  assert.equal(got.length, events.length, 'every change once, the shared one included')
+  const serial = await fakeRelay(events, 100).relay.queryAll(filters, { batch: false })
+  assert.deepEqual(got.map((e) => e.id).sort(), serial.map((e) => e.id).sort(), 'every change once, the shared one and the first group’s oldest included')
 })
 
 test('more filters than one request will take are chunked', async () => {
