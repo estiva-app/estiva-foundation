@@ -189,12 +189,33 @@ export interface LiveRelay {
 /** How many consecutive AUTH refusals before giving up rather than looping. */
 const MAX_AUTH_FAILURES = 3
 
+/**
+ * The CLOSED reason of a read the relay could not run because it was too busy
+ * (its database pool was full or unreachable). Asking again shortly helps,
+ * unlike upstream's `error: query timed out`, which the same read would hit
+ * again.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
+ */
+export const RELAY_BUSY_CLOSED = 'error: relay busy'
+
+/**
+ * How many times a subscription the relay closed as busy is re-issued, with
+ * backoff, before its `onClosed` hears about it: about 15 s at the default
+ * backoff.
+ */
+const MAX_BUSY_RETRIES = 4
+
 interface LiveSubscription {
   id: string
   filters: Record<string, unknown>[]
   onEvent: (event: SignedEvent) => void
   onEose?: (() => void) | undefined
   onClosed?: ((reason: string) => void) | undefined
+  /** Busy closes since the last EOSE. */
+  busyRetries: number
+  /** The pending re-issue after a busy close, if any. */
+  busyTimer: unknown
 }
 
 /** `https://` → `wss://`, `http://` → `ws://`; a `ws`-scheme URL is left alone. */
@@ -306,7 +327,42 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
   }
 
   function openSubscription(sub: LiveSubscription) {
+    // A reconnect re-issues it now; a busy retry still pending would send it twice.
+    cancelBusyRetry(sub)
     send(['REQ', sub.id, ...sub.filters])
+  }
+
+  function cancelBusyRetry(sub: LiveSubscription) {
+    if (sub.busyTimer === null) return
+    clearTimer(sub.busyTimer)
+    sub.busyTimer = null
+  }
+
+  /**
+   * The relay closed `sub` as busy: ask again after a backoff, quietly, so the
+   * app keeps what it shows. Returns false once the retries are spent, and the
+   * subscriber is told.
+   */
+  function retryBusy(sub: LiveSubscription): boolean {
+    if (sub.busyRetries >= MAX_BUSY_RETRIES) {
+      sub.busyRetries = 0
+      return false
+    }
+    const delay =
+      Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + backoff.jitter() / 2)
+    sub.busyRetries += 1
+    log('relay busy; re-issuing the subscription', {
+      subId: sub.id,
+      delayMs: Math.round(delay),
+      attempt: sub.busyRetries,
+    })
+    cancelBusyRetry(sub)
+    sub.busyTimer = setTimer(() => {
+      sub.busyTimer = null
+      // Closed meanwhile, or the socket is down: a reconnect re-issues it.
+      if (subscriptions.get(sub.id) === sub && state === 'live') openSubscription(sub)
+    }, delay)
+    return true
   }
 
   /**
@@ -416,12 +472,16 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       case 'EVENT':
         subscriptions.get(frame.subId)?.onEvent(frame.event)
         return
-      case 'EOSE':
-        subscriptions.get(frame.subId)?.onEose?.()
+      case 'EOSE': {
+        const sub = subscriptions.get(frame.subId)
+        if (sub) sub.busyRetries = 0
+        sub?.onEose?.()
         return
+      }
       case 'CLOSED': {
         const sub = subscriptions.get(frame.subId)
         log('subscription closed by the relay', { subId: frame.subId, reason: frame.message })
+        if (sub && frame.message === RELAY_BUSY_CLOSED && retryBusy(sub)) return
         sub?.onClosed?.(frame.message)
         // `auth-required` here means the connection is unauthenticated — the
         // poisoned-but-open state. Reconnecting is the only fix, and dropping
@@ -482,12 +542,15 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         onEvent,
         onEose: subOptions?.onEose,
         onClosed: subOptions?.onClosed,
+        busyRetries: 0,
+        busyTimer: null,
       }
       subscriptions.set(id, sub)
       if (state === 'live') openSubscription(sub)
       return {
         close() {
           if (!subscriptions.delete(id)) return
+          cancelBusyRetry(sub)
           if (state === 'live') send(['CLOSE', id])
         },
       }
@@ -521,6 +584,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         clearTimer(reconnectTimer)
         reconnectTimer = null
       }
+      for (const sub of subscriptions.values()) cancelBusyRetry(sub)
       subscriptions.clear()
       if (socket) {
         socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null

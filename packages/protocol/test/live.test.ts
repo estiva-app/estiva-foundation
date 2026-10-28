@@ -339,6 +339,88 @@ describe('subscriptions', () => {
   })
 })
 
+describe('a relay too busy to answer a read', () => {
+  it('asks again quietly and delivers what the relay then sends', async () => {
+    const h = harness()
+    const onEvent = fn()
+    const onClosed = fn()
+    h.relay.subscribe([{ kinds: [9] }], onEvent, { onClosed })
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    s.deliver(['CLOSED', subId, 'error: relay busy'])
+    assert.equal(onClosed.calls.length, 0, 'the app is not told, so it keeps what it shows')
+    assert.equal(s.sentOf('REQ').length, 1, 'not before the backoff')
+
+    h.runReconnect()
+    assert.deepEqual(s.sentOf('REQ')[1], ['REQ', subId, { kinds: [9] }])
+    s.deliver(['EVENT', subId, { id: 'e1' }])
+    assert.deepEqual(onEvent.calls, [[{ id: 'e1' }]])
+  })
+
+  it('tells the subscriber "error: relay busy" once four quiet retries are spent', async () => {
+    const h = harness()
+    const onClosed = fn()
+    h.relay.subscribe([{ kinds: [9] }], () => {}, { onClosed })
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    for (let retry = 0; retry < 4; retry++) {
+      s.deliver(['CLOSED', subId, 'error: relay busy'])
+      h.runReconnect()
+    }
+    assert.equal(s.sentOf('REQ').length, 5)
+    assert.equal(onClosed.calls.length, 0)
+
+    s.deliver(['CLOSED', subId, 'error: relay busy'])
+    assert.deepEqual(onClosed.calls, [['error: relay busy']])
+    assert.equal(s.sentOf('REQ').length, 5, 'no fifth retry')
+  })
+
+  it('starts the count again after the relay answers in full', async () => {
+    const h = harness()
+    const onClosed = fn()
+    h.relay.subscribe([{ kinds: [9] }], () => {}, { onClosed })
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    for (let retry = 0; retry < 4; retry++) {
+      s.deliver(['CLOSED', subId, 'error: relay busy'])
+      h.runReconnect()
+    }
+    s.deliver(['EOSE', subId])
+    s.deliver(['CLOSED', subId, 'error: relay busy'])
+    h.runReconnect()
+    assert.equal(onClosed.calls.length, 0)
+    assert.equal(s.sentOf('REQ').length, 6)
+  })
+
+  it('does not ask again for a read cut off for running too long', async () => {
+    const h = harness()
+    const onClosed = fn()
+    h.relay.subscribe([{ kinds: [9] }], () => {}, { onClosed })
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    s.deliver(['CLOSED', subId, 'error: query timed out'])
+    h.runReconnect()
+    assert.deepEqual(onClosed.calls, [['error: query timed out']])
+    assert.equal(s.sentOf('REQ').length, 1)
+  })
+
+  it('does not re-open a subscription closed while it waited', async () => {
+    const h = harness()
+    const sub = h.relay.subscribe([{ kinds: [9] }], () => {})
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    s.deliver(['CLOSED', subId, 'error: relay busy'])
+    sub.close()
+    h.runReconnect()
+    assert.equal(s.sentOf('REQ').length, 1)
+  })
+})
+
 describe('authentication failures', () => {
   it('reconnects when the relay refuses the auth event', async () => {
     // Relay-side this connection is now AuthState::Failed and stays OPEN,
