@@ -20,7 +20,6 @@ import {
   parseQueryResponse,
   commandPayload,
   Relay,
-  RelayBusyError,
   secretKeySigner,
   buildMessage,
 } from '../dist/index.js'
@@ -233,7 +232,7 @@ test('a relay that stays busy is reported as "the relay is busy, try again in a 
   t.after(() => mock.timers.reset())
   const { relay, asked } = scriptedRelay([BUSY])
   await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => {
-    assert.ok(error instanceof RelayBusyError)
+    assert.equal(error.name, 'RelayBusyError')
     assert.equal(error.message, 'the relay is busy, try again in a moment')
     return true
   })
@@ -244,7 +243,7 @@ test('a read the relay cut off for running too long is not asked again', async (
   mock.timers.enable({ apis: ['setTimeout'] })
   t.after(() => mock.timers.reset())
   const { relay, asked } = scriptedRelay([{ status: 503, body: JSON.stringify({ error: 'query timed out' }) }])
-  await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => !(error instanceof RelayBusyError))
+  await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => error.name !== 'RelayBusyError')
   assert.equal(asked.length, 1)
 })
 

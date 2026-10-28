@@ -236,8 +236,9 @@ export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
 
 /**
  * The relay, or the proxy in front of it, cannot answer right now and asking
- * again shortly will help: a `503` that is not a cut-off query, or a `502` /
- * `504` from the proxy while the relay restarts.
+ * again shortly will help: a `503` that is not a cut-off query, or a `502`
+ * from the proxy while the relay restarts. Not a proxy's `504`: that is a
+ * request that ran too long, which asking again repeats.
  *
  * Decided on the status and on upstream's stable `query timed out` body, never
  * on prose. A cut-off query is not busy: the same query would be cut off again,
@@ -246,7 +247,7 @@ export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
  */
 export function isRelayBusyResponse(status: number, text: string): boolean {
-  if (status === 502 || status === 504) return true
+  if (status === 502) return true
   if (status !== 503) return false
   let error: unknown
   try {

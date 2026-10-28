@@ -12,7 +12,7 @@ changes** (SPEC §2; APP-9; record
 When the relay cannot reach its database it now answers `503` with
 `Retry-After` on HTTP and `CLOSED "error: relay busy"` on a read. `Relay`
 asks again quietly, three times over about seven seconds (jittered), on a
-`503` that is not `query timed out` and on a proxy's `502`/`504`; if the relay
+`503` that is not `query timed out` and on a proxy's `502`; if the relay
 stays busy, `query` throws a `RelayBusyError` and `publish` returns
 `{ ok: false, reason: RELAY_BUSY_MESSAGE }`, both reading "the relay is busy,
 try again in a moment". `createLiveRelay` re-issues a subscription the relay
