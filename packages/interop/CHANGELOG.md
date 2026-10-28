@@ -6,6 +6,24 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.70.0 — 2026-10-28
+
+**Manifest: nothing.** One load reads each change once when it also reads a
+whole kind (APP-6).
+
+- `createLoadQuery` counts a filter naming only kinds (`{ kinds: [1851] }`,
+  with or without a `limit`) as it counts one naming values: when it came back
+  whole, a later filter of one of its kinds, by any one tag, is answered from
+  it, and one asked while it is in flight waits for it. The agent's workspace
+  read every change whole and the Folder listing beside it read the same
+  changes again by `#a`: 41 MB, then 26 MB more, on production 28 Oct.
+- `createLoadQuery(query, { paged: true })` is for a query that pages every
+  filter to its end, as `Relay.queryAll` does: every answer counts whatever its
+  size. Counting the page never counted a read longer than one page, which every
+  workspace read is. Without it, a whole-kind read counts only when it states
+  a `limit` and came back short of it, since a relay may give a filter with no
+  limit a smaller page. A one-page query's reads by value count as before.
+
 ## 0.69.1 — 2026-10-27
 
 **Manifest: nothing.** A security fix in reading Mentioned in (PEEKM-7's

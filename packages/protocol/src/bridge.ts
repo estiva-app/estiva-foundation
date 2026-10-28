@@ -281,7 +281,7 @@ export interface RelayOptions {
  * A function saying which filter of a batch an event came from, or `null` when
  * that cannot be decided with certainty.
  *
- * Two discriminators, both exact, and between them they cover every batched
+ * Three discriminators, all exact, and between them they cover every batched
  * read the suite performs:
  *
  * - **`#h`**, when every filter names exactly one Folder and no two name the
@@ -292,6 +292,7 @@ export interface RelayOptions {
  *   else the filters constrain — extra constraints only ever narrow a filter,
  *   they cannot make it match a kind it did not ask for. This is the discovery
  *   pair, `{kinds:[30850]}` and `{kinds:[30851]}`.
+ * - **By match**, when every filter is a plain NIP-01 filter: see {@link byMatch}.
  *
  * Anything else returns `null` and the chunk is paged the old way. The bar is
  * "certain", not "usually right": a wrong attribution under-counts a run,
@@ -335,8 +336,80 @@ function byKind(filters: Record<string, unknown>[]): Discriminator | null {
   return (event) => slot.get(event.kind) ?? null
 }
 
+const NIP01_LISTS = new Set(['ids', 'authors', 'kinds'])
+
+/**
+ * NIP-01's match of one plain filter, or `null` for a filter with anything
+ * else in it (`search`, an extension), whose matches only the relay knows.
+ */
+function matcherOf(filter: Record<string, unknown>): ((event: SignedEvent) => boolean) | null {
+  const sets = new Map<string, Set<unknown>>()
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === 'limit') continue
+    if (key === 'since' || key === 'until') {
+      if (typeof value !== 'number') return null
+      continue
+    }
+    if (!NIP01_LISTS.has(key) && !/^#[A-Za-z]$/.test(key)) return null
+    if (!Array.isArray(value)) return null
+    sets.set(key, new Set(value))
+  }
+  const { since, until } = filter as { since?: number; until?: number }
+  return (event) => {
+    if (since !== undefined && event.created_at < since) return false
+    if (until !== undefined && event.created_at > until) return false
+    for (const [key, want] of sets) {
+      if (key === 'ids' && !want.has(event.id)) return false
+      if (key === 'authors' && !want.has(event.pubkey)) return false
+      if (key === 'kinds' && !want.has(event.kind)) return false
+      if (key.startsWith('#') && !event.tags.some((tag) => tag[0] === key[1] && want.has(tag[1]))) return false
+    }
+    return true
+  }
+}
+
+/**
+ * **By match**, for any batch of plain filters: an event the relay sent
+ * matching exactly one filter of the batch can only be in that filter's run.
+ * One matching two is refused, not guessed. This is the listing's read, a
+ * Folder's files and their changes in groups of ten addresses (APP-6), where
+ * no filter names a Folder and several ask the same kind: its 21 change
+ * filters' first page, 23.8 MB on production 27 Oct, was thrown away and every
+ * filter asked again.
+ *
+ * Offered only when every two filters ask disjoint values of some one field,
+ * so the answer is likely to split: two that could select the same events
+ * (`{kinds:[8,9]}` and `{kinds:[9]}`) would spend the request for nothing.
+ */
+function byMatch(filters: Record<string, unknown>[]): Discriminator | null {
+  const matchers = filters.map(matcherOf)
+  if (matchers.some((matcher) => matcher === null)) return null
+  const lists = filters.map(
+    (filter) => new Map(Object.entries(filter).flatMap(([key, values]) => (Array.isArray(values) ? [[key, new Set(values)] as const] : []))),
+  )
+  const apart = (a: Map<string, Set<unknown>>, b: Map<string, Set<unknown>>) =>
+    [...a].some(([key, values]) => {
+      const other = b.get(key)
+      if (!other) return false
+      for (const value of values) if (other.has(value)) return false
+      return true
+    })
+  for (let i = 0; i < lists.length; i++) {
+    for (let j = i + 1; j < lists.length; j++) if (!apart(lists[i], lists[j])) return null
+  }
+  return (event) => {
+    let found: number | null = null
+    for (const [index, matches] of matchers.entries()) {
+      if (!matches!(event)) continue
+      if (found !== null) return null
+      found = index
+    }
+    return found
+  }
+}
+
 function discriminate(filters: Record<string, unknown>[]): Discriminator | null {
-  return byFolder(filters) ?? byKind(filters)
+  return byFolder(filters) ?? byKind(filters) ?? byMatch(filters)
 }
 
 /** The batched response split into one run per filter, or `null` if any event is unclaimed. */

@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.45.1 — 2026-10-28
+
+**Wire behaviour: nothing changes** (APP-6). `Relay.queryAll` keeps a pooled
+first page it used to throw away. When every filter of the batch is a plain
+NIP-01 filter and every two ask disjoint values of some field, each event is
+put in the run of the one filter it matches; a run that came back short is
+settled, a full one pages on from where it ended. Before, a batch whose filters
+named no Folder and shared a kind (a Folder listing's changes, in groups of ten
+addresses) could not be split: its whole answer, 23.8 MB on production 27 Oct,
+was discarded and every filter asked again. An event matching two filters still
+leaves the batch unsplit, read the old way.
+
 ## 0.45.0 — 2026-10-27
 
 **Wire behaviour: nothing changes** (PEEKM-7). `linksOnWordsOf(text)` reads

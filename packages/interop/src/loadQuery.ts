@@ -15,8 +15,20 @@
  *   the relay's answer did not fill the page. A later filter in the same load
  *   naming such a value gets the events already read, and asks only for the
  *   rest.
+ * - **A read of a whole kind answers every later read of that kind** (APP-6).
+ *   The agent's workspace reads every change with `{ kinds: [1851] }`, and
+ *   `listFolders` beside it read the same changes again by `#a`: 37.6 MB, then
+ *   23.6 MB more, on production 27 Oct. A filter naming only kinds is complete
+ *   on the same terms as one naming values, and a later filter of one of its
+ *   kinds, by any one tag, is answered from it.
  * - **A read in flight is joined, not repeated.** A value still being read is
  *   waited for, and an identical request still in flight shares its answer.
+ *
+ * **A query that pages every filter to its end** (`Relay.queryAll`, the
+ * agent's) says so with `{ paged: true }`. Its answer is whole whatever its
+ * size and whatever `limit` the filter carried, so every such read counts;
+ * counting the page would never count a read past one page, which every
+ * workspace read is.
  *
  * **One load, never longer.** What it holds is the relay's answer at the moment
  * of the load: a refresh, a live update, or the next screen must read afresh,
@@ -53,13 +65,66 @@ function byTagOf(filter: Filter): ByTag | null {
   return { kind: kinds[0], tag: tagKeys[0].slice(1), values, limit }
 }
 
+/** `{ kinds: [...] }`, with or without a `limit`, and nothing else: every event of those kinds. */
+interface WholeKinds {
+  kinds: number[]
+  limit: number
+}
+
+function wholeKindsOf(filter: Filter, paged: boolean): WholeKinds | null {
+  const { kinds, limit, ...rest } = filter
+  if (Object.keys(rest).length !== 0 || !Array.isArray(kinds) || kinds.length === 0) return null
+  if (!kinds.every((kind) => typeof kind === 'number')) return null
+  // A relay may give a filter with no limit a smaller page than its ceiling, so
+  // through one page only a stated limit says when the answer was cut short.
+  if (typeof limit !== 'number' && !(paged && limit === undefined)) return null
+  return { kinds, limit: limit ?? RELAY_PAGE_CEILING }
+}
+
+/**
+ * The tags a whole read answers a later read by: the ones the relay matches as
+ * NIP-01 does, on every kind. Never `h`, which is a Folder's scope on the relay
+ * (the event's first `h`, its membership checked there), so a tag match would
+ * take in a change one member planted with a second `h` naming a Folder they
+ * cannot write to. Never `d` either: a Folder's own events (39000–39003) are
+ * reached by naming the Folder, and a read naming no Folder misses some.
+ */
+const WHOLE_READ_TAGS = new Set(['a', 'e'])
+
+/** The events of a whole read naming each value of one tag, indexed once per read and tag. */
+const indexes = new WeakMap<SignedEvent[], Map<string, Map<string, SignedEvent[]>>>()
+function naming(events: SignedEvent[], tag: string, value: string): SignedEvent[] {
+  let byTag = indexes.get(events)
+  if (!byTag) indexes.set(events, (byTag = new Map()))
+  let byValue = byTag.get(tag)
+  if (!byValue) {
+    byTag.set(tag, (byValue = new Map()))
+    for (const event of events) {
+      for (const [name, held] of event.tags) {
+        if (name !== tag) continue
+        const list = byValue.get(held) ?? []
+        if (!list.includes(event)) list.push(event)
+        byValue.set(held, list)
+      }
+    }
+  }
+  return byValue.get(value) ?? []
+}
+
+/** Every event of the read's kinds, if this answer holds them all: see {@link completeByValue}. */
+function completeWhole(shape: WholeKinds, answer: SignedEvent[], paged: boolean): SignedEvent[] | null {
+  const held = answer.filter((event) => shape.kinds.includes(event.kind))
+  return paged || held.length < Math.min(shape.limit, RELAY_PAGE_CEILING) ? held : null
+}
+
 /**
  * The events naming each of the filter's values, if this answer holds them
- * all: fewer came back for the filter than its page. The count is of
- * everything in the pooled answer the filter matches, which can only
- * overcount — so a page is never taken as complete when it was full.
+ * all: fewer came back for the filter than its page, or the query pages to the
+ * end. The count is of everything in the pooled answer the filter matches,
+ * which can only overcount — so a page is never taken as complete when it was
+ * full.
  */
-function completeByValue(shape: ByTag, answer: SignedEvent[]): Map<string, SignedEvent[]> | null {
+function completeByValue(shape: ByTag, answer: SignedEvent[], paged: boolean): Map<string, SignedEvent[]> | null {
   const byValue = new Map<string, SignedEvent[]>(shape.values.map((value) => [value, []]))
   let matched = 0
   for (const event of answer) {
@@ -74,16 +139,42 @@ function completeByValue(shape: ByTag, answer: SignedEvent[]): Map<string, Signe
     }
     if (hit) matched++
   }
-  return matched >= Math.min(shape.limit, RELAY_PAGE_CEILING) ? null : byValue
+  return !paged && matched >= Math.min(shape.limit, RELAY_PAGE_CEILING) ? null : byValue
+}
+
+export interface LoadQueryOptions {
+  /** The query answers every filter in full, paging past the relay's page (`Relay.queryAll`): see the module's note. */
+  paged?: boolean
+}
+
+/** A read held for the load: what it found, `null` when its page was full, or the read still in flight — and the limit it was read with. */
+interface Held {
+  limit: number
+  events: Promise<SignedEvent[] | null>
 }
 
 /** A query for one load: see the module's note. Make one per load and drop it after. */
-export function createLoadQuery(query: QueryFn): QueryFn {
-  // Per `<kind>:<tag>:<value>`: the events naming it, `null` while unknown
-  // (the page was full), or the read still in flight — and the limit it was
-  // read with, since only an ask with as large a limit would have got them all.
-  const known = new Map<string, { limit: number; events: Promise<SignedEvent[] | null> }>()
+export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}): QueryFn {
+  const paged = options.paged === true
+  // Only an ask with as large a limit as a held read would have got all it holds,
+  // so a smaller page goes to the relay. A paged read holds everything whatever its limit.
+  const answers = (held: Held | undefined, limit: number): held is Held => !!held && (paged || held.limit <= limit)
+  // Per `<kind>:<tag>:<value>`: the events naming it.
+  const known = new Map<string, Held>()
+  // Per kind: every event of it, read by a filter naming only kinds.
+  const wholes = new Map<number, Held>()
   const flights = new Map<string, Promise<SignedEvent[]>>()
+
+  const remember = <K>(memo: Map<K, Held>, key: K, entry: Held) => {
+    // A larger read of the same, in flight or done, is kept.
+    if ((memo.get(key)?.limit ?? -1) > entry.limit) return
+    memo.set(key, entry)
+    // Forget a refused read, and a page that came back full, so the next ask goes to the relay.
+    const forget = () => {
+      if (memo.get(key) === entry) memo.delete(key)
+    }
+    entry.events.then((events) => events ?? forget(), forget)
+  }
 
   const ask = (filters: Filter[]): Promise<SignedEvent[]> => {
     const key = JSON.stringify(filters)
@@ -97,18 +188,36 @@ export function createLoadQuery(query: QueryFn): QueryFn {
   return async (filters) => {
     const send: Filter[] = []
     const asked: ByTag[] = []
-    const joined: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
+    const askedWhole: WholeKinds[] = []
+    // Answered from a held read; `again` is what to ask if that read's page came back full.
+    const joined: { again: Filter; entry: Promise<SignedEvent[] | null> }[] = []
+    const joinedByTag: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
     for (const filter of filters) {
+      const whole = wholeKindsOf(filter, paged)
+      if (whole) {
+        const held = whole.kinds.map((kind) => wholes.get(kind))
+        if (held.every((entry) => answers(entry, whole.limit))) {
+          const parts = Promise.all(held.map((entry) => entry!.events))
+          joined.push({ again: filter, entry: parts.then((all) => (all.includes(null) ? null : all.flat() as SignedEvent[])) })
+        } else {
+          send.push(filter)
+          askedWhole.push(whole)
+        }
+        continue
+      }
       const shape = byTagOf(filter)
       if (!shape) {
         send.push(filter)
         continue
       }
       const fresh: string[] = []
+      const read = WHOLE_READ_TAGS.has(shape.tag) ? wholes.get(shape.kind) : undefined
       for (const value of new Set(shape.values)) {
         const entry = known.get(`${shape.kind}:${shape.tag}:${value}`)
-        // A smaller page than the read had might not have held them all: the relay is asked, as it was.
-        if (entry && entry.limit <= shape.limit) joined.push({ shape, value, entry: entry.events })
+        if (answers(read, shape.limit)) {
+          const events = read.events.then((all) => all && naming(all, shape.tag, value))
+          joinedByTag.push({ shape, value, entry: events })
+        } else if (answers(entry, shape.limit)) joinedByTag.push({ shape, value, entry: entry.events })
         else fresh.push(value)
       }
       if (fresh.length === 0) continue
@@ -117,38 +226,36 @@ export function createLoadQuery(query: QueryFn): QueryFn {
     }
 
     const answer = send.length ? ask(send) : Promise.resolve([])
+    for (const shape of askedWhole) {
+      const split = answer.then((events) => completeWhole(shape, events, paged))
+      for (const kind of shape.kinds) {
+        remember(wholes, kind, { limit: shape.limit, events: split.then((events) => events && events.filter((event) => event.kind === kind)) })
+      }
+    }
     for (const shape of asked) {
-      const split = answer.then((events) => completeByValue(shape, events))
+      const split = answer.then((events) => completeByValue(shape, events, paged))
       for (const value of shape.values) {
-        const key = `${shape.kind}:${shape.tag}:${value}`
-        // A larger read of the same value, in flight or done, is kept.
-        if ((known.get(key)?.limit ?? -1) > shape.limit) continue
-        const entry = { limit: shape.limit, events: split.then((byValue) => byValue?.get(value) ?? null) }
-        known.set(key, entry)
-        // Forget a refused read, and a page that came back full, so the next ask goes to the relay.
-        const forget = () => {
-          if (known.get(key) === entry) known.delete(key)
-        }
-        entry.events.then((events) => events ?? forget(), forget)
+        remember(known, `${shape.kind}:${shape.tag}:${value}`, { limit: shape.limit, events: split.then((byValue) => byValue?.get(value) ?? null) })
       }
     }
 
     const out = [...(await answer)]
+    const again: Filter[] = []
+    for (const { again: filter, entry } of joined) {
+      const events = await entry
+      if (events) out.push(...events)
+      else again.push(filter)
+    }
     // Per filter of the caller's, so a re-ask keeps the grouping it chose.
     const unknown = new Map<ByTag, string[]>()
-    for (const { shape, value, entry } of joined) {
+    for (const { shape, value, entry } of joinedByTag) {
       const events = await entry
       if (events) out.push(...events)
       // That read's page was full: ask for this value here, as the caller would have.
       else unknown.set(shape, [...(unknown.get(shape) ?? []), value])
     }
-    if (unknown.size) {
-      out.push(
-        ...(await ask(
-          [...unknown].map(([shape, values]) => ({ kinds: [shape.kind], [`#${shape.tag}`]: values, limit: shape.limit })),
-        )),
-      )
-    }
+    for (const [shape, values] of unknown) again.push({ kinds: [shape.kind], [`#${shape.tag}`]: values, limit: shape.limit })
+    if (again.length) out.push(...(await ask(again)))
 
     // One copy of each event, as one request to the relay answers.
     const seen = new Set<string>()

@@ -595,6 +595,19 @@ kept across loads, a live list would stop seeing changes. Measured as the agent
 on production, 26 Oct: 70.7 MB and 39 requests became 23.9 MB and 31, the same
 listing byte for byte.
 
+A read of a whole kind, `{ kinds: [1851] }`, counts the same way: once it came
+back whole, a later read of that kind by one tag is answered from it. A query
+that pages every filter to its end, as `Relay.queryAll` does, says so, and then
+every answer counts however long it is:
+
+```ts
+const load = createLoadQuery((filters) => relay.queryAll(filters), { paged: true })
+```
+
+Measured as the agent's `ship issues` on production, 28 Oct, with the workspace
+read and the listing sharing one: 99.1 MB in 55 requests became 44.4 MB in 19,
+each change read once and the output byte for byte the same.
+
 ### Only the kinds you draw
 
 A reader that draws some kinds and no dots, such as a list of one app's files,
