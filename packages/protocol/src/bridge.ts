@@ -231,6 +231,51 @@ export function parseQueryResponse(status: number, text: string): QueryResult {
   }
 }
 
+/** What a person reads when the relay stays busy through the quiet retries. */
+export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
+
+/**
+ * The relay, or the proxy in front of it, cannot answer right now and asking
+ * again shortly will help: a `503` that is not a cut-off query, or a `502` /
+ * `504` from the proxy while the relay restarts.
+ *
+ * Decided on the status and on upstream's stable `query timed out` body, never
+ * on prose. A cut-off query is not busy: the same query would be cut off again,
+ * and repeating it adds to the load that cut it off.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
+ */
+export function isRelayBusyResponse(status: number, text: string): boolean {
+  if (status === 502 || status === 504) return true
+  if (status !== 503) return false
+  let error: unknown
+  try {
+    error = JSON.parse(text)?.error
+  } catch {
+    error = text.trim()
+  }
+  return error !== 'query timed out'
+}
+
+/** A read the relay kept answering "busy" to, after the quiet retries. */
+export class RelayBusyError extends Error {
+  readonly httpStatus: number
+  constructor(httpStatus: number) {
+    super(RELAY_BUSY_MESSAGE)
+    this.name = 'RelayBusyError'
+    this.httpStatus = httpStatus
+  }
+}
+
+/**
+ * Waits before each quiet retry of a busy answer, in milliseconds: three
+ * retries, about seven seconds in all, each jittered so several apps refused
+ * together do not come back together.
+ */
+const BUSY_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000]
+
+declare const setTimeout: (fn: () => void, ms: number) => unknown
+
 /**
  * Just enough of `fetch` to post a body and read the answer.
  *
@@ -268,6 +313,12 @@ export interface RelayOptions {
   headers?: RelayHeaders
   /** Override the transport. Defaults to the runtime's `fetch`. */
   fetch?: FetchLike
+  /**
+   * Waits before each quiet retry of a busy answer ({@link isRelayBusyResponse}).
+   * Its length is the number of retries. A test seam; the default is about
+   * seven seconds over three retries.
+   */
+  busyRetryDelaysMs?: readonly number[]
 }
 
 /**
@@ -454,9 +505,28 @@ export class Relay {
     const opts: RelayOptions = typeof options === 'function' ? { headers: options } : options
     this.headers = opts.headers ?? (() => ({}))
     this.transport = opts.fetch
+    this.busyRetryDelaysMs = opts.busyRetryDelaysMs ?? BUSY_RETRY_DELAYS_MS
   }
 
+  private readonly busyRetryDelaysMs: readonly number[]
+
+  /**
+   * {@link Relay.send}, asked again after a jittered wait while the relay says
+   * it is busy, at most once per entry of `busyRetryDelaysMs`. The last answer
+   * is returned as it came, busy or not; the caller turns a busy one into
+   * {@link RELAY_BUSY_MESSAGE}.
+   */
   private async post(path: string, payload: unknown): Promise<{ status: number; text: string }> {
+    for (const delay of this.busyRetryDelaysMs) {
+      const answer = await this.send(path, payload)
+      if (!isRelayBusyResponse(answer.status, answer.text)) return answer
+      const jittered = delay * (0.5 + Math.random() / 2)
+      await new Promise<void>((resolve) => setTimeout(resolve, jittered))
+    }
+    return this.send(path, payload)
+  }
+
+  private async send(path: string, payload: unknown): Promise<{ status: number; text: string }> {
     const url = `${this.url}${path}`
     const body = JSON.stringify(payload)
     const auth = await authorizationHeader(this.signer, { url, method: 'POST', body })
@@ -482,6 +552,7 @@ export class Relay {
 
   async publish(event: SignedEvent): Promise<PublishResult> {
     const { status, text } = await this.post('/events', event)
+    if (isRelayBusyResponse(status, text)) return { ok: false, reason: RELAY_BUSY_MESSAGE, httpStatus: status }
     return parsePublishResponse(status, text)
   }
 
@@ -491,9 +562,12 @@ export class Relay {
    * Throws on a transport-level failure rather than returning an empty array,
    * because "no events" and "the relay refused you" are not the same answer and
    * a caller that cannot tell them apart renders an empty screen either way.
+   * A relay that stays busy through the quiet retries throws a
+   * {@link RelayBusyError}.
    */
   async query(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
     const { status, text } = await this.post('/query', filters)
+    if (isRelayBusyResponse(status, text)) throw new RelayBusyError(status)
     const result = parseQueryResponse(status, text)
     if (!result.ok) throw new Error(`query failed: ${result.reason}`)
     return result.events

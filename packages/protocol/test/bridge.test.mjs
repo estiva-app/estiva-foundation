@@ -13,13 +13,14 @@
  * `peek-app/src/nostr/`. They go deeper than a second harness here would, so
  * this file stops at the bridge.
  */
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parsePublishResponse,
   parseQueryResponse,
   commandPayload,
   Relay,
+  RelayBusyError,
   secretKeySigner,
   buildMessage,
 } from '../dist/index.js'
@@ -184,4 +185,77 @@ test('a bare headers callback is still accepted as the second option', async () 
     globalThis.fetch = saved
   }
   assert.equal(headers['x-auth-tag'], 'v')
+})
+
+// ── a relay too busy to answer ─────────────────────────────────────────────
+// why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
+
+const BUSY = { status: 503, body: JSON.stringify({ error: 'relay busy, retry shortly' }) }
+
+/** A relay that gives `answers` in turn (the last one repeats), counting the asks. */
+function scriptedRelay(answers) {
+  const asked = []
+  const relay = new Relay('https://r', secretKeySigner(SECRET), {
+    fetch: async (url) => {
+      const answer = answers[Math.min(asked.length, answers.length - 1)]
+      asked.push(url)
+      return { status: answer.status, text: async () => answer.body }
+    },
+  })
+  return { relay, asked }
+}
+
+/** Run `promise` to its end under fake timers, moving the clock past each retry wait. */
+async function settle(promise) {
+  let done = false
+  const tracked = promise.finally(() => {
+    done = true
+  })
+  tracked.catch(() => {})
+  while (!done) {
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(10_000)
+  }
+  return tracked
+}
+
+test('a busy relay is asked again quietly, and the read returns what it then sends', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const event = { id: 'e1', kind: 9 }
+  const { relay, asked } = scriptedRelay([BUSY, { status: 200, body: JSON.stringify([event]) }])
+  assert.deepEqual(await settle(relay.query([{ kinds: [9] }])), [event])
+  assert.equal(asked.length, 2)
+})
+
+test('a relay that stays busy is reported as "the relay is busy, try again in a moment"', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([BUSY])
+  await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => {
+    assert.ok(error instanceof RelayBusyError)
+    assert.equal(error.message, 'the relay is busy, try again in a moment')
+    return true
+  })
+  assert.equal(asked.length, 4, 'the first ask and three quiet retries')
+})
+
+test('a read the relay cut off for running too long is not asked again', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([{ status: 503, body: JSON.stringify({ error: 'query timed out' }) }])
+  await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => !(error instanceof RelayBusyError))
+  assert.equal(asked.length, 1)
+})
+
+test('a 502 page from the proxy while the relay restarts is busy, and a send says so', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([{ status: 502, body: '<!DOCTYPE html><title>502 Bad Gateway</title>' }])
+  const signer = secretKeySigner(SECRET)
+  const event = await signer.sign(buildMessage(signer.pubkey, 1787142018561, { channelUuid: CH, content: 'x' }))
+  const result = await settle(relay.publish(event))
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'the relay is busy, try again in a moment')
+  assert.equal(asked.length, 4)
 })

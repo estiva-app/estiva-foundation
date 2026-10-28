@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.45.1'
+export const PROTOCOL_VERSION = '0.46.0'
 
 export {
   // types
@@ -155,6 +155,9 @@ export {
   DEFAULT_QUERY_CONCURRENCY,
   MAX_FILTERS_PER_QUERY,
   Relay,
+  RELAY_BUSY_MESSAGE,
+  RelayBusyError,
+  isRelayBusyResponse,
 } from './bridge.js'
 
 export {
@@ -167,6 +170,7 @@ export {
   toWebSocketUrl,
   parseFrame,
   createLiveRelay,
+  RELAY_BUSY_CLOSED,
 } from './live.js'
 
 export {

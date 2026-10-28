@@ -4,6 +4,22 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.46.0 — 2026-10-28
+
+**Wire behaviour: a busy relay is asked again; nothing an app publishes
+changes** (SPEC §2; APP-9; record
+[a busy relay says it is busy](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md)).
+When the relay cannot reach its database it now answers `503` with
+`Retry-After` on HTTP and `CLOSED "error: relay busy"` on a read. `Relay`
+asks again quietly, three times over about seven seconds (jittered), on a
+`503` that is not `query timed out` and on a proxy's `502`/`504`; if the relay
+stays busy, `query` throws a `RelayBusyError` and `publish` returns
+`{ ok: false, reason: RELAY_BUSY_MESSAGE }`, both reading "the relay is busy,
+try again in a moment". `createLiveRelay` re-issues a subscription the relay
+closed as busy, with backoff, up to four times before its `onClosed` hears
+`RELAY_BUSY_CLOSED`; the count starts again after an `EOSE`. A read cut off
+for running too long (`query timed out`) is still not asked again.
+
 ## 0.45.1 — 2026-10-28
 
 **Wire behaviour: nothing changes** (APP-6). `Relay.queryAll` keeps a pooled
