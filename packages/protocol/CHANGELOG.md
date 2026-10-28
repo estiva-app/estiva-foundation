@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.46.1 — 2026-10-28
+
+**Wire behaviour: fewer asks of a busy or rate-limited relay; nothing an app
+publishes changes** (APP-9; record
+[a busy relay says it is busy](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md),
+"clients decide on the status code and the `error:` prefix").
+A `503` whose error opens with a NIP-01 prefix is no longer busy: the relay's
+`rate-limited: shared admission unavailable` is its rate limit, asked once and
+passed on in its own words, so an app's rate-limit pause still applies. The
+quiet retries wait at least the answer's `Retry-After` (the relay sends `5`
+with a busy `503`) and never longer than the three waits add up to, so a busy
+relay is asked twice, not four times inside the five seconds it asked for.
+New: `retryAfterMsOf(header)`, and `RelayAnswer`, whose optional
+`retryAfterMs` an app with its own transport passes to `retryWhileBusy`.
+
 ## 0.46.0 — 2026-10-28
 
 **Wire behaviour: a busy relay is asked again; nothing an app publishes

@@ -240,9 +240,12 @@ export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
  * from the proxy while the relay restarts. Not a proxy's `504`: that is a
  * request that ran too long, which asking again repeats.
  *
- * Decided on the status and on upstream's stable `query timed out` body, never
- * on prose. A cut-off query is not busy: the same query would be cut off again,
- * and repeating it adds to the load that cut it off.
+ * Decided on the status, on a machine-readable prefix and on upstream's stable
+ * `query timed out` body, never on prose. A cut-off query is not busy: the same
+ * query would be cut off again, and repeating it adds to the load that cut it
+ * off. Nor is a `503` whose error opens with a NIP-01 prefix: `rate-limited:
+ * shared admission unavailable` is the relay's rate limit, which has its own
+ * pause, and asking again inside it is what the pause is there to stop.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
  */
@@ -255,7 +258,20 @@ export function isRelayBusyResponse(status: number, text: string): boolean {
   } catch {
     error = text.trim()
   }
+  if (typeof error === 'string' && MACHINE_READABLE_PREFIX.test(error)) return false
   return error !== 'query timed out'
+}
+
+/** NIP-01's machine-readable prefix on an error: `rate-limited:`, `restricted:`, `auth-required:`. */
+const MACHINE_READABLE_PREFIX = /^[a-z]+(-[a-z]+)*:/
+
+/**
+ * A `Retry-After` header in milliseconds, when it is a number of seconds (the
+ * form the relay sends with a busy `503`); `undefined` for none or a date.
+ */
+export function retryAfterMsOf(header: string | null | undefined): number | undefined {
+  if (!header || !/^\d+$/.test(header.trim())) return undefined
+  return Number(header.trim()) * 1_000
 }
 
 /** A read the relay kept answering "busy" to, after the quiet retries. */
@@ -277,26 +293,43 @@ const BUSY_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000]
 
 declare const setTimeout: (fn: () => void, ms: number) => unknown
 
+/** One answer from the relay, as {@link retryWhileBusy} reads it. */
+export interface RelayAnswer {
+  status: number
+  text: string
+  /** The answer's `Retry-After`, in milliseconds ({@link retryAfterMsOf}). */
+  retryAfterMs?: number
+}
+
 /**
  * `send`, asked again after a jittered wait while the relay says it is busy
  * ({@link isRelayBusyResponse}), at most once per entry of `delaysMs`. The last
  * answer is returned as it came, busy or not; the caller turns a busy one into
  * {@link RELAY_BUSY_MESSAGE}.
  *
+ * A wait is never shorter than the answer's `Retry-After`, and the waits never
+ * add up to more than `delaysMs` does: an ask the relay said would be too soon
+ * is not sent, and a relay asking for five seconds is asked again once, not
+ * three times inside them.
+ *
  * Takes the request as a function rather than a URL, so an app with its own
  * transport (Peek signs through Estiva ID, not a {@link Signer}) gets the same
  * quiet retries as {@link Relay}. `send` is called afresh each time, so a
  * request that signs NIP-98 auth signs a new one per ask.
  */
-export async function retryWhileBusy(
-  send: () => Promise<{ status: number; text: string }>,
+export async function retryWhileBusy<A extends RelayAnswer>(
+  send: () => Promise<A>,
   delaysMs: readonly number[] = BUSY_RETRY_DELAYS_MS,
-): Promise<{ status: number; text: string }> {
+): Promise<A> {
+  const budget = delaysMs.reduce((sum, delay) => sum + delay, 0)
+  let waited = 0
   for (const delay of delaysMs) {
     const answer = await send()
     if (!isRelayBusyResponse(answer.status, answer.text)) return answer
-    const jittered = delay * (0.5 + Math.random() / 2)
-    await new Promise<void>((resolve) => setTimeout(resolve, jittered))
+    const wait = Math.max(delay * (0.5 + Math.random() / 2), answer.retryAfterMs ?? 0)
+    if (waited + wait > budget) return answer
+    waited += wait
+    await new Promise<void>((resolve) => setTimeout(resolve, wait))
   }
   return send()
 }
@@ -311,7 +344,7 @@ export async function retryWhileBusy(
 export type FetchLike = (
   url: string,
   init: { method: string; headers: Record<string, string>; body: string },
-) => Promise<{ status: number; text(): Promise<string> }>
+) => Promise<{ status: number; text(): Promise<string>; headers?: { get(name: string): string | null } }>
 
 /** See {@link FetchLike}. Read inside a method, so importing touches no global. */
 declare const fetch: FetchLike
@@ -536,11 +569,11 @@ export class Relay {
   private readonly busyRetryDelaysMs: readonly number[]
 
   /** {@link Relay.send} through {@link retryWhileBusy}. */
-  private post(path: string, payload: unknown): Promise<{ status: number; text: string }> {
+  private post(path: string, payload: unknown): Promise<RelayAnswer> {
     return retryWhileBusy(() => this.send(path, payload), this.busyRetryDelaysMs)
   }
 
-  private async send(path: string, payload: unknown): Promise<{ status: number; text: string }> {
+  private async send(path: string, payload: unknown): Promise<RelayAnswer> {
     const url = `${this.url}${path}`
     const body = JSON.stringify(payload)
     const auth = await authorizationHeader(this.signer, { url, method: 'POST', body })
@@ -561,7 +594,7 @@ export class Relay {
       },
       body,
     })
-    return { status: res.status, text: await res.text() }
+    return { status: res.status, text: await res.text(), retryAfterMs: retryAfterMsOf(res.headers?.get('retry-after')) }
   }
 
   async publish(event: SignedEvent): Promise<PublishResult> {
