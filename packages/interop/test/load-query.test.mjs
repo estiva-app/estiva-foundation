@@ -192,6 +192,74 @@ describe('a load query answers from what it has read only when that read was com
   })
 })
 
+describe('a read of a whole kind answers later reads of that kind (APP-6)', () => {
+  const N = addressOf(north)
+  const S = addressOf(south)
+  const ALL = [{ kinds: [1851] }]
+
+  /** Like `Relay.queryAll`: every filter answered to its end, whatever its `limit`. */
+  function pagingRelay(events) {
+    const base = countingRelay(events)
+    const query = (filters) => base.query(filters.map(({ limit, ...rest }) => rest))
+    return { ...base, query }
+  }
+
+  test('the agent’s workspace read, then the listing beside it: each change comes from the relay once', async () => {
+    const relay = pagingRelay(world())
+    const query = createLoadQuery(relay.query, { paged: true })
+    await query(ALL)
+    await listFolders(query)
+    for (const c of changes) assert.equal(relay.timesSent(c), 1, `change ${c.id} sent ${relay.timesSent(c)} times`)
+  })
+
+  test('a read by value after it is answered without the relay, and holds what the relay would send', async () => {
+    const relay = countingRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query([{ kinds: [1851], limit: 10 }])
+    const byValue = await query([{ kinds: [1851], '#a': [N, S], limit: 10 }])
+    assert.equal(relay.requests.length, 1)
+    assert.deepEqual(byValue.map((e) => e.id).sort(), changes.slice(0, 4).map((e) => e.id).sort())
+  })
+
+  test('a read by value while it is in flight waits for it instead of asking', async () => {
+    const relay = pagingRelay(world())
+    let release
+    const gate = new Promise((resolve) => (release = resolve))
+    const query = createLoadQuery((filters) => gate.then(() => relay.query(filters)), { paged: true })
+    const both = Promise.all([query(ALL), query([{ kinds: [1851], '#a': [S], limit: 500 }])])
+    release()
+    const [, south] = await both
+    assert.equal(relay.requests.length, 1)
+    assert.deepEqual(south.map((e) => e.id).sort(), changes.slice(2, 4).map((e) => e.id).sort())
+  })
+
+  test('through a query that pages to the end, a read longer than its limit still counts', async () => {
+    const relay = pagingRelay(world())
+    const query = createLoadQuery(relay.query, { paged: true })
+    await query([{ kinds: [1851], limit: 2 }])
+    const again = await query([{ kinds: [1851], '#a': [N], limit: 1 }])
+    assert.equal(relay.requests.length, 1)
+    assert.equal(again.length, 2)
+  })
+
+  test('through one page, a whole-kind read that filled it answers nothing: the relay is asked again', async () => {
+    const relay = countingRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query([{ kinds: [1851], limit: 5 }]) // five changes exist: the page is full, so more may
+    const byValue = await query([{ kinds: [1851], '#a': [N], limit: 10 }])
+    assert.equal(relay.requests.length, 2)
+    assert.equal(byValue.length, 2)
+  })
+
+  test('a read of another kind still goes to the relay', async () => {
+    const relay = countingRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query(ALL)
+    await query([{ kinds: [KIND_FOLDER_STATE], '#d': [APIARY], limit: 10 }])
+    assert.equal(relay.requests.length, 2)
+  })
+})
+
 describe('a read in flight is joined, not repeated', () => {
   /** A relay whose answers wait until released, so two asks overlap. */
   function heldRelay(events) {

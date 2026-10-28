@@ -110,7 +110,7 @@ export {
  * breadcrumbs and move targets, with cycles cut. No requests.
  */
 export { nestingOf, type Nestable, type Nesting } from './nesting.js'
-export { createLoadQuery } from './loadQuery.js'
+export { createLoadQuery, type LoadQueryOptions } from './loadQuery.js'
 
 /**
  * The files `[` offers (PEE-21): resolved objects as rows, and typed text as

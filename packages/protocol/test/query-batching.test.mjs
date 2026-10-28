@@ -58,6 +58,7 @@ function fakeRelay(events, serverCeiling = 1000, { maxFilters = MAX_FILTERS_PER_
       const eligible = events
         .filter((e) => (filter.kinds ? filter.kinds.includes(e.kind) : true))
         .filter((e) => (filter['#h'] ? filter['#h'].includes(e.tags.find((t) => t[0] === 'h')?.[1]) : true))
+        .filter((e) => (filter['#a'] ? e.tags.some((t) => t[0] === 'a' && filter['#a'].includes(t[1])) : true))
         .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
         .sort((a, b) => b.created_at - a.created_at)
       out.push(...eligible.slice(0, Math.min(filter.limit ?? serverCeiling, serverCeiling)))
@@ -171,6 +172,52 @@ test('an unattributable batch is not even attempted on a cold relay', async () =
     calls.every((filters) => filters.length === 1),
     'every call carried a single filter — no batch was speculatively spent',
   )
+})
+
+/** `count` changes to each address, kind 1851, one `a` tag each — or every one of `targets` on one change. */
+const changesTo = (targets, count, base) =>
+  targets.flatMap((target, t) =>
+    Array.from({ length: count }, (_, i) => ({ ...event(base + t * 1000 + i, 2_000_000 - t * 1000 - i, 1851), tags: [['a', target]] })),
+  )
+
+test('changes read in groups of addresses keep their page: a short group is settled, a long one pages on from it (APP-6)', async () => {
+  /*
+    The listing's read: a Folder's files' changes in groups of ten addresses,
+    one kind, no Folder named. On production, 27 Oct, the answer to 21 such
+    groups was 23.8 MB, and because no run could be told apart it was thrown
+    away and every group asked again. Each change names one file, and the
+    groups name disjoint files, so each event says which run it is in.
+  */
+  const groups = [['f0', 'f1'], ['f2', 'f3'], ['f4', 'f5']]
+  const events = [...changesTo(['f0', 'f1'], 75, 0), ...changesTo(['f2'], 3, 10_000), ...changesTo(['f5'], 4, 20_000)]
+  const { relay, calls } = fakeRelay(events, 100)
+  await relay.queryAll([{ kinds: [9] }, { kinds: [1851], '#a': ['f0'] }], { batch: false }) // a warm relay: it has seen a full page
+  calls.length = 0
+
+  const filters = groups.map((group) => ({ kinds: [1851], '#a': group }))
+  const got = await relay.queryAll(filters)
+
+  assert.equal(got.length, events.length)
+  assert.deepEqual(
+    calls.slice(1).map((call) => call.map((f) => f['#a'])),
+    [[['f0', 'f1']]],
+    'after the one batched call, only the long group asks again — from where its page ended',
+  )
+  assert.ok(calls.slice(1).every(([f]) => f.until !== undefined), 'its first page is not asked a second time')
+  const serial = await fakeRelay(events, 100).relay.queryAll(filters, { batch: false })
+  assert.deepEqual(got.map((e) => e.id).sort(), serial.map((e) => e.id).sort())
+})
+
+test('a change naming files in two groups cannot be attributed, and the answer is still right', async () => {
+  const both = { ...event(99_999, 3_000_000, 1851), tags: [['a', 'f0'], ['a', 'f2']] }
+  const events = [both, ...changesTo(['f0'], 3, 0), ...changesTo(['f2'], 3, 10_000)]
+  const { relay, calls } = fakeRelay(events, 100)
+  await relay.queryAll([{ kinds: [9] }, { kinds: [1851] }], { batch: false })
+  calls.length = 0
+
+  const got = await relay.queryAll([{ kinds: [1851], '#a': ['f0', 'f1'] }, { kinds: [1851], '#a': ['f2', 'f3'] }])
+
+  assert.equal(got.length, events.length, 'every change once, the shared one included')
 })
 
 test('more filters than one request will take are chunked', async () => {
