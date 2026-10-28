@@ -6,6 +6,18 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.70.1 — 2026-10-28
+
+**Manifest: nothing.** The same manifests answer; discovery is one wait
+instead of two (APP-3).
+
+- `resolveManifest` asks the `#k` claim beside the author's `kind:31989`
+  recommendation, not after it, and takes a recommended manifest from the claim
+  when the claim holds it. A Leaf page opened by its link waited ~0.5 s on the
+  two in turn before its own read (production, 28 Oct). The recommendation
+  still wins; a recommended manifest that does not claim the kind is still
+  read by its address, a third request where it used to be the second.
+
 ## 0.70.0 — 2026-10-28
 
 **Manifest: nothing.** One load reads each change once when it also reads a
