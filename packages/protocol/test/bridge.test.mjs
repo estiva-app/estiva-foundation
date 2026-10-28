@@ -225,7 +225,8 @@ test('a busy relay is asked again quietly, and the read returns what it then sen
   t.after(() => mock.timers.reset())
   const event = { id: 'e1', kind: 9 }
   const { relay, asked } = scriptedRelay([BUSY, { status: 200, body: JSON.stringify([event]) }])
-  assert.deepEqual(await settle(relay.query([{ kinds: [9] }])), [event])
+  const answer = await settle(relay.query([{ kinds: [9] }])).catch((error) => error.message)
+  assert.deepEqual(answer, [event])
   assert.equal(asked.length, 2)
 })
 
