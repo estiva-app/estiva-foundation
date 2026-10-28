@@ -1872,9 +1872,9 @@ type CachedManifests = ResolvedManifest | null | readonly ResolvedManifest[]
 /**
  * A memo for the half of a resolve that does not change between refreshes.
  *
- * Resolving one reference costs four round trips, and **two of them are NIP-89
- * discovery** — the author's `kind:31989` recommendation, then the `kind:31990`
- * manifest itself. A consumer that re-resolves on a timer pays for both every
+ * Resolving one reference costs four requests, and **two of them are NIP-89
+ * discovery** — the author's `kind:31989` recommendation and the `kind:31990`
+ * manifests claiming the kind, asked together (APP-3). A consumer that re-resolves on a timer pays for both every
  * time, and they answer the same thing until an app republishes its manifest.
  * Measured on Ship, where a reference widget re-resolves on the poll: 4
  * requests per reference per tick, identical on the second resolve, against a
@@ -2044,7 +2044,7 @@ async function resolveManifestUncached(
   const claim = query([
     { kinds: [KIND_HANDLER_INFORMATION], '#k': [String(pointer.kind)], limit: 20 },
   ])
-  claim.catch(() => {})
+  void claim.catch(() => {})
   const recommended = await query(
     [
       {

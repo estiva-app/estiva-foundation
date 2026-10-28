@@ -349,6 +349,16 @@ test('a recommended manifest the claim already holds is not read again', async (
   assert.equal(relay.count, 2, `the recommendation and the claim, nothing else; got ${relay.count}`)
 })
 
+test('a refused claim does not cost a resolve the recommendation answers', async () => {
+  const relay = countingRelay([manifest, appManifest('chosen', [['k', String(KIND)]]), recommending('chosen')])
+  const query = async (filters) => {
+    if (claimsKind(filters)) throw new Error('rate-limited: quota exceeded; retry in 8s')
+    return relay.query(filters)
+  }
+  const resolved = await resolveManifest(POINTER, query)
+  assert.equal(resolved.address, `31990:${APP}:chosen`, 'the recommended manifest is read by its address instead')
+})
+
 test('a recommended manifest that does not claim the kind is still read by its address', async () => {
   const relay = countingRelay([manifest, appManifest('chosen', []), recommending('chosen')])
   const resolved = await resolveManifest(POINTER, relay.query)
