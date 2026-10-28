@@ -235,6 +235,13 @@ export function parseQueryResponse(status: number, text: string): QueryResult {
 export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
 
 /**
+ * NIP-01's machine-readable prefixes for a refusal the relay means: asking
+ * again shortly gets the same answer. Not `error:`, which is how a busy relay
+ * answers (`error: relay busy`).
+ */
+const REFUSAL_PREFIX = /^(rate-limited|restricted|auth-required|blocked|invalid|pow|duplicate|mute):/
+
+/**
  * The relay, or the proxy in front of it, cannot answer right now and asking
  * again shortly will help: a `503` that is not a cut-off query, or a `502`
  * from the proxy while the relay restarts. Not a proxy's `504`: that is a
@@ -243,9 +250,13 @@ export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
  * Decided on the status, on a machine-readable prefix and on upstream's stable
  * `query timed out` body, never on prose. A cut-off query is not busy: the same
  * query would be cut off again, and repeating it adds to the load that cut it
- * off. Nor is a `503` whose error opens with a NIP-01 prefix: `rate-limited:
- * shared admission unavailable` is the relay's rate limit, which has its own
- * pause, and asking again inside it is what the pause is there to stop.
+ * off. Nor is a `503` whose error opens with a NIP-01 refusal prefix
+ * ({@link REFUSAL_PREFIX}): the relay labelled it, and the label decides. The
+ * one the relay sends today, `rate-limited: shared admission unavailable`, is
+ * its rate limiter's own store failing; it reaches the app as a rate limit,
+ * whose pause is longer than these retries, rather than a quick re-ask piling
+ * onto a limiter that is down. `error:` is not a refusal prefix: it is what a
+ * busy relay says.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md
  */
@@ -256,14 +267,12 @@ export function isRelayBusyResponse(status: number, text: string): boolean {
   try {
     error = JSON.parse(text)?.error
   } catch {
-    error = text.trim()
+    error = text
   }
-  if (typeof error === 'string' && MACHINE_READABLE_PREFIX.test(error)) return false
+  if (typeof error === 'string') error = error.trim()
+  if (typeof error === 'string' && REFUSAL_PREFIX.test(error)) return false
   return error !== 'query timed out'
 }
-
-/** NIP-01's machine-readable prefix on an error: `rate-limited:`, `restricted:`, `auth-required:`. */
-const MACHINE_READABLE_PREFIX = /^[a-z]+(-[a-z]+)*:/
 
 /**
  * A `Retry-After` header in milliseconds, when it is a number of seconds (the
@@ -307,10 +316,12 @@ export interface RelayAnswer {
  * answer is returned as it came, busy or not; the caller turns a busy one into
  * {@link RELAY_BUSY_MESSAGE}.
  *
- * A wait is never shorter than the answer's `Retry-After`, and the waits never
- * add up to more than `delaysMs` does: an ask the relay said would be too soon
- * is not sent, and a relay asking for five seconds is asked again once, not
- * three times inside them.
+ * A wait is the answer's `Retry-After` plus a jitter, so clients told the same
+ * five seconds do not all come back at the same instant, and the waits never
+ * add up to more than `delaysMs` does. A relay asking for five seconds is asked
+ * again once, after them, not three times inside them; one asking for longer
+ * than the whole budget is still asked once more at the budget's end, rather
+ * than given up on at once.
  *
  * Takes the request as a function rather than a URL, so an app with its own
  * transport (Peek signs through Estiva ID, not a {@link Signer}) gets the same
@@ -326,8 +337,10 @@ export async function retryWhileBusy<A extends RelayAnswer>(
   for (const delay of delaysMs) {
     const answer = await send()
     if (!isRelayBusyResponse(answer.status, answer.text)) return answer
-    const wait = Math.max(delay * (0.5 + Math.random() / 2), answer.retryAfterMs ?? 0)
-    if (waited + wait > budget) return answer
+    const floor = answer.retryAfterMs ?? delay / 2
+    const room = budget - waited - delay / 2
+    if (waited > 0 && floor > room) return answer
+    const wait = Math.min(floor, room) + (delay * Math.random()) / 2
     waited += wait
     await new Promise<void>((resolve) => setTimeout(resolve, wait))
   }

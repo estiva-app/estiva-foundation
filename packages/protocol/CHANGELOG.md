@@ -10,14 +10,22 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 publishes changes** (APP-9; record
 [a busy relay says it is busy](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-busy-relay-says-it-is-busy.md),
 "clients decide on the status code and the `error:` prefix").
-A `503` whose error opens with a NIP-01 prefix is no longer busy: the relay's
-`rate-limited: shared admission unavailable` is its rate limit, asked once and
-passed on in its own words, so an app's rate-limit pause still applies. The
-quiet retries wait at least the answer's `Retry-After` (the relay sends `5`
-with a busy `503`) and never longer than the three waits add up to, so a busy
-relay is asked twice, not four times inside the five seconds it asked for.
-New: `retryAfterMsOf(header)`, and `RelayAnswer`, whose optional
-`retryAfterMs` an app with its own transport passes to `retryWhileBusy`.
+A `503` whose error opens with a NIP-01 refusal prefix (`rate-limited:`,
+`restricted:`, `auth-required:`, `blocked:`, `invalid:`, `pow:`, `duplicate:`,
+`mute:`; not `error:`) is no longer busy: the relay labelled it, and the label
+decides. The one it sends today, `rate-limited: shared admission unavailable`,
+is its rate limiter's store failing; it is asked once and passed on in its own
+words, so an app's longer rate-limit pause applies instead of quick re-asks
+piling onto a limiter that is down. The quiet retries wait the answer's
+`Retry-After` (the relay sends `5` with a busy `503`) plus a jitter, so clients
+told the same five seconds do not return at the same instant, and never longer
+than the three waits add up to: a busy relay asking for five seconds is asked
+twice, not four times inside them, and one asking for longer than that is
+asked once more at the end rather than given up on. Browsers read
+`Retry-After` only once the relay exposes it in CORS; until then they wait the
+plain jittered delays. New: `retryAfterMsOf(header)`, and `RelayAnswer`, whose
+optional `retryAfterMs` an app with its own transport passes to
+`retryWhileBusy`.
 
 ## 0.46.0 — 2026-10-28
 
