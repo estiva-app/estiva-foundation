@@ -158,6 +158,7 @@ export {
   RELAY_BUSY_MESSAGE,
   RelayBusyError,
   isRelayBusyResponse,
+  retryWhileBusy,
 } from './bridge.js'
 
 export {

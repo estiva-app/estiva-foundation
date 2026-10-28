@@ -15,7 +15,8 @@ asks again quietly, three times over about seven seconds (jittered), on a
 `503` that is not `query timed out` and on a proxy's `502`; if the relay
 stays busy, `query` throws a `RelayBusyError` and `publish` returns
 `{ ok: false, reason: RELAY_BUSY_MESSAGE }`, both reading "the relay is busy,
-try again in a moment". `createLiveRelay` re-issues a subscription the relay
+try again in a moment". An app with its own transport gets the same quiet
+retries from `retryWhileBusy(send)`, which `Relay` uses. `createLiveRelay` re-issues a subscription the relay
 closed as busy, with backoff, up to four times before its `onClosed` hears
 `RELAY_BUSY_CLOSED`; the count starts again after an `EOSE`. A read cut off
 for running too long (`query timed out`) is still not asked again.

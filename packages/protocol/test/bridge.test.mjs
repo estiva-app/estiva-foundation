@@ -23,6 +23,8 @@ import {
   secretKeySigner,
   buildMessage,
 } from '../dist/index.js'
+// Read off the namespace, so the file still loads on a build without it.
+import * as protocol from '../dist/index.js'
 
 const CH = '24f5c271-3ed4-47f7-92e4-e9d6cf7f42d1'
 
@@ -257,4 +259,24 @@ test('a 502 page from the proxy while the relay restarts is busy, and a send say
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'the relay is busy, try again in a moment')
   assert.equal(asked.length, 4)
+})
+
+test('an app with its own transport gets the same quiet retries, each ask sent afresh', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  // Peek posts through Estiva ID's /sign, not a Relay: each ask signs new auth.
+  const answers = [{ status: 502, text: 'Bad Gateway' }, { status: BUSY.status, text: BUSY.body }, { status: 200, text: '[]' }]
+  let asks = 0
+  const answer = await settle(protocol.retryWhileBusy(async () => answers[asks++]))
+  assert.deepEqual(answer, { status: 200, text: '[]' })
+  assert.equal(asks, 3)
+})
+
+test('an app with its own transport hears the last busy answer when the relay stays busy', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  let asks = 0
+  const answer = await settle(protocol.retryWhileBusy(async () => (asks++, { status: BUSY.status, text: BUSY.body })))
+  assert.equal(protocol.isRelayBusyResponse(answer.status, answer.text), true)
+  assert.equal(asks, 4, 'the first ask and three quiet retries')
 })

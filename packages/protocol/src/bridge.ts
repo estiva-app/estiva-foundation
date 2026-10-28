@@ -278,6 +278,30 @@ const BUSY_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000]
 declare const setTimeout: (fn: () => void, ms: number) => unknown
 
 /**
+ * `send`, asked again after a jittered wait while the relay says it is busy
+ * ({@link isRelayBusyResponse}), at most once per entry of `delaysMs`. The last
+ * answer is returned as it came, busy or not; the caller turns a busy one into
+ * {@link RELAY_BUSY_MESSAGE}.
+ *
+ * Takes the request as a function rather than a URL, so an app with its own
+ * transport (Peek signs through Estiva ID, not a {@link Signer}) gets the same
+ * quiet retries as {@link Relay}. `send` is called afresh each time, so a
+ * request that signs NIP-98 auth signs a new one per ask.
+ */
+export async function retryWhileBusy(
+  send: () => Promise<{ status: number; text: string }>,
+  delaysMs: readonly number[] = BUSY_RETRY_DELAYS_MS,
+): Promise<{ status: number; text: string }> {
+  for (const delay of delaysMs) {
+    const answer = await send()
+    if (!isRelayBusyResponse(answer.status, answer.text)) return answer
+    const jittered = delay * (0.5 + Math.random() / 2)
+    await new Promise<void>((resolve) => setTimeout(resolve, jittered))
+  }
+  return send()
+}
+
+/**
  * Just enough of `fetch` to post a body and read the answer.
  *
  * A parameter rather than an ambient global, per ADR 0002 §4a — `fetch` is in
@@ -511,20 +535,9 @@ export class Relay {
 
   private readonly busyRetryDelaysMs: readonly number[]
 
-  /**
-   * {@link Relay.send}, asked again after a jittered wait while the relay says
-   * it is busy, at most once per entry of `busyRetryDelaysMs`. The last answer
-   * is returned as it came, busy or not; the caller turns a busy one into
-   * {@link RELAY_BUSY_MESSAGE}.
-   */
-  private async post(path: string, payload: unknown): Promise<{ status: number; text: string }> {
-    for (const delay of this.busyRetryDelaysMs) {
-      const answer = await this.send(path, payload)
-      if (!isRelayBusyResponse(answer.status, answer.text)) return answer
-      const jittered = delay * (0.5 + Math.random() / 2)
-      await new Promise<void>((resolve) => setTimeout(resolve, jittered))
-    }
-    return this.send(path, payload)
+  /** {@link Relay.send} through {@link retryWhileBusy}. */
+  private post(path: string, payload: unknown): Promise<{ status: number; text: string }> {
+    return retryWhileBusy(() => this.send(path, payload), this.busyRetryDelaysMs)
   }
 
   private async send(path: string, payload: unknown): Promise<{ status: number; text: string }> {
