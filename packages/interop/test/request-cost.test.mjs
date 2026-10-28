@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, createProjectionCache, MANIFEST_TTL_MS } from '../dist/index.js'
+import { resolveForeignObject, resolveManifest, createProjectionCache, MANIFEST_TTL_MS } from '../dist/index.js'
 
 const AUTHOR = 'a'.repeat(64)
 const KIND = 30850
@@ -263,7 +263,8 @@ test('a failed discovery is shared by the burst and not remembered', async () =>
     Array.from({ length: 10 }, () => resolveForeignObject(ADDRESS, query, undefined, 0, cache)),
   )
   assert.ok(burst.every((outcome) => outcome.status === 'rejected'), 'every asker sees the failure')
-  assert.equal(discovery(relay.calls), 1, 'one refused request for the whole burst, not ten')
+  // The recommendation and the claim, asked together (APP-3) — once for the burst.
+  assert.equal(discovery(relay.calls), 2, 'one refused discovery for the whole burst, not ten')
 
   refuse = false
   const found = await resolveForeignObject(ADDRESS, query, undefined, 0, cache)
@@ -303,4 +304,66 @@ test('a cache without share keeps the old behaviour: look up, read, remember', a
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
   assert.equal(cold, 4)
   assert.equal(relay.count - cold, 1)
+})
+
+/*
+  APP-3 — discovery is one wait, not two. A Leaf page opened by its link read
+  the author's recommendation, then the `#k` claim, and only then itself: two
+  round trips, ~0.5 s on production 28 Oct. The claim is now asked beside the
+  recommendation, and a recommended manifest the claim already holds is not
+  read a second time.
+*/
+const APP = 'b'.repeat(64)
+const POINTER = { kind: KIND, pubkey: AUTHOR, identifier: 'p1', relays: [] }
+const claimsKind = (filters) => filters.some((f) => f.kinds?.includes(31990) && f['#k']?.includes(String(KIND)))
+const appManifest = (d, tags) =>
+  event({
+    kind: 31990,
+    pubkey: APP,
+    tags: [['d', d], ...tags],
+    content: JSON.stringify({ name: d, projections: { [KIND]: { widget: 'card', slots: { title: { tag: 'title' } } } } }),
+  })
+const recommending = (d) => event({ kind: 31989, tags: [['d', String(KIND)], ['a', `31990:${APP}:${d}`]] })
+
+test('the claim is asked while the recommendation is still out', async () => {
+  const relay = world()
+  let release
+  const gate = new Promise((resolve) => (release = resolve))
+  const query = async (filters) => {
+    if (filters.some((f) => f.kinds?.includes(31989))) await gate
+    return relay.query(filters)
+  }
+  const resolving = resolveManifest(POINTER, query)
+  assert.ok(relay.calls.some(claimsKind), 'the #k claim must not wait for the recommendation to answer')
+  release()
+  assert.equal((await resolving).address, `31990:${AUTHOR}:some-app`)
+})
+
+test('a recommended manifest the claim already holds is not read again', async () => {
+  const chosen = appManifest('chosen', [['k', String(KIND)]])
+  const relay = countingRelay([manifest, chosen, recommending('chosen'), appManifest('newer', [['k', String(KIND)]])])
+  const resolved = await resolveManifest(POINTER, relay.query)
+
+  assert.equal(resolved.address, `31990:${APP}:chosen`, 'the recommendation still wins over the newest claim')
+  assert.equal(resolved.viaRecommendation, true)
+  assert.equal(relay.count, 2, `the recommendation and the claim, nothing else; got ${relay.count}`)
+})
+
+test('a refused claim does not cost a resolve the recommendation answers', async () => {
+  const relay = countingRelay([manifest, appManifest('chosen', [['k', String(KIND)]]), recommending('chosen')])
+  const query = async (filters) => {
+    if (claimsKind(filters)) throw new Error('rate-limited: quota exceeded; retry in 8s')
+    return relay.query(filters)
+  }
+  const resolved = await resolveManifest(POINTER, query)
+  assert.equal(resolved.address, `31990:${APP}:chosen`, 'the recommended manifest is read by its address instead')
+})
+
+test('a recommended manifest that does not claim the kind is still read by its address', async () => {
+  const relay = countingRelay([manifest, appManifest('chosen', []), recommending('chosen')])
+  const resolved = await resolveManifest(POINTER, relay.query)
+
+  assert.equal(resolved.address, `31990:${APP}:chosen`)
+  assert.equal(resolved.viaRecommendation, true)
+  assert.equal(relay.count, 3)
 })

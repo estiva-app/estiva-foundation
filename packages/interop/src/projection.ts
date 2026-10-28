@@ -1872,9 +1872,9 @@ type CachedManifests = ResolvedManifest | null | readonly ResolvedManifest[]
 /**
  * A memo for the half of a resolve that does not change between refreshes.
  *
- * Resolving one reference costs four round trips, and **two of them are NIP-89
- * discovery** — the author's `kind:31989` recommendation, then the `kind:31990`
- * manifest itself. A consumer that re-resolves on a timer pays for both every
+ * Resolving one reference costs four requests, and **two of them are NIP-89
+ * discovery** — the author's `kind:31989` recommendation and the `kind:31990`
+ * manifests claiming the kind, asked together (APP-3). A consumer that re-resolves on a timer pays for both every
  * time, and they answer the same thing until an app republishes its manifest.
  * Measured on Ship, where a reference widget re-resolves on the poll: 4
  * requests per reference per tick, identical on the second resolve, against a
@@ -2036,6 +2036,15 @@ async function resolveManifestUncached(
   const addressOf = (event: SignedEvent) =>
     `${event.kind}:${event.pubkey}:${tagValue(event, 'd') ?? ''}`
 
+  // The claim is asked beside the recommendation, not after it (APP-3): asked
+  // in turn they were two round trips before every opened object's own read,
+  // ~0.5 s of a Leaf page opened by its link. A recommended manifest usually
+  // claims the kind too, so the claim answers the recommendation's second read
+  // as well. The claim's failure counts only when it is the answer.
+  const claim = query([
+    { kinds: [KIND_HANDLER_INFORMATION], '#k': [String(pointer.kind)], limit: 20 },
+  ])
+  void claim.catch(() => {})
   const recommended = await query(
     [
       {
@@ -2049,9 +2058,12 @@ async function resolveManifestUncached(
   const manifestAddr = recommended[0]?.tags.find((t) => t[0] === 'a')?.[1]
   if (manifestAddr) {
     const [kind, pubkey, ...rest] = manifestAddr.split(':')
-    const found = await query([
-      { kinds: [Number(kind)], authors: [pubkey], '#d': [rest.join(':')], limit: 1 },
-    ])
+    const claimedCopy = (await claim.catch(() => []))
+      .filter((event) => addressOf(event) === `${Number(kind)}:${pubkey}:${rest.join(':')}`)
+      .sort((a, b) => b.created_at - a.created_at)
+    const found = claimedCopy.length
+      ? claimedCopy
+      : await query([{ kinds: [Number(kind)], authors: [pubkey], '#d': [rest.join(':')], limit: 1 }])
     const manifest = found[0] ? parse(found[0]) : null
     if (manifest) {
       return {
@@ -2063,9 +2075,7 @@ async function resolveManifestUncached(
     }
   }
 
-  const claimed = await query([
-    { kinds: [KIND_HANDLER_INFORMATION], '#k': [String(pointer.kind)], limit: 20 },
-  ])
+  const claimed = await claim
   // Newest wins among unrecommended candidates. Arbitrary, and honest about it:
   // there is no principled ranking without a recommendation, which is exactly
   // why the recommendation exists.
