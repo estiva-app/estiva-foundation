@@ -259,6 +259,14 @@ describe('a read of a whole kind answers later reads of that kind (APP-6)', () =
     assert.equal(relay.requests.length, 2)
   })
 
+  test('a read of a Folder by `h` still goes to the relay: a change naming two Folders is the relay’s to place', async () => {
+    const relay = pagingRelay(world())
+    const query = createLoadQuery(relay.query, { paged: true })
+    await query(ALL)
+    await query([{ kinds: [1851], '#h': [APIARY], limit: 500 }])
+    assert.equal(relay.requests.length, 2)
+  })
+
   test('a read of another kind still goes to the relay', async () => {
     const relay = countingRelay(world())
     const query = createLoadQuery(relay.query)

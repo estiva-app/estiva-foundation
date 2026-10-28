@@ -81,6 +81,16 @@ function wholeKindsOf(filter: Filter, paged: boolean): WholeKinds | null {
   return { kinds, limit: limit ?? RELAY_PAGE_CEILING }
 }
 
+/**
+ * The tags a whole read answers a later read by: the ones the relay matches as
+ * NIP-01 does, on every kind. Never `h`, which is a Folder's scope on the relay
+ * (the event's first `h`, its membership checked there), so a tag match would
+ * take in a change one member planted with a second `h` naming a Folder they
+ * cannot write to. Never `d` either: a Folder's own events (39000–39003) are
+ * reached by naming the Folder, and a read naming no Folder misses some.
+ */
+const WHOLE_READ_TAGS = new Set(['a', 'e'])
+
 /** The events of a whole read naming each value of one tag, indexed once per read and tag. */
 const indexes = new WeakMap<SignedEvent[], Map<string, Map<string, SignedEvent[]>>>()
 function naming(events: SignedEvent[], tag: string, value: string): SignedEvent[] {
@@ -201,7 +211,7 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
         continue
       }
       const fresh: string[] = []
-      const read = wholes.get(shape.kind)
+      const read = WHOLE_READ_TAGS.has(shape.tag) ? wholes.get(shape.kind) : undefined
       for (const value of new Set(shape.values)) {
         const entry = known.get(`${shape.kind}:${shape.tag}:${value}`)
         if (answers(read, shape.limit)) {
