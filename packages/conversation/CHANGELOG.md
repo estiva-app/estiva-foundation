@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.22.0 — 2026-10-28
+
+**The line on an archived file, once for every app and the agent** (PEEKM-8;
+record *a-file-is-archived-with-the-closest-archived-file-above-it*).
+`archivedLine` moves here from `@estiva-app/ui`, which re-exports it, so the
+agent's refusal prints the words Peek, Ship and Leaf show without a React
+package. New: `options.in` names where to unarchive, for an app with no
+Unarchive of its own ("Archived. Unarchive it in Peek to comment."), and
+`options.to` says what waits ("…to edit.").
+
+SPEC: none changed. It words §6.5's archive as read; nothing is read or
+written differently.
+
 ## 0.21.0 — 2026-10-27
 
 **Wire behaviour: nothing changes** (PEEKM-7). The composer reads `[words](url)`
