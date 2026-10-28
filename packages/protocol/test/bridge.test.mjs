@@ -200,7 +200,8 @@ function scriptedRelay(answers) {
     fetch: async (url) => {
       const answer = answers[Math.min(asked.length, answers.length - 1)]
       asked.push(url)
-      return { status: answer.status, text: async () => answer.body }
+      const headers = new Map(Object.entries(answer.headers ?? {}))
+      return { status: answer.status, text: async () => answer.body, headers: { get: (name) => headers.get(name) ?? null } }
     },
   })
   return { relay, asked }
@@ -248,6 +249,86 @@ test('a read the relay cut off for running too long is not asked again', async (
   const { relay, asked } = scriptedRelay([{ status: 503, body: JSON.stringify({ error: 'query timed out' }) }])
   await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => error.name !== 'RelayBusyError')
   assert.equal(asked.length, 1)
+})
+
+test('the relay’s rate limit (a 503 marked rate-limited:) is not busy: asked once, and its own words reach the caller', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([
+    { status: 503, body: JSON.stringify({ error: 'rate-limited: shared admission unavailable' }) },
+  ])
+  await assert.rejects(settle(relay.query([{ kinds: [9] }])), (error) => {
+    assert.notEqual(error.name, 'RelayBusyError')
+    assert.match(error.message, /rate-limited: shared admission unavailable/)
+    return true
+  })
+  assert.equal(asked.length, 1)
+})
+
+test('a busy relay asking for five seconds is asked again once, after them, not three times inside them', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([{ ...BUSY, headers: { 'retry-after': '5' } }])
+  const read = relay.query([{ kinds: [9] }])
+  read.catch(() => {})
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+  for (let i = 0; i < 5; i++) await turn()
+  assert.equal(asked.length, 1)
+  mock.timers.tick(4_999)
+  for (let i = 0; i < 5; i++) await turn()
+  assert.equal(asked.length, 1, 'nothing is sent inside the Retry-After')
+  mock.timers.tick(1)
+  await assert.rejects(settle(read), (error) => error.name === 'RelayBusyError')
+  assert.equal(asked.length, 2)
+})
+
+test('clients told the same five seconds come back spread out after them, not all at the fifth second', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  t.mock.method(Math, 'random', () => 0.99)
+  const { relay, asked } = scriptedRelay([{ ...BUSY, headers: { 'retry-after': '5' } }])
+  const read = relay.query([{ kinds: [9] }])
+  read.catch(() => {})
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+  for (let i = 0; i < 5; i++) await turn()
+  mock.timers.tick(5_000)
+  for (let i = 0; i < 5; i++) await turn()
+  assert.equal(asked.length, 1, 'a jitter rides on top of the Retry-After')
+  mock.timers.tick(500)
+  for (let i = 0; i < 5; i++) await turn()
+  assert.equal(asked.length, 2)
+  await assert.rejects(settle(read), (error) => error.name === 'RelayBusyError')
+})
+
+test('a busy relay asking for longer than the retries last is still asked once more, at their end', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([{ ...BUSY, headers: { 'retry-after': '30' } }, { status: 200, body: '[]' }])
+  const read = relay.query([{ kinds: [9] }])
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+  for (let i = 0; i < 5; i++) await turn()
+  mock.timers.tick(7_000)
+  assert.deepEqual(await read, [])
+  assert.equal(asked.length, 2)
+})
+
+test('a 503 saying "error: relay busy" is busy, and asked again', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  t.after(() => mock.timers.reset())
+  const { relay, asked } = scriptedRelay([
+    { status: 503, body: JSON.stringify({ error: 'error: relay busy' }) },
+    { status: 200, body: '[]' },
+  ])
+  assert.deepEqual(await settle(relay.query([{ kinds: [9] }])), [])
+  assert.equal(asked.length, 2)
+})
+
+test('Retry-After is read as seconds; a date or anything else is no wait', () => {
+  assert.equal(protocol.retryAfterMsOf(' 5 '), 5_000)
+  assert.equal(protocol.retryAfterMsOf('Wed, 28 Oct 2026 16:00:00 GMT'), undefined)
+  assert.equal(protocol.retryAfterMsOf('soon'), undefined)
+  assert.equal(protocol.retryAfterMsOf('-1'), undefined)
+  assert.equal(protocol.retryAfterMsOf(null), undefined)
 })
 
 test('a 502 page from the proxy while the relay restarts is busy, and a send says so', async (t) => {
