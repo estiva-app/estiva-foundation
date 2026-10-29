@@ -248,6 +248,8 @@ describe('fetch and publish, injected', () => {
     const a = await fetchReadState(async () => [other, undecryptable], ME, nip44, identity, 0)
     assert.equal(a.ownUndecryptable, true)
     assert.deepEqual(a.merged, { [FOLDER]: 9 })
+    // A rotated key will never decrypt: asking again changes nothing, so the merge is whole (PEE-68).
+    assert.equal(a.complete, true)
     const taken = slotEvent(identity.slotId, JSON.stringify({ v: 1, client_id: 'peek-1', contexts: {} }))
     const b = await fetchReadState(async () => [taken], ME, nip44, identity, 0)
     assert.equal(b.coordinateConflicted, true)
