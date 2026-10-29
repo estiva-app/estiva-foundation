@@ -109,6 +109,39 @@ function chipsAsReferences(node: EditorNode): EditorNode {
   return node.content ? { ...node, content: node.content.map(chipsAsReferences) } : node
 }
 
+/** The chips a message writes as an address: a URL chip or a `nostr:` reference, a person, a message. */
+const ADDRESS_CHIPS = new Set(['reference', 'mention', 'urgentMention', 'captionedReference'])
+
+/**
+ * Whether text written right after a chip's address would be read as more of
+ * it: anything but a space, a sentence's closing punctuation before a space or
+ * the end, or a character an address never holds (protocol's `continuesUrl`).
+ */
+const runsOn = (text: string) => text !== '' && !/^(\s|[.,;:!?)\]]+(\s|$))/.test(text) && !/^[<>"'`]/.test(text)
+
+/**
+ * A space between a chip and what was typed right after it, where that would
+ * run on into its address. "test" typed after a chip with no space was sent as
+ * `…/p/<id>test`, which names nothing, and drew as a plain web link (Katerina,
+ * 2026-10-30); the box showed the chip, then the word.
+ */
+function spacedAfterChips(node: EditorNode): EditorNode {
+  if (!node.content) return node
+  const content: EditorNode[] = []
+  for (const child of node.content.map(spacedAfterChips)) {
+    const last = content[content.length - 1]
+    if (last && ADDRESS_CHIPS.has(last.type)) {
+      if (child.type === 'text' && child.text !== undefined && runsOn(child.text)) {
+        content.push({ ...child, text: ` ${child.text}` })
+        continue
+      }
+      if (ADDRESS_CHIPS.has(child.type)) content.push({ type: 'text', text: ' ' })
+    }
+    content.push(child)
+  }
+  return { ...node, content }
+}
+
 /**
  * The message a composer's document writes: its marker text, trimmed, and the
  * keys its urgent chips name. A document with no blocks (an edit of a message
@@ -127,7 +160,7 @@ export function composerText(doc: EditorDocument | EditorNode): ComposerText {
     node.content?.forEach(walk)
   }
   walk(doc)
-  const text = doc.content?.length ? blockDocumentToMarkerText(fromEditorDocument(chipsAsReferences(doc) as EditorDocument)).trim() : ''
+  const text = doc.content?.length ? blockDocumentToMarkerText(fromEditorDocument(chipsAsReferences(spacedAfterChips(doc)) as EditorDocument)).trim() : ''
   return urgent.size > 0 ? { text, urgent: [...urgent] } : { text }
 }
 

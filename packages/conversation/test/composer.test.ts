@@ -70,6 +70,30 @@ describe('composerText: what a send writes from the box', () => {
     const inCode = { type: 'text', text: 'plan', marks: [{ type: 'code' }, { type: 'link', attrs: { href: ISSUE_URL } }] }
     assert.equal(composerText(paragraph(inCode)).text, '`plan`')
   })
+
+  // Katerina, 2026-10-30: "test" typed right after a chip was sent onto its address, which then named nothing.
+  describe('a word typed right after a chip', () => {
+    const chip = { type: 'reference', attrs: { uri: NEVENT, href: ISSUE_URL } }
+
+    it('is written a space apart from a URL chip, which stays whole', () => {
+      assert.equal(composerText(paragraph(chip, text('test'))).text, `${ISSUE_URL} test`)
+    })
+
+    it('and from a person or a message by its nostr: address', () => {
+      assert.equal(composerText(paragraph(mention(BOB, 'Bob'), text('thanks'))).text, `${NPUB_BOB} thanks`)
+      assert.equal(composerText(paragraph(captioned(NEVENT, 'Bob', 'the numbers'), text('again'))).text, `${NEVENT} again`)
+    })
+
+    it('two chips side by side are written apart', () => {
+      assert.equal(composerText(paragraph(chip, chip)).text, `${ISSUE_URL} ${ISSUE_URL}`)
+    })
+
+    it('a space, or a sentence ending, after a chip is written as typed', () => {
+      assert.equal(composerText(paragraph(chip, text(' test'))).text, `${ISSUE_URL} test`)
+      assert.equal(composerText(paragraph(chip, text(', test'))).text, `${ISSUE_URL}, test`)
+      assert.equal(composerText(paragraph(chip, text('.'))).text, `${ISSUE_URL}.`)
+    })
+  })
 })
 
 describe('composerDocument: an edit or a draft opens with chips again', () => {
