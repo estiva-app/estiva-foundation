@@ -346,6 +346,36 @@ describe('fetch and publish, injected', () => {
       assert.deepEqual(seam.asked, [a.content])
       assert.deepEqual(read.merged, {})
       assert.equal(read.reachable, true)
+      assert.equal(read.complete, false)
+    })
+
+    it('a new tab refused a slot it never decrypted reports the merge incomplete, until one decrypts it (PEE-68)', async () => {
+      const cache = createSlotCache()
+      const ship = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }, 'ship-1'))
+      const peek = slotEvent('2'.repeat(32), blobOf({ [ISSUE]: 2 }, 'peek-2'))
+      const cold = await fetchReadState(async () => [ship, peek], ME, counting((c) => c === ship.content), identity, 0, 90, cache)
+      assert.deepEqual(cold.merged, {})
+      assert.equal(cold.complete, false)
+      const next = await fetchReadState(async () => [ship, peek], ME, counting(), identity, 0, 90, cache)
+      assert.deepEqual(next.merged, { [FOLDER]: 1, [ISSUE]: 2 })
+      assert.equal(next.complete, true)
+    })
+
+    it('a refused slot with an earlier copy, or one that will never decrypt, leaves the merge complete', async () => {
+      const cache = createSlotCache()
+      const a = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 1 }))
+      const rotated = { ...slotEvent('3'.repeat(32), ''), content: 'garbage' }
+      const first = await fetchReadState(async () => [a, rotated], ME, counting(), identity, 0, 90, cache)
+      assert.equal(first.complete, true)
+      const a2 = slotEvent('1'.repeat(32), blobOf({ [FOLDER]: 5 }), 2)
+      const refused = await fetchReadState(async () => [a2, rotated], ME, counting(() => true), identity, 0, 90, cache)
+      assert.deepEqual(refused.merged, { [FOLDER]: 1 })
+      assert.equal(refused.complete, true)
+    })
+
+    it('an unreachable relay is not a complete merge', async () => {
+      const read = await fetchReadState(async () => { throw new Error('down') }, ME, counting(), identity, 0, 90, createSlotCache())
+      assert.equal(read.complete, false)
     })
 
     it('forgets slots the relay no longer holds', async () => {

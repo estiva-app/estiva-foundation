@@ -6,6 +6,22 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.23.0 — 2026-10-29
+
+**A merge that is missing a slot says so** (PEE-68). `fetchReadState`
+returns `complete: false` when a slot's `/nip44/decrypt` was refused and the
+cache holds no earlier copy of it — typically a new tab whose first round drew
+a 429. That slot's markers are absent from `merged`, so what was read through
+that installation looks unread until the next merge, and an app judging unread
+on it shows items as new and then drops them. An app must not judge unread on
+an incomplete merge: keep the frontier it had and read again soon. A refused
+slot with an earlier copy, and a slot that will never decrypt, leave the merge
+complete; an unreachable relay is `complete: false` as well as
+`reachable: false`.
+
+SPEC: none changed. §11's merge is unchanged; this reports when the merge
+could not see every slot.
+
 ## 0.22.0 — 2026-10-28
 
 **The line on an archived file, once for every app and the agent** (PEEKM-8;

@@ -527,6 +527,16 @@ export interface FetchedReadState {
   /** False when the relay could not be asked — not the same as "no slots". */
   reachable: boolean
   merged: Record<string, number>
+  /**
+   * False when a slot the relay holds is missing from `merged`: its decrypt
+   * was refused and there is no earlier copy of it to stand in. Whatever was
+   * read through that installation then looks unread, and becomes read again
+   * at the next merge that decrypts it — so an app must not judge unread on
+   * an incomplete merge, only keep what it had and read again soon (PEE-68).
+   * A slot that will never decrypt (a rotated key) does not make a merge
+   * incomplete: asking again changes nothing.
+   */
+  complete: boolean
   slots: SlotBlob[]
   /** This installation's own blob, when the relay holds one at our coordinate and it decrypted. */
   own?: ReadStateBlob
@@ -580,7 +590,7 @@ async function fetchReadStateOnce(
   try {
     events = await query([allSlotsFilter(pubkey, nowMs, horizonDays)])
   } catch {
-    return { reachable: false, merged: {}, slots: [], ownUndecryptable: false, coordinateConflicted: false }
+    return { reachable: false, merged: {}, complete: false, slots: [], ownUndecryptable: false, coordinateConflicted: false }
   }
   if (cache && cache.pubkey !== pubkey) {
     cache.pubkey = pubkey
@@ -599,6 +609,7 @@ async function fetchReadStateOnce(
   const slots: SlotBlob[] = []
   let ownUndecryptable = false
   let refused = false
+  let complete = true
   for (const { event, dTag } of candidates) {
     const cached = cache?.slots.get(dTag)
     if (cached?.content === event.content) {
@@ -624,6 +635,7 @@ async function fetchReadStateOnce(
       // now may hold markers that blob does not.
       if (dTag === ownDTag) ownUndecryptable = true
       if (cached) slots.push(cached.slot)
+      else complete = false
       continue
     }
     const blob = parseReadStateBlob(plaintext)
@@ -649,6 +661,7 @@ async function fetchReadStateOnce(
   return {
     reachable: true,
     merged: mergeSlots(slots),
+    complete,
     slots,
     own: atOwn && !coordinateConflicted && !ownUndecryptable ? atOwn.blob : undefined,
     ownUndecryptable,
