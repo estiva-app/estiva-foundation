@@ -6,6 +6,22 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.23.1 — 2026-10-30
+
+**A word typed right after a chip is sent a space apart from it.** A chip
+is written as its address: a URL chip as its URL, a person or a message as
+its `nostr:` URI. A word typed straight after it, with no space, was written
+onto that address (`…/p/<id>test`), which names nothing, so every app drew
+it as a plain web link (Katerina, 2026-10-30). `composerText` now puts a space
+between a chip and what follows it when that would read as more of the
+address, by protocol's `continuesUrl` rule: anything but a space, a
+sentence's closing punctuation before a space or the end, or a character an
+address never holds (`<`, `>`, a quote or a backtick). Two chips side by
+side get one too.
+
+SPEC: none changed. The reader is as it was; what is written now reads back
+as the chip that was in the box, by a reader of any version.
+
 ## 0.23.0 — 2026-10-29
 
 **A merge that is missing a slot says so** (PEE-68). `fetchReadState`
