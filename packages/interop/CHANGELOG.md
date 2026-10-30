@@ -6,6 +6,30 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.71.0 — 2026-10-30
+
+**Manifest: nothing.** A topic keeps a list of files from any Folder, and any
+app can ask which topics list a file (SPEC §6.14; record
+a-topic-keeps-its-own-list-of-files). New API only; every read that existed is
+unchanged.
+
+- `planListInTopic` and `planRemoveFromTopic` write one `kind:1851` entry on
+  the topic: `a`, `O` (the topic's `d`), `field` `lists:<d>`, `value`
+  `true`/`false`, `h` (the topic's Folder), `ts`, `["o", <d>]`. No `p`: a
+  listing adds nobody to the file.
+- `topicsOfFile(query, d)` asks `{kinds:[1851], "#o":[d]}` and returns the
+  topics whose newest entry lists the file, each with its root; an entry filed
+  outside its topic's Folder, on a topic the reader cannot read, or on any
+  other type is left out. `topicList(query, topic)` returns a topic's listed
+  files, oldest listed first, each id resolved over `LISTED_FILE_KINDS` (or
+  `fileKinds`), never a Folder's `39000`; an id held by two files or by none
+  resolves to `null`, not drawn and not counted.
+- `listEntries` is the fold both use: newest per topic and file, listed only
+  by exactly `true`; an entry is skipped when none of its `o` is the field's
+  `<d>`, its `O` is not its `a`'s `d`, it lists the topic itself, or it names
+  no Folder. `topicsOfFileFilter`, `topicListFilter` and `listsField` are the
+  filters and the field name.
+
 ## 0.70.2 — 2026-10-30
 
 **Manifest: nothing.** A reader may ask for a file's archived children too

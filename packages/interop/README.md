@@ -740,6 +740,31 @@ Its wording is the relay's. Take the count and say it in your app's words
 ("This Folder still has 2 files. Move or delete them first."), as you would
 for `target-is-private`.
 
+### A topic's list of files (0.71.0)
+
+A topic lists files from any Folder, one `kind:1851` entry per file, by the
+file's id (SPEC §6.14). The file stays where it is filed; a listing grants,
+moves and archives nothing.
+
+```ts
+import { planListInTopic, planRemoveFromTopic, topicList, topicsOfFile, folderOf } from '@estiva-app/interop'
+
+const topic = { address: topicAddress, folder: folderOf(topicRoot)! } // the Folder its root names
+const [entry] = planListInTopic(me, Date.now(), { topic, file: projectId }) // or planRemoveFromTopic
+await publish(await sign(entry))
+
+const files = await topicList(query, topic)          // [{ file, address, entry }], oldest listed first
+const shown = files.filter((f) => f.address)         // address null: unreadable, or two files hold the id
+const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry }]: which topics list it
+```
+
+`topicsOfFile` asks `{kinds:[1851], "#o":[id]}`; a file's own changes, by `#O`
+or `#a`, never hold an entry that lists it. Only topics' lists are read, an
+entry filed outside its topic's Folder is ignored, and an id held by two files
+or only by a Folder resolves to nothing: draw and count only the resolved ones.
+`topicList` resolves ids over `LISTED_FILE_KINDS`; pass `fileKinds` for kinds
+you know from manifests.
+
 ### Archiving anything (0.37.0)
 
 ```ts

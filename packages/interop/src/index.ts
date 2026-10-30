@@ -148,6 +148,27 @@ export {
 } from './folders.js'
 
 /**
+ * SPEC §6.14: a topic's list of files from any Folder, one `kind:1851` entry
+ * per file by its id. Plan an entry, read a topic's list, and ask which topics
+ * list a file (`#o`); a file's own changes (`#O`) never hold an entry.
+ */
+export {
+  planListInTopic,
+  planRemoveFromTopic,
+  topicsOfFile,
+  topicList,
+  topicsOfFileFilter,
+  topicListFilter,
+  listEntries,
+  listsField,
+  LISTED_FILE_KINDS,
+  type ListHolder,
+  type ListEntry,
+  type FileTopic,
+  type ListedFile,
+} from './topics.js'
+
+/**
  * What an app link names, and where a file is mentioned — once for every app
  * (SPEC §7.7, §13.1, §6.8; PEEKM-7). Each app passes its relay read; none
  * keeps a resolver of its own.
