@@ -32,6 +32,8 @@ const KIND_CHANGE = 1851
 /** The topic (bare file) kind: the only lists this stage reads (Miky, 2026-10-30). */
 const KIND_TOPIC = 30840
 const KIND_FOLDER = 39000
+/** Listed ids resolved per request: 2 × this stays under a relay's usual `limit` cap. */
+const RESOLVE_BATCH = 100
 /**
  * The file kinds a listed id is looked for under by default: topic, document,
  * project, issue. Never a bare `#d`, since a Folder's `kind:39000` shares its
@@ -64,6 +66,8 @@ function entry(
   if (!holder) throw new Error(`not a file address: ${JSON.stringify(args.list.address)}`)
   if (!args.list.folder) throw new Error('a list entry names the Folder of the file that keeps the list')
   if (!args.file || /\s/.test(args.file)) throw new Error(`not a file id: ${JSON.stringify(args.file)}`)
+  // A reader ignores a file on its own list (§6.14): refuse it here rather than publish an entry that shows nothing.
+  if (args.file === holder[3]) throw new Error('a file is not on its own list')
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
   return {
     pubkey,
@@ -78,7 +82,8 @@ function entry(
       ['ts', String(createdAtMs)],
       ['o', args.file],
     ],
-    content: args.note ?? (args.listed ? 'List' : 'Unlist'),
+    // Empty unless the person wrote a note: each app says "added" and "removed" in its own words (§6.14).
+    content: args.note ?? '',
   }
 }
 
@@ -237,7 +242,8 @@ export interface ListedFile {
 
 /**
  * A topic's list: its entries whose newest value lists the file, filed in the
- * topic's Folder (§6.2), oldest listed first, each id resolved over
+ * topic's Folder (§6.2), in no promised order (sort as the design says;
+ * `entry.event` carries the time), each id resolved over
  * `fileKinds` by `#d`. An id held by none the reader can read, or by two,
  * resolves to `null`: a consumer draws and counts only the resolved ones
  * (§3.2, the count is the disclosure).
@@ -254,8 +260,11 @@ export async function topicList(
   const ids = [...new Set(entries.map((entry) => entry.file))]
   // Never a Folder's `39000`, which shares its uuid (§11.1): an id only a Folder holds resolves to nothing.
   const kinds = (options.fileKinds ?? LISTED_FILE_KINDS).filter((kind) => kind !== KIND_FOLDER)
-  // Room for a second holder of every id, so two holders are seen as two.
-  const found = await query([{ kinds, '#d': ids, limit: ids.length * 2 }])
+  // Room for a second holder of every id, so two holders are seen as two; in
+  // batches, so a relay's cap on `limit` cannot cut a long list short.
+  const batches: string[][] = []
+  for (let i = 0; i < ids.length; i += RESOLVE_BATCH) batches.push(ids.slice(i, i + RESOLVE_BATCH))
+  const found = (await Promise.all(batches.map((batch) => query([{ kinds, '#d': batch, limit: batch.length * 2 }])))).flat()
   const holders = new Map<string, Set<string>>()
   for (const event of found) {
     const d = tagOf(event, 'd')

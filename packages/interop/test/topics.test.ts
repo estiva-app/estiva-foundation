@@ -87,7 +87,7 @@ describe('an entry on the wire', () => {
       ['ts', String(MS)],
       ['o', PROJECT_D],
     ])
-    assert.equal(event.content, 'List')
+    assert.equal(event.content, '')
   })
 
   it('takes a file off with a false entry of the same shape, never a deletion', () => {
@@ -96,12 +96,13 @@ describe('an entry on the wire', () => {
     assert.equal(events[0].kind, 1851)
     assert.deepEqual(events[0].tags.find((t) => t[0] === 'value'), ['value', 'false'])
     assert.deepEqual(events[0].tags.find((t) => t[0] === 'o'), ['o', DOC_D])
-    assert.equal(events[0].content, 'Unlist')
+    assert.equal(events[0].content, '')
   })
 
-  it('refuses an entry with no Folder or a list named by something other than an address', () => {
+  it('refuses an entry with no Folder, a list named by something other than an address, or a topic on its own list', () => {
     assert.throws(() => planListInTopic(QA1, MS, { topic: { address: TOPIC, folder: '' }, file: DOC_D }))
     assert.throws(() => planListInTopic(QA1, MS, { topic: { address: TOPIC_D, folder: FOLDER }, file: DOC_D }))
+    assert.throws(() => planListInTopic(QA1, MS, { topic: { address: TOPIC, folder: FOLDER }, file: TOPIC_D }))
   })
 })
 
@@ -157,8 +158,11 @@ describe('a malformed entry is skipped, and never hides an older good one', () =
     assert.equal(entries[0].listed, false)
   })
 
-  it('ignores a topic listing itself', () => {
-    assert.deepEqual(listEntries([list(TOPIC_D)]), [])
+  it('ignores a topic listing itself, as an outside client might write it', () => {
+    const self = retagged(list(DOC_D), (tags) =>
+      tags.map((t) => (t[0] === 'field' ? ['field', `lists:${TOPIC_D}`] : t[0] === 'o' ? ['o', TOPIC_D] : t)),
+    )
+    assert.deepEqual(listEntries([self]), [])
   })
 })
 
@@ -201,13 +205,10 @@ describe('which topics list a file, and what changed on it', () => {
 })
 
 describe("a topic's list", () => {
-  it('resolves each listed id to the one file holding it, oldest listed first', async () => {
+  it('resolves each listed id to the one file holding it', async () => {
     const query = relay([topicRoot, projectRoot, docRoot, list(DOC_D, MS + 1000), list(PROJECT_D, MS)])
     const files = await topicList(query, { address: TOPIC, folder: FOLDER })
-    assert.deepEqual(
-      files.map((f) => f.address),
-      [PROJECT, DOC],
-    )
+    assert.deepEqual(files.map((f) => f.address).sort(), [DOC, PROJECT].sort())
   })
 
   it('draws and counts no id held by two files, or held only by a Folder', async () => {
@@ -222,6 +223,18 @@ describe("a topic's list", () => {
         [OTHER_FOLDER, null],
       ],
     )
+  })
+
+  it('resolves every file of a long list from a relay that caps each lookup at 250 events', async () => {
+    const ids = Array.from({ length: 300 }, (_, i) => `file-${String(i).padStart(3, '0')}`)
+    const roots = ids.map((d) => root(30842, QA1, d, OTHER_FOLDER))
+    const entries = ids.map((d, i) => list(d, MS + i))
+    const all = relay([topicRoot, ...roots, ...entries])
+    const capped = async (filters: Record<string, unknown>[]) =>
+      filters.some((f) => '#d' in f) ? (await all(filters)).slice(0, 250) : all(filters)
+    const files = await topicList(capped, { address: TOPIC, folder: FOLDER })
+    assert.equal(files.length, 300)
+    assert.equal(files.filter((f) => f.address === null).length, 0)
   })
 
   it('leaves out a file taken off and an entry filed in another Folder', async () => {

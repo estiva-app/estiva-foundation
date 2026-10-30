@@ -21,7 +21,7 @@ unchanged.
   topics whose newest entry lists the file, each with its root; an entry filed
   outside its topic's Folder, on a topic the reader cannot read, or on any
   other type is left out. `topicList(query, topic)` returns a topic's listed
-  files, oldest listed first, each id resolved over `LISTED_FILE_KINDS` (or
+  files, in no promised order, each id resolved over `LISTED_FILE_KINDS` (or
   `fileKinds`), never a Folder's `39000`; an id held by two files or by none
   resolves to `null`, not drawn and not counted.
 - `listEntries` is the fold both use: newest per topic and file, listed only
