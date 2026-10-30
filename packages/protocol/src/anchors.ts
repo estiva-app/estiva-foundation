@@ -193,34 +193,89 @@ export function resolvePart(block: string, source: PartSource): Part {
   return { state: 'unaddressable' }
 }
 
+/** A deletion as {@link absenceOf} reads it: its kind, its signer and its tags. */
+export interface DeletionEvent {
+  kind: number
+  pubkey: string
+  tags: string[][]
+}
+
+export interface AbsenceOptions {
+  /**
+   * Whether the relay applies §6.5's check to a deletion: Buzz does, so the
+   * default is true. On a relay that does not, only the author's own deletions
+   * count (§13.6.1).
+   */
+  relayChecksOwner?: boolean
+}
+
 /**
  * Why a read by address came back empty: `deleted` when the relay holds a
  * deletion of it by address (a `kind:5` with that `a`), else `unreadable`.
  *
- * `deletions` is what `{kinds: [5], "#a": [address]}` returned. A deletion
- * counts when either holds:
+ * `deletions` is what {@link absenceFilters} returned — `{kinds: [5], "#a":
+ * [address]}` — and may hold deletions of other addresses too, so one read
+ * can answer for several. A deletion counts when either holds:
  *
  * - **its signer is the address's author** — NIP-09, true on any relay; or
  * - **it is the shape the relay checked**: no `e` tag, and the address is its
  *   *first* `a`. Buzz accepts that shape from the author or the author's owner
  *   (SPEC §6.5), and ownership is visible only to the relay — most objects here
- *   are written by an agent and deleted by the person who owns it.
+ *   are written by an agent and deleted by the person who owns it. Not counted
+ *   when `options.relayChecksOwner` is false.
  *
  * Anything else is unchecked. Buzz validates only the `e` targets when there
  * are any, and only the first `a` when there are none, yet stores every tag; a
  * member could otherwise add somebody's address as a second `a` and make their
  * hidden object read "deleted" to everyone who cannot see it.
  */
-export function absenceOf(
-  address: string,
-  deletions: readonly { kind: number; pubkey: string; tags: string[][] }[],
-): 'deleted' | 'unreadable' {
+export function absenceOf(address: string, deletions: readonly DeletionEvent[], options: AbsenceOptions = {}): 'deleted' | 'unreadable' {
   const author = address.split(':')[1]
+  const ownerChecked = options.relayChecksOwner ?? true
   const deleted = deletions.some((event) => {
     if (event.kind !== 5) return false
     if (event.pubkey === author) return event.tags.some((t) => t[0] === 'a' && t[1] === address)
-    if (event.tags.some((t) => t[0] === 'e')) return false
+    if (!ownerChecked || event.tags.some((t) => t[0] === 'e')) return false
     return event.tags.find((t) => t[0] === 'a')?.[1] === address
   })
   return deleted ? 'deleted' : 'unreadable'
+}
+
+/** How many deletions each of {@link absenceFilters}' filters asks for. */
+const ABSENCE_LIMIT = 20
+
+/**
+ * The read that tells deleted from unreadable, once a read by address came
+ * back empty (§13.6.1): `{kinds: [5], "#a": [address]}`, and the same asked of
+ * the address's author alone. The relay checks only a deletion's first `a`, so
+ * other members' deletions naming the address further along could fill the
+ * first filter's window and push out the author's own. Pass what they return
+ * to {@link absenceOf}; the filters of several addresses may go in one read.
+ *
+ * Empty for a value that is not an address (an artifact's id, an event id): no
+ * deletion names it by `a`, so it reads as `unreadable` without asking.
+ */
+export function absenceFilters(address: string): { kinds: number[]; authors?: string[]; '#a': string[]; limit: number }[] {
+  if (!isAddress(address)) return []
+  const author = address.split(':')[1]!
+  return [
+    { kinds: [5], authors: [author], '#a': [address], limit: ABSENCE_LIMIT },
+    { kinds: [5], '#a': [address], limit: ABSENCE_LIMIT },
+  ]
+}
+
+/**
+ * {@link absenceFilters} asked through the app's own read, answered by
+ * {@link absenceOf}: `deleted` or `unreadable`, for an address whose read came
+ * back empty. A read that fails throws, as `query` does: neither answer is
+ * known, and saying `unreadable` would be a guess.
+ */
+export async function readAbsence(
+  address: string,
+  query: (filters: Record<string, unknown>[]) => Promise<readonly DeletionEvent[]>,
+  options: AbsenceOptions = {},
+): Promise<'deleted' | 'unreadable'> {
+  const filters = absenceFilters(address)
+  if (filters.length === 0) return 'unreadable'
+  return absenceOf(address, await query(filters), options)
 }

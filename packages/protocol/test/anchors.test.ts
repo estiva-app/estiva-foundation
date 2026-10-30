@@ -10,12 +10,14 @@ import assert from 'node:assert/strict'
 import {
   BLOCK_ANCHOR_TAG,
   PART_TAG,
+  absenceFilters,
   absenceOf,
   blockAnchorOf,
   blockIds,
   markerTextToBlockDocument,
   partTag,
   partsOf,
+  readAbsence,
   resolveBlockAnchor,
   resolvePart,
   serializeBlockDocument,
@@ -215,5 +217,55 @@ describe('why a read by address came back empty', () => {
 
   it('ignores a deletion of another address', () => {
     assert.equal(absenceOf(issue, [deletion(pk, [['a', `30851:${pk}:issue-2`]])]), 'unreadable')
+  })
+
+  it("on a relay that does not check owners, counts only the author's own deletion — §13.6.1", () => {
+    const options = { relayChecksOwner: false }
+    assert.equal(absenceOf(issue, [deletion(other, [['a', issue]])], options), 'unreadable')
+    assert.equal(absenceOf(issue, [deletion(pk, [['a', issue]])], options), 'deleted')
+  })
+})
+
+describe('asking the relay whether an empty read was a deletion', () => {
+  const deletion = (pubkey: string, tags: string[][]) => ({ kind: 5, pubkey, tags })
+
+  it("asks for kind 5 by the address, and the author's own apart so others' cannot fill the window", () => {
+    assert.deepEqual(absenceFilters(issue), [
+      { kinds: [5], authors: [pk], '#a': [issue], limit: 20 },
+      { kinds: [5], '#a': [issue], limit: 20 },
+    ])
+  })
+
+  it('asks nothing for a value that is not an address, and calls it unreadable', async () => {
+    const id = '0f8fad5b-d9cb-469f-a165-70867728950e'
+    assert.deepEqual(absenceFilters(id), [])
+    let asked = 0
+    const answer = await readAbsence(id, async () => {
+      asked++
+      return [deletion(pk, [['a', id]])]
+    })
+    assert.equal(answer, 'unreadable')
+    assert.equal(asked, 0)
+  })
+
+  it('reads deleted when the answer holds a deletion the reader can trust, unreadable when it holds none', async () => {
+    const asked: Record<string, unknown>[][] = []
+    const query = (events: ReturnType<typeof deletion>[]) => async (filters: Record<string, unknown>[]) => {
+      asked.push(filters)
+      return events
+    }
+    assert.equal(await readAbsence(issue, query([deletion(other, [['a', issue]])])), 'deleted')
+    assert.equal(await readAbsence(issue, query([deletion(other, [['a', `30851:${other}:x`], ['a', issue]])])), 'unreadable')
+    assert.equal(await readAbsence(issue, query([])), 'unreadable')
+    assert.deepEqual(asked[0], absenceFilters(issue))
+  })
+
+  it('throws when the read fails, rather than guessing unreadable', async () => {
+    await assert.rejects(
+      readAbsence(issue, async () => {
+        throw new Error('relay busy')
+      }),
+      /relay busy/,
+    )
   })
 })
