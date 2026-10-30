@@ -176,6 +176,22 @@ describe('an archived parent hides what is under it, and unarchiving restores it
     assert.equal(byTitle['Spring inspection'].resolution, 'Hive moved to the orchard.')
   })
 
+  test('archivedChildren keeps an inspection archived on its own on its live hive, marked; without it, it is left out (PEE-58)', async () => {
+    // The hive log hides an archived record (`hiddenWhen`), as Ship does: that is an archive too, so it is kept.
+    const own = archive(addressOf(spring), { folder: HIVE_TALK, note: 'Queen replaced.' })
+    const events = [hiveLog, hive, spring, summer, own]
+    const children = (card) => Object.fromEntries(card.children.map((c) => [c.slots.title?.value, c.archived]))
+    const plain = await resolveForeignObject(addressOf(hive), relay(events), noPeople)
+    assert.deepEqual(children(plain), { 'Summer inspection': undefined })
+    const kept = await resolveForeignObject(addressOf(hive), relay(events), noPeople, 0, undefined, { archivedChildren: true })
+    assert.deepEqual(children(kept), {
+      'Spring inspection': { by: HELPER, at: own.created_at, resolution: 'Queen replaced.' },
+      'Summer inspection': undefined,
+    })
+    const set = await resolveForeignObjects([addressOf(hive)], relay(events), noPeople, undefined, { archivedChildren: true })
+    assert.deepEqual(children(set[addressOf(hive)]), children(kept))
+  })
+
   test('a parent in another Folder is read once, and hides its child here', async () => {
     // The inspection is listed in the apiary; its hive is listed nowhere here.
     const archived = archive(addressOf(hive), { folder: HIVE_TALK })

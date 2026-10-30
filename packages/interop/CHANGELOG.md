@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.70.2 — 2026-10-30
+
+**Manifest: nothing.** A reader may ask for a file's archived children too
+(PEE-58); every read that does not ask is unchanged.
+
+- `resolveForeignObject` and `resolveForeignObjects` take `archivedChildren`
+  (`ArchiveReadOptions`): a `list` keeps a child archived itself, with its own
+  `archived`, where it was left out — what `resolveFolderContents`'
+  `includeArchived` is for a Folder. For an archive view: an archived issue of
+  a live project is listed by no Folder, so no Folder read could find it, and
+  Peek's Archive drew it nowhere. A child the app hides (`hiddenWhen`) because
+  it is archived, as Ship's issues are, counts as archived, the rule the Folder
+  listing already reads; one hidden for any other reason is still left out.
+  No new request: the children's changes are read either way.
+
 ## 0.70.1 — 2026-10-28
 
 **Manifest: nothing.** The same manifests answer; discovery is one wait

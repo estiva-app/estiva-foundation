@@ -3538,7 +3538,7 @@ export async function resolveForeignObject(
   const followUp = childChangeFilters(plan, answered)
   const childChanges = followUp.length ? await queryChunked(followUp, query) : []
   const childOwners = await childOwnersOf(plan, answered, childChanges, query, cache)
-  const assembled = assembleObject(plan, answered, childChanges, childOwners)
+  const assembled = assembleObject(plan, answered, childChanges, childOwners, options.archivedChildren)
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query, cache)
   return withFiles(
@@ -3679,7 +3679,7 @@ export async function resolveForeignObjects(
   const assembled = plans.map(({ reference, plan }, i) => ({
     reference,
     plan,
-    built: assembleObject(plan, events, childChanges, ownerLists[i]),
+    built: assembleObject(plan, events, childChanges, ownerLists[i], options.archivedChildren),
   }))
   if (options.archivedWith) {
     await markArchivedParents(assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })), query, cache)
@@ -3990,6 +3990,15 @@ export interface ArchiveReadOptions {
    * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
    */
   folderFiles?: boolean
+  /**
+   * Keep the children archived themselves, each with its own `archived`, where
+   * every other read leaves them out (FOL-46): what {@link resolveFolderContents}'s
+   * `includeArchived` is for a Folder, for a file's `list`. For an archive view,
+   * which draws an archived issue of a live project — a file no Folder lists,
+   * so no Folder read can find it (PEE-58). Costs nothing more: the children's
+   * changes are read either way.
+   */
+  archivedChildren?: boolean
 }
 
 /**
@@ -4330,6 +4339,8 @@ function assembleObject(
   answered: SignedEvent[],
   childChanges: SignedEvent[] = [],
   childOwners: Set<string> = new Set(),
+  /** {@link ArchiveReadOptions}' `archivedChildren`. */
+  archivedChildren = false,
 ): AssembledObject {
   const { naddr, pointer, address, resolved, projection, commentKinds, childFilter, openUrl } = plan
   const { manifest, viaRecommendation } = resolved
@@ -4423,6 +4434,7 @@ function assembleObject(
     viaRecommendation,
     childChanges,
     childOwners,
+    archivedChildren,
   })
 
   return { object, ...(children ? { children } : {}) }
@@ -4689,8 +4701,19 @@ function childrenFrom(args: {
   childChanges?: SignedEvent[]
   /** What {@link childOwnersOf} answered: the authors whose children carry actions. */
   childOwners?: Set<string>
+  /** Keep a child archived itself, marked, rather than drop it — {@link ArchiveReadOptions}' `archivedChildren`. */
+  archivedChildren?: boolean
 }): ForeignObject[] | undefined {
-  const { events, childFilter, manifest, webTemplate, viaRecommendation, childChanges = [], childOwners = new Set() } = args
+  const {
+    events,
+    childFilter,
+    manifest,
+    webTemplate,
+    viaRecommendation,
+    childChanges = [],
+    childOwners = new Set(),
+    archivedChildren = false,
+  } = args
   if (childFilter === undefined) return undefined
   if (childFilter === null) return []
 
@@ -4727,7 +4750,8 @@ function childrenFrom(args: {
         that names no parent at all, is not this parent either. Only a folded
         value counts: without one the `via` tag is the parent, and that is what
         found the child.
-      - **hidden** by the app's own `hiddenWhen`, or **archived** (FOL-46).
+      - **hidden** by the app's own `hiddenWhen`, or **archived** (FOL-46) —
+        unless `archivedChildren` asks for those too, marked.
 
       - **moved in** and since moved on, or never really here — FOL-45. A
         child found by its move's `MOVED_TO_TAG` has no `via` naming this
@@ -4737,8 +4761,12 @@ function childrenFrom(args: {
     const folded = address ? foldOf(childChanges, address, manifest, event) : {}
     if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
     if (address && movedIn.has(address) && folded[movedBy!]?.value !== childFilter.parent) return []
-    if (records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals) return []
-    if (address && manifest.records && archiveOf(childChanges, address, records, event)) return []
+    // Hidden for a reason of the app's own is gone either way; hidden because archived, as Ship's issues
+    // are, is an archive, kept on request — the rule the Folder listing reads `hiddenWhen` by.
+    const archived = address && manifest.records ? archiveOf(childChanges, address, records, event) : undefined
+    const hidden = !!records.hiddenWhen && folded[records.hiddenWhen.field]?.value === records.hiddenWhen.equals
+    if (hidden && !archived) return []
+    if (archived && !archivedChildren) return []
     return [
       buildChildObject({
         root: event,
@@ -4749,6 +4777,7 @@ function childrenFrom(args: {
         viaRecommendation,
         folded,
         ownsKind: childOwners.has(event.pubkey),
+        archived,
       }),
     ]
   })
@@ -4909,8 +4938,10 @@ function buildChildObject(args: {
    * as {@link childOwnersOf} found. Its actions are offered only then.
    */
   ownsKind?: boolean
+  /** The child's own archive, for a child kept archived (`archivedChildren`). */
+  archived?: Archive
 }): ForeignObject {
-  const { root, manifest, projection, webTemplate, viaRecommendation, nevent, folded = {}, ownsKind = false } = args
+  const { root, manifest, projection, webTemplate, viaRecommendation, nevent, folded = {}, ownsKind = false, archived } = args
   const identifier = tagValue(root, 'd')
   const addressable = identifier !== undefined
   const pointer: AddressPointer = {
@@ -4962,6 +4993,7 @@ function buildChildObject(args: {
     actions: addressable && !nevent && ownsKind ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
     changedAt: changedAtOf(root, folded),
+    ...(archived ? { archived } : {}),
   }
 }
 
