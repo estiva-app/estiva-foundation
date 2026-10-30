@@ -6,6 +6,45 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.24.0 — 2026-10-30
+
+Three of Katerina's calls from the widget review (30 October), once for
+every app.
+
+**`[` lists Files first, and finds a message by its own words** (item 19).
+`referenceSectionsOf(ranked)` gives `rankReferences`' two sections in the
+order every app draws them: Files, then Messages (CON-26's ranking had
+Messages above Files, so typing a file's word picked a message instead).
+`messageCandidate(message, tier, nameOf, { resolveLink })` builds a
+message's row as Peek, Ship and Leaf each built their own: its reference,
+its author, its opening words as the caption, and `messageWords(body,
+nameOf)` to be found by — what its writer wrote, with no URL and no type
+word for a file or message it names, so a message is no longer found by the
+raw text of a link in it. Each app passed the raw body as `search`.
+
+**A link in a message preview reads as what it names** (item 20).
+`openingWords(body, nameOf, { resolveLink })` reads a bare app URL the app
+has resolved (§7.7) as the reference it names, "Issue" or "Message", as its
+chip would (§13.6.2, "A bare app link reads as a reference"), never as the
+raw URL. One nothing claims, one not answered yet, one in code and one in a
+link's words stay as written. Without `resolveLink` it reads as before.
+
+**An edit box shows the message's card, with its ✕** (item 36). With the
+message's folded `embed` set as `folded`, `boxLinksOf` and `boxReadOf` give
+the edit box the card the message has, while the edit still names its file,
+so it can be seen and taken off there; otherwise, as before, the default
+for a file the edit names first. A value the set holds as `none` (✕ after
+sending) gets no default again, even when its link is taken out and put
+back: a card taken off stays off (SPEC §13.6.2 lets a writer give it one;
+these apps no longer do). `embedsToEdit` follows: the message's own card
+kept leaves the set as it was (`undefined`, where it carried the set with
+that card `detailed`, which draws the same); ✕ on it sets it `none` — which
+also fixes ✕ on a link put back whose card the set still carried, which
+used to keep the card.
+
+SPEC: none changed. Nothing is read differently; what an edit writes stays
+within §13.6.2's "The default on an edit".
+
 ## 0.23.1 — 2026-10-30
 
 **A word typed right after a chip is sent a space apart from it.** A chip

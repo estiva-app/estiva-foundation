@@ -9,6 +9,11 @@
  *   a Folder, a person, a message and the file the conversation is on do not
  *   count, a link on words counts by its target, and a plain web link counts
  *   for nothing. ✕ takes it off (the box's to keep).
+ * - **An edit's card.** The message's own card while the edit still names its
+ *   file, with its ✕, so it can be seen and taken off there; otherwise the
+ *   default for a file the edit names first. A card taken off before, with ✕
+ *   on the sent message, never comes back in an edit (Katerina, 2026-10-30,
+ *   widget review item 36).
  * - **The live part of each block link**, as the `part` the message will
  *   carry, one per file. A part counts as its file and draws instead of a card,
  *   so linking an issue and a block of a page shows the block and no card. A
@@ -21,6 +26,7 @@
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
 import {
+  cardsIn,
   defaultCardOf,
   toRenderTree,
   valuesIn,
@@ -41,7 +47,12 @@ export interface BoxLinks {
   values: string[]
   /** The block links' parts, one per file, the first link's; none of the conversation's own file. */
   parts: PartPointer[]
-  /** The file that gets the default card, before any ✕. */
+  /**
+   * The card under the box, before any ✕: for a new message, the file that
+   * gets the default card; for an edit (`folded` given), the message's own
+   * card while the edit still names it, else the default for a file the edit
+   * names first.
+   */
   card?: string
   /**
    * Every URL the text names, bare or as a link's target, once each: what the
@@ -59,6 +70,13 @@ export interface BoxLinkContext {
   here?: string
   /** An edit's: the values the message named before it, which get no default again. */
   previous?: readonly string[]
+  /**
+   * An edit's: the message's folded `embed` set (`foldEmbeds`). Its card shows
+   * under the box while the edit names its file, and a value it holds as
+   * `none` — a card taken off with ✕ after sending — gets no default again,
+   * even named afresh.
+   */
+  folded?: readonly Embed[]
 }
 
 /**
@@ -70,13 +88,14 @@ export function linkTargetOf(url: string, context: Pick<BoxLinkContext, 'resolve
   return context.resolveLink(url) ?? context.blockOf(url)?.address
 }
 
-/** What a marker text names, and the one file it gives the default card. */
+/** What a marker text names, and the one card it shows under the box. */
 export function boxLinksOf(text: string, context: BoxLinkContext): BoxLinks {
   // valuesIn asks the resolver about exactly the URLs a reader counts (not one
   // in a code span, nor one in a link's words), so recording its questions
   // gives the URLs without a second URL finder.
   const urls: string[] = []
-  const values = valuesIn(text ? toRenderTree(text, 'marker') : [], (url) => {
+  const tree = text ? toRenderTree(text, 'marker') : []
+  const values = valuesIn(tree, (url) => {
     if (!urls.includes(url)) urls.push(url)
     return context.resolveLink(url)
   })
@@ -86,7 +105,12 @@ export function boxLinksOf(text: string, context: BoxLinkContext): BoxLinks {
     if (part && part.address !== context.here && !parts.has(part.address)) parts.set(part.address, part)
   }
   const kept = [...parts.values()].slice(0, MAX_PARTS)
-  const card = defaultCardOf(values, kept, { here: context.here, previous: context.previous })
+  const folded = context.folded ?? []
+  // The card a reader draws under the message once the edit is saved: the first its folded set holds for what the edit names.
+  const current = cardsIn(folded, tree, kept, context.resolveLink).find((embed) => embed.layout !== 'none')?.value
+  const takenOff = folded.filter((embed) => embed.layout === 'none').map((embed) => embed.value)
+  const previous = takenOff.length > 0 ? [...(context.previous ?? []), ...takenOff] : context.previous
+  const card = current ?? defaultCardOf(values, kept, { here: context.here, previous })
   return { values, parts: kept, card, urls }
 }
 
@@ -112,13 +136,18 @@ export function embedsToSend(links: Pick<BoxLinks, 'card'>, removed: ReadonlySet
 
 /**
  * The `embed` set an edit sends, or undefined to leave the message's as it
- * was. Only an edit that names a file first adds its default (`links` read
- * with `previous`), and then it carries the whole folded set with it, since a
- * set replaces (§13.6.2). A card removed with ✕, before sending or after,
- * stays removed.
+ * was. `links` is read with `previous` and `folded`, so its card is the
+ * message's own or the default for a file the edit names first. The message's
+ * own card, kept, leaves the set as it was; taken off with ✕ in the edit box,
+ * it is set `none`. A file named first adds its default; ✕ on that one writes
+ * nothing. Either way the whole folded set goes with it, since a set replaces
+ * (§13.6.2), and a card removed with ✕, before sending or after, stays removed.
  */
 export function embedsToEdit(links: Pick<BoxLinks, 'card'>, removed: ReadonlySet<string>, folded: readonly Embed[] | undefined): Embed[] | undefined {
-  return links.card && !removed.has(links.card) ? withCard(folded ?? [], links.card, 'detailed') : undefined
+  if (!links.card) return undefined
+  const own = (folded ?? []).some((embed) => embed.value === links.card && embed.layout !== 'none')
+  if (removed.has(links.card)) return own ? withCard(folded ?? [], links.card, 'none') : undefined
+  return own ? undefined : withCard(folded ?? [], links.card, 'detailed')
 }
 
 /** ✕ on a sent message's card: the folded set, with that card `none` and every other kept. */

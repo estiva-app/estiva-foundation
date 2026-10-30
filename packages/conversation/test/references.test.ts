@@ -5,15 +5,17 @@
 */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { decodeNaddr } from '@estiva-app/protocol'
+import { addrToNaddr, decodeNaddr, decodeNevent } from '@estiva-app/protocol'
 import {
   FILE_TIER,
   fileReference,
   MESSAGE_TIER,
+  messageCandidate,
   rankReferences,
   REFERENCE_CAPS,
   referenceMatch,
   referenceSearch,
+  referenceSectionsOf,
   referenceTagsFor,
   type ReferenceCandidate,
 } from '../dist/index.js'
@@ -220,6 +222,53 @@ describe('rankReferences', () => {
     const ranked = rankReferences({ messages: chat, files: many, query: '' })
     assert.equal(ranked.messages.length, REFERENCE_CAPS.messages)
     assert.equal(ranked.files.length, REFERENCE_CAPS.files)
+  })
+})
+
+describe('`[` in every app: Files first, a message found by its own words (widget review item 19)', () => {
+  const EVENT = 'e'.repeat(64)
+  const CHECKLIST = `30851:${PK}:draft-the-onboarding-checklist`
+  const CHECKLIST_URL = 'https://ship.estiva.app/issue/draft-the-onboarding-checklist'
+  const resolveLink = (url: string) => (url === CHECKLIST_URL ? CHECKLIST : undefined)
+  const nameOf = () => undefined
+  const checklist = file('draft-the-onboarding-checklist', 'Draft the onboarding checklist', FILE_TIER.folder)
+  const linking = (body: string) => messageCandidate({ id: EVENT, kind: 9, author: 'Ana', body, at: 10 }, MESSAGE_TIER.here, nameOf, { resolveLink })
+
+  it('draws Files above Messages, so the first row is the file when both match', () => {
+    const ranked = rankReferences({ messages: [linking('the onboarding plan')], files: [checklist], query: 'onboarding' })
+    const sections = referenceSectionsOf(ranked)
+    assert.deepEqual(
+      sections.map((s) => [s.name, titles(s.items)]),
+      [
+        ['files', ['Draft the onboarding checklist']],
+        ['messages', ['Ana']],
+      ],
+    )
+  })
+
+  it('typing a file’s word finds the file, not a message whose only mention of it is its link', () => {
+    const bare = linking(`WR test 3: both ${CHECKLIST_URL}`)
+    const unresolved = linking('see https://ship.estiva.app/issue/onboarding-elsewhere')
+    const reference = linking(`see nostr:${addrToNaddr(CHECKLIST)}`)
+    const ranked = rankReferences({ messages: [bare, unresolved, reference], files: [checklist], query: 'onboarding' })
+    assert.deepEqual(titles(ranked.files), ['Draft the onboarding checklist'])
+    assert.deepEqual(ranked.messages, [])
+    assert.deepEqual(rankReferences({ messages: [reference], files: [], query: 'issue' }).messages, [], 'not by the type word its caption shows')
+  })
+
+  it('finds a message by its own words, a link’s words among them, and by who wrote it', () => {
+    const words = linking(`read [the onboarding notes](${CHECKLIST_URL}) first`)
+    assert.deepEqual(rankReferences({ messages: [words], files: [], query: 'onboarding notes' }).messages.map((m) => m.id), [EVENT])
+    assert.deepEqual(rankReferences({ messages: [words], files: [], query: 'ana' }).messages.map((m) => m.id), [EVENT])
+  })
+
+  it('a message’s row: its reference with its kind, its author, and a link in its caption read as what it names', () => {
+    const row = linking(`WR test 3: both ${CHECKLIST_URL}`)
+    const pointer = decodeNevent(row.uri.replace(/^nostr:/, ''))
+    assert.deepEqual([pointer.id, pointer.kind], [EVENT, 9])
+    assert.equal(row.title, 'Ana')
+    assert.equal(row.caption, 'WR test 3: both Issue')
+    assert.equal(row.at, 10)
   })
 })
 

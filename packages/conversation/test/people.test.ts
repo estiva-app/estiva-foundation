@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { addrToNaddr, encodeNevent, encodeNpub } from '@estiva-app/protocol'
-import { mentionablePeople, namedProfilesOf, openingWords, rosterOf } from '../dist/index.js'
+import { mentionablePeople, messageWords, namedProfilesOf, openingWords, rosterOf } from '../dist/index.js'
 
 const key = (c: string) => c.repeat(64)
 const [ANNA, BOB, EMILE, ZOE, AGENT, ME, APP] = ['1', '2', '3', '4', '5', '6', '7'].map(key)
@@ -99,5 +99,46 @@ describe('a comment\'s opening words', () => {
   it('puts lines on one line without their list, quote, heading or fence markers', () => {
     const body = '## Plan\n> quoted\n- [ ] first\n2. second\n```\nnpm test\n```'
     assert.equal(openingWords(body, nameOf), 'Plan quoted first second npm test')
+  })
+})
+
+describe('a link in a message preview reads as what it names, never as a raw URL (widget review item 20)', () => {
+  const nameOf = () => undefined
+  const ISSUE_URL = 'https://ship.estiva.app/issue/draft-the-onboarding-checklist'
+  const MESSAGE_URL = 'https://peek.estiva.app/m/one'
+  const resolved: Record<string, string> = { [ISSUE_URL]: `30851:${key('b')}:draft-the-onboarding-checklist`, [MESSAGE_URL]: key('c') }
+  const resolveLink = (url: string) => resolved[url]
+
+  it('reads a bare app link the app has resolved as its type word, as its chip would', () => {
+    assert.equal(openingWords(`WR test 3: both ${ISSUE_URL}`, nameOf, { resolveLink }), 'WR test 3: both Issue')
+    assert.equal(openingWords(`as said in ${MESSAGE_URL}.`, nameOf, { resolveLink }), 'as said in Message.')
+    assert.equal(openingWords(`**${ISSUE_URL}**`, nameOf, { resolveLink }), 'Issue')
+  })
+
+  it('keeps a URL as written where it names nothing: unresolved, another site, in code, or in a link’s words', () => {
+    const unresolved = 'https://ship.estiva.app/issue/not-answered-yet'
+    assert.equal(openingWords(`see ${unresolved} and https://example.com/a`, nameOf, { resolveLink }), `see ${unresolved} and https://example.com/a`)
+    assert.equal(openingWords(`run \`${ISSUE_URL}\``, nameOf, { resolveLink }), `run ${ISSUE_URL}`)
+    assert.equal(openingWords(`\`\`\`\n${ISSUE_URL}\n\`\`\``, nameOf, { resolveLink }), ISSUE_URL)
+    assert.equal(openingWords(`[${ISSUE_URL}](https://example.com/b)`, nameOf, { resolveLink }), ISSUE_URL)
+  })
+
+  it('without a resolver, a URL stays as written, as before', () => {
+    assert.equal(openingWords(`both ${ISSUE_URL}`, nameOf), `both ${ISSUE_URL}`)
+  })
+})
+
+describe('the words a message is found by', () => {
+  const nameOf = (pubkey: string) => (pubkey === ANNA ? 'Anna' : undefined)
+  const issue = `nostr:${addrToNaddr(`30851:${key('b')}:widgets`)}`
+
+  it('keeps what its writer wrote — a link’s words, a person, code — and drops every URL and the type word of a file or message it names', () => {
+    const body = `WR test 3: both https://ship.estiva.app/issue/draft and ${issue}, read [the widgets guide](https://example.com/guide) with nostr:${encodeNpub(ANNA)} then \`npm test\``
+    assert.equal(messageWords(body, nameOf), 'WR test 3: both and , read the widgets guide with @Anna then npm test')
+  })
+
+  it('a message that is only a link has no words of its own', () => {
+    assert.equal(messageWords(`nostr:${encodeNevent({ id: key('c'), relays: [] })}`, nameOf), '')
+    assert.equal(messageWords('https://ship.estiva.app/issue/draft', nameOf), '')
   })
 })

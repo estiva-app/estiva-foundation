@@ -2,12 +2,16 @@
  * What `[` offers, and in what order — CON-26's ranking (Miky, 2026-10-02),
  * in one place for every app (PEE-21).
  *
- * Two capped sections, Messages above Files:
+ * Two capped sections, Files above Messages ({@link referenceSectionsOf};
+ * Katerina, 2026-10-30, widget review item 19 — Messages led until then, and
+ * typing a file's word picked a message):
  *
- * - **Messages:** this thread or file first, then the parent file's.
  * - **Files:** this Folder first, then files you read recently (your §11 read
  *   markers), then everything else, which you reach only by typing (relay
  *   search).
+ * - **Messages:** this thread or file first, then the parent file's. A message
+ *   is found by its own words ({@link messageWords}), never by a link's raw
+ *   text: a row built by {@link messageCandidate} carries them.
  *
  * With nothing typed the tiers set the order. Once you type, a better title
  * match beats a higher tier; an open issue goes before a done or cancelled
@@ -20,6 +24,8 @@
  * markers, a relay search — is the app's: each app holds them differently.
  */
 import { addrToNaddr } from '@estiva-app/protocol'
+import { messageReference } from './compose.js'
+import { messageWords, openingWords, type OpeningWordsOptions } from './openingWords.js'
 
 /** What a reference names, as the row's type word says it (label objects by type, not app). */
 export type ReferenceType = 'message' | 'issue' | 'project' | 'topic' | 'document'
@@ -42,7 +48,10 @@ export interface ReferenceCandidate {
    * none, and on a message. Not matched: search keeps to titles.
    */
   summary?: string
-  /** Matched beside `title`: a message's text, an issue's ref (`CON-33`). */
+  /**
+   * Matched beside `title`: a message's own words ({@link messageWords}), an
+   * issue's ref (`CON-33`). A message without it is matched on `caption`.
+   */
   search?: string
   /** 0 is closest: {@link MESSAGE_TIER} or {@link FILE_TIER}. */
   tier: number
@@ -69,6 +78,63 @@ export const REFERENCE_CAPS = { messages: 4, files: 6 } as const
 export interface RankedReferences {
   messages: ReferenceCandidate[]
   files: ReferenceCandidate[]
+}
+
+/** One of `[`'s sections, by name: the app gives it its heading. */
+export interface RankedSection {
+  name: 'files' | 'messages'
+  items: ReferenceCandidate[]
+}
+
+/**
+ * {@link rankReferences}' sections in the order `[` draws them: Files, then
+ * Messages (Katerina, 2026-10-30), in every app. An empty one is kept: the
+ * menu draws no heading for it.
+ */
+export function referenceSectionsOf(ranked: RankedReferences): RankedSection[] {
+  return [
+    { name: 'files', items: ranked.files },
+    { name: 'messages', items: ranked.messages },
+  ]
+}
+
+/** A message `[` can offer, as the app holds it. */
+export interface ReferableMessage {
+  /** Its event id. */
+  id: string
+  /** Its kind, carried in the reference so a reader fetches the right thing: 9 for chat, 1111 for a comment. */
+  kind: number
+  /** Who wrote it, as the row names them. */
+  author: string
+  body: string
+  /** When it was written, in seconds, or any number that is higher for a newer one. */
+  at?: number
+}
+
+/**
+ * A message as `[`'s row offers it, the same in every app: its reference
+ * (`messageReference`), its author as the title, its opening words as the
+ * caption ({@link openingWords}, an app link read as what it names when
+ * `resolveLink` has answered for it), and its own words to be found by
+ * ({@link messageWords}) — not the raw text of a link in it.
+ */
+export function messageCandidate(
+  message: ReferableMessage,
+  tier: number,
+  nameOf: (pubkey: string) => string | undefined,
+  options: OpeningWordsOptions = {},
+): ReferenceCandidate {
+  return {
+    id: message.id,
+    uri: messageReference(message.id, message.kind),
+    type: 'message',
+    kind: message.kind,
+    title: message.author,
+    caption: openingWords(message.body, nameOf, options),
+    search: messageWords(message.body, nameOf),
+    tier,
+    ...(message.at === undefined ? {} : { at: message.at }),
+  }
 }
 
 export interface RankReferencesInput {
