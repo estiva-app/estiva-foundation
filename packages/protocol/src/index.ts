@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.46.1'
+export const PROTOCOL_VERSION = '0.47.0'
 
 export {
   // types
@@ -259,16 +259,20 @@ export {
 } from './editor.js'
 
 export {
+  type AbsenceOptions,
   type BlockAnchor,
+  type DeletionEvent,
   type Part,
   type PartPointer,
   type PartSource,
   BLOCK_ANCHOR_TAG,
   PART_TAG,
+  absenceFilters,
   absenceOf,
   blockAnchorOf,
   partTag,
   partsOf,
+  readAbsence,
   resolveBlockAnchor,
   resolvePart,
 } from './anchors.js'

@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.23.1'
+export const CONVERSATION_VERSION = '0.24.0'
 
 export {
   KIND_MESSAGE,
@@ -93,13 +93,17 @@ export {
   FILE_TIER,
   fileReference,
   MESSAGE_TIER,
+  messageCandidate,
   rankReferences,
   REFERENCE_CAPS,
   referenceMatch,
   referenceSearch,
+  referenceSectionsOf,
   refMatch,
   type RankedReferences,
+  type RankedSection,
   type RankReferencesInput,
+  type ReferableMessage,
   type ReferenceCandidate,
   type ReferenceSearch,
   type ReferenceSearchFn,
@@ -185,7 +189,7 @@ export { peopleNamedInText, newlyNamedPeople, mentionAddsFor, type FileText } fr
 
 export { KIND_MEMBERSHIP_LIST, namedProfilesOf, rosterOf, byName, mentionablePeople, type NamedProfile } from './people.js'
 
-export { openingWords, referenceWord } from './openingWords.js'
+export { messageWords, openingWords, referenceWord, type OpeningWordsOptions } from './openingWords.js'
 
 export { archivedLine } from './archivedLine.js'
 

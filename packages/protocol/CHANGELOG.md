@@ -4,6 +4,22 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.47.0 — 2026-10-30
+
+**Wire behaviour: nothing an app publishes changes** (SPEC §13.6.1, "Five
+states, and deleted is not not-permitted"; widget review, item 56). Telling a
+deleted file from one the reader may not see, once for every app, so a card
+can say "deleted" rather than "not available" as a part already can. New:
+`absenceFilters(address)`, the read §13.6.1 asks for — `{kinds: [5], "#a":
+[address]}`, and the same of the address's author alone, so other members'
+deletions naming the address further along cannot fill the window and push
+the author's own out (Ship's part read asked it so; Peek's asked only the
+first). `readAbsence(address, query)` asks it through the app's own read and
+answers `deleted` or `unreadable`; a failed read throws. `absenceOf` takes
+`{ relayChecksOwner: false }` for a relay that does not apply §6.5's check,
+where only the author's own deletions count. A value that is not an address
+(an artifact's id) asks nothing and reads `unreadable`.
+
 ## 0.46.1 — 2026-10-28
 
 **Wire behaviour: fewer asks of a busy or rate-limited relay; nothing an app

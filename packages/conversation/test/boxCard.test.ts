@@ -108,6 +108,35 @@ describe('boxReadOf: the box’s document, read as the send writes it', () => {
   })
 })
 
+describe('an edit box shows the message’s card (widget review item 36)', () => {
+  const previous = namedBefore(`${ISSUE_URL} for now`, context)
+
+  it('shows the card the message has while the edit still names its file, so ✕ can take it off there', () => {
+    const folded = [{ value: ISSUE, layout: 'detailed' as const }]
+    assert.equal(boxLinksOf(`${ISSUE_URL} fixed a word`, { ...context, previous, folded }).card, ISSUE)
+  })
+
+  it('shows no card once the edit no longer names that file', () => {
+    const folded = [{ value: ISSUE, layout: 'detailed' as const }]
+    assert.equal(boxLinksOf('the link is gone', { ...context, previous, folded }).card, undefined)
+  })
+
+  it('never shows a card taken off after sending, even when its link is taken out and put back', () => {
+    const folded = [{ value: ISSUE, layout: 'none' as const }]
+    assert.equal(boxLinksOf(`${ISSUE_URL} again`, { ...context, previous, folded }).card, undefined)
+    assert.equal(boxLinksOf(ISSUE_URL, { ...context, previous: namedBefore('no link here', context), folded }).card, undefined)
+  })
+
+  it('a card taken off before sending wrote nothing, and the link still named gets none', () => {
+    assert.equal(boxLinksOf(`${ISSUE_URL} again`, { ...context, previous, folded: [] }).card, undefined)
+  })
+
+  it('a file the edit names first still gets its card', () => {
+    const folded = [{ value: ISSUE, layout: 'none' as const }]
+    assert.equal(boxLinksOf(`${OTHER_ISSUE_URL}`, { ...context, previous, folded }).card, OTHER_ISSUE)
+  })
+})
+
 describe('the embed a comment sends', () => {
   it('a new comment sends its card as detailed, and nothing after ✕', () => {
     const links = boxLinksOf(ISSUE_URL, context)
@@ -124,6 +153,19 @@ describe('the embed a comment sends', () => {
       { value: OTHER_ISSUE, layout: 'detailed' },
     ])
     assert.equal(embedsToEdit(added, new Set([OTHER_ISSUE]), []), undefined)
+  })
+
+  it('Save with the message’s own card kept leaves its set as it was; ✕ on it in the edit box sets it none', () => {
+    const folded = [{ value: ISSUE, layout: 'detailed' as const }]
+    const links = boxLinksOf(`${ISSUE_URL} fixed`, { ...context, previous: namedBefore(ISSUE_URL, context), folded })
+    assert.equal(embedsToEdit(links, new Set(), folded), undefined)
+    assert.deepEqual(embedsToEdit(links, new Set([ISSUE]), folded), [{ value: ISSUE, layout: 'none' }])
+  })
+
+  it('✕ in the edit box on a link put back, whose card the set still carries, sets it none rather than keeping it', () => {
+    const folded = [{ value: ISSUE, layout: 'detailed' as const }]
+    const links = boxLinksOf(ISSUE_URL, { ...context, previous: namedBefore('the link was taken out', context), folded })
+    assert.deepEqual(embedsToEdit(links, new Set([ISSUE]), folded), [{ value: ISSUE, layout: 'none' }])
   })
 
   it('a block link’s file was named before an edit, so it gets no card after', () => {
