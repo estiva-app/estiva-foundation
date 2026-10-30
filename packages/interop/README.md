@@ -753,7 +753,7 @@ const topic = { address: topicAddress, folder: folderOf(topicRoot)! } // the Fol
 const [entry] = planListInTopic(me, Date.now(), { topic, file: projectId }) // or planRemoveFromTopic
 await publish(await sign(entry))
 
-const files = await topicList(query, topic)          // [{ file, address, entry }], in no promised order: sort as your design says
+const files = await topicList(query, topicAddress)   // [{ file, address, entry }], in no promised order: sort as your design says
 const shown = files.filter((f) => f.address)         // address null: unreadable, or two files hold the id
 const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry }]: which topics list it
 ```

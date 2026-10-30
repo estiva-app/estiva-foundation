@@ -192,6 +192,24 @@ describe('which topics list a file, and what changed on it', () => {
     assert.deepEqual(await query([{ kinds: [1851], '#a': [PROJECT] }]).then((r) => r.map((e) => e.id)), [rename.id])
   })
 
+  it('keeps a file listed when a newer entry filed in another Folder tries to take it off', async () => {
+    for (const value of ['false', 'true']) {
+      const shadow = retagged(unlist(PROJECT_D, MS + 5000, QA2), (tags) =>
+        tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t[0] === 'value' ? ['value', value] : t)),
+      )
+      const query = relay([topicRoot, projectRoot, list(PROJECT_D, MS), shadow])
+      assert.deepEqual((await topicsOfFile(query, PROJECT_D)).map((t) => t.address), [TOPIC], `topics, ${value}`)
+      assert.deepEqual((await topicList(query, TOPIC)).map((f) => f.address), [PROJECT], `list, ${value}`)
+    }
+  })
+
+  it('lists nothing on a topic it cannot read, or whose root names no Folder', async () => {
+    const noFolder = signed({ ...topicRoot, tags: topicRoot.tags.filter((t) => t[0] !== 'h') })
+    assert.deepEqual(await topicList(relay([projectRoot, list(PROJECT_D)]), TOPIC), [])
+    assert.deepEqual(await topicList(relay([noFolder, projectRoot, list(PROJECT_D)]), TOPIC), [])
+    assert.deepEqual(await topicsOfFile(relay([noFolder, projectRoot, list(PROJECT_D)]), PROJECT_D), [])
+  })
+
   it('drops an entry filed outside the topic’s Folder, and one whose topic it cannot read', async () => {
     const outside = retagged(list(PROJECT_D), (tags) => tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t)))
     assert.deepEqual(await topicsOfFile(relay([topicRoot, outside]), PROJECT_D), [])
@@ -207,7 +225,7 @@ describe('which topics list a file, and what changed on it', () => {
 describe("a topic's list", () => {
   it('resolves each listed id to the one file holding it', async () => {
     const query = relay([topicRoot, projectRoot, docRoot, list(DOC_D, MS + 1000), list(PROJECT_D, MS)])
-    const files = await topicList(query, { address: TOPIC, folder: FOLDER })
+    const files = await topicList(query, TOPIC)
     assert.deepEqual(files.map((f) => f.address).sort(), [DOC, PROJECT].sort())
   })
 
@@ -215,7 +233,7 @@ describe("a topic's list", () => {
     const twin = root(30851, QA2, PROJECT_D, OTHER_FOLDER)
     const folder = signed({ pubkey: RELAY, created_at: 1_787_000_000, kind: 39000, tags: [['d', OTHER_FOLDER], ['name', 'Ops']], content: '' })
     const query = relay([topicRoot, projectRoot, twin, folder, list(PROJECT_D, MS), list(OTHER_FOLDER, MS + 1)])
-    const files = await topicList(query, { address: TOPIC, folder: FOLDER }, { fileKinds: [30840, 30842, 30850, 30851, 39000] })
+    const files = await topicList(query, TOPIC, { fileKinds: [30840, 30842, 30850, 30851, 39000] })
     assert.deepEqual(
       files.map((f) => [f.file, f.address]),
       [
@@ -232,7 +250,7 @@ describe("a topic's list", () => {
     const all = relay([topicRoot, ...roots, ...entries])
     const capped = async (filters: Record<string, unknown>[]) =>
       filters.some((f) => '#d' in f) ? (await all(filters)).slice(0, 250) : all(filters)
-    const files = await topicList(capped, { address: TOPIC, folder: FOLDER })
+    const files = await topicList(capped, TOPIC)
     assert.equal(files.length, 300)
     assert.equal(files.filter((f) => f.address === null).length, 0)
   })
@@ -240,6 +258,6 @@ describe("a topic's list", () => {
   it('leaves out a file taken off and an entry filed in another Folder', async () => {
     const outside = retagged(list(PROJECT_D, MS + 10), (tags) => tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t)))
     const query = relay([topicRoot, projectRoot, docRoot, list(DOC_D, MS), unlist(DOC_D, MS + 2000), outside])
-    assert.deepEqual(await topicList(query, { address: TOPIC, folder: FOLDER }), [])
+    assert.deepEqual(await topicList(query, TOPIC), [])
   })
 })

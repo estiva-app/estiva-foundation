@@ -151,10 +151,16 @@ const listedIn = (event: Pick<SignedEvent, 'tags'>): string | null => {
  * never hides a good one. A `value` other than exactly `true` does not list
  * the file.
  *
- * The Folder check against the list's root (§6.2) is the caller's, since only
- * the caller holds the root: {@link topicsOfFile} and {@link topicList} do it.
+ * `folderOfList` is §6.2's Folder check against each list's root, applied
+ * before the fold: an entry filed in any other Folder must not become the
+ * newest and hide the good one before it. A list it answers no Folder for (an
+ * unread root, or one naming none) keeps no entry. Without it the check is the
+ * caller's; {@link topicsOfFile} and {@link topicList} pass it.
  */
-export function listEntries(events: readonly SignedEvent[]): ListEntry[] {
+export function listEntries(
+  events: readonly SignedEvent[],
+  folderOfList?: (list: string) => string | null | undefined,
+): ListEntry[] {
   const newest = new Map<string, { event: SignedEvent; file: string }>()
   for (const event of events) {
     if (event.kind !== KIND_CHANGE) continue
@@ -162,7 +168,9 @@ export function listEntries(events: readonly SignedEvent[]): ListEntry[] {
     if (!file || !event.tags.some((t) => t[0] === 'o' && t[1] === file)) continue
     const list = tagOf(event, 'a')
     const holder = list ? ADDRESS.exec(list) : null
-    if (!holder || tagOf(event, 'O') !== holder[3] || file === holder[3] || !tagOf(event, 'h')) continue
+    const folder = tagOf(event, 'h')
+    if (!holder || tagOf(event, 'O') !== holder[3] || file === holder[3] || !folder) continue
+    if (folderOfList && folderOfList(list!) !== folder) continue
     const key = `${list}\n${file}`
     const seen = newest.get(key)
     if (!seen || byOrder(seen.event, event) < 0) newest.set(key, { event, file })
@@ -218,17 +226,18 @@ export interface FileTopic {
  * topics' roots.
  */
 export async function topicsOfFile(query: QueryFn, file: string): Promise<FileTopic[]> {
-  const entries = listEntries(await query([topicsOfFileFilter(file)])).filter(
-    (entry) => entry.listed && entry.file === file && entry.list.startsWith(`${KIND_TOPIC}:`),
-  )
-  if (entries.length === 0) return []
-  const roots = await rootsOf(query, entries.map((entry) => entry.list))
-  const topics: FileTopic[] = []
-  for (const entry of entries) {
-    const root = roots.get(entry.list)
-    if (root && folderOf(root) === entry.folder) topics.push({ address: entry.list, root, entry })
+  const isTopic = (entry: ListEntry) => entry.file === file && entry.list.startsWith(`${KIND_TOPIC}:`)
+  const events = await query([topicsOfFileFilter(file)])
+  const lists = [...new Set(listEntries(events).filter(isTopic).map((entry) => entry.list))]
+  if (lists.length === 0) return []
+  const roots = await rootsOf(query, lists)
+  const folderOfList = (list: string) => {
+    const root = roots.get(list)
+    return root ? folderOf(root) : null
   }
-  return topics
+  return listEntries(events, folderOfList)
+    .filter((entry) => entry.listed && isTopic(entry))
+    .map((entry) => ({ address: entry.list, root: roots.get(entry.list)!, entry }))
 }
 
 /** A file on a topic's list. */
@@ -241,20 +250,26 @@ export interface ListedFile {
 }
 
 /**
- * A topic's list: its entries whose newest value lists the file, filed in the
- * topic's Folder (§6.2), in no promised order (sort as the design says;
- * `entry.event` carries the time), each id resolved over
- * `fileKinds` by `#d`. An id held by none the reader can read, or by two,
- * resolves to `null`: a consumer draws and counts only the resolved ones
- * (§3.2, the count is the disclosure).
+ * A topic's list, by the topic's address: its entries whose newest value
+ * lists the file, filed in the Folder the topic's root names (§6.2; read here,
+ * never taken from the caller), in no promised order (sort as the design
+ * says; `entry.event` carries the time), each id resolved over `fileKinds` by
+ * `#d`. A topic the reader cannot read, or whose root names no Folder, lists
+ * nothing. An id held by none the reader can read, or by two, resolves to
+ * `null`: a consumer draws and counts only the resolved ones (§3.2, the count
+ * is the disclosure).
  */
 export async function topicList(
   query: QueryFn,
-  topic: ListHolder,
+  topic: string,
   options: { fileKinds?: readonly number[] } = {},
 ): Promise<ListedFile[]> {
-  const entries = listEntries(await query([topicListFilter(topic.address)]))
-    .filter((entry) => entry.listed && entry.list === topic.address && entry.folder === topic.folder)
+  const [roots, events] = await Promise.all([rootsOf(query, [topic]), query([topicListFilter(topic)])])
+  const root = roots.get(topic)
+  const folder = root ? folderOf(root) : null
+  if (!folder) return []
+  const entries = listEntries(events, (list) => (list === topic ? folder : null))
+    .filter((entry) => entry.listed)
     .sort((a, b) => byOrder(a.event, b.event))
   if (entries.length === 0) return []
   const ids = [...new Set(entries.map((entry) => entry.file))]
