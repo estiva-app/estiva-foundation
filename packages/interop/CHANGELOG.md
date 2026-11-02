@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.72.0 — 2026-11-02
+
+**Manifest: nothing.** Many topics' lists in one go, for Peek's Topics screen
+(TOP-4). New API only; `topicList` answers as before.
+
+- `topicLists(query, topicAddresses)` returns a `Map` from every address asked
+  to its listed files, by `topicList`'s rules, in three reads whatever the
+  number of topics: the roots, every topic's changes (`#O`, at most 20 topics
+  per filter) and one batched `#d` resolve. One `topicList` per topic is three
+  reads each, and at Miky's 32 topics the relay answered "rate-limited: quota
+  exceeded" (2 Nov). A topic that lists nothing, or that the reader cannot
+  read, maps to `[]`.
+- `topicList` is now `topicLists` of one topic.
+
 ## 0.71.0 — 2026-10-30
 
 **Manifest: nothing.** A topic keeps a list of files from any Folder, and any

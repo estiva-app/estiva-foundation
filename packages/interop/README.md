@@ -756,6 +756,7 @@ await publish(await sign(entry))
 const files = await topicList(query, topicAddress)   // [{ file, address, entry }], in no promised order: sort as your design says
 const shown = files.filter((f) => f.address)         // address null: unreadable, or two files hold the id
 const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry }]: which topics list it
+const lists = await topicLists(query, myTopics)      // Map<topicAddress, files>: a whole column of topics in three reads
 ```
 
 `topicsOfFile` asks `{kinds:[1851], "#o":[id]}`; a file's own changes, by `#O`

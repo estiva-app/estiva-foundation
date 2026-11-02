@@ -14,6 +14,7 @@ import {
   planListInTopic,
   planRemoveFromTopic,
   topicList,
+  topicLists,
   topicListFilter,
   topicsOfFile,
 } from '../dist/index.js'
@@ -259,5 +260,60 @@ describe("a topic's list", () => {
     const outside = retagged(list(PROJECT_D, MS + 10), (tags) => tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t)))
     const query = relay([topicRoot, projectRoot, docRoot, list(DOC_D, MS), unlist(DOC_D, MS + 2000), outside])
     assert.deepEqual(await topicList(query, TOPIC), [])
+  })
+})
+
+describe("many topics' lists at once (Peek's Topics screen)", () => {
+  const SECOND_D = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
+  const SECOND = `30840:${QA2}:${SECOND_D}`
+  const secondRoot = root(30840, QA2, SECOND_D, OTHER_FOLDER)
+  const listOnSecond = (file: string, at = MS) => signed(planListInTopic(QA2, at, { topic: { address: SECOND, folder: OTHER_FOLDER }, file })[0])
+  const UNREAD = `30840:${QA2}:0f0f0f0f-0000-4000-8000-000000000000`
+
+  it('gives each topic its own files, a file in two topics under both, and every topic asked a key', async () => {
+    const query = relay([topicRoot, secondRoot, projectRoot, docRoot, list(PROJECT_D, MS), list(DOC_D, MS + 1), listOnSecond(PROJECT_D)])
+    const lists = await topicLists(query, [TOPIC, SECOND, UNREAD])
+    assert.deepEqual(lists.get(TOPIC)?.map((f) => f.address), [PROJECT, DOC])
+    assert.deepEqual(lists.get(SECOND)?.map((f) => f.address), [PROJECT])
+    assert.deepEqual(lists.get(UNREAD), [])
+  })
+
+  it("never draws somebody else's same-id file when a full answer may have cut the real one", async () => {
+    // QA2 fills the lookup's limit (2 per id) with newer files under the project's id and a doc's id.
+    const planted = [30840, 30842, 30851].map((kind) => signed({ ...root(kind, QA2, DOC_D, OTHER_FOLDER), created_at: 1_787_000_100 }))
+    const fake = signed({ ...root(30842, QA2, PROJECT_D, OTHER_FOLDER), created_at: 1_787_000_100 })
+    const all = relay([topicRoot, projectRoot, ...planted, fake, list(PROJECT_D, MS), list(DOC_D, MS + 1)])
+    // A relay that honours `limit`, newest first.
+    const honouring = async (filters: Record<string, unknown>[]) =>
+      (await Promise.all(filters.map(async (f) => {
+        const hits = (await all([f])).sort((a, b) => b.created_at - a.created_at)
+        return typeof f.limit === 'number' ? hits.slice(0, f.limit) : hits
+      }))).flat()
+    const files = await topicList(honouring, TOPIC)
+    assert.deepEqual(files.map((f) => f.address), [null, null])
+  })
+
+  it("does not count an entry for one topic filed in another topic's Folder", async () => {
+    const inSecondsFolder = retagged(list(DOC_D, MS + 5), (tags) => tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t)))
+    const query = relay([topicRoot, secondRoot, docRoot, inSecondsFolder])
+    const lists = await topicLists(query, [TOPIC, SECOND])
+    assert.deepEqual(lists.get(TOPIC), [])
+    assert.deepEqual(lists.get(SECOND), [])
+  })
+
+  it('reads 45 topics in three requests, where one read per topic trips the relay rate limit, and a cap on each answer cuts no topic short', async () => {
+    const ds = Array.from({ length: 45 }, (_, i) => `topic-${String(i).padStart(2, '0')}`)
+    const roots = ds.map((d) => root(30840, QA1, d, FOLDER))
+    const entries = ds.map((d, i) => signed(planListInTopic(QA1, MS + i, { topic: { address: `30840:${QA1}:${d}`, folder: FOLDER }, file: DOC_D })[0]))
+    const all = relay([...roots, docRoot, ...entries])
+    let requests = 0
+    // A relay that answers each unlimited filter with at most 10 events, as a default cap on an answer would.
+    const capped = async (filters: Record<string, unknown>[]) => {
+      requests += 1
+      return (await Promise.all(filters.map(async (f) => ('limit' in f ? all([f]) : (await all([f])).slice(0, 10))))).flat()
+    }
+    const lists = await topicLists(capped, ds.map((d) => `30840:${QA1}:${d}`))
+    assert.equal(requests, 3)
+    assert.equal([...lists.values()].filter((files) => files.length === 1 && files[0].address === DOC).length, 45)
   })
 })

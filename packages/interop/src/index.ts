@@ -157,6 +157,7 @@ export {
   planRemoveFromTopic,
   topicsOfFile,
   topicList,
+  topicLists,
   topicsOfFileFilter,
   topicListFilter,
   listEntries,
