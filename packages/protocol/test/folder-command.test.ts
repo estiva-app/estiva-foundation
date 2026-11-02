@@ -44,6 +44,8 @@ describe('buildFolderCommand', () => {
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'add', from: 'x' }), /only a move/)
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: '' }), /another folder/)
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: FOLDER }), /another folder/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: FOLDER.toUpperCase() }), /another folder/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: '5c1f7a3e-0b4d-4f7e-9a51-3d2c8e6b7f10' }), /names the files/)
   })
 
   it('refuses a command that names no folder', () => {

@@ -19,6 +19,7 @@ import {
   planPlaceFile,
   planRenameFolder,
   planUnlistFile,
+  readMoveRefusal,
 } from '../dist/index.js'
 
 const PUB = 'b'.repeat(64)
@@ -288,6 +289,17 @@ describe('planMoveFromFolders', () => {
     assert.deepEqual(plan({ from: [], to: { ...to, private: true } }), { ok: false, reason: 'target-is-private' })
   })
 
+  it('refuses to place a topic no team lists in a team that is not its home, and sends nothing', () => {
+    assert.deepEqual(plan({ file: file(FILE, undefined, C), from: [] }), { ok: false, reason: 'target-is-not-home' })
+  })
+
+  it('places a topic no team lists in its own team, or in the Company team', () => {
+    const home = plan({ file: file(FILE, undefined, B), from: [] })
+    const company = plan({ file: file(FILE, undefined, C), from: [], to: { ...to, company: true } })
+    assert.ok(home.ok && company.ok)
+    for (const placed of [home, company]) assert.deepEqual(shape(placed.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', FILE]] }])
+  })
+
   it('places a file in the private Folder its h already names', () => {
     const moved = plan({ file: file(FILE, undefined, B), from: [], to: { ...to, private: true } })
     assert.ok(moved.ok)
@@ -312,6 +324,42 @@ describe('planMoveFromFolders', () => {
     const moved = plan({ from: [{ id: B, hasState: true, addresses: [PROJECT] }, from], listings: new Map([[A, [file(PROJECT)]]]) })
     assert.ok(moved.ok)
     assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', PROJECT]] }])
+  })
+})
+
+describe('readMoveRefusal', () => {
+  const PROJECT = `30850:${PUB}:p1`
+  const moved = planMoveFromFolders(PUB, MS, {
+    file: { ref: PROJECT, address: PROJECT },
+    from: [
+      { id: A, hasState: true, addresses: [PROJECT] },
+      { id: C, hasState: true, addresses: [PROJECT] },
+    ],
+    to: { id: B, hasState: true },
+    listings: new Map(),
+  })
+  assert.ok(moved.ok)
+
+  it('a refused first move moved nothing', () => {
+    assert.deepEqual(readMoveRefusal(moved.events, 0, "only the team's members mark or unmark its spaces"), {
+      why: 'not-a-member',
+      nothingMoved: true,
+      notMovedFrom: [],
+    })
+  })
+
+  it('a refused later move names every source it had not left yet', () => {
+    assert.deepEqual(readMoveRefusal(moved.events, 1, 'the team a move leaves does not list 30840:x:t1'), {
+      why: 'changed-meanwhile',
+      nothingMoved: false,
+      notMovedFrom: [C],
+    })
+  })
+
+  it('reads an archived team, and anything else as a plain refusal', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'a move into or out of an archived team is refused').why, 'team-archived')
+    assert.equal(readMoveRefusal(moved.events, 0, 'blocked: rate limit').why, 'refused')
+    assert.equal(readMoveRefusal(moved.events, 0, undefined).why, 'refused')
   })
 })
 

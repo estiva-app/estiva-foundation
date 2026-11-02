@@ -506,7 +506,8 @@ export function buildFolderCommand(
   // The relay refuses an unknown op rather than defaulting it; so do we.
   if (!FOLDER_OPS.includes(args.op)) throw new Error(`unknown folder op: ${String(args.op)}`)
   if ((args.op === 'move') !== (args.from !== undefined)) throw new Error('a move, and only a move, names the folder it leaves')
-  if (args.from !== undefined && (!args.from || args.from === args.folder)) throw new Error('a move leaves another folder than the one it goes to')
+  if (args.from !== undefined && (!args.from || args.from.toLowerCase() === args.folder.toLowerCase())) throw new Error('a move leaves another folder than the one it goes to')
+  if (args.op === 'move' && !args.addresses?.length) throw new Error('a move names the files it moves')
   const tags: NostrTag[] = [
     ['h', args.folder],
     ['op', args.op],

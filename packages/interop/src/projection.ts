@@ -6303,6 +6303,12 @@ export interface FolderSummary {
    */
   private?: true
   /**
+   * Present when the relay marks it the Company team: its `kind:39000`
+   * carries `["company"]` (§3.4). What `planMoveFromFolders` reads as
+   * `FolderRef.company`.
+   */
+  company?: true
+  /**
    * Who may rename and archive it: the owners and admins on its relay-signed
    * `kind:39001`. Offer Archive only to them — a reader ignores an archive from
    * anybody else (§3.2). Absent when the relay returned no admin list.
@@ -6533,6 +6539,7 @@ async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[
     const name = nameOf(channel)
     if (name !== undefined) folder.name = name
     if (channel.tags.some((tag) => tag[0] === 'private')) folder.private = true
+    if (channel.tags.some((tag) => tag[0] === 'company')) folder.company = true
     const admins = folderAdminsOf(adminsOf.get(id), channel)
     if (admins.length) folder.admins = admins
     folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: id, relays: [] })
@@ -6962,6 +6969,7 @@ export async function resolveFolderContents(
     name: nameOf(channel),
     hasState: !!state,
     ...(channel?.tags.some((tag) => tag[0] === 'private') ? { private: true as const } : {}),
+    ...(channel?.tags.some((tag) => tag[0] === 'company') ? { company: true as const } : {}),
     ...(admins.length ? { admins } : {}),
     ...(channelAddress ? { channel: channelAddress } : {}),
     ...(state

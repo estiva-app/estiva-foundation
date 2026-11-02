@@ -330,6 +330,16 @@ describe('listFolders', () => {
       assert.equal(listed.name, (await resolveFolderContents(FOLDER, query, async () => ({}))).name, order)
     }
   })
+
+  test('the team the relay marks the Company team says so, in the list and in its contents (TEA-3)', async () => {
+    const company = event({ kind: 39000, pubkey: RELAY, tags: [['d', FOLDER], ['name', 'Estiva HQ'], ['company']] })
+    const other = event({ kind: 39000, pubkey: RELAY, tags: [['d', 'aaa'], ['name', 'Another channel']] })
+    const query = relay([company, other, state([])])
+    const folders = await listFolders(query)
+    assert.equal(folders.find((f) => f.id === FOLDER).company, true)
+    assert.equal(folders.find((f) => f.id === 'aaa').company, undefined)
+    assert.equal((await resolveFolderContents(FOLDER, query, async () => ({}))).company, true)
+  })
 })
 
 describe('listFolderRecords: a Folder by its own records, without the files’ change history (e0e3e907)', () => {

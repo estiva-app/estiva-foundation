@@ -50,6 +50,7 @@ import {
   buildDeleteChannel,
   buildEditChannelMetadata,
   buildFolderCommand,
+  KIND,
   type ChannelVisibility,
   type UnsignedEvent,
 } from '@estiva-app/protocol'
@@ -64,6 +65,12 @@ export interface FolderRef {
    * `["private"]`. Only a move *into* the Folder reads it.
    */
   private?: boolean
+  /**
+   * `FolderSummary.company`: the relay marks it the Company team (§3.4). Only
+   * {@link planMoveFromFolders} reads it, as the home of a topic made outside
+   * any team.
+   */
+  company?: boolean
   /**
    * `FolderSummary.addresses`: what its state lists. Only
    * {@link planMoveFromFolders} reads it, to know a source lists the moved
@@ -244,8 +251,11 @@ export interface MovableFile {
  * `target-is-private`: the target's `kind:39000` is private and a moved file's
  * `h` names any other channel, or none. A listing never changes who can read a
  * file (§3.1), so the file would look private in the target and not be.
+ *
+ * `target-is-not-home`: a topic no team lists goes only to its home, the team
+ * its `h` names or else the Company team (§3.3).
  */
-export type MoveRefusal = 'source-has-no-state' | 'target-has-no-state' | 'target-is-private'
+export type MoveRefusal = 'source-has-no-state' | 'target-has-no-state' | 'target-is-private' | 'target-is-not-home'
 
 export type MovePlan =
   | {
@@ -428,7 +438,42 @@ export function planMoveFromFolders(
   if (moved.size === 0) {
     if (to.private && file.scopedTo !== to.id) return { ok: false, reason: 'target-is-private' }
     if (!file.address) return { ok: true, events: [], moved: [] }
+    // A topic on no list goes home: its `h` team, or the Company team when its `h` is no team. Which `h`
+    // is a team is the relay's to know, so the Company team is let through here and the relay decides.
+    if (file.address.startsWith(`${KIND.FILE}:`) &&file.scopedTo !== to.id && !to.company) return { ok: false, reason: 'target-is-not-home' }
     return { ok: true, events: planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true }), moved: [file.address] }
   }
   return { ok: true, events, moved: [...moved] }
+}
+
+/**
+ * What a refusal of `events[index]` from {@link planMoveFromFolders} means,
+ * so an app says it in its own words and never shows the relay's text.
+ *
+ * - `why`: `team-archived` (a team it leaves or enters is archived),
+ *   `not-a-member` (moving a space needs a member of each team it changes),
+ *   `changed-meanwhile` (a list changed since it was read: the team no longer
+ *   lists it, or another team now does), or `refused`.
+ * - `nothingMoved`: the first command was refused, so nothing changed.
+ * - `notMovedFrom`: otherwise, the Folders that still list it besides the
+ *   target — the refused command's `from` and every later one's.
+ */
+export function readMoveRefusal(
+  events: readonly UnsignedEvent[],
+  index: number,
+  reason: string | undefined,
+): { why: 'team-archived' | 'not-a-member' | 'changed-meanwhile' | 'refused'; nothingMoved: boolean; notMovedFrom: string[] } {
+  const text = reason ?? ''
+  const why = /archived/i.test(text)
+    ? 'team-archived'
+    : /only the team's members/i.test(text)
+      ? 'not-a-member'
+      : /does not list|lists none of|listed by one team/i.test(text)
+        ? 'changed-meanwhile'
+        : 'refused'
+  const nothingMoved = index <= 0
+  const notMovedFrom = nothingMoved
+    ? []
+    : events.slice(index).flatMap((event) => event.tags.filter((tag) => tag[0] === 'from').map((tag) => tag[1]!))
+  return { why, nothingMoved, notMovedFrom }
 }

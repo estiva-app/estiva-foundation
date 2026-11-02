@@ -23,6 +23,15 @@ Needs protocol 0.49.0 and a relay that knows `move`.
   and stop at the first refusal: each changes both its lists or neither, so
   what landed stands, and moving again finishes it. Callers that published
   `add` then each `removes[i].event` publish `events` in order instead.
+- A topic no team lists is placed only at home: in the team its `h` names,
+  or in the Company team. Anywhere else `planMoveFromFolders` refuses with
+  `target-is-not-home`, and the relay refuses it too.
+- `FolderSummary.company` (and `FolderRef.company`): the relay marks the
+  Company team with `["company"]` on its `kind:39000` (§3.4).
+- `readMoveRefusal(events, index, reason)`: what a refused command means
+  (`team-archived`, `not-a-member`, `changed-meanwhile` or `refused`),
+  whether anything moved, and which sources still list the file, so an app
+  says it in its own words rather than showing the relay's.
 
 ## 0.73.0 — 2026-11-02
 
