@@ -307,9 +307,13 @@ async function resolveIds(query: QueryFn, ids: readonly string[], fileKinds?: re
   // batches, so a relay's cap on `limit` cannot cut a long list short.
   const batches: string[][] = []
   for (let i = 0; i < ids.length; i += RESOLVE_BATCH) batches.push(ids.slice(i, i + RESOLVE_BATCH))
-  const found = (await Promise.all(batches.map((batch) => query([{ kinds, '#d': batch, limit: batch.length * 2 }])))).flat()
+  const answers = await Promise.all(batches.map((batch) => query([{ kinds, '#d': batch, limit: batch.length * 2 }])))
+  // An answer that filled its limit may have cut a second holder (newest
+  // first), and one holder would then pass for the only one: every id of that
+  // batch stays unresolved rather than drawn as somebody else's file.
+  const unsure = new Set(batches.flatMap((batch, i) => (answers[i].length >= batch.length * 2 ? batch : [])))
   const holders = new Map<string, Set<string>>()
-  for (const event of found) {
+  for (const event of answers.flat()) {
     const d = tagOf(event, 'd')
     if (!d || !kinds.includes(event.kind)) continue
     const set = holders.get(d) ?? new Set<string>()
@@ -317,6 +321,6 @@ async function resolveIds(query: QueryFn, ids: readonly string[], fileKinds?: re
     holders.set(d, set)
   }
   const out = new Map<string, string>()
-  for (const [d, set] of holders) if (set.size === 1) out.set(d, `${[...set][0]}:${d}`)
+  for (const [d, set] of holders) if (set.size === 1 && !unsure.has(d)) out.set(d, `${[...set][0]}:${d}`)
   return out
 }

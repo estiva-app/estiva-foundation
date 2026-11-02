@@ -278,6 +278,21 @@ describe("many topics' lists at once (Peek's Topics screen)", () => {
     assert.deepEqual(lists.get(UNREAD), [])
   })
 
+  it("never draws somebody else's same-id file when a full answer may have cut the real one", async () => {
+    // QA2 fills the lookup's limit (2 per id) with newer files under the project's id and a doc's id.
+    const planted = [30840, 30842, 30851].map((kind) => signed({ ...root(kind, QA2, DOC_D, OTHER_FOLDER), created_at: 1_787_000_100 }))
+    const fake = signed({ ...root(30842, QA2, PROJECT_D, OTHER_FOLDER), created_at: 1_787_000_100 })
+    const all = relay([topicRoot, projectRoot, ...planted, fake, list(PROJECT_D, MS), list(DOC_D, MS + 1)])
+    // A relay that honours `limit`, newest first.
+    const honouring = async (filters: Record<string, unknown>[]) =>
+      (await Promise.all(filters.map(async (f) => {
+        const hits = (await all([f])).sort((a, b) => b.created_at - a.created_at)
+        return typeof f.limit === 'number' ? hits.slice(0, f.limit) : hits
+      }))).flat()
+    const files = await topicList(honouring, TOPIC)
+    assert.deepEqual(files.map((f) => f.address), [null, null])
+  })
+
   it("does not count an entry for one topic filed in another topic's Folder", async () => {
     const inSecondsFolder = retagged(list(DOC_D, MS + 5), (tags) => tags.map((t) => (t[0] === 'h' ? ['h', OTHER_FOLDER] : t)))
     const query = relay([topicRoot, secondRoot, docRoot, inSecondsFolder])
