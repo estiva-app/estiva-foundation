@@ -207,7 +207,7 @@ export function planArchiveFolder(
       tags: [
         ['a', args.channel],
         // The file it is about, by its id (§6.2).
-        ...(args.channel.split(':').length >= 3 ? [['O', args.channel.split(':').slice(2).join(':')]] : []),
+        ...(identifierOf(args.channel) !== undefined ? [['O', identifierOf(args.channel)!]] : []),
         ['field', 'archived'],
         ['value', args.archived ? 'true' : ''],
         ['h', args.folder],
@@ -216,6 +216,11 @@ export function planArchiveFolder(
       content: args.archived ? (args.resolution ?? '') : '',
     },
   ]
+}
+
+/** The file's id, the `d` of an address `<kind>:<pubkey>:<d>`; undefined for anything else. */
+export function identifierOf(address: string): string | undefined {
+  return /^\d+:[0-9a-f]{64}:([^]*)$/.exec(address)?.[1]
 }
 
 /**

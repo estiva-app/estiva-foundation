@@ -90,7 +90,8 @@ function ownContentOf(block: Block): string {
   const own: Record<string, unknown> = { ...rest }
   // A block's children are blocks of their own: where they sit is a move,
   // what they say is theirs. Everything else in it is this block's words.
-  if (content !== undefined && !childBlocksOf(block)) own.content = content
+  // An empty content is no words: an emptied list has not been rewritten.
+  if (content !== undefined && !childBlocksOf(block) && !(Array.isArray(content) && content.length === 0)) own.content = content
   return stableJson(own)
 }
 
@@ -285,6 +286,11 @@ export function mergeBlockDocuments(base: BlockDocument, theirs: BlockDocument, 
       ask(id, 'edited-and-deleted')
       continue
     }
+    // Mine puts it under a block theirs has meanwhile put inside it: both
+    // moved, so theirs stands rather than a loop that holds neither.
+    let above: string | null | undefined = parent
+    while (above != null && above !== id) above = parentOf.get(above)
+    if (above === id) continue
     if (parentOf.has(id)) {
       const from = kids.get(parentOf.get(id)!)!
       from.splice(from.indexOf(id), 1)
@@ -306,13 +312,19 @@ export function mergeBlockDocuments(base: BlockDocument, theirs: BlockDocument, 
 
   if (asks.length) return { asks: dedupe(asks) }
 
+  const placed = new Set<string>()
   const build = (parent: string | null): Block[] =>
     kids.get(parent)!.map((id) => {
+      placed.add(id)
       const block = content.get(id)!
       const inner = build(id)
       return inner.length || wasParent(id, B, T, M) ? { ...block, content: inner } : block
     })
-  return { merged: { ...theirs, content: build(null) } }
+  const merged: BlockDocument = { ...theirs, content: build(null) }
+  // Never lose words: a block the merge kept but could not place asks.
+  for (const id of content.keys()) if (!placed.has(id)) ask(id, 'changed-by-both')
+  if (asks.length) return { asks: dedupe(asks) }
+  return { merged }
 }
 
 /** Whether a block's own content held blocks on any side: an emptied list stays a list. */

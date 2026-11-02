@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeEventId, serializeBlockDocument, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { buildActionEvent, changedAt, fieldsSetBy, listFiles, openFile, writeChange, type QueryFn } from '../dist/index.js'
+import { buildActionEvent, changedAt, fieldsSetBy, listFiles, openFile, textOf, writeChange, type QueryFn } from '../dist/index.js'
 
 const OWNER = 'a'.repeat(64)
 const AGENT = 'c'.repeat(64)
@@ -169,6 +169,13 @@ describe('reading files by their fields — §6.13', () => {
     assert.equal(files[0].fields.description, undefined)
   })
 
+  it('a change from another Folder that leaves out O is not folded in either', async () => {
+    const bare = sign({ ...stray, tags: stray.tags.filter((t) => t[0] !== 'O') })
+    const files = await listFiles(async () => [root, title, bare], { kinds: [PROJECT] })
+    assert.equal(files[0].fields.title.value, 'Launch, renamed')
+    assert.equal(files[0].fields.title.id, title.id)
+  })
+
   it('opening a file asks for its text by #d and takes the current text with the id the next save follows', async () => {
     const asked: Record<string, unknown>[] = []
     const file = await openFile(async (f) => (asked.push(...f), [root, title, text]), { kind: PROJECT, pubkey: OWNER, d: D }, { text: true })
@@ -176,6 +183,11 @@ describe('reading files by their fields — §6.13', () => {
     assert.equal(file?.fields.description.id, text.id)
     assert.equal(file?.fields.description.format, 'estiva-blocks-1')
     assert.deepEqual(file?.events.map((e) => e.id).sort(), [root.id, title.id, text.id].sort())
+  })
+
+  it('a project whose text was never changed reads its description tag as the text a merge starts from', () => {
+    const seeded = sign({ ...root, tags: [...root.tags, ['description', 'the plan, as created']], content: 'older body' })
+    assert.deepEqual(textOf(seeded), { value: 'the plan, as created' })
   })
 
   it('a relay without the text read is never sent "text"', async () => {

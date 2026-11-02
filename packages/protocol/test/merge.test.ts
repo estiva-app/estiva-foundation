@@ -100,6 +100,26 @@ describe('mergeBlockDocuments — §13.3', () => {
     assert.ok(result.asks?.some((a) => a.block === 'i2' && a.why === 'edited-and-deleted'))
   })
 
+  it('two blocks each nested inside the other by one side keep their words, as theirs nested them', () => {
+    const quote = (id: string, ...content: Block[]): Block => ({ type: 'blockquote', id, content })
+    const base = doc(quote('x', p('p1', 'Alpha')), quote('y', p('p2', 'Beta')), p('z', 'Zed'))
+    const theirs = doc(quote('y', p('p2', 'Beta'), quote('x', p('p1', 'Alpha'))), p('z', 'Zed'))
+    const mine = doc(quote('x', p('p1', 'Alpha'), quote('y', p('p2', 'Beta'))), p('z', 'Zed, mine'))
+    const result = mergeBlockDocuments(base, theirs, mine)
+    const text = JSON.stringify(result.merged)
+    assert.ok(text.includes('Alpha') && text.includes('Beta') && text.includes('Zed, mine'), text)
+    assert.deepEqual(ids(result.merged), ['y', 'z'])
+  })
+
+  it('a list mine emptied and theirs deleted is deleted, without asking', () => {
+    const base = doc(p('b1', 'one'), { type: 'bulletList', id: 'l', content: [{ type: 'listItem', id: 'i1', content: [p('i1p', 'first')] }] })
+    const theirs = doc(p('b1', 'one'))
+    const mine = doc(p('b1', 'one'), { type: 'bulletList', id: 'l', content: [] })
+    const result = mergeBlockDocuments(base, theirs, mine)
+    assert.equal(result.asks, undefined)
+    assert.deepEqual(ids(result.merged), ['b1'])
+  })
+
   it('an item theirs edited inside a list mine moved keeps both: their words, mine\'s place', () => {
     const list = (id: string, ...items: Block[]): Block => ({ type: 'bulletList', id, content: items })
     const item = (id: string, text: string): Block => ({ type: 'listItem', id, content: [p(`${id}p`, text)] })

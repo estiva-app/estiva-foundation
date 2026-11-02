@@ -123,20 +123,17 @@ export function filesOf(events: readonly SignedEvent[], options: { withText?: bo
     const O = tagValue(event, 'O')
     if (O !== undefined && O !== tagValue(file.root, 'd')) continue
     if (tagValue(event, 'h') !== (folderOf(file.root) ?? undefined)) continue
-    let counted = false
     for (const set of fieldsSetBy(event)) {
       if (set.field === TEXT_FIELD && !options.withText) continue
       const held = file.fields[set.field]
       if (held && !newer(event, held.event)) continue
       file.fields[set.field] = { ...set, id: event.id, pubkey: event.pubkey, at: changedAt(event), event }
-      counted = true
     }
-    if (counted && !file.events.includes(event)) file.events.push(event)
   }
-  // An event no field still points at is not part of what was read.
+  // The root and each change some field still points at, once.
   for (const file of files.values()) {
-    const current = new Set(Object.values(file.fields).map((f) => f.id))
-    file.events = file.events.filter((e) => e === file.root || current.has(e.id))
+    const current = new Map(Object.values(file.fields).map((f) => [f.id, f.event]))
+    file.events = [file.root, ...current.values()]
   }
   return [...files.values()]
 }
@@ -177,14 +174,19 @@ export async function openFile(
   return filesOf(events, { withText: options.text }).find((f) => f.address === address)
 }
 
-/** The text a change or first record holds: a change's `description`, or a first record's seed (§6.10). */
+/**
+ * The text a change or first record holds: a change's `description`, or a
+ * first record's seed — a project's `description` tag, then its `content`
+ * (§6.2, §7.2).
+ */
 export function textOf(event: SignedEvent): MergeText | undefined {
   if (event.kind === KIND_CHANGE) {
     const set = fieldsSetBy(event).find((f) => f.field === TEXT_FIELD)
     return set ? { value: set.value, ...(set.format ? { format: set.format } : {}) } : undefined
   }
   const format = tagValue(event, CONTENT_FORMAT_TAG)
-  return { value: event.content, ...(format ? { format } : {}) }
+  const value = tagValue(event, TEXT_FIELD) ?? event.content
+  return { value, ...(format ? { format } : {}) }
 }
 
 /** What a `conflict:` refusal says (§6.2), as the relay words it. */

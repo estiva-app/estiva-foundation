@@ -22,7 +22,7 @@ import {
   imetaTag,
   parseBlockDocument,
 } from '@estiva-app/protocol'
-import { planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
+import { identifierOf, planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
 /*
   SPEC §6.4's comment strength and §6.3's ordering are the conversation
   package's (CON-5): one copy of each rule, read here for a file's `comments`,
@@ -5807,11 +5807,6 @@ const PERSON_KEY = /^[0-9a-f]{64}$/
 
 /** An event id as the relay reads a `prev`: lower-case hex. */
 const EVENT_ID = /^[0-9a-f]{64}$/
-
-/** The file's id, the `d` of an address `<kind>:<pubkey>:<d>`; undefined for anything else. */
-function identifierOf(address: string): string | undefined {
-  return /^\d+:[0-9a-f]{64}:([^]*)$/.exec(address)?.[1]
-}
 
 /** Why `value` is neither `''` nor a person's key, or undefined when it is one. */
 function personKeyProblem(label: string, value: string): string | undefined {
