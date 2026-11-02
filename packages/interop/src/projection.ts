@@ -5805,6 +5805,14 @@ function buildCreationEvent(args: {
  */
 const PERSON_KEY = /^[0-9a-f]{64}$/
 
+/** An event id as the relay reads a `prev`: lower-case hex. */
+const EVENT_ID = /^[0-9a-f]{64}$/
+
+/** The file's id, the `d` of an address `<kind>:<pubkey>:<d>`; undefined for anything else. */
+function identifierOf(address: string): string | undefined {
+  return /^\d+:[0-9a-f]{64}:([^]*)$/.exec(address)?.[1]
+}
+
 /** Why `value` is neither `''` nor a person's key, or undefined when it is one. */
 function personKeyProblem(label: string, value: string): string | undefined {
   if (value === '' || PERSON_KEY.test(value)) return undefined
@@ -5879,6 +5887,17 @@ export interface ActionEventArgs {
    * only: a comment's text is its `value`, and a creation has its own body.
    */
   note?: string
+  /**
+   * The change this one follows for its field: the id of that field's current
+   * change as the writer read it, or the file's first record's id for its
+   * first change (SPEC §6.2). A change only. Every writer should send it; a
+   * relay that keeps the type in order refuses a change without it, and one
+   * naming a change that is no longer current with `conflict:`, which
+   * {@link writeChange} answers.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+   */
+  prev?: string
   pubkey: string
   createdAtMs: number
 }
@@ -5988,6 +6007,13 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   if (args.note !== undefined && (isCreation || !declared.emits.field || declared.emits.kind === KIND_DELETION)) {
     return `"${declared.label}" is not a change, so it takes no note.`
   }
+  // Only a change follows another for its field (§6.2).
+  if (args.prev !== undefined && (isCreation || !declared.emits.field || declared.emits.kind === KIND_DELETION)) {
+    return `"${declared.label}" is not a change, so it follows no change.`
+  }
+  if (args.prev !== undefined && !EVENT_ID.test(args.prev)) {
+    return `"${declared.label}" follows ${JSON.stringify(args.prev)}, which is not an event id.`
+  }
 
   // An object-creating action is a different event entirely — a new object
   // rather than a change to one — so it branches before the scalar path.
@@ -6072,9 +6098,13 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   if (typeof prose === 'string') return prose
   const [formatTag, ...files] = prose
 
+  // The file the change is about, by its id, beside its address (§6.2): the
+  // relay keeps each field in order by it.
+  const fileId = records.targetTag === 'a' ? identifierOf(address) : undefined
   const tags: string[][] = declared.emits.field
     ? [
         [records.targetTag, address],
+        ...(fileId !== undefined ? [['O', fileId]] : []),
         [records.fieldTag, declared.emits.field],
         [records.valueTag, value],
         ['h', folder],
@@ -6114,6 +6144,7 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // second would be separated by event id — arbitrarily, and differently
   // depending on which app you asked (FRICTION.md A6).
   if (records.order?.includes('ts')) tags.push(['ts', String(args.createdAtMs)])
+  if (args.prev !== undefined) tags.push(['prev', args.prev])
   tags.push(...files)
   // The person, where the relay indexes them: `value` is not indexed, so
   // without this `#p` never finds the change and §11.8 makes nobody a member.
@@ -6150,6 +6181,12 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   if (moved?.field === declared.emits.field && typeof value === 'string' && parentAddress.test(value)) {
     tags.push([MOVED_TO_TAG, value])
   }
+  // What the chosen option means, last (§6.2's `stage`): a status says
+  // whether it is open, started, done or dropped, whichever app reads it.
+  const stage = declared.emits.field && declared.input?.enum
+    ? manifest.vocabularies?.[declared.input.enum]?.find((entry) => entry.value === value)?.stage
+    : undefined
+  if (declared.emits.field && stage && STAGES.has(stage as Stage)) tags.push(['stage', declared.emits.field, stage])
 
   return {
     pubkey: args.pubkey,

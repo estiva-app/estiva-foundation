@@ -75,6 +75,7 @@ describe('a change that names a person', () => {
     const event = change('assign', PERSON)
     assert.deepEqual(event.tags, [
       ['a', I1],
+      ['O', I1.split(':')[2]],
       ['field', 'assignee'],
       ['value', PERSON],
       ['h', FOLDER],

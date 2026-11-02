@@ -206,6 +206,8 @@ export function planArchiveFolder(
       // shape produce the same tags.
       tags: [
         ['a', args.channel],
+        // The file it is about, by its id (§6.2).
+        ...(args.channel.split(':').length >= 3 ? [['O', args.channel.split(':').slice(2).join(':')]] : []),
         ['field', 'archived'],
         ['value', args.archived ? 'true' : ''],
         ['h', args.folder],

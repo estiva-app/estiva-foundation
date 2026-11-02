@@ -255,7 +255,7 @@ describe('the bare file declares how to change it', () => {
     assert.equal(change.kind, 1851)
     assert.deepEqual(
       change.tags.filter((t) => t[0] !== 'ts'),
-      [['a', TOPIC], ['field', 'summary'], ['value', 'What we call the launch.'], ['h', FOLDER]],
+      [['a', TOPIC], ['O', TOPIC.split(':')[2]], ['field', 'summary'], ['value', 'What we call the launch.'], ['h', FOLDER]],
       'no content-format: a summary is not prose (SPEC §7.3)',
     )
   })

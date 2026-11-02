@@ -6,6 +6,39 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.73.0 — 2026-11-02
+
+**Manifest: nothing. Wire: every change now names its file in `O`, and a
+change can name the one it follows** (ALO-7; SPEC §6.2, §6.13, §13.3; records
+[a-file-is-its-fields-each-kept-in-order-by-the-relay](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md),
+[opening-a-file-reads-its-current-text-not-its-history](https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md),
+[merging-two-changes-to-one-text-never-loses-words](https://github.com/estiva-app/estiva-docs/blob/main/decisions/merging-two-changes-to-one-text-never-loses-words.md)).
+
+- `buildActionEvent`'s change writes `["O", <d>]` after `a` (and
+  `planArchiveFolder` the same), takes `prev` (written after `ts`; refused on
+  anything that is not a change, or that is not an event id), and writes
+  `["stage", <field>, <stage>]` last when the chosen option of an `enum`
+  carries one of the four stages. The relay only checks that `O` is the `a`'s
+  `d`, so a change to any kind takes it.
+- New: `listFiles` and `openFile`, the relay's list read (`"fields": "newest"`)
+  and its opening read (`"text": true` beside `#d`), folded by `filesOf` into
+  each file's current change per field, whose id is the field's next `prev`. A
+  list never carries the text. For a relay whose NIP-11 advertises `file_list`
+  (`relayFileReadsOf`, protocol 0.48.0); `text` only where it says so.
+- New: `writeChange`, the change writer that answers `conflict:` as §6.2 says.
+  A field set again after a stale `prev` follows the current change and
+  stands; a text merges by §13.3 (`mergeTexts`) onto the current one and says
+  whose it merged onto, or sends nothing and returns the blocks that ask and
+  theirs; a change stamped before its `prev` goes 1 ms after it; `invalid:` is
+  never sent again; four tries, then the relay's last answer.
+- Needs `@estiva-app/protocol` 0.48.0.
+
+Checked on production as QA-1 and QA-2 (2026-11-02): a text change to another
+block merged onto QA-1's and kept both people's words; one to the same block
+asked and left QA-1's text current; a status set from an older copy stood, with
+both in its history; a writer whose clock was two minutes behind was stamped
+1 ms after its `prev` and accepted.
+
 ## 0.72.0 — 2026-11-02
 
 **Manifest: nothing.** Many topics' lists in one go, for Peek's Topics screen

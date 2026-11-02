@@ -419,7 +419,7 @@ describe('a Folder is archived the way any file is', () => {
     })
     assert.deepEqual(folderChange, fileChange)
     const [restore] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: false, resolution: 'ignored' })
-    assert.deepEqual([restore.tags[2], restore.content], [['value', ''], ''])
+    assert.deepEqual([restore.tags.find((t) => t[0] === 'value'), restore.content], [['value', ''], ''])
     // Always the Folder's own `h` (SPEC §3.3): readers count no other (MAN-17).
     const [nested] = planArchiveFolder(HELPER, 1, { folder: APIARY, channel: addressOf(apiary), archived: true, into: ORCHARD })
     assert.deepEqual(nested.tags.find((t) => t[0] === 'h'), ['h', APIARY])
