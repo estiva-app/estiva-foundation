@@ -487,7 +487,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     assert.equal(change.pubkey, OTHER, 'a non-author renames: it is a change, not a re-publish')
     assert.deepEqual(
       change.tags.filter((t) => t[0] !== 'ts'),
-      [['a', TOPIC], ['field', 'title'], ['value', 'Launch naming, second pass'], ['h', TEAM]],
+      [['a', TOPIC], ['O', TOPIC.split(':')[2]], ['field', 'title'], ['value', 'Launch naming, second pass'], ['h', TEAM]],
     )
     const renamed = event({ ...change, id: 'f'.repeat(64), sig: '' } as SignedEvent)
     const found = await resolveForeignObject(TOPIC, relay([topic(), renamed]))
@@ -534,7 +534,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     assert.deepEqual(
       change.tags.filter((t) => t[0] !== 'ts'),
       // `A` names the new parent where a relay indexes it (SPEC §7.2, FOL-45).
-      [['a', TOPIC], ['field', 'parent'], ['value', target], ['h', TEAM], ['A', target]],
+      [['a', TOPIC], ['O', TOPIC.split(':')[2]], ['field', 'parent'], ['value', target], ['h', TEAM], ['A', target]],
     )
     const moved = event({ ...change, id: 'e'.repeat(64), sig: '' } as SignedEvent)
     const found = await resolveForeignObject(TOPIC, relay([topic(), moved]))
@@ -549,7 +549,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     const change = { ...(built as Exclude<typeof built, string>) }
     assert.deepEqual(
       change.tags.filter((t) => t[0] !== 'ts'),
-      [['a', TOPIC], ['field', 'archived'], ['value', 'true'], ['h', TEAM]],
+      [['a', TOPIC], ['O', TOPIC.split(':')[2]], ['field', 'archived'], ['value', 'true'], ['h', TEAM]],
     )
     assert.equal(change.content, '', 'no note, no content')
     const noted = buildActionEvent({

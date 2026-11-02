@@ -208,8 +208,22 @@ export function parsePublishResponse(status: number, text: string): PublishResul
 export interface QueryResult {
   ok: boolean
   events: SignedEvent[]
+  /** With `search` (SPEC §6.13): the files found, best first. The relay's statement, never signed. */
+  matches?: SearchMatch[]
   reason?: string
   httpStatus?: number
+}
+
+/** One file a `search` found, and which of its words held the typing — SPEC §6.13. */
+export interface SearchMatch {
+  /** The file's address. */
+  a: string
+  match: {
+    /** Of `title`, `summary`, `key` and `text`, each that holds a typed word, best first. */
+    fields: string[]
+    /** The words around a typed word in the text, as plain text: an author's words, never markup. */
+    around?: string
+  }
 }
 
 /** The relay's answer to `POST /query`, interpreted. */
@@ -225,9 +239,61 @@ export function parseQueryResponse(status: number, text: string): QueryResult {
   }
   try {
     const parsed = JSON.parse(text)
+    // A search answers an object (§6.13); every other read a bare array.
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.events)) {
+      const matches = Array.isArray(parsed.matches) ? parsed.matches.filter(isSearchMatch) : []
+      return { ok: true, events: parsed.events, matches, httpStatus: status }
+    }
     return { ok: true, events: Array.isArray(parsed) ? parsed : [], httpStatus: status }
   } catch {
     return { ok: false, events: [], reason: `unparseable response: ${text.slice(0, 200)}`, httpStatus: status }
+  }
+}
+
+function isSearchMatch(value: unknown): value is SearchMatch {
+  const m = value as SearchMatch | null
+  return !!m && typeof m.a === 'string' && !!m.match && Array.isArray(m.match.fields) &&
+    m.match.fields.every((f) => typeof f === 'string') && (m.match.around === undefined || typeof m.match.around === 'string')
+}
+
+/**
+ * What a relay says, in its NIP-11 document, about reading files — SPEC §6.13.
+ *
+ * - `list`: `/query` answers `"fields": "newest"` (`file_list.newest`), so an
+ *   app reads a list with it rather than every change.
+ * - `text`: the read takes `"text": true` beside `#d` (`file_list.text`), so
+ *   opening a file costs its current text, not its history. Never sent to a
+ *   relay that does not say so: one that ignored the key would answer as if
+ *   the text had never changed.
+ * - `inOrder`: the types the relay keeps in order (`files.requires_prev`), and
+ *   whether it has made the switch at all (`files` present).
+ * - `search`: the types it finds by their words (`file_search.types`).
+ *
+ * A relay that says nothing reads as none of them, which is always safe: the
+ * app reads every change and folds them itself.
+ */
+export interface RelayFileReads {
+  list: boolean
+  text: boolean
+  switched: boolean
+  inOrder: string[]
+  search: string[]
+}
+
+export function relayFileReadsOf(info: unknown): RelayFileReads {
+  const doc = (info && typeof info === 'object' ? info : {}) as Record<string, unknown>
+  const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined)
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
+  const files = obj(doc.files)
+  // A relay advertising the switch advertises the list too (§6.13); one from
+  // before `file_list` existed said it only under `files`.
+  const list = obj(doc.file_list) ?? (files?.newest === true ? { newest: true } : undefined)
+  return {
+    list: list?.newest === true,
+    text: list?.newest === true && list.text === true,
+    switched: !!files,
+    inOrder: strings(files?.requires_prev),
+    search: strings(obj(doc.file_search)?.types),
   }
 }
 
@@ -626,11 +692,34 @@ export class Relay {
    * {@link RelayBusyError}.
    */
   async query(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
+    return (await this.queryWithMatches(filters)).events
+  }
+
+  /**
+   * {@link Relay.query}, keeping what a `search` found besides its events
+   * (SPEC §6.13): `matches` lists the files in rank order, which the events
+   * alone do not say.
+   */
+  async queryWithMatches(filters: Record<string, unknown>[]): Promise<{ events: SignedEvent[]; matches: SearchMatch[] }> {
     const { status, text } = await this.post('/query', filters)
     if (isRelayBusyResponse(status, text)) throw new RelayBusyError(status)
     const result = parseQueryResponse(status, text)
     if (!result.ok) throw new Error(`query failed: ${result.reason}`)
-    return result.events
+    return { events: result.events, matches: result.matches ?? [] }
+  }
+
+  /**
+   * The relay's NIP-11 document, read from its own address. Unauthenticated:
+   * it says what the relay offers, to anyone. Throws when it cannot be read,
+   * so a caller can tell "says nothing" from "did not answer".
+   */
+  async info(): Promise<unknown> {
+    const send = this.transport ?? fetch
+    // A GET carries no body; `FetchLike` names one for the POSTs.
+    const init = { method: 'GET', headers: { accept: 'application/nostr+json' } } as unknown as Parameters<FetchLike>[1]
+    const res = await send(this.url, init)
+    if (res.status < 200 || res.status >= 300) throw new Error(`relay information failed: ${res.status}`)
+    return JSON.parse(await res.text())
   }
 
   /**

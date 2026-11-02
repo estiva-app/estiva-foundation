@@ -170,6 +170,27 @@ export {
 } from './topics.js'
 
 /**
+ * A file as its fields, each kept in order by the relay (SPEC §6.2, §6.13):
+ * the list and open reads, and the change writer that answers `conflict:`.
+ */
+export {
+  TEXT_FIELD,
+  changedAt,
+  fieldsSetBy,
+  filesOf,
+  listFiles,
+  openFile,
+  textOf,
+  conflictOf,
+  writeChange,
+  type CurrentField,
+  type FileFields,
+  type Conflict,
+  type WriteChangeArgs,
+  type WriteChangeResult,
+} from './fields.js'
+
+/**
  * What an app link names, and where a file is mentioned — once for every app
  * (SPEC §7.7, §13.1, §6.8; PEEKM-7). Each app passes its relay read; none
  * keeps a resolver of its own.

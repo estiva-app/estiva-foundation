@@ -4,6 +4,29 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.48.0 — 2026-11-02
+
+**Wire behaviour: nothing an app publishes changes** (ALO-7; SPEC §6.13,
+§13.3; record
+[merging-two-changes-to-one-text-never-loses-words](https://github.com/estiva-app/estiva-docs/blob/main/decisions/merging-two-changes-to-one-text-never-loses-words.md)).
+
+- New: `mergeTexts(base, theirs, mine)` and `mergeBlockDocuments`, §13.3's
+  *Merging two changes to one text*, which every app merges by so two crossing
+  saves give the same text whichever was refused. A block one side changed is
+  taken; one both changed differently, or one deleted and the other edited,
+  asks (`MergeAsk`, with both versions as plain text and as blocks), and then
+  there is no merged text. A move takes their words at mine's place; a delete
+  against a move deletes; both moving one block, theirs stands; both adding at
+  one place keeps both, theirs first. A text that is not a block document is
+  one block. Conformance C41 and C42 are its tests.
+- New: `relayFileReadsOf(nip11)`, what a relay says about reading files —
+  `file_list` (`list`, `text`), `files` (`switched`, `inOrder`) and
+  `file_search` (`search`) — and `Relay.info()`, which reads the NIP-11
+  document from the relay's own address, unauthenticated.
+- `parseQueryResponse` reads a search's `{events, matches}` answer (it read
+  `[]` before), and `Relay.queryWithMatches` returns the matches in rank
+  order beside the events.
+
 ## 0.47.0 — 2026-10-30
 
 **Wire behaviour: nothing an app publishes changes** (SPEC §13.6.1, "Five
