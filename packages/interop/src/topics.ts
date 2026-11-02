@@ -34,6 +34,8 @@ const KIND_TOPIC = 30840
 const KIND_FOLDER = 39000
 /** Listed ids resolved per request: 2 × this stays under a relay's usual `limit` cap. */
 const RESOLVE_BATCH = 100
+/** Topics per `#O` filter in {@link topicLists}, so one filter's answer stays the size of a few topics' changes. */
+const TOPIC_BATCH = 20
 /**
  * The file kinds a listed id is looked for under by default: topic, document,
  * project, issue. Never a bare `#d`, since a Folder's `kind:39000` shares its
@@ -264,17 +266,47 @@ export async function topicList(
   topic: string,
   options: { fileKinds?: readonly number[] } = {},
 ): Promise<ListedFile[]> {
-  const [roots, events] = await Promise.all([rootsOf(query, [topic]), query([topicListFilter(topic)])])
-  const root = roots.get(topic)
-  const folder = root ? folderOf(root) : null
-  if (!folder) return []
-  const entries = listEntries(events, (list) => (list === topic ? folder : null))
+  return (await topicLists(query, [topic], options)).get(topic) ?? []
+}
+
+/**
+ * Many topics' lists at once, by address (TOP-4, Peek's Topics screen): the
+ * rules of {@link topicList} for each, in three reads whatever the number of
+ * topics, the roots, every topic's changes (`#O` on all their ids, one filter
+ * per {@link TOPIC_BATCH}) and one batched `#d` resolve, where one
+ * `topicList` per topic would be three reads each and trips a relay's rate
+ * limit at a few dozen topics. Every address asked for is a key; one that
+ * lists nothing, or that the reader cannot read, maps to `[]`.
+ */
+export async function topicLists(
+  query: QueryFn,
+  topics: readonly string[],
+  options: { fileKinds?: readonly number[] } = {},
+): Promise<Map<string, ListedFile[]>> {
+  const asked = [...new Set(topics)]
+  const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
+  if (asked.length === 0) return out
+  const ids = asked.map((topic) => ADDRESS.exec(topic)?.[3] ?? topic)
+  const filters: Record<string, unknown>[] = []
+  for (let i = 0; i < ids.length; i += TOPIC_BATCH) filters.push({ kinds: [KIND_CHANGE], '#O': ids.slice(i, i + TOPIC_BATCH) })
+  const [roots, events] = await Promise.all([rootsOf(query, asked), query(filters)])
+  const folderOfList = (list: string) => {
+    const root = out.has(list) ? roots.get(list) : undefined
+    return root ? folderOf(root) : null
+  }
+  const entries = listEntries(events, folderOfList)
     .filter((entry) => entry.listed)
     .sort((a, b) => byOrder(a.event, b.event))
-  if (entries.length === 0) return []
-  const ids = [...new Set(entries.map((entry) => entry.file))]
+  if (entries.length === 0) return out
+  const resolved = await resolveIds(query, [...new Set(entries.map((entry) => entry.file))], options.fileKinds)
+  for (const entry of entries) out.get(entry.list)!.push({ file: entry.file, address: resolved.get(entry.file) ?? null, entry })
+  return out
+}
+
+/** Each id's address when exactly one file of `fileKinds` the reader can read holds it; an id held by none or by two is left out. */
+async function resolveIds(query: QueryFn, ids: readonly string[], fileKinds?: readonly number[]): Promise<Map<string, string>> {
   // Never a Folder's `39000`, which shares its uuid (§11.1): an id only a Folder holds resolves to nothing.
-  const kinds = (options.fileKinds ?? LISTED_FILE_KINDS).filter((kind) => kind !== KIND_FOLDER)
+  const kinds = (fileKinds ?? LISTED_FILE_KINDS).filter((kind) => kind !== KIND_FOLDER)
   // Room for a second holder of every id, so two holders are seen as two; in
   // batches, so a relay's cap on `limit` cannot cut a long list short.
   const batches: string[][] = []
@@ -288,8 +320,7 @@ export async function topicList(
     set.add(`${event.kind}:${event.pubkey}`)
     holders.set(d, set)
   }
-  return entries.map((entry) => {
-    const set = holders.get(entry.file)
-    return { file: entry.file, address: set?.size === 1 ? `${[...set][0]}:${entry.file}` : null, entry }
-  })
+  const out = new Map<string, string>()
+  for (const [d, set] of holders) if (set.size === 1) out.set(d, `${[...set][0]}:${d}`)
+  return out
 }
