@@ -138,6 +138,7 @@ export {
   planUnlistFile,
   planMoveFile,
   planMoveFromFolders,
+  readMoveRefusal,
   planArchiveFolder,
   listedBeneath,
   type FolderRef,

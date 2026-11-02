@@ -6,6 +6,33 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.74.0 — 2026-11-02
+
+**Manifest: nothing. Wire: a move is one `kind:1852 op: move` per source,
+not an add and a remove** (TEA-3; SPEC §3.3; record
+[a-topic-always-has-a-team-and-moves-in-one-action](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-always-has-a-team-and-moves-in-one-action.md)).
+Needs protocol 0.49.0 and a relay that knows `move`.
+
+- `planMoveFile` returns one event, the `move` in the target naming the
+  source in `from`. The relay changes both lists or neither, so a topic is
+  never on no list between the two halves.
+- **Breaking:** `planMoveFromFolders` returns `{ ok: true, events, moved }`,
+  like `planMoveFile`, in place of `add` and `removes`. `events` holds one
+  `move` per source that lists part of the set, each naming what that source
+  lists, or one `add` when no source lists any of it. Publish them in order
+  and stop at the first refusal: each changes both its lists or neither, so
+  what landed stands, and moving again finishes it. Callers that published
+  `add` then each `removes[i].event` publish `events` in order instead.
+- A topic no team lists is placed only at home: in the team its `h` names,
+  or in the Company team. Anywhere else `planMoveFromFolders` refuses with
+  `target-is-not-home`, and the relay refuses it too.
+- `FolderSummary.company` (and `FolderRef.company`): the relay marks the
+  Company team with `["company"]` on its `kind:39000` (§3.4).
+- `readMoveRefusal(events, index, reason)`: what a refused command means
+  (`team-archived`, `not-a-member`, `changed-meanwhile` or `refused`),
+  whether anything moved, and which sources still list the file, so an app
+  says it in its own words rather than showing the relay's.
+
 ## 0.73.0 — 2026-11-02
 
 **Manifest: nothing. Wire: every change now names its file in `O`, and a

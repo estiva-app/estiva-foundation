@@ -19,6 +19,7 @@ import {
   planPlaceFile,
   planRenameFolder,
   planUnlistFile,
+  readMoveRefusal,
 } from '../dist/index.js'
 
 const PUB = 'b'.repeat(64)
@@ -130,23 +131,19 @@ describe('planMoveFile', () => {
   const from = { id: A, hasState: true }
   const to = { id: B, hasState: true }
 
-  it('adds to the target before removing from the source', () => {
+  it('sends one move in the target naming the source, so both lists change or neither', () => {
     const plan = planMoveFile(PUB, MS, { listing: null, file: file(FILE), from, to })
     assert.ok(plan.ok)
-    assert.deepEqual(shape(plan.events), [
-      { kind: 1852, tags: [['h', B], ['op', 'add'], ['a', FILE]] },
-      { kind: 1852, tags: [['h', A], ['op', 'remove'], ['a', FILE]] },
-    ])
+    assert.deepEqual(shape(plan.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', FILE]] }])
     assert.deepEqual(plan.moved, [FILE])
   })
 
-  it('moves the subtree whole: one add naming every file, then one remove naming the same set', () => {
+  it('moves the subtree whole: one move naming every file', () => {
     const listing = [file(OTHER), file(FILE), file(CHILD, FILE), file(GRANDCHILD, CHILD)]
     const plan = planMoveFile(PUB, MS, { file: listing[1], from, to, listing })
     assert.ok(plan.ok)
     assert.deepEqual(shape(plan.events), [
-      { kind: 1852, tags: [['h', B], ['op', 'add'], ['a', FILE], ['a', CHILD], ['a', GRANDCHILD]] },
-      { kind: 1852, tags: [['h', A], ['op', 'remove'], ['a', FILE], ['a', CHILD], ['a', GRANDCHILD]] },
+      { kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', FILE], ['a', CHILD], ['a', GRANDCHILD]] },
     ])
   })
 
@@ -241,21 +238,17 @@ describe('planMoveFromFolders', () => {
   const plan = (args: Partial<Parameters<typeof planMoveFromFolders>[2]>) =>
     planMoveFromFolders(PUB, MS, { file: project, from: [from], to, listings: new Map(), ...args })
 
-  it('sends one add naming what every source lists beneath the file, then a remove per source naming its own', () => {
+  it('sends one move per source, each naming what that source lists beneath the file', () => {
     const listings = new Map([
       [A, [file(PROJECT), file(CHILD, PROJECT)]],
       [C, [file(PROJECT, undefined, C), file(GRANDCHILD, PROJECT, C)]],
     ])
     const moved = plan({ from: [from, also], listings })
     assert.ok(moved.ok)
-    assert.deepEqual(shape([moved.add!]), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT], ['a', CHILD], ['a', GRANDCHILD]] }])
-    assert.deepEqual(
-      moved.removes.map(({ folder, event }) => ({ folder, tags: event.tags })),
-      [
-        { folder: A, tags: [['h', A], ['op', 'remove'], ['a', PROJECT], ['a', CHILD]] },
-        { folder: C, tags: [['h', C], ['op', 'remove'], ['a', PROJECT], ['a', GRANDCHILD]] },
-      ],
-    )
+    assert.deepEqual(shape(moved.events), [
+      { kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', PROJECT], ['a', CHILD]] },
+      { kind: 1852, tags: [['h', B], ['op', 'move'], ['from', C], ['a', PROJECT], ['a', GRANDCHILD]] },
+    ])
     assert.deepEqual(moved.moved, [PROJECT, CHILD, GRANDCHILD])
   })
 
@@ -263,7 +256,7 @@ describe('planMoveFromFolders', () => {
     const moved = plan({ listings: new Map([[A, [file(OTHER), file(CHILD, PROJECT)]]]) })
     assert.ok(moved.ok)
     assert.deepEqual(moved.moved, [PROJECT, CHILD])
-    assert.deepEqual(moved.removes[0].event.tags, [['h', A], ['op', 'remove'], ['a', PROJECT], ['a', CHILD]])
+    assert.deepEqual(moved.events[0].tags, [['h', B], ['op', 'move'], ['from', A], ['a', PROJECT], ['a', CHILD]])
   })
 
   it('does not add a file its source’s state does not name — only what is beneath it', () => {
@@ -276,25 +269,35 @@ describe('planMoveFromFolders', () => {
     const moved = plan({})
     assert.ok(moved.ok)
     assert.deepEqual(moved.moved, [PROJECT])
-    assert.deepEqual(moved.removes.map(({ folder }) => folder), [A])
+    assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', PROJECT]] }])
   })
 
-  it('places a file listed nowhere, with no remove', () => {
+  it('places a file listed nowhere with one add', () => {
     const moved = plan({ from: [] })
     assert.ok(moved.ok)
-    assert.deepEqual(shape([moved.add!]), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT]] }])
-    assert.deepEqual(moved.removes, [])
+    assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT]] }])
   })
 
-  it('places a file its Folder holds only by containment, with no remove', () => {
+  it('places a file its Folder holds only by containment with one add', () => {
     const moved = plan({ from: [{ id: A, hasState: true, addresses: [] }], listings: new Map([[A, [file(OTHER)]]]) })
     assert.ok(moved.ok)
     assert.deepEqual(moved.moved, [PROJECT])
-    assert.deepEqual(moved.removes, [])
+    assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PROJECT]] }])
   })
 
   it('refuses to place a project in a private Folder: its root carries no h', () => {
     assert.deepEqual(plan({ from: [], to: { ...to, private: true } }), { ok: false, reason: 'target-is-private' })
+  })
+
+  it('refuses to place a topic no team lists in a team that is not its home, and sends nothing', () => {
+    assert.deepEqual(plan({ file: file(FILE, undefined, C), from: [] }), { ok: false, reason: 'target-is-not-home' })
+  })
+
+  it('places a topic no team lists in its own team, or in the Company team', () => {
+    const home = plan({ file: file(FILE, undefined, B), from: [] })
+    const company = plan({ file: file(FILE, undefined, C), from: [], to: { ...to, company: true } })
+    assert.ok(home.ok && company.ok)
+    for (const placed of [home, company]) assert.deepEqual(shape(placed.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', FILE]] }])
   })
 
   it('places a file in the private Folder its h already names', () => {
@@ -314,13 +317,49 @@ describe('planMoveFromFolders', () => {
   })
 
   it('plans nothing for a file already in the target and nowhere else', () => {
-    assert.deepEqual(plan({ from: [{ id: B, hasState: true }] }), { ok: true, removes: [], moved: [] })
+    assert.deepEqual(plan({ from: [{ id: B, hasState: true }] }), { ok: true, events: [], moved: [] })
   })
 
-  it('takes the target out of the sources: only the other Folder is removed from', () => {
+  it('takes the target out of the sources: only the other Folder is moved from', () => {
     const moved = plan({ from: [{ id: B, hasState: true, addresses: [PROJECT] }, from], listings: new Map([[A, [file(PROJECT)]]]) })
     assert.ok(moved.ok)
-    assert.deepEqual(moved.removes.map(({ folder }) => folder), [A])
+    assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', PROJECT]] }])
+  })
+})
+
+describe('readMoveRefusal', () => {
+  const PROJECT = `30850:${PUB}:p1`
+  const moved = planMoveFromFolders(PUB, MS, {
+    file: { ref: PROJECT, address: PROJECT },
+    from: [
+      { id: A, hasState: true, addresses: [PROJECT] },
+      { id: C, hasState: true, addresses: [PROJECT] },
+    ],
+    to: { id: B, hasState: true },
+    listings: new Map(),
+  })
+  assert.ok(moved.ok)
+
+  it('a refused first move moved nothing', () => {
+    assert.deepEqual(readMoveRefusal(moved.events, 0, "only the team's members mark or unmark its spaces"), {
+      why: 'not-a-member',
+      nothingMoved: true,
+      notMovedFrom: [],
+    })
+  })
+
+  it('a refused later move names every source it had not left yet', () => {
+    assert.deepEqual(readMoveRefusal(moved.events, 1, 'the team a move leaves does not list 30840:x:t1'), {
+      why: 'changed-meanwhile',
+      nothingMoved: false,
+      notMovedFrom: [C],
+    })
+  })
+
+  it('reads an archived team, and anything else as a plain refusal', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'a move into or out of an archived team is refused').why, 'team-archived')
+    assert.equal(readMoveRefusal(moved.events, 0, 'blocked: rate limit').why, 'refused')
+    assert.equal(readMoveRefusal(moved.events, 0, undefined).why, 'refused')
   })
 })
 
