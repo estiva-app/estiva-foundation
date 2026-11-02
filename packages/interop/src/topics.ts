@@ -34,8 +34,6 @@ const KIND_TOPIC = 30840
 const KIND_FOLDER = 39000
 /** Listed ids resolved per request: 2 × this stays under a relay's usual `limit` cap. */
 const RESOLVE_BATCH = 100
-/** Topics per `#O` filter in {@link topicLists}, so one filter's answer stays the size of a few topics' changes. */
-const TOPIC_BATCH = 20
 /**
  * The file kinds a listed id is looked for under by default: topic, document,
  * project, issue. Never a bare `#d`, since a Folder's `kind:39000` shares its
@@ -271,10 +269,10 @@ export async function topicList(
 
 /**
  * Many topics' lists at once, by address (TOP-4, Peek's Topics screen): the
- * rules of {@link topicList} for each, in three reads whatever the number of
- * topics, the roots, every topic's changes (`#O` on all their ids, one filter
- * per {@link TOPIC_BATCH}) and one batched `#d` resolve, where one
- * `topicList` per topic would be three reads each and trips a relay's rate
+ * rules of {@link topicList} for each, in three requests whatever the number
+ * of topics (one more per 100 listed files): the roots, every topic's changes
+ * (one `#O` filter per topic) and the batched `#d` resolve, where one
+ * `topicList` per topic would be three requests each and trips a relay's rate
  * limit at a few dozen topics. Every address asked for is a key; one that
  * lists nothing, or that the reader cannot read, maps to `[]`.
  */
@@ -286,10 +284,8 @@ export async function topicLists(
   const asked = [...new Set(topics)]
   const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
   if (asked.length === 0) return out
-  const ids = asked.map((topic) => ADDRESS.exec(topic)?.[3] ?? topic)
-  const filters: Record<string, unknown>[] = []
-  for (let i = 0; i < ids.length; i += TOPIC_BATCH) filters.push({ kinds: [KIND_CHANGE], '#O': ids.slice(i, i + TOPIC_BATCH) })
-  const [roots, events] = await Promise.all([rootsOf(query, asked), query(filters)])
+  // One filter per topic in one request, so a relay's cap on an answer cuts no more than it would for that topic alone.
+  const [roots, events] = await Promise.all([rootsOf(query, asked), query(asked.map(topicListFilter))])
   const folderOfList = (list: string) => {
     const root = out.has(list) ? roots.get(list) : undefined
     return root ? folderOf(root) : null

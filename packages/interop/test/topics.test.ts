@@ -286,20 +286,19 @@ describe("many topics' lists at once (Peek's Topics screen)", () => {
     assert.deepEqual(lists.get(SECOND), [])
   })
 
-  it('asks the relay three times for 45 topics, at most 20 topics per #O filter, where one read per topic trips its rate limit', async () => {
+  it('reads 45 topics in three requests, where one read per topic trips the relay rate limit, and a cap on each answer cuts no topic short', async () => {
     const ds = Array.from({ length: 45 }, (_, i) => `topic-${String(i).padStart(2, '0')}`)
     const roots = ds.map((d) => root(30840, QA1, d, FOLDER))
     const entries = ds.map((d, i) => signed(planListInTopic(QA1, MS + i, { topic: { address: `30840:${QA1}:${d}`, folder: FOLDER }, file: DOC_D })[0]))
     const all = relay([...roots, docRoot, ...entries])
-    const asked: Record<string, unknown>[][] = []
-    const counting = async (filters: Record<string, unknown>[]) => {
-      asked.push(filters)
-      return all(filters)
+    let requests = 0
+    // A relay that answers each unlimited filter with at most 10 events, as a default cap on an answer would.
+    const capped = async (filters: Record<string, unknown>[]) => {
+      requests += 1
+      return (await Promise.all(filters.map(async (f) => ('limit' in f ? all([f]) : (await all([f])).slice(0, 10))))).flat()
     }
-    const lists = await topicLists(counting, ds.map((d) => `30840:${QA1}:${d}`))
-    assert.equal(asked.length, 3)
-    const byO = asked.flat().filter((f) => '#O' in f).map((f) => (f['#O'] as string[]).length)
-    assert.deepEqual(byO, [20, 20, 5])
+    const lists = await topicLists(capped, ds.map((d) => `30840:${QA1}:${d}`))
+    assert.equal(requests, 3)
     assert.equal([...lists.values()].filter((files) => files.length === 1 && files[0].address === DOC).length, 45)
   })
 })
