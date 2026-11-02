@@ -297,31 +297,27 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
 }
 
 /**
- * Move a file to another Folder, with everything listed beneath it:
- * `[kind:1852 add to target, kind:1852 remove from source]` — SPEC §3.3.
+ * Move a file to another Folder, with everything listed beneath it: one
+ * `kind:1852 move` in the target naming the source in `from` — SPEC §3.3.
  *
- * **One command each way, naming the whole set.** `listing` is the source
- * Folder's files (`FolderContents.files`); the file moves with every file
- * listed beneath it ({@link listedBeneath}), so a subtree moves whole. The
- * relay applies every address on a command in one state write, so a failure
- * can never split the subtree between the two Folders. The file itself is
- * moved only when the source lists it — a Ship issue is listed by no Folder,
- * its project is. The file's `h` does not change.
+ * **One command, naming the whole set.** `listing` is the source Folder's
+ * files (`FolderContents.files`); the file moves with every file listed
+ * beneath it ({@link listedBeneath}), so a subtree moves whole. The file
+ * itself is moved only when the source lists it — a Ship issue is listed by
+ * no Folder, its project is. The file's `h` does not change.
  *
  * `listing` is required, and `null` says "nothing can be listed beneath this
  * file", making the file the whole set. A move that silently left its
  * sub-files behind is the bug this planner exists to end, so omitting the
  * listing is a type error rather than a quiet single-file move.
  *
- * **Add first.** There is no atomic move — state is per Folder — so something
- * can fail between the two. After the add, a failure leaves the set in both
- * Folders: visible, obviously wrong, fixed by moving again. Removing first and
- * failing would leave it in neither, which looks like files that never were.
+ * **Both lists or neither.** The relay changes the source's and the target's
+ * list in one write, after checking the mover may change each; refused,
+ * nothing has changed, so a topic is never on no list (record
+ * a-topic-always-has-a-team-and-moves-in-one-action).
  *
- * **Refused unless both Folders have state.** An `add` to a Folder with none
- * emits state listing only the moved files, and everything already filed in
- * it disappears; a `remove` from one emits state listing nothing, and the
- * whole source disappears.
+ * **Refused unless both Folders have state.** The relay refuses a move
+ * between Folders that do not both hold a listing.
  *
  * **Refused into a private Folder** when any moved file's `h` is another
  * channel or absent (`target-is-private`, §3.1).
@@ -329,6 +325,7 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
  * A move to the same Folder, or of a set the source does not list, plans nothing.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/moving-a-file-never-changes-who-can-read-it.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-always-has-a-team-and-moves-in-one-action.md
  */
 export function planMoveFile(
   pubkey: string,
@@ -348,10 +345,7 @@ export function planMoveFile(
   if (!moved.length) return { ok: true, events: [], moved }
   return {
     ok: true,
-    events: [
-      buildFolderCommand(pubkey, createdAtMs, { folder: args.to.id, op: 'add', addresses: moved }),
-      buildFolderCommand(pubkey, createdAtMs, { folder: args.from.id, op: 'remove', addresses: moved }),
-    ],
+    events: [buildFolderCommand(pubkey, createdAtMs, { folder: args.to.id, op: 'move', from: args.from.id, addresses: moved })],
     moved,
   }
 }
@@ -360,33 +354,31 @@ export type MoveFromFoldersPlan =
   | {
       ok: true
       /**
-       * The one `kind:1852 add` in the target, naming everything moved. Publish
-       * it first: refused, nothing has changed. Absent when there is nothing to send.
+       * The commands to publish, in order, stopping at the first the relay
+       * refuses: a `kind:1852 move` from each source that lists part of the
+       * set, or one `add` when no source lists any of it. Empty when there is
+       * nothing to send.
        */
-      add?: UnsignedEvent
-      /**
-       * A `remove` for each source that lists part of the set, naming what that
-       * source lists. Publish them once the add has landed; a refused one leaves
-       * its Folder listing the set as well, which moving again fixes.
-       */
-      removes: { folder: string; event: UnsignedEvent }[]
-      /** Every address the add names. */
+      events: UnsignedEvent[]
+      /** Every address the commands put in the target. */
       moved: string[]
     }
   | { ok: false; reason: MoveRefusal }
 
 /**
  * Move a file out of every Folder that lists it, with everything listed
- * beneath it in each: one `kind:1852 add` in the target naming the whole set,
- * then a `remove` in each source — SPEC §3.3.
+ * beneath it in each: one `kind:1852 move` from each source into the target
+ * — SPEC §3.3.
  *
  * {@link planMoveFile} for each source, and what every consumer did around it
  * (Ship's "Move to Folder…", Peek's Move, the agent's `move-project`), so it is
  * done once:
  *
- * - **One add, not one per source.** A file two Folders list can have a
- *   different set beneath it in each. One add naming the union lands whole or
- *   not at all, so a refusal never leaves part of the set in the target.
+ * - **One move per source.** A file two Folders list can have a different set
+ *   beneath it in each; each move names what its source lists. Each changes
+ *   both of its lists or neither, so no step leaves the file on no list, and a
+ *   refusal halfway leaves it where the earlier moves put it (in the target
+ *   and the sources not yet moved from), which moving again finishes.
  * - **The file is in a source whose state names it** (`from[i].addresses`),
  *   even when its row is missing from that source's listing. A row that did
  *   not resolve is still what is being moved.
@@ -414,8 +406,8 @@ export function planMoveFromFolders(
 ): MoveFromFoldersPlan {
   const { file, to } = args
   const sources = args.from.filter((folder) => folder.id !== to.id)
-  if (sources.length === 0 && args.from.length > 0) return { ok: true, removes: [], moved: [] }
-  const removes: { folder: string; event: UnsignedEvent }[] = []
+  if (sources.length === 0 && args.from.length > 0) return { ok: true, events: [], moved: [] }
+  const events: UnsignedEvent[] = []
   const moved = new Set<string>()
   for (const from of sources) {
     const listing = args.listings.get(from.id) ?? null
@@ -430,16 +422,13 @@ export function planMoveFromFolders(
     })
     if (!plan.ok) return plan
     for (const address of plan.moved) moved.add(address)
-    const remove = plan.events[1]
-    if (remove) removes.push({ folder: from.id, event: remove })
+    events.push(...plan.events)
   }
   if (!to.hasState) return { ok: false, reason: 'target-has-no-state' }
   if (moved.size === 0) {
     if (to.private && file.scopedTo !== to.id) return { ok: false, reason: 'target-is-private' }
-    if (!file.address) return { ok: true, removes: [], moved: [] }
-    const [add] = planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true })
-    return { ok: true, add, removes: [], moved: [file.address] }
+    if (!file.address) return { ok: true, events: [], moved: [] }
+    return { ok: true, events: planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true }), moved: [file.address] }
   }
-  const addresses = [...moved]
-  return { ok: true, add: buildFolderCommand(pubkey, createdAtMs, { folder: to.id, op: 'add', addresses }), removes, moved: addresses }
+  return { ok: true, events, moved: [...moved] }
 }

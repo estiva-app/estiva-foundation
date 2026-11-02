@@ -468,20 +468,23 @@ export function buildEditChannelMetadata(
 }
 
 /** A Folder command's `op`. `handle_folder_command` refuses anything else. */
-export type FolderOp = 'add' | 'remove' | 'set'
-const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set']
+export type FolderOp = 'add' | 'remove' | 'set' | 'move'
+const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set', 'move']
 
 /**
  * kind:1852 Folder command — the tag shape `handle_folder_command` reads
  * (`buzz-relay/src/handlers/side_effects.rs`, `nfb-demo-kinds`). Buzz has no
  * builder for it: the kind is the relay's own and only clients send it.
  *
- * Tag order: h, op, a…, [name]. `a` tags keep the order given, because the
- * relay appends them in that order and a Folder's order is the Folder's.
+ * Tag order: h, op, [from], a…, [name]. `a` tags keep the order given, because
+ * the relay appends them in that order and a Folder's order is the Folder's.
  *
  * - `add` and `remove` act on the addresses named and leave the rest alone;
  *   `set` replaces the list wholesale. `add` with no addresses keeps the
  *   contents and is how a name alone is changed — there is no `rename` op.
+ * - `move` takes the addresses off the Folder `from` names and puts them on
+ *   the `h` one, both lists or neither (SPEC §3.3). It names exactly one
+ *   `from`, never the `h`, and no other op names one.
  * - `name` is sticky: a command without one keeps the Folder's name.
  * - The name goes through `canonicalChannelName`, as the channel's does. The
  *   state's name shadows the channel's wherever a Folder is listed, so the two
@@ -496,16 +499,19 @@ const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set']
 export function buildFolderCommand(
   pubkey: string,
   createdAtMs: number,
-  args: { folder: string; op: FolderOp; addresses?: string[]; name?: string },
+  args: { folder: string; op: FolderOp; from?: string; addresses?: string[]; name?: string },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
   if (!args.folder) throw new Error('a folder command names the folder')
   // The relay refuses an unknown op rather than defaulting it; so do we.
   if (!FOLDER_OPS.includes(args.op)) throw new Error(`unknown folder op: ${String(args.op)}`)
+  if ((args.op === 'move') !== (args.from !== undefined)) throw new Error('a move, and only a move, names the folder it leaves')
+  if (args.from !== undefined && (!args.from || args.from === args.folder)) throw new Error('a move leaves another folder than the one it goes to')
   const tags: NostrTag[] = [
     ['h', args.folder],
     ['op', args.op],
   ]
+  if (args.from !== undefined) tags.push(['from', args.from])
   for (const address of args.addresses ?? []) {
     if (!address) throw new Error('a folder command address must not be empty')
     tags.push(['a', address])

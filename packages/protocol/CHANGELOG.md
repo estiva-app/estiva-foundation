@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.49.0 — 2026-11-02
+
+**Wire behaviour: a new Folder command, `op: move`** (TEA-3; SPEC §3.3;
+record
+[a-topic-always-has-a-team-and-moves-in-one-action](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-always-has-a-team-and-moves-in-one-action.md)).
+
+- `buildFolderCommand` takes `op: 'move'` with `from`, the Folder the
+  addresses leave; the `h` is the one they go to. Tag order h, op, from, a….
+  The relay changes both lists in one write or neither. A move without
+  `from`, a `from` on any other op, and a move to the Folder it leaves are
+  refused, as the relay refuses them.
+- Nothing an app already publishes changes. Only a relay that knows `move`
+  (buzz `nfb-demo-kinds` from estiva-app/buzz#48) accepts one.
+
 ## 0.48.0 — 2026-11-02
 
 **Wire behaviour: nothing an app publishes changes** (ALO-7; SPEC §6.13,

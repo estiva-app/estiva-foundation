@@ -28,6 +28,24 @@ describe('buildFolderCommand', () => {
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'rename' as FolderOp }), /unknown folder op/)
   })
 
+  it('writes a move with the folder it leaves in from, after the op', () => {
+    const SOURCE = '5c1f7a3e-0b4d-4f7e-9a51-3d2c8e6b7f10'
+    const event = buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: SOURCE, addresses: [`30840:${PUB}:t1`] })
+    assert.deepEqual(event.tags, [
+      ['h', FOLDER],
+      ['op', 'move'],
+      ['from', SOURCE],
+      ['a', `30840:${PUB}:t1`],
+    ])
+  })
+
+  it('refuses a move with no from, a from on any other op, and a move to the folder it leaves', () => {
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move' }), /only a move/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'add', from: 'x' }), /only a move/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: '' }), /another folder/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: FOLDER }), /another folder/)
+  })
+
   it('refuses a command that names no folder', () => {
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: '', op: 'add' }), /names the folder/)
   })
