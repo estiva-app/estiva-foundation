@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.27.0'
+export const CONVERSATION_VERSION = '0.28.0'
 
 export {
   KIND_MESSAGE,
@@ -118,6 +118,8 @@ export {
 export {
   KIND_CHANGE,
   MEMBER_FIELD_PREFIX,
+  FOLLOW_FIELD_PREFIX,
+  isMembershipField,
   memberField,
   memberOfField,
   mentions,
@@ -137,6 +139,29 @@ export {
   type Membership,
   type MutedList,
 } from './membership.js'
+
+export {
+  followingOf,
+  placeKindOf,
+  placeFilters,
+  unreadOnPlace,
+  isUnreadOnPlace,
+  followField,
+  buildLevelChange,
+  TEAMS_D_TAG,
+  parseTeamsBlob,
+  serializeTeamsBlob,
+  buildTeamsEvent,
+  teamsFilter,
+  type Level,
+  type PlaceKind,
+  type Place,
+  type PlaceFacts,
+  type WayIn,
+  type Following,
+  type PlaceJudge,
+  type TeamsList,
+} from './places.js'
 
 export {
   READ_STATE_TAG,

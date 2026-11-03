@@ -6,6 +6,32 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.28.0 — 2026-11-03
+
+**SPEC: §11.8 *Places and following* — the shared fold for places, and a
+level is never a placement** (TEA-4). Needs protocol 0.51.0.
+
+- **Read differently, always (F2):** a `follow:<P>` change is a membership
+  field, as `member:<P>` is. Its `p` places nobody, alone or in a `set`, so
+  `membershipOf`, `membersOf` and `foldMemberships` no longer make whoever
+  chose a level a member of every conversation on the place. Before this, a
+  reader treated `follow:<P>` = `important` as an assignee-like placement.
+- `followingOf` (new): whether a person is in a topic, a space or a team's
+  chat, at All or Important, and since when, from ways in 1–4 (a level they
+  chose, a join or an Add, authorship, a team's default), their own acts read
+  in one order, an archived team holding nobody, and the private `off` list.
+  `placeKindOf` and `placeFilters` (the reads it needs) beside it.
+- `unreadOnPlace` / `isUnreadOnPlace` (new): what lights on a place — at
+  Important a new conversation, a reply in a conversation the person is in
+  and a mention; at All everything; a mute already kept still lights only
+  mentions.
+- `buildLevelChange` and `followField` (new): the `follow:<P>` change, signed
+  by `P` for `P`, value `all`, `important` or empty.
+- `parseTeamsBlob`, `serializeTeamsBlob`, `buildTeamsEvent`, `teamsFilter`,
+  `TEAMS_D_TAG` (new): the private `estiva:teams:v1` list.
+- Nothing calls the new reads yet: apps keep today's dots until the
+  following switch.
+
 ## 0.27.0 — 2026-11-03
 
 **SPEC: §6.4 "A comment in both forms", §11.6 and §11.8 — behind the switch, a
