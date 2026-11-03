@@ -451,7 +451,9 @@ export function planMoveFromFolders(
  * so an app says it in its own words and never shows the relay's text.
  *
  * - `why`: `team-archived` (a team it leaves or enters is archived),
- *   `not-a-member` (moving a space needs a member of each team it changes),
+ *   `not-a-member` (moving a space needs a member of each team it changes:
+ *   the team it leaves refuses with "only the team's members…", the team it
+ *   enters with "not a channel member"),
  *   `changed-meanwhile` (a list changed since it was read: the team no longer
  *   lists it, or another team now does), or `refused`.
  * - `nothingMoved`: the first command was refused, so nothing changed.
@@ -466,7 +468,7 @@ export function readMoveRefusal(
   const text = reason ?? ''
   const why = /archived/i.test(text)
     ? 'team-archived'
-    : /only the team's members/i.test(text)
+    : /only the team's members|not a channel member/i.test(text)
       ? 'not-a-member'
       : /does not list|lists none of|listed by one team/i.test(text)
         ? 'changed-meanwhile'
