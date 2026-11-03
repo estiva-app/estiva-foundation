@@ -6499,6 +6499,19 @@ export async function listFolders(
      * records alone were 0.9 s.
      */
     recordChannels?: boolean
+    /**
+     * The relay offers the list read (NIP-11 `file_list`, `relayFileReadsOf`'s
+     * `list`): each listed file is read as its first record and its fields'
+     * current changes (§6.13), so finding which are archived costs about a
+     * change a field instead of every change ever made to them, a text save
+     * being a whole document. A deleted file is not in that answer, so its
+     * channel is neither placed nor archived with it. Only where the relay advertises it: one that does
+     * not answers the read as a plain one, with no changes at all.
+     *
+     * Measured on production 29 Oct: 25.7 MB of a cold Ship load was every
+     * change to every project, read here and by Ship's own load (ALO-5).
+     */
+    listRead?: boolean
   } = {},
 ): Promise<FolderSummary[]> {
   const { events, byId } = await readFolderRecords(query)
@@ -6532,7 +6545,7 @@ export async function listFolders(
           ),
           rootOf: new Map<string, SignedEvent>(),
         }
-      : await placeRecordChannels(events, byId, listedIn, query)
+      : await placeRecordChannels(events, byId, listedIn, query, options.listRead === true)
   for (const [id, containers] of listedIn) {
     const folder = byId.get(id)
     if (folder) folder.listedIn = containers
@@ -6849,6 +6862,8 @@ async function placeRecordChannels(
   byId: Map<string, FolderSummary>,
   listedIn: Map<string, string[]>,
   query: QueryFn,
+  /** {@link listFolders}' `listRead`: each record's current changes come with its root, so none is read by `#a`. */
+  listRead: boolean,
 ): Promise<{ recordsOf: Map<string, string[]>; archives: SignedEvent[]; rootOf: Map<string, SignedEvent> }> {
   const containersOf = new Map<string, { pointer: AddressPointer; containers: string[] }>()
   const states = events.filter((event) => event.kind === KIND_FOLDER_STATE)
@@ -6876,8 +6891,12 @@ async function placeRecordChannels(
   // Every Folder's archive, and every listed record's, ride with the roots
   // (FOL-46): the channel addresses are in hand from the listing and the
   // record addresses are the keys above, so neither needs the roots first.
+  // With the list read, a file's archive is among its current changes, which
+  // come with its root below; only the Folders' own, and any other kind's, are
+  // read by `#a`.
   const channels = [...byId.values()].flatMap((folder) => (folder.channel ? [folder.channel] : []))
-  const archiveAsk = archiveFilters([...new Set([...channels, ...containersOf.keys()])])
+  const changesAsked = [...containersOf].flatMap(([key, { pointer }]) => (listRead && FILE_KINDS.includes(pointer.kind) ? [] : [key]))
+  const archiveAsk = archiveFilters([...new Set([...channels, ...changesAsked])])
   if (containersOf.size === 0) {
     const archives: SignedEvent[] = []
     for (let start = 0; start < archiveAsk.length; start += MAX_FILTERS_PER_QUERY) {
@@ -6894,17 +6913,19 @@ async function placeRecordChannels(
     groups.set(key, group)
   }
   const filters: Record<string, unknown>[] = []
+  const listed: Record<string, unknown>[] = []
   for (const { kind, pubkey, identifiers } of groups.values()) {
     for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
       const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
-      filters.push({ kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length })
+      const filter = { kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length }
+      // `limit` counts first records in a list read, not the changes beside them.
+      if (listRead && FILE_KINDS.includes(kind)) listed.push({ ...filter, fields: 'newest' })
+      else filters.push(filter)
     }
   }
   filters.push(...archiveAsk)
-  const answered: SignedEvent[] = []
-  for (let start = 0; start < filters.length; start += MAX_FILTERS_PER_QUERY) {
-    answered.push(...(await query(filters.slice(start, start + MAX_FILTERS_PER_QUERY))))
-  }
+  // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
+  const answered = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
   // A state lists files, never change events, so the kind tells them apart.
   const archives = answered.filter((e) => e.kind === ARCHIVE_RULE.changeKind)
   const roots = answered.filter((e) => e.kind !== ARCHIVE_RULE.changeKind)
@@ -7010,6 +7031,18 @@ export async function resolveFolderContents(
      * of it project descriptions.
      */
     kinds?: readonly number[]
+    /**
+     * The relay offers the list read (as {@link listFolders}' `listRead`):
+     * each file is read as its first record and its fields' current changes
+     * (§6.13) rather than every change ever made to it. The text is not in
+     * that answer, so a slot drawing a file's `description` is empty, and a
+     * deleted file is left out. Nested Folders are read as before.
+     *
+     * Each field is the relay's newest change by §6.3's order: where an app's
+     * fold would refuse that change, the field reads as its first record's,
+     * not as the change before it.
+     */
+    listRead?: boolean
   } = {},
 ): Promise<FolderContents> {
   // 1. The folder itself. Both kinds in one trip: the state is the model and
@@ -7115,22 +7148,34 @@ export async function resolveFolderContents(
   // for it here only repeated them: its 500 newest are among each group's page
   // (APP-2, where it was most of a second copy of every change).
   const otherChangeKinds = changeKinds.filter((kind) => kind !== ARCHIVE_RULE.changeKind)
+  // With the list read, a file's current changes come with its root. The relay
+  // keeps only its file kinds that way, so a nested Folder, or any other kind,
+  // is read as before.
+  const byFields = (kind: number) => options.listRead === true && FILE_KINDS.includes(kind)
+  const changesAsked = addresses.filter((address) => !byFields(addressPointerOf(address)?.kind ?? NaN))
+  const rootFilters = [...groups.values()].map(({ pointer, addresses: group }) => ({
+    kinds: [pointer.kind],
+    authors: [pointer.pubkey],
+    '#d': group.map((a) => referenceToPointer(a).identifier),
+    limit: group.length,
+    ...(byFields(pointer.kind) ? { fields: 'newest' } : {}),
+  }))
   // Chunked: at ten addresses per archive filter, a Folder of about 1,200 files
-  // would pass the relay's filters-per-request ceiling in one request.
-  const events = await queryChunked([
-    ...[...groups.values()].map(({ pointer, addresses: group }) => ({
-      kinds: [pointer.kind],
-      authors: [pointer.pubkey],
-      '#d': group.map((a) => referenceToPointer(a).identifier),
-      limit: group.length,
-    })),
-    ...(otherChangeKinds.length ? [{ kinds: otherChangeKinds, '#a': addresses, limit: 500 }] : []),
-    // Every change, in groups small enough that a busy Folder's changes cannot
-    // push one file's off the page — one Folder has already had 688. Same request.
-    ...archiveFilters(channelAddress ? [...addresses, channelAddress] : addresses),
-    // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
-    ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
-  ], query)
+  // would pass the relay's filters-per-request ceiling in one request. A relay
+  // refuses a request mixing list reads with plain ones, so those go on their own.
+  const [plainEvents, listedEvents] = await Promise.all([
+    queryChunked([
+      ...rootFilters.filter((filter) => !('fields' in filter)),
+      ...(otherChangeKinds.length ? [{ kinds: otherChangeKinds, '#a': addresses, limit: 500 }] : []),
+      // Every change, in groups small enough that a busy Folder's changes cannot
+      // push one file's off the page — one Folder has already had 688. Same request.
+      ...archiveFilters(channelAddress ? [...changesAsked, channelAddress] : changesAsked),
+      // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
+      ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
+    ], query),
+    queryChunked(rootFilters.filter((filter) => 'fields' in filter), query),
+  ])
+  const events = [...plainEvents, ...listedEvents]
   const ownArchive = folderArchiveOf(events, summary)
   if (ownArchive) summary.archived = ownArchive
 
@@ -7159,6 +7204,12 @@ export async function resolveFolderContents(
       records,
       root,
     )
+    // The list read carries no text (§6.13), and a change that set it with
+    // other fields may be stale: the text is unread, never the seed the file
+    // was created with drawn as if it were current.
+    if (byFields(pointer.kind)) {
+      folded.description = { value: '', by: root.pubkey, at: root.created_at, format: 'marker' }
+    }
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL
         ? new Set(
