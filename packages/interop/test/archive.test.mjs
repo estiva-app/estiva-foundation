@@ -28,6 +28,7 @@ import {
   planArchiveFolder,
   planMoveFromFolders,
   buildActionEvent,
+  filesOf,
   KIND_BARE_FILE,
   KIND_FOLDER_STATE,
 } from '../dist/index.js'
@@ -535,6 +536,56 @@ describe('a Folder is archived the way any file is', () => {
       recordChannels: false,
     })
     assert.deepEqual(nested.find((f) => f.id === APIARY).listedIn, [ORCHARD], 'a nested Folder is still not top-level')
+  })
+
+  // The relay's list read (§6.13): a filter with `fields` answers its first records and each one's current changes.
+  const listing = (events) => async (filters) => {
+    const roots = await relay(events)(filters.filter((f) => f.fields))
+    const current = filesOf(events).filter((file) => roots.includes(file.root)).flatMap((file) => file.events.slice(1))
+    return [...(await relay(events)(filters.filter((f) => !f.fields))), ...roots, ...current]
+  }
+  const spying = (events) => {
+    const asked = []
+    const query = async (filters) => {
+      asked.push(...filters)
+      return listing(events)(filters)
+    }
+    // Every value asked for by `#a`: what reads a file's changes one by one.
+    return { query, byA: () => asked.flatMap((f) => f['#a'] ?? []) }
+  }
+
+  test('with the list read, a record’s archive comes with its root and no listed file is read by `#a` (ALO-5)', async () => {
+    const base = [apiary, hiveTalk, hive, topic, stateOf(APIARY, 'Apiary', both)]
+    const archived = archive(addressOf(hive), { folder: HIVE_TALK })
+    const read = spying([...base, archived])
+    const folders = await listFolders(read.query, { listRead: true })
+    assert.equal(folders.find((f) => f.id === HIVE_TALK).archived?.with, addressOf(hive))
+    assert.deepEqual(
+      read.byA().filter((value) => [addressOf(hive), addressOf(topic)].includes(value)),
+      [],
+      'no listed file’s changes are asked for',
+    )
+    const restored = archive(addressOf(hive), { folder: HIVE_TALK, archived: false })
+    const back = await listFolders(spying([...base, archived, restored]).query, { listRead: true })
+    assert.equal(back.find((f) => f.id === HIVE_TALK).archived, undefined, 'the newer restore stands')
+  })
+
+  test('with the list read, a Folder’s files are folded from their current changes, none read by `#a` (ALO-5)', async () => {
+    const base = [hiveLog, hiveTalk, hive, spring, summer]
+    const live = spying(base)
+    assert.deepEqual(titles(await resolveFolderContents(HIVE_TALK, live.query, noPeople, undefined, { listRead: true })).sort(), [
+      'North hive',
+      'Spring inspection',
+      'Summer inspection',
+    ])
+    const archived = archive(addressOf(hive), { folder: HIVE_TALK })
+    const hidden = spying([...base, archived])
+    assert.deepEqual(titles(await resolveFolderContents(HIVE_TALK, hidden.query, noPeople, undefined, { listRead: true })), [])
+    assert.deepEqual(
+      hidden.byA().filter((value) => [hive, spring, summer].map(addressOf).includes(value)),
+      [],
+      'no file’s changes are asked for',
+    )
   })
 })
 

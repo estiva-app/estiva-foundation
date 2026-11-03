@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.80.0 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing written; reads narrower where asked**
+(ALO-5; SPEC §6.13). `listFolders` and `resolveFolderContents` take
+`listRead`, for a relay whose NIP-11 advertises `file_list`: each listed file
+is read as its first record and its fields' current changes (`"fields":
+"newest"`, beside the `#d` read already made), and none of its changes by `#a`.
+Which files are archived, and so which record channels are archived with them,
+is answered from those. A Folder's contents fold from them the same way,
+without the text, so a slot drawing a file's `description` is empty; a deleted
+file is left out. Nested Folders and each Folder's own archive are read as
+before. Off by default: on a relay without the list read, the same request
+would come back with no changes at all. Ship's cold load read 25.7 MB of
+project changes on 29 Oct, here and in its own load.
+
 ## 0.79.0 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing written or read differently** (SHIPS-3;
