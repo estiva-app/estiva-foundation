@@ -79,9 +79,12 @@ export interface FileCandidatesOptions {
   at?: ReadonlyMap<string, number>
   /** The types the relay keeps in order (`RelayFileReads.inOrder`): a project of one is picked as its link. */
   inOrder?: readonly string[]
-  /** The host Ship serves projects from, such as `https://ship.estiva.app`: a picked project's link is `<it>/project/<d>`. */
+  /** The host Ship serves projects from: a picked project's link is `<it>/project/<d>`. Ship's own unless said, so every app picks the same link. */
   projectOrigin?: string
 }
+
+/** Where Ship serves projects (§13.1, decided 2026-11-03): one link for a project, whichever app picked it. */
+export const SHIP_ORIGIN = 'https://ship.estiva.app'
 
 /**
  * How a picked file goes in the text (§13.1): a project whose type the relay
@@ -90,9 +93,12 @@ export interface FileCandidatesOptions {
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md
  */
-export function pickedFileUri(address: string, { inOrder = [], projectOrigin }: Pick<FileCandidatesOptions, 'inOrder' | 'projectOrigin'> = {}): string {
-  const byId = projectOrigin ? fileIdFormOf(inOrder, address) : undefined
-  return byId?.type === 'osnova.project' ? `${projectOrigin!.replace(/\/+$/, '')}/project/${byId.id}` : fileReference(address)
+export function pickedFileUri(
+  address: string,
+  { inOrder = [], projectOrigin = SHIP_ORIGIN }: Pick<FileCandidatesOptions, 'inOrder' | 'projectOrigin'> = {},
+): string {
+  const byId = fileIdFormOf(inOrder, address)
+  return byId?.type === 'osnova.project' ? `${projectOrigin.replace(/\/+$/, '')}/project/${byId.id}` : fileReference(address)
 }
 
 /**

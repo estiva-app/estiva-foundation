@@ -323,6 +323,22 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     assert.equal(typeof combineChanges([unfollowed]), 'string')
   })
 
+  it('refuses a membership field, which the relay never takes in a set', () => {
+    const add = { ...change(AGENT, 'title', 'x', root.id, T0) }
+    add.tags = add.tags.map((t) => (t[0] === 'field' ? ['field', `member:${QA1}`] : t[0] === 'value' ? ['value', 'true'] : t))
+    assert.match(String(combineChanges([change(AGENT, 'status', 'done', root.id, T0), add])), /never in a change setting several fields/)
+  })
+
+  it('writes the tags after the sets in §6.2\'s order, A before p, whatever order the fields came in', () => {
+    const withP = change(AGENT, 'title', 'x', root.id, T0)
+    withP.tags.push(['p', QA1])
+    const withA = change(AGENT, 'status', 'done', root.id, T0)
+    withA.tags.splice(withA.tags.findIndex((t) => t[0] === 'stage'), 0, ['A', `${PROJECT}:${OWNER}:parent`])
+    const built = combineChanges([withP, withA])
+    assert.ok(typeof built !== 'string')
+    assert.deepEqual(built.tags.slice(6).map((t) => t[0]), ['A', 'p', 'stage'])
+  })
+
   it('both land from one copy: QA-1 renamed it meanwhile, so the whole change is sent again with title after QA-1\'s and stands', async () => {
     const relay = keptRelay()
     const qa = relay.theirs(QA1, 'title', 'Launch, by QA-1', T0 + 10_000)

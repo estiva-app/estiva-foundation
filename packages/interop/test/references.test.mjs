@@ -212,16 +212,16 @@ describe('searchFileReferences', () => {
 })
 
 describe('fileCandidates', () => {
-  test('a project picked once the relay keeps projects in order goes in as Ship\'s path link with its id and no title (ALO-4)', async () => {
+  test('a project picked once the relay keeps projects in order goes in as Ship\'s path link with its id and no title, from any app (ALO-4)', async () => {
     const ID = '0f8a7c1e-5b2d-4e6f-9a3b-c4d5e6f7a8b9'
     const kept = event({ kind: PROJECT, tags: [['d', ID], ['title', 'Secret launch'], ['h', 'f1']] })
     const relay = searchingRelay([manifest, kept, issue('i5', 'An issue')])
     const objects = Object.values(await resolveForeignObjects([`${PROJECT}:${AUTHOR}:${ID}`, I('i5')], relay.query))
-    const picked = await fileCandidates(objects, 0, relay.query, { inOrder: ['osnova.project'], projectOrigin: 'https://ship.estiva.app/' })
+    const picked = await fileCandidates(objects, 0, relay.query, { inOrder: ['osnova.project'] })
     const uri = Object.fromEntries(picked.map((r) => [r.kind, r.uri]))
     assert.equal(uri[PROJECT], `https://ship.estiva.app/project/${ID}`)
     assert.match(uri[ISSUE], /^nostr:naddr1/, 'an issue, whose type is not kept in order, stays a nostr: reference')
-    const before = await fileCandidates(objects, 0, relay.query, { projectOrigin: 'https://ship.estiva.app' })
+    const before = await fileCandidates(objects, 0, relay.query)
     assert.match(before.find((r) => r.kind === PROJECT).uri, /^nostr:naddr1/, 'before the switch, as today')
   })
 

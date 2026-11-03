@@ -171,6 +171,23 @@ describe('writing a comment', () => {
     assert.deepEqual(referenceTagsFor(body, ISSUE), [['a', OTHER]])
     assert.deepEqual(mentionTagsFor(body), [['p', BOB]])
   })
+
+  it('once issues are kept in order, a named issue earns an o with its id after its a, and its own file neither (ALO-4)', () => {
+    const body = `${naddrOf(ISSUE)} and ${naddrOf(OTHER)}`
+    assert.deepEqual(referenceTagsFor(body, ISSUE, ['osnova.issue']), [['a', OTHER], ['o', OTHER.split(':')[2]]])
+  })
+
+  it('a reply never carries its own file as a link, by its id in an o or a part either (ALO-4)', () => {
+    const D = ISSUE.split(':')[2]
+    const reply = buildReply(BOB, 0, {
+      comment: { id: '1'.repeat(64), anchor: ISSUE, author: ALICE },
+      folder: FOLDER,
+      body: 'see',
+      inOrder: ['osnova.issue'],
+      tags: [['o', D], ['part', D, 'b1'], ['o', OTHER.split(':')[2]]],
+    })
+    assert.deepEqual(reply.tags.filter((t) => t[0] === 'o' || t[0] === 'part'), [['o', OTHER.split(':')[2]]])
+  })
 })
 
 describe('what a composer pick writes (§13.1)', () => {

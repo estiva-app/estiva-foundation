@@ -7,7 +7,7 @@
  * already Buzz-shaped and byte-pinned. What is conversation-specific is the
  * NIP-22 pair below, whose shape the SPEC decided rather than Buzz.
  */
-import { fileIdFormOf, imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'
+import { fileIdFormOf, fileIdOf, imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'
 import { FOLDER_ID, KIND_COMMENT } from './kinds.js'
 
 /**
@@ -144,7 +144,14 @@ export function buildReply(
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.comment.anchor)
   const byId = fileIdFormOf(args.inOrder ?? [], args.comment.anchor)
-  const earned = (args.tags ?? []).filter((t) => !(t[0] === 'a' && t[1] === args.comment.anchor) && !PLACE_TAGS.has(t[0]))
+  // Its own file is its `A`/`O`, never a link: not by address, and not by id in an `o` or a `part`.
+  const ownId = fileIdOf(args.comment.anchor)
+  const earned = (args.tags ?? []).filter(
+    (t) =>
+      !(t[0] === 'a' && t[1] === args.comment.anchor) &&
+      !((t[0] === 'o' || t[0] === 'part') && ownId !== undefined && t[1] === ownId) &&
+      !PLACE_TAGS.has(t[0]),
+  )
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),

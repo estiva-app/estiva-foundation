@@ -27,7 +27,7 @@
  * reply `e` — a `kind:9` with any `e`, a `kind:1111` with a lowercase `e` that
  * differs from its `E` — is not a comment of its own, whatever `a` it carries.
  */
-import { decodeNaddr, decodeNpub, findNaddrs, findNostrUris, FILE_KINDS, fileIdOf, pointerToAddress, type NostrTag, type SignedEvent } from '@estiva-app/protocol'
+import { decodeNaddr, decodeNpub, findNaddrs, findNostrUris, FILE_KINDS, fileIdFormOf, fileIdOf, pointerToAddress, type NostrTag, type SignedEvent } from '@estiva-app/protocol'
 import { KIND_COMMENT } from './kinds.js'
 
 type Tagged = Pick<SignedEvent, 'kind' | 'tags'>
@@ -219,11 +219,17 @@ export function threadStrength(root: Readable | undefined, replies: readonly Rea
  * §6.4: a writer MUST NOT put an address in a `kind:1111`'s `a` that the body
  * does not name, unless it is the `A` — which is what keeps the mention row
  * readable without decoding the body.
+ *
+ * A file whose type the relay keeps in order (`inOrder`) earns an `o` with
+ * its id after its `a` (§6.4).
  */
-export function referenceTagsFor(body: string, own = ''): NostrTag[] {
+export function referenceTagsFor(body: string, own = '', inOrder: readonly string[] = []): NostrTag[] {
   const addresses = namedInBody(body)
   addresses.delete(own)
-  return [...addresses].map((a) => ['a', a])
+  return [...addresses].flatMap((a) => {
+    const byId = fileIdFormOf(inOrder, a)
+    return byId ? [['a', a], ['o', byId.id]] : [['a', a]]
+  })
 }
 
 /** The most `p` tags a message carries — Buzz's cap, and `buildMessage`'s. */

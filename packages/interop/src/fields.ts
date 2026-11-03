@@ -348,6 +348,10 @@ export async function writeChange(args: WriteChangeArgs): Promise<WriteChangeRes
 /** The tags of a one-field change that belong to its field, and so go after the `set` tags. */
 const FIELD_OWN = new Set(['a', 'O', 'field', 'value', 'h', 'ts', 'prev', 'stage', CONTENT_FORMAT_TAG])
 
+/** §6.2's order for the tags after the `set` tags; anything else after them. */
+const AFTER_SETS = ['A', 'o', 'imeta', 'p']
+const afterSetsRank = (name: string) => (AFTER_SETS.indexOf(name) + AFTER_SETS.length + 1) % (AFTER_SETS.length + 1)
+
 /**
  * One change setting several fields of one file (§6.2), from the one-field
  * changes for each — `buildActionEvent`'s, each with its `prev`, so the
@@ -382,6 +386,8 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
     const field = tagValue(change, 'field')
     const prev = tagValue(change, 'prev')
     if (!field || !prev) return 'Each field of a several-field change names the change it follows.'
+    // Who is on a file is kept beside it, never in a `set` (§6.2, §11.8): the relay refuses one.
+    if (field.startsWith('member:') || field.startsWith('follow:')) return `${field} is never in a change setting several fields.`
     if (sets.some((s) => s[1] === field)) return `A change names ${field} once.`
     sets.push(['set', field, tagValue(change, 'value') ?? '', prev])
     for (const tag of change.tags) {
@@ -395,7 +401,16 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
     pubkey: first.pubkey,
     created_at: Math.floor(ms / 1000),
     kind: KIND_CHANGE,
-    tags: [['a', file], ['O', id], ['h', folder], ['ts', String(ms)], ...sets, ...(format ? [format] : []), ...rest, ...stages],
+    tags: [
+      ['a', file],
+      ['O', id],
+      ['h', folder],
+      ['ts', String(ms)],
+      ...sets,
+      ...(format ? [format] : []),
+      ...rest.sort((x, y) => afterSetsRank(x[0]) - afterSetsRank(y[0])),
+      ...stages,
+    ],
     content: first.content,
   }
 }
@@ -450,16 +465,19 @@ export async function writeChanges(args: WriteChangesArgs): Promise<WriteChangeR
     if (!conflict || conflict.kind === 'other' || !fields.some((f) => f.field === conflict.field)) return { ok: false, refused: last }
 
     if (conflict.kind === 'sorts-before') {
-      const followed = await byId(args.query, fields.find((f) => f.field === conflict.field)!.prev)
-      if (!followed) return { ok: false, refused: last }
-      after = changedAt(followed) + 1
+      // After every field's prev, not only the one named: the next field would be refused the same way.
+      const followed = await Promise.all(fields.map((f) => byId(args.query, f.prev)))
+      if (followed.some((e) => !e)) return { ok: false, refused: last }
+      after = Math.max(...followed.map((e) => changedAt(e!) + 1))
       continue
     }
 
+    const heads = await Promise.all(
+      fields.map((f) => (f.field === conflict.field && conflict.current ? byId(args.query, conflict.current) : args.current(f.field))),
+    )
     const next: typeof fields = []
-    for (const f of fields) {
-      const head =
-        f.field === conflict.field && conflict.current ? await byId(args.query, conflict.current) : await args.current(f.field)
+    for (const [i, f] of fields.entries()) {
+      const head = heads[i]
       if (!head) return { ok: false, refused: last }
       after = Math.max(after, changedAt(head) + 1)
       if (head.id === f.prev) {
