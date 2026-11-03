@@ -542,13 +542,17 @@ export interface TopicConversation {
   conversations: number
   /** Peek's dot: only on an open topic of the viewer's. */
   unread: boolean
+  /** How many of its conversations have something new for the viewer, judged as the dot is: `unread` is `fresh > 0`. */
+  fresh: number
 }
 
 /**
  * Each topic's conversations and dot, as Peek's Topics shows them (SHIPS-2):
  * the count is the thread roots addressed to the topic (`conversationsOf`),
  * the dot is {@link streamHasUnread} on the topic's own marker, gated by
- * membership (§11.8), on the viewer's open topics only.
+ * membership (§11.8), on the viewer's open topics only. `fresh` is the same
+ * judge over each thread alone (a root and its replies), so Ship's Topics can
+ * say how many of them are new where Peek shows the dot (SHIPS-3).
  *
  * The read state and the muted list are encrypted, so the app hands in what
  * it holds: `merged` (the merged markers, once the first merge has landed)
@@ -578,18 +582,24 @@ export async function topicConversations(
     const messages = held[topic.address]
     if (!messages) continue
     const context = fileContext(topic.address)
-    const unread =
-      !!context &&
-      judged.has(topic.address) &&
-      streamHasUnread(
-        // A reply from before the thread rule's cut-over never lit a row (CON-34).
-        messages.filter((m) => m.root === m.id || m.at >= THREAD_RULE_FROM),
-        context,
-        terms(topic.address),
-        { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS },
-        (id) => read.membership.mentioned.has(id),
-      )
-    out.set(topic.address, { conversations: messages.filter((m) => m.root === m.id).length, unread })
+    let fresh = 0
+    if (context && judged.has(topic.address)) {
+      // A reply from before the thread rule's cut-over never lit a row (CON-34).
+      const threads = new Map<string, (typeof messages)[number][]>()
+      for (const m of messages) {
+        if (m.root !== m.id && m.at < THREAD_RULE_FROM) continue
+        const thread = threads.get(m.root)
+        if (thread) thread.push(m)
+        else threads.set(m.root, [m])
+      }
+      const topicTerms = terms(topic.address)
+      const frontier = { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS }
+      // Every thread here is one of the topic's: `conversationsOf` keeps a reply only under a root of this file.
+      for (const thread of threads.values()) {
+        if (streamHasUnread(thread, context, topicTerms, frontier, (id) => read.membership.mentioned.has(id))) fresh++
+      }
+    }
+    out.set(topic.address, { conversations: messages.filter((m) => m.root === m.id).length, unread: fresh > 0, fresh })
   }
   return out
 }

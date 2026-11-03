@@ -6,6 +6,15 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.79.0 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing written or read differently** (SHIPS-3;
+SPEC §11.3, §11.8). `topicConversations` gives each topic `fresh`: how many of
+its conversations have something new for the viewer, each thread (a root and
+its replies) judged alone by `streamHasUnread`, the rule the dot uses, so
+`unread` is `fresh > 0`. Ship's Topics says "2 new" where Peek's Topics shows
+the dot. Read from what the call already holds; no request added.
+
 ## 0.78.0 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing written; one read added** (SHIPS-3; SPEC
