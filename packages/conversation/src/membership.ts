@@ -246,7 +246,11 @@ export function membershipFilters(person: string, since?: number): Filter[] {
  * file, if any, is its root's, which the app resolves by reading the thread.
  */
 export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): string[] {
-  if (event.kind === KIND_CHANGE) return event.tags.filter((t) => t[0] === 'a' && ADDRESS.test(t[1] ?? '')).map((t) => t[1])
+  if (event.kind === KIND_CHANGE) {
+    // A level says nothing about file membership: counted as a candidate, it would read as a word that the person is not a member.
+    if (tag(event, 'field')?.startsWith(FOLLOW_FIELD_PREFIX)) return []
+    return event.tags.filter((t) => t[0] === 'a' && ADDRESS.test(t[1] ?? '')).map((t) => t[1])
+  }
   return anchorsOf(event).filter((a) => ADDRESS.test(a))
 }
 

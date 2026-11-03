@@ -243,7 +243,10 @@ export function followingOf(place: Place, person: string, facts: PlaceFacts): Fo
   const starts: number[] = []
   const acts = actsOf(place, person, facts.events)
   const lastLeave = acts.map((a) => a.act).lastIndexOf('leave')
-  const after = acts.slice(lastLeave + 1)
+  // An Add after a leave names it with `prev`, so the relay's order holds whatever the two clocks said (§11.8).
+  const leaveId = acts[lastLeave]?.event.id
+  const named = acts.slice(0, Math.max(lastLeave, 0)).filter((a) => a.act === 'join' && leaveId !== undefined && tag(a.event, 'prev') === leaveId)
+  const after = [...named, ...acts.slice(lastLeave + 1)]
   // 1. A level chosen since the last leave, and not cleared since; changing it keeps its start.
   let chosen: { level: Level; since: number } | undefined
   for (const a of after) {
@@ -364,14 +367,15 @@ export function unreadOnPlace<E extends Message>(messages: readonly E[], merged:
 /**
  * Whether one message on a place is unread. `root` is its conversation's root
  * id when it is a reply; `inConversationSince`, the second `me` came into
- * that conversation, when they did.
+ * that conversation (wrote in it or was mentioned there), or undefined when
+ * they never did — then a reply lights at Important only by a mention.
  */
 export function isUnreadOnPlace(
   message: Message,
   root: string | undefined,
   merged: Readonly<Record<string, number>>,
   judge: PlaceJudge,
-  inConversationSince?: number,
+  inConversationSince: number | undefined,
 ): boolean {
   if (message.pubkey === judge.me) return false
   const { following } = judge

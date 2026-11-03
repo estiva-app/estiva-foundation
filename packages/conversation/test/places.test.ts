@@ -10,6 +10,8 @@ import {
   buildLevelChange,
   buildMembershipChange,
   followingOf,
+  foldMemberships,
+  membershipJudges,
   membershipOf,
   parseTeamsBlob,
   placeFilters,
@@ -73,6 +75,11 @@ describe('F2 — a level on the file fold', () => {
     assert.deepEqual(membershipOf(TOPIC, BOB, [root(), level(BOB, T0 + 10, 'all')]), { member: false })
   })
 
+  it('a level alone is no word on file membership, so an app still reads full history for someone who joined before the horizon', () => {
+    const read = foldMemberships(BOB, [level(BOB, T0 + 10, 'all')], T0 + 100)
+    assert.equal(membershipJudges(TOPIC, read, BOB), false)
+  })
+
   it('a follow:<P> inside a several-field change places nobody either', () => {
     const several = event({ kind: 1851, pubkey: BOB, created_at: T0 + 10, tags: [['a', TOPIC], ['set', `follow:${BOB}`, 'all'], ['h', TEAM], ['p', BOB]] })
     assert.deepEqual(membershipOf(TOPIC, BOB, [root(), several]), { member: false })
@@ -100,6 +107,13 @@ describe('§11.8 ways in — a level, an Add, the author', () => {
     const before = [root(), member(ALICE, T0 + 5, BOB, true), level(BOB, T0 + 10, 'all'), member(BOB, T0 + 20, BOB, false)]
     assert.equal(following(BOB, { events: before }).in, false)
     assert.deepEqual(brief(following(BOB, { events: [...before, member(ALICE, T0 + 30, BOB, true)] })), { in: true, level: 'important', since: T0 + 30 })
+  })
+
+  it('an Add naming P leave with prev puts P back in even when the adder clock is behind the leave', () => {
+    const leave = member(BOB, T0 + 20, BOB, false)
+    const add = member(ALICE, T0 + 10, BOB, true)
+    add.tags.push(['prev', leave.id])
+    assert.deepEqual(brief(following(BOB, { events: [root(), member(ALICE, T0 + 5, BOB, true), leave, add] })), { in: true, level: 'important', since: T0 + 10 })
   })
 
   it('a leave signed by someone else is ignored', () => {
