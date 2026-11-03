@@ -363,21 +363,31 @@ const SPACE_ROLE = 'space'
 /**
  * The topics a team's list marks as its spaces: an `a` entry naming the
  * topic, or an `o` entry naming its id, with the role after an empty third
- * element. A topic is listed by one team (§3.3), so any list marking it is
- * that team's.
+ * element (§3.3). A topic is listed by one team, so a list that names it
+ * without the role — one left behind by a move that failed halfway — keeps it
+ * a plain topic: no team's people follow a space nobody there chose. An id
+ * two topics hold names neither (C31).
  */
 function spacesOf(states: readonly SignedEvent[], addresses: readonly string[]): Set<string> {
-  const byId = new Map(addresses.map((address) => [address.split(':').slice(2).join(':'), address]))
-  const out = new Set<string>()
+  const known = new Set(addresses)
+  const holders = new Map<string, string[]>()
+  for (const address of addresses) {
+    const id = address.split(':').slice(2).join(':')
+    holders.set(id, [...(holders.get(id) ?? []), address])
+  }
+  const marked = new Set<string>()
+  const plain = new Set<string>()
   for (const state of states) {
     if (state.kind !== KIND_FOLDER_STATE) continue
-    for (const [name, value, , role] of state.tags) {
-      if (role !== SPACE_ROLE || !value) continue
-      const address = name === 'a' ? value : name === 'o' ? byId.get(value) : undefined
-      if (address && byId.get(address.split(':').slice(2).join(':')) === address) out.add(address)
+    for (const [name, value, third, role] of state.tags) {
+      const held = name === 'o' ? holders.get(value) : undefined
+      const address = name === 'a' && known.has(value) ? value : held?.length === 1 ? held[0] : undefined
+      if (!address) continue
+      if (role === SPACE_ROLE && !third) marked.add(address)
+      else plain.add(address)
     }
   }
-  return out
+  return new Set([...marked].filter((address) => !plain.has(address)))
 }
 
 /** Every topic the viewer can read, and the membership read that judges their dots. */

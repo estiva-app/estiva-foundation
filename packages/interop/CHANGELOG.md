@@ -12,7 +12,9 @@ manifests already published still mean what they meant.
 §3.3, C37). `readTopics` gives each topic `space`: a team's relay-signed list
 (`kind:30890`) marks its entry with the role `space`, as
 `["a", <address>, "", "space"]` or `["o", <d>, "", "space"]`. A relay hint in
-the third place, or a role it does not know, leaves the topic a plain listing.
+the third place, or a role it does not know, leaves the topic a plain listing;
+so does a second list naming it without the role (a move that failed halfway),
+and an id two topics hold marks neither (C31).
 The lists naming the topics are read in the same round as their lists, by `#a`
 and `#o`, so `readTopics` stays three rounds. Ship's Topics draws no space.
 
