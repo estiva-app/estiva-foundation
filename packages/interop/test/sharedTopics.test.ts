@@ -117,6 +117,24 @@ describe('readTopics — every topic the viewer can read, once', () => {
     const yours = read.topics.filter((t) => t.yours).map((t) => t.object.slots.title?.value).sort()
     assert.deepEqual(yours, ['Alpha', 'Bravo', 'Echo', 'Foxtrot', 'Hotel'])
   })
+
+  it('marks a topic a space only where a team’s list gives its entry the role, by address or by id', async () => {
+    const teamList = (folder: string, tags: string[][]) =>
+      signed({ pubkey: 'c'.repeat(64), created_at: NOW - DAY, kind: 30890, tags: [['d', folder], ...tags], content: '' })
+    const lists = [
+      teamList(FOLDER, [['a', bravo.address, '', 'space'], ['a', charlie.address]]),
+      // A list naming its topic only by id: found only by reading the lists by `#o`.
+      teamList('7e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b', [['o', 'delta', '', 'space']]),
+      // A relay hint in the third place, with or without the role, and an unknown role leave the entry a plain listing.
+      teamList(OTHER_FOLDER, [['a', echo.address, 'wss://relay.example', 'space'], ['a', alpha.address, '', 'pinned']]),
+      // Left on a second list without the role, as a move that failed halfway would: not a space.
+      teamList('5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f', [['a', foxtrot.address, '', 'space']]),
+      teamList('6d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a', [['a', foxtrot.address]]),
+    ]
+    const read = await readTopics(relay([...world, ...lists]).query, ME, { nowSeconds: NOW })
+    const spaces = read.topics.filter((t) => t.space).map((t) => t.object.slots.title?.value).sort()
+    assert.deepEqual(spaces, ['Bravo', 'Delta'])
+  })
 })
 
 describe('addableTopics — what Add to topic offers', () => {

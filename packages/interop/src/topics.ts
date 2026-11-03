@@ -44,6 +44,7 @@ import {
   conversationsOf,
   folderOf,
   isArchived,
+  KIND_FOLDER_STATE,
   resolveForeignRoots,
   type ForeignObject,
   type ProjectionCache,
@@ -348,6 +349,45 @@ export interface ReadTopic {
    * says.
    */
   yours: boolean
+  /**
+   * A team marks it one of its spaces (§3.3): its entry on a team's
+   * relay-signed list carries the role `space`. Ship's Topics never draws one.
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-space-is-the-teams-own-mark-on-a-topic-it-lists.md
+   */
+  space: boolean
+}
+
+/** The role on a team list's entry that marks a topic one of the team's spaces (§3.3). */
+const SPACE_ROLE = 'space'
+
+/**
+ * The topics a team's list marks as its spaces: an `a` entry naming the
+ * topic, or an `o` entry naming its id, with the role after an empty third
+ * element (§3.3). A topic is listed by one team, so a list that names it
+ * without the role — one left behind by a move that failed halfway — keeps it
+ * a plain topic: no team's people follow a space nobody there chose. An id
+ * two topics hold names neither (C31).
+ */
+function spacesOf(states: readonly SignedEvent[], addresses: readonly string[]): Set<string> {
+  const known = new Set(addresses)
+  const holders = new Map<string, string[]>()
+  for (const address of addresses) {
+    const id = address.split(':').slice(2).join(':')
+    holders.set(id, [...(holders.get(id) ?? []), address])
+  }
+  const marked = new Set<string>()
+  const plain = new Set<string>()
+  for (const state of states) {
+    if (state.kind !== KIND_FOLDER_STATE) continue
+    for (const [name, value, third, role] of state.tags) {
+      const held = name === 'o' ? holders.get(value) : undefined
+      const address = name === 'a' && known.has(value) ? value : held?.length === 1 ? held[0] : undefined
+      if (!address) continue
+      if (role === SPACE_ROLE && !third) marked.add(address)
+      else plain.add(address)
+    }
+  }
+  return new Set([...marked].filter((address) => !plain.has(address)))
 }
 
 /** Every topic the viewer can read, and the membership read that judges their dots. */
@@ -413,12 +453,13 @@ function memberOverAllHistory(person: string, file: string, events: readonly Sig
 
 /**
  * Every topic the viewer can read, once (SHIPS-2): each with its list, its
- * archive (its own, or with its project), its Folder and whether it is the
- * viewer's — the one read Ship's Topics, a topic's page and Add to topic draw
- * from, and Leaf's Add to topic too.
+ * archive (its own, or with its project), its Folder, whether it is the
+ * viewer's and whether a team marks it a space (SHIPS-3) — the one read Ship's
+ * Topics, a topic's page and Add to topic draw from, and Leaf's Add to topic too.
  *
  * Three rounds whatever the number of topics: every `kind:30840` root; then
- * the topics as drawn, their lists and the viewer's part in them; then the
+ * the topics as drawn, their lists, the viewer's part in them and the team
+ * lists naming them; then the
  * listed ids and archived parents. No conversation is read here:
  * {@link topicConversations} is for a page that draws them.
  *
@@ -450,12 +491,18 @@ export async function readTopics(
   }
   const addresses = [...roots.keys()]
   if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds) }
-  const [objects, lists, part] = await Promise.all([
+  const [objects, lists, part, states] = await Promise.all([
     resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
     listsOf(query, addresses, Promise.resolve(roots), options),
     // Held once each, though one comment can answer two of the filters: the folds count events.
     readAll(query, personInFilesFilters(me, addresses)),
+    // The team lists naming a topic, for which of them are spaces.
+    readAll(query, [
+      { kinds: [KIND_FOLDER_STATE], '#a': addresses },
+      { kinds: [KIND_FOLDER_STATE], '#o': [...roots.values()].map((root) => tagOf(root, 'd') ?? '') },
+    ]),
   ])
+  const spaces = spacesOf(states, addresses)
   const membership = foldMemberships(me, part.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
   // Each topic's own events, so each is folded over its own and not over all of them.
   const byTopic = new Map<string, SignedEvent[]>()
@@ -468,7 +515,7 @@ export async function readTopics(
     const address = object.address!
     const yours =
       streamTermsOf(address, membership, me, none).member || (!membershipJudges(address, membership, me) && memberOverAllHistory(me, address, byTopic.get(address) ?? []))
-    return [{ address, object, folder, listed: lists.get(address) ?? [], yours }]
+    return [{ address, object, folder, listed: lists.get(address) ?? [], yours, space: spaces.has(address) }]
   })
   return { me, topics, membership }
 }
