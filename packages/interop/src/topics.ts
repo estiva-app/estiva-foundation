@@ -25,8 +25,10 @@
  * nobody to the file (§11.8).
  */
 import { type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import { RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 import {
   byOrder,
+  candidateFilesOf,
   fileContext,
   foldMemberships,
   HORIZON_SECONDS,
@@ -366,6 +368,41 @@ function personInFilesFilters(person: string, files: readonly string[]): Record<
   ]
 }
 
+/** Whether an event answers a filter, as NIP-01 reads it: kinds, authors, `#x` tags, `since` and `until`. */
+function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
+  const { kinds, authors, since, until } = filter as { kinds?: number[]; authors?: string[]; since?: number; until?: number }
+  if (kinds && !kinds.includes(event.kind)) return false
+  if (authors && !authors.includes(event.pubkey)) return false
+  if (since !== undefined && event.created_at < since) return false
+  if (until !== undefined && event.created_at > until) return false
+  return Object.entries(filter).every(
+    ([key, values]) => !key.startsWith('#') || event.tags.some((t) => t[0] === key.slice(1) && (values as string[]).includes(t[1])),
+  )
+}
+
+/**
+ * Everything the filters match, however many: each asked with a page's
+ * `limit`, and a filter whose answer filled it asked again from its oldest
+ * second down (`until`), until a page comes back short. One request when
+ * nothing fills a page, as at Miky's scale; never a silent cut at the relay's
+ * cap. A second holding a page's worth on its own ends the walk there.
+ */
+async function readAll(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
+  const out = new Map<string, SignedEvent>()
+  let open = filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
+  while (open.length) {
+    const events = await query(open)
+    for (const event of events) out.set(event.id, event)
+    open = open.flatMap((filter) => {
+      const page = events.filter((event) => answers(event, filter))
+      if (page.length < filter.limit) return []
+      const until = Math.min(...page.map((event) => event.created_at))
+      return until === (filter as { until?: number }).until ? [] : [{ ...filter, until }]
+    })
+  }
+  return [...out.values()]
+}
+
 /** Whether the person is a member of the file over all history, folded as its own page folds it. */
 function memberOverAllHistory(person: string, file: string, events: readonly SignedEvent[]): boolean {
   const [kind, pubkey, ...d] = file.split(':')
@@ -402,7 +439,7 @@ export async function readTopics(
   options: { cache?: ProjectionCache; fileKinds?: readonly number[]; nowSeconds?: number } = {},
 ): Promise<TopicsRead> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
-  const rootEvents = await query([{ kinds: [KIND_TOPIC] }])
+  const rootEvents = await readAll(query, [{ kinds: [KIND_TOPIC] }])
   const roots = new Map<string, SignedEvent>()
   for (const root of rootEvents) {
     if (root.kind !== KIND_TOPIC) continue
@@ -416,11 +453,13 @@ export async function readTopics(
   const [objects, lists, part] = await Promise.all([
     resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
     listsOf(query, addresses, Promise.resolve(roots), options),
-    query(personInFilesFilters(me, addresses)),
+    // Held once each, though one comment can answer two of the filters: the folds count events.
+    readAll(query, personInFilesFilters(me, addresses)),
   ])
-  // One comment can answer two of the filters; the folds count events, so each is held once.
-  const events = [...new Map(part.map((e) => [e.id, e])).values()]
-  const membership = foldMemberships(me, events.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
+  const membership = foldMemberships(me, part.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
+  // Each topic's own events, so each is folded over its own and not over all of them.
+  const byTopic = new Map<string, SignedEvent[]>()
+  for (const event of part) for (const file of candidateFilesOf(event)) byTopic.set(file, [...(byTopic.get(file) ?? []), event])
   const none = new Set<string>()
   const topics = objects.flatMap((object): ReadTopic[] => {
     const root = object.address ? roots.get(object.address) : undefined
@@ -428,13 +467,14 @@ export async function readTopics(
     if (!root || !folder || object.unreachable) return []
     const address = object.address!
     const yours =
-      streamTermsOf(address, membership, me, none).member || (!membershipJudges(address, membership, me) && memberOverAllHistory(me, address, events))
+      streamTermsOf(address, membership, me, none).member || (!membershipJudges(address, membership, me) && memberOverAllHistory(me, address, byTopic.get(address) ?? []))
     return [{ address, object, folder, listed: lists.get(address) ?? [], yours }]
   })
   return { me, topics, membership }
 }
 
-const titleOf = (topic: ReadTopic) => topic.object.slots.title?.value || ''
+// An untitled topic sorts where the apps' "Untitled topic" would.
+const titleOf = (topic: ReadTopic) => topic.object.slots.title?.value || 'Untitled topic'
 
 /**
  * What Add to topic offers: the open topics in a Folder the viewer is in —

@@ -155,6 +155,15 @@ describe('streamTermsOf — what a stream is judged on', () => {
     assert.deepEqual(streamTermsOf(THEIRS, read, ME, new Set([THEIRS])), { member: true, since: NOW - 500, muted: true })
   })
 
+  it('a file the viewer joined and then left is not theirs, and its new talk lights nothing', () => {
+    const joined = change(THEIRS, `member:${ME}`, 'true', THEM, ME, NOW - 300)
+    const left = change(THEIRS, `member:${ME}`, 'false', ME, ME, NOW - 200)
+    const after = foldMemberships(ME, [joined, left], NOW)
+    const terms = streamTermsOf(THEIRS, after, ME, new Set())
+    assert.equal(terms.member, false)
+    assert.equal(streamHasUnread([said('later', NOW - 10)], THEIRS, terms, frontier(), never), false)
+  })
+
   it('a file the viewer created and the read holds nothing about is theirs from the horizon', () => {
     assert.deepEqual(streamTermsOf(MINE, read, ME, new Set()), { member: true, since: NOW - HORIZON, muted: false })
   })
