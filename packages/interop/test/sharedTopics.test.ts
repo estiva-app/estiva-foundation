@@ -185,6 +185,13 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     assert.equal(out.get(alpha.address)?.unread, false)
   })
 
+  it('lights nothing on an archived topic of the viewer’s, however new its talk', async () => {
+    const { query } = relay([...world, ...talk, comment(THEM, foxtrot, NOW - 100)])
+    const read = await readTopics(query, ME, { nowSeconds: NOW })
+    const out = await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })
+    assert.deepEqual(out.get(foxtrot.address), { conversations: 1, unread: false, fresh: 0 })
+  })
+
   it('asks for replies only on the viewer’s open topics, from the reply floor or the thread rule’s cut-over', async () => {
     const { query, asked } = relay([...world, ...talk])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
