@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.75.0 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing new; reads only** (SHIPS-2). Needs
+conversation 0.25.0.
+
+- `readTopics(query, me)`: every topic the viewer can read, once — each
+  with its list, its Folder, its archive (its own, or with its parent) and
+  whether it is the viewer's (§11.8 over the horizon, else over all history,
+  as Peek's Topics says). Three rounds whatever the number of topics.
+- `addableTopics(read, folders)`: what Add to topic offers — open topics in
+  the viewer's Folders, theirs first, each A–Z.
+- `topicConversations(read, query, { merged, muted })`: each topic's
+  conversations (thread roots, as Peek's badge counts) and Peek's dot, on the
+  viewer's open topics only. Replies are read only for those, from the
+  reply floor or the thread rule's cut-over.
+- `resolveForeignRoots(…, { archivedWith })` marks a file archived with its
+  parent; `conversationsOf(…, { repliesSince })` bounds or skips each file's
+  replies.
+
 ## 0.74.1 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing.** `readMoveRefusal` reads the relay's

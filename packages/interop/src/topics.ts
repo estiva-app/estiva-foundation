@@ -25,13 +25,36 @@
  * nobody to the file (§11.8).
  */
 import { type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { byOrder } from '@estiva-app/conversation'
-import { folderOf, type QueryFn } from './projection.js'
+import { RELAY_PAGE_CEILING } from '@estiva-app/protocol'
+import {
+  byOrder,
+  candidateFilesOf,
+  fileContext,
+  foldMemberships,
+  HORIZON_SECONDS,
+  membersOf,
+  membershipJudges,
+  REPLY_FLOOR_CONTEXT,
+  streamHasUnread,
+  streamTermsOf,
+  THREAD_RULE_FROM,
+  type MembershipRead,
+} from '@estiva-app/conversation'
+import {
+  conversationsOf,
+  folderOf,
+  isArchived,
+  resolveForeignRoots,
+  type ForeignObject,
+  type ProjectionCache,
+  type QueryFn,
+} from './projection.js'
 
 const KIND_CHANGE = 1851
 /** The topic (bare file) kind: the only lists this stage reads (Miky, 2026-10-30). */
 const KIND_TOPIC = 30840
 const KIND_FOLDER = 39000
+const KIND_COMMENT = 1111
 /** Listed ids resolved per request: 2 × this stays under a relay's usual `limit` cap. */
 const RESOLVE_BATCH = 100
 /**
@@ -282,10 +305,20 @@ export async function topicLists(
   options: { fileKinds?: readonly number[] } = {},
 ): Promise<Map<string, ListedFile[]>> {
   const asked = [...new Set(topics)]
+  if (asked.length === 0) return new Map()
+  return listsOf(query, asked, rootsOf(query, asked), options)
+}
+
+/** {@link topicLists} with the roots already asked for: {@link readTopics} reads them once for everything. */
+async function listsOf(
+  query: QueryFn,
+  asked: readonly string[],
+  rootsRead: Promise<ReadonlyMap<string, SignedEvent>>,
+  options: { fileKinds?: readonly number[] },
+): Promise<Map<string, ListedFile[]>> {
   const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
-  if (asked.length === 0) return out
   // One filter per topic in one request, so a relay's cap on an answer cuts no more than it would for that topic alone.
-  const [roots, events] = await Promise.all([rootsOf(query, asked), query(asked.map(topicListFilter))])
+  const [roots, events] = await Promise.all([rootsRead, query(asked.map(topicListFilter))])
   const folderOfList = (list: string) => {
     const root = out.has(list) ? roots.get(list) : undefined
     return root ? folderOf(root) : null
@@ -296,6 +329,221 @@ export async function topicLists(
   if (entries.length === 0) return out
   const resolved = await resolveIds(query, [...new Set(entries.map((entry) => entry.file))], options.fileKinds)
   for (const entry of entries) out.get(entry.list)!.push({ file: entry.file, address: resolved.get(entry.file) ?? null, entry })
+  return out
+}
+
+/** A topic as {@link readTopics} reads it. */
+export interface ReadTopic {
+  address: string
+  /** As its roots and changes draw it: its title and summary slots, and `archived`, its own or its parent's (§6.5). */
+  object: ForeignObject
+  /** Its Folder, from its root (§6.2): where an entry on its list is filed. */
+  folder: string
+  /** Its list, as {@link topicLists} reads it. */
+  listed: ListedFile[]
+  /**
+   * The viewer is a member (§11.8): by the horizon's membership read, or,
+   * where that read has no word on them, over all history — a topic joined
+   * before the horizon with nothing since is still theirs, as Peek's Topics
+   * says.
+   */
+  yours: boolean
+}
+
+/** Every topic the viewer can read, and the membership read that judges their dots. */
+export interface TopicsRead {
+  me: string
+  topics: ReadTopic[]
+  membership: MembershipRead
+}
+
+/** The filters for a person's part in some files over all history: the changes naming them, what they wrote, what names them. */
+function personInFilesFilters(person: string, files: readonly string[]): Record<string, unknown>[] {
+  return [
+    { kinds: [KIND_CHANGE], '#a': files, '#p': [person] },
+    { kinds: [KIND_COMMENT], '#A': files, authors: [person] },
+    { kinds: [KIND_COMMENT], '#a': files, authors: [person] },
+    { kinds: [KIND_COMMENT], '#A': files, '#p': [person] },
+    { kinds: [KIND_COMMENT], '#a': files, '#p': [person] },
+  ]
+}
+
+/** Whether an event answers a filter, as NIP-01 reads it: kinds, authors, `#x` tags, `since` and `until`. */
+function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
+  const { kinds, authors, since, until } = filter as { kinds?: number[]; authors?: string[]; since?: number; until?: number }
+  if (kinds && !kinds.includes(event.kind)) return false
+  if (authors && !authors.includes(event.pubkey)) return false
+  if (since !== undefined && event.created_at < since) return false
+  if (until !== undefined && event.created_at > until) return false
+  return Object.entries(filter).every(
+    ([key, values]) => !key.startsWith('#') || event.tags.some((t) => t[0] === key.slice(1) && (values as string[]).includes(t[1])),
+  )
+}
+
+/**
+ * Everything the filters match, however many: each asked with a page's
+ * `limit`, and a filter whose answer filled it asked again from its oldest
+ * second down (`until`), until a page comes back short. One request when
+ * nothing fills a page, as at Miky's scale; never a silent cut at the relay's
+ * cap. A second holding a page's worth on its own ends the walk there.
+ */
+async function readAll(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
+  const out = new Map<string, SignedEvent>()
+  let open = filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
+  while (open.length) {
+    const events = await query(open)
+    for (const event of events) out.set(event.id, event)
+    open = open.flatMap((filter) => {
+      const page = events.filter((event) => answers(event, filter))
+      if (page.length < filter.limit) return []
+      const until = Math.min(...page.map((event) => event.created_at))
+      return until === (filter as { until?: number }).until ? [] : [{ ...filter, until }]
+    })
+  }
+  return [...out.values()]
+}
+
+/** Whether the person is a member of the file over all history, folded as its own page folds it. */
+function memberOverAllHistory(person: string, file: string, events: readonly SignedEvent[]): boolean {
+  const [kind, pubkey, ...d] = file.split(':')
+  // The root, dated before everything: its author is a member unless a leave of theirs says otherwise.
+  const root = { id: '0'.repeat(64), pubkey: pubkey ?? '', kind: Number(kind), created_at: 0, tags: [['d', d.join(':')]], content: '', sig: '' }
+  return membersOf(file, [root, ...events]).has(person)
+}
+
+/**
+ * Every topic the viewer can read, once (SHIPS-2): each with its list, its
+ * archive (its own, or with its project), its Folder and whether it is the
+ * viewer's — the one read Ship's Topics, a topic's page and Add to topic draw
+ * from, and Leaf's Add to topic too.
+ *
+ * Three rounds whatever the number of topics: every `kind:30840` root; then
+ * the topics as drawn, their lists and the viewer's part in them; then the
+ * listed ids and archived parents. No conversation is read here:
+ * {@link topicConversations} is for a page that draws them.
+ *
+ * The viewer's part is one read over all history, narrowed to the topics —
+ * the changes naming them, what they wrote, what names them — and the
+ * horizon's membership is folded from the part of it inside the horizon, as
+ * {@link membershipQueries} would have read it for these files. On
+ * production, QA-2's horizon read over every file was 500 KB; over the topics
+ * it is a few.
+ *
+ * "Yours" is today's membership fold (§11.8); following replaces it in this
+ * same function (Teams and following, milestone 5).
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-keeps-its-own-list-of-files.md
+ */
+export async function readTopics(
+  query: QueryFn,
+  me: string,
+  options: { cache?: ProjectionCache; fileKinds?: readonly number[]; nowSeconds?: number } = {},
+): Promise<TopicsRead> {
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
+  const rootEvents = await readAll(query, [{ kinds: [KIND_TOPIC] }])
+  const roots = new Map<string, SignedEvent>()
+  for (const root of rootEvents) {
+    if (root.kind !== KIND_TOPIC) continue
+    const address = `${root.kind}:${root.pubkey}:${tagOf(root, 'd') ?? ''}`
+    const held = roots.get(address)
+    // Two versions of one record: NIP-01's later created_at, then the lower id (§6.3).
+    if (!held || root.created_at > held.created_at || (root.created_at === held.created_at && root.id < held.id)) roots.set(address, root)
+  }
+  const addresses = [...roots.keys()]
+  if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds) }
+  const [objects, lists, part] = await Promise.all([
+    resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
+    listsOf(query, addresses, Promise.resolve(roots), options),
+    // Held once each, though one comment can answer two of the filters: the folds count events.
+    readAll(query, personInFilesFilters(me, addresses)),
+  ])
+  const membership = foldMemberships(me, part.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
+  // Each topic's own events, so each is folded over its own and not over all of them.
+  const byTopic = new Map<string, SignedEvent[]>()
+  for (const event of part) for (const file of candidateFilesOf(event)) byTopic.set(file, [...(byTopic.get(file) ?? []), event])
+  const none = new Set<string>()
+  const topics = objects.flatMap((object): ReadTopic[] => {
+    const root = object.address ? roots.get(object.address) : undefined
+    const folder = root ? folderOf(root) : null
+    if (!root || !folder || object.unreachable) return []
+    const address = object.address!
+    const yours =
+      streamTermsOf(address, membership, me, none).member || (!membershipJudges(address, membership, me) && memberOverAllHistory(me, address, byTopic.get(address) ?? []))
+    return [{ address, object, folder, listed: lists.get(address) ?? [], yours }]
+  })
+  return { me, topics, membership }
+}
+
+// An untitled topic sorts where the apps' "Untitled topic" would.
+const titleOf = (topic: ReadTopic) => topic.object.slots.title?.value || 'Untitled topic'
+
+/**
+ * What Add to topic offers: the open topics in a Folder the viewer is in —
+ * `folders`, the Folders the relay lists for them, where it accepts their
+ * entry — theirs first, then the rest, each A–Z. An archived topic, its own
+ * or with its project, is read-only and is not offered.
+ */
+export function addableTopics(read: TopicsRead, folders: ReadonlySet<string>): { yours: ReadTopic[]; others: ReadTopic[] } {
+  const open = read.topics
+    .filter((topic) => !isArchived(topic.object) && folders.has(topic.folder))
+    .sort((a, b) => titleOf(a).localeCompare(titleOf(b)))
+  return { yours: open.filter((topic) => topic.yours), others: open.filter((topic) => !topic.yours) }
+}
+
+/** A topic's conversations in Peek: how many, and whether one has something new for the viewer. */
+export interface TopicConversation {
+  /** Thread roots addressed to the topic, as Peek's Topics badge counts them. */
+  conversations: number
+  /** Peek's dot: only on an open topic of the viewer's. */
+  unread: boolean
+}
+
+/**
+ * Each topic's conversations and dot, as Peek's Topics shows them (SHIPS-2):
+ * the count is the thread roots addressed to the topic (`conversationsOf`),
+ * the dot is {@link streamHasUnread} on the topic's own marker, gated by
+ * membership (§11.8), on the viewer's open topics only.
+ *
+ * The read state and the muted list are encrypted, so the app hands in what
+ * it holds: `merged` (the merged markers, once the first merge has landed)
+ * and `muted`. Replies are read only for the topics a dot is judged on, and
+ * only from the latest second before which none can be unread: the thread
+ * rule's cut-over, the reply floor, and when the viewer joined (§11.3: a
+ * reply is read by its thread's marker or the floor, never the topic's).
+ */
+export async function topicConversations(
+  read: TopicsRead,
+  query: QueryFn,
+  state: { merged: Readonly<Record<string, number>>; muted: ReadonlySet<string>; nowSeconds?: number },
+  options: { cache?: ProjectionCache } = {},
+): Promise<Map<string, TopicConversation>> {
+  const nowSeconds = state.nowSeconds ?? Math.floor(Date.now() / 1000)
+  const terms = (address: string) => streamTermsOf(address, read.membership, read.me, state.muted)
+  const judged = new Set(read.topics.filter((topic) => topic.yours && !isArchived(topic.object)).map((topic) => topic.address))
+  const repliesSince = (address: string) => {
+    if (!judged.has(address)) return null
+    const floor = state.merged[REPLY_FLOOR_CONTEXT]
+    return Math.max(THREAD_RULE_FROM, floor ?? 0, terms(address).since ?? 0)
+  }
+  const files = read.topics.map((topic) => ({ ...topic.object, ref: topic.address }))
+  const held = await conversationsOf(files, query, options.cache, { replies: true, repliesSince })
+  const out = new Map<string, TopicConversation>()
+  for (const topic of read.topics) {
+    const messages = held[topic.address]
+    if (!messages) continue
+    const context = fileContext(topic.address)
+    const unread =
+      !!context &&
+      judged.has(topic.address) &&
+      streamHasUnread(
+        // A reply from before the thread rule's cut-over never lit a row (CON-34).
+        messages.filter((m) => m.root === m.id || m.at >= THREAD_RULE_FROM),
+        context,
+        terms(topic.address),
+        { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS },
+        (id) => read.membership.mentioned.has(id),
+      )
+    out.set(topic.address, { conversations: messages.filter((m) => m.root === m.id).length, unread })
+  }
   return out
 }
 

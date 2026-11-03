@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.25.0 — 2026-11-03
+
+**SPEC: none changed.** Peek's rule for a list row's dot moves here, so Ship
+and Peek judge a topic's dot the same way (SHIPS-2). Each is Peek's code as it
+ran, made pure: the read state and the muted list stay the app's to decrypt
+and hand in.
+
+- `streamHasUnread(messages, context, terms, frontier, isMentioned)`: §11.8's
+  four conditions over bodiless messages (`StreamMessage`: id, at, by, root).
+- `membershipQueries(pubkey, now)`, `foldMemberships(pubkey, events, now)`:
+  the three filters bounded by the 90-day horizon (`HORIZON_SECONDS`,
+  `MEMBERSHIP_LIMIT` per filter), folded per candidate file, a created file
+  the viewer's from the horizon's start; the ids that name the viewer.
+- `streamTermsOf(key, read, me, muted)`: member, since and muted for a file;
+  a Folder's own stream has no members. `membershipJudges(key, read, me)`:
+  whether the horizon has a word on the viewer there. `authorOfAddress`.
+
 ## 0.24.0 — 2026-10-30
 
 Three of Katerina's calls from the widget review (30 October), once for

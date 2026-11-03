@@ -757,6 +757,8 @@ const files = await topicList(query, topicAddress)   // [{ file, address, entry 
 const shown = files.filter((f) => f.address)         // address null: unreadable, or two files hold the id
 const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry }]: which topics list it
 const lists = await topicLists(query, myTopics)      // Map<topicAddress, files>: a whole column of topics in three reads
+const read = await readTopics(query, me)             // every topic: list, Folder, archive, yours — Add to topic is addableTopics(read, folders)
+const talk = await topicConversations(read, query, { merged, muted }) // Map<topicAddress, { conversations, unread }>, Peek's badge
 ```
 
 `topicsOfFile` asks `{kinds:[1851], "#o":[id]}`; a file's own changes, by `#O`
