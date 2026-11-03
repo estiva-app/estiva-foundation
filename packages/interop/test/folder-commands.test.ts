@@ -348,6 +348,10 @@ describe('readMoveRefusal', () => {
     })
   })
 
+  it('a mover who is not a member of the team it enters is not a member, not a plain refusal', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'restricted: not a channel member').why, 'not-a-member')
+  })
+
   it('a refused later move names every source it had not left yet', () => {
     assert.deepEqual(readMoveRefusal(moved.events, 1, 'the team a move leaves does not list 30840:x:t1'), {
       why: 'changed-meanwhile',

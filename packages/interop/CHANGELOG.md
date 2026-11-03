@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.74.1 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing.** `readMoveRefusal` reads the relay's
+"not a channel member", its refusal of a mover who is not a member of the
+team a move enters, as `not-a-member`. It was a plain `refused`, so an app
+told the person to try again, which can never succeed (TEA-3).
+
 ## 0.74.0 — 2026-11-02
 
 **Manifest: nothing. Wire: a move is one `kind:1852 op: move` per source,
