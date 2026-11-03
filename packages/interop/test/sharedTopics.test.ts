@@ -156,8 +156,18 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     const { query } = relay([...world, ...talk, reply(ME, first, NOW - 50)])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
     const out = await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })
-    assert.deepEqual(out.get(alpha.address), { conversations: 2, unread: false })
-    assert.deepEqual(out.get(bravo.address), { conversations: 1, unread: false })
+    assert.deepEqual(out.get(alpha.address), { conversations: 2, unread: false, fresh: 0 })
+    assert.deepEqual(out.get(bravo.address), { conversations: 1, unread: false, fresh: 0 })
+  })
+
+  it('says how many of a topic’s conversations are new: each thread judged alone, a read one not counted', async () => {
+    const third = comment(THEM, alpha, NOW - 150)
+    const { query } = relay([...world, ...talk, third, reply(THEM, first, NOW - 100), reply(THEM, first, NOW - 90)])
+    const read = await readTopics(query, ME, { nowSeconds: NOW })
+    // `first` has two new replies and `third` is new itself: two conversations, not three messages.
+    assert.deepEqual(await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW }).then((out) => out.get(alpha.address)), { conversations: 3, unread: true, fresh: 2 })
+    const firstRead = { ...merged, [`thread:${first.id}`]: NOW }
+    assert.deepEqual(await topicConversations(read, query, { merged: firstRead, muted: new Set(), nowSeconds: NOW }).then((out) => out.get(alpha.address)), { conversations: 3, unread: true, fresh: 1 })
   })
 
   it('lights a topic of the viewer’s for a new reply until its thread is read', async () => {
@@ -172,7 +182,7 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     const { query } = relay([...world, ...talk, reply(THEM, first, NOW - 100)])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
     const out = await topicConversations(read, query, { merged, muted: new Set([alpha.address]), nowSeconds: NOW })
-    assert.deepEqual(out.get(delta.address), { conversations: 1, unread: false })
+    assert.deepEqual(out.get(delta.address), { conversations: 1, unread: false, fresh: 0 })
     assert.equal(out.get(alpha.address)?.unread, false)
   })
 
