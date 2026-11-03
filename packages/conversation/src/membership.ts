@@ -30,7 +30,7 @@
 import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS as ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { byOrder } from './order.js'
-import { anchorsOf, isCommentOn, peopleNamedInBody } from './strength.js'
+import { anchorsOf, isAbout, isCommentOn, peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 
 export { KIND_CHANGE }
@@ -92,7 +92,7 @@ export function streamOf<E extends Event>(file: string, events: readonly E[]): E
     out.push(root, ...(replies[root.id] ?? []))
   }
   for (const id of missing) {
-    for (const reply of replies[id] ?? []) if (reply.kind === KIND_COMMENT && anchorsOf(reply).includes(file)) out.push(reply)
+    for (const reply of replies[id] ?? []) if (reply.kind === KIND_COMMENT && isAbout(reply, file)) out.push(reply)
   }
   return out.sort(byOrder)
 }
@@ -134,8 +134,16 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
     for (const person of peopleNamedInBody(message.content)) add(person, message, true)
   }
 
+  const id = file.split(':').slice(2).join(':')
   for (const change of events) {
-    if (change.kind !== KIND_CHANGE || !change.tags.some((t) => t[0] === 'a' && t[1] === file)) continue
+    if (change.kind !== KIND_CHANGE || !isChangeTo(change, file, id)) continue
+    const sets = change.tags.filter((t) => t[0] === 'set' && typeof t[1] === 'string')
+    if (sets.length) {
+      // A several-field change never carries a `member:<P>` (§11.8), so one is not read here;
+      // the `p` it carries places people when any field it sets has a value.
+      if (sets.some((t) => !t[1].startsWith(MEMBER_FIELD_PREFIX) && t[2])) addNamed(change)
+      continue
+    }
     const field = tag(change, 'field')
     const value = tag(change, 'value')
     const member = memberOfField(field)
@@ -146,9 +154,25 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
     }
     // A change with an empty value takes someone off (an unassign) and places nobody, whatever `p` it carries.
     if (field?.startsWith(MEMBER_FIELD_PREFIX) || !value) continue
-    for (const t of change.tags) if (t[0] === 'p' && typeof t[1] === 'string') add(t[1], change, true)
+    addNamed(change)
   }
   return steps
+
+  function addNamed(change: Event) {
+    for (const t of change.tags) if (t[0] === 'p' && typeof t[1] === 'string') add(t[1], change, true)
+  }
+}
+
+/**
+ * Whether a change is to the file: its first `a` names it, the one the relay
+ * checks the change against, and any `O` is the file's id. A change with no
+ * `a` is checked against nothing, so it is to no file; one whose `O` is not
+ * its `a`'s file is about neither (§6.2).
+ */
+function isChangeTo(change: Pick<SignedEvent, 'tags'>, file: string, id: string): boolean {
+  const O = tag(change, 'O')
+  if (O !== undefined && O !== id) return false
+  return tag(change, 'a') === file
 }
 
 function fold(steps: readonly Step[] | undefined): Membership {

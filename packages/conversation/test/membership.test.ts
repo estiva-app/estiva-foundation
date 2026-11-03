@@ -6,6 +6,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { encodeNpub, type SignedEvent } from '@estiva-app/protocol'
 import {
+  anchorIdsOf,
   buildMembershipChange,
   candidateFilesOf,
   membersOf,
@@ -15,6 +16,7 @@ import {
   parseMutedBlob,
   serializeMutedBlob,
   streamOf,
+  threadStrength,
   unreadIn,
 } from '../dist/index.js'
 
@@ -119,6 +121,72 @@ describe('C17 — membership fold', () => {
     const events = [root(), top, reply(CAROL, top, T0 + 150), member(BOB, T0 + 200, BOB, false)]
     assert.deepEqual([...membersOf(ISSUE, events).keys()].sort(), [ALICE, CAROL])
     assert.equal(streamOf(ISSUE, events).length, 2)
+  })
+})
+
+describe('a file named by its id in a change or a comment (§6.2, §6.4, §11.8)', () => {
+  const byId = (by: string, at: number, tags: string[][]) => event({ kind: 1851, pubkey: by, created_at: at, tags: [['O', D], ['h', FOLDER], ...tags] })
+
+  it('an add naming the file by its a and its O joins', () => {
+    const add = byId(ALICE, T0 + 20, [['a', ISSUE], ['field', `member:${BOB}`], ['value', 'true'], ['p', BOB]])
+    assert.deepEqual(membershipOf(ISSUE, BOB, [root(), add]), { member: true, since: T0 + 20 })
+  })
+
+  // The relay checks a change against its first `a` alone: one with no `a` is checked against nothing.
+  it('an add with no a, or whose first a is another file, joins nobody', () => {
+    for (const a of [[], [['a', OTHER], ['a', ISSUE]]]) {
+      const add = event({ kind: 1851, pubkey: CAROL, created_at: T0 + 20, tags: [...a, ...(a.length ? [] : [['O', D]]), ['field', `member:${CAROL}`], ['value', 'true'], ['p', CAROL], ['h', FOLDER]] })
+      assert.equal(membershipOf(ISSUE, CAROL, [root(), add]).member, false, JSON.stringify(a))
+    }
+  })
+
+  it('a change whose O names another file adds nobody to this one', () => {
+    const crossed = event({ kind: 1851, pubkey: ALICE, created_at: T0 + 20, tags: [['a', ISSUE], ['O', OTHER.split(':')[2]], ['field', `member:${BOB}`], ['value', 'true'], ['p', BOB], ['h', FOLDER]] })
+    assert.equal(membershipOf(ISSUE, BOB, [root(), crossed]).member, false)
+  })
+
+  it('a several-field change that assigns someone places them, as its one-field form does', () => {
+    const assign = byId(ALICE, T0 + 30, [['a', ISSUE], ['set', 'assignee', CAROL, 'x'], ['set', 'status', 'todo', 'y'], ['p', CAROL]])
+    assert.equal(membershipOf(ISSUE, CAROL, [root(), assign]).member, true)
+    const unassign = byId(ALICE, T0 + 30, [['a', ISSUE], ['set', 'assignee', '', 'x'], ['p', CAROL]])
+    assert.equal(membershipOf(ISSUE, CAROL, [root(), unassign]).member, false)
+  })
+
+  it('a comment whose A and O name different files is in neither stream', () => {
+    const crossed = event({ kind: 1111, pubkey: BOB, created_at: T0 + 40, tags: [['A', ISSUE], ['K', '30851'], ['O', OTHER.split(':')[2]], ['a', ISSUE], ['h', FOLDER]] })
+    const both = event({ kind: 1111, pubkey: CAROL, created_at: T0 + 41, tags: [['A', ISSUE], ['K', '30851'], ['O', D], ['K', 'osnova.project'], ['a', ISSUE], ['h', FOLDER]] })
+    assert.deepEqual(streamOf(ISSUE, [root(), crossed, both]).map((e) => e.pubkey), [CAROL])
+    assert.deepEqual(candidateFilesOf(crossed), [])
+    // Nor a mention of either file: a reader asking #A and one asking #O must agree.
+    assert.equal(threadStrength(crossed, [], ISSUE), null)
+    assert.equal(threadStrength(crossed, [], OTHER), null)
+  })
+
+  it('a comment with no A, whose a and O name different files, is in neither stream', () => {
+    const crossed = event({ kind: 1111, pubkey: BOB, created_at: T0 + 40, tags: [['a', ISSUE], ['O', OTHER.split(':')[2]], ['h', FOLDER]] })
+    const other = event({ kind: 30851, pubkey: ALICE, created_at: T0, tags: [['d', OTHER.split(':')[2]], ['h', FOLDER]] })
+    assert.deepEqual(streamOf(ISSUE, [root(), crossed]), [])
+    assert.deepEqual(streamOf(OTHER, [other, crossed]), [])
+    assert.deepEqual(candidateFilesOf(crossed), [])
+    assert.equal(membershipOf(OTHER, BOB, [other, crossed]).member, false)
+  })
+
+  it('a comment with the file’s id under an address of another author or kind, or with two O or two A, is not in its stream (§6.4, C44)', () => {
+    const tags = (...extra: string[][]) => [...extra, ['h', FOLDER]]
+    const comments = [
+      // No A: its `a` is the root, and names Bob's address, not the issue.
+      event({ kind: 1111, pubkey: BOB, created_at: T0 + 40, tags: tags(['a', `30851:${BOB}:${D}`], ['O', D]) }),
+      // Two O: ignored, though one is the issue's.
+      event({ kind: 1111, pubkey: BOB, created_at: T0 + 41, tags: tags(['A', ISSUE], ['O', D], ['O', OTHER.split(':')[2]], ['a', ISSUE]) }),
+      // Two A: ignored, though one is the issue's.
+      event({ kind: 1111, pubkey: BOB, created_at: T0 + 42, tags: tags(['A', ISSUE], ['A', `30851:${BOB}:${D}`], ['O', D], ['a', ISSUE]) }),
+    ]
+    const both = event({ kind: 1111, pubkey: CAROL, created_at: T0 + 43, tags: tags(['A', ISSUE], ['K', '30851'], ['O', D], ['a', ISSUE]) })
+    assert.deepEqual(streamOf(ISSUE, [root(), ...comments, both]).map((e) => e.pubkey), [CAROL])
+    for (const comment of comments) assert.equal(threadStrength(comment, [], ISSUE), null, JSON.stringify(comment.tags))
+    // A root that is no file kind's address names no file by its id.
+    const notAFile = event({ kind: 1111, pubkey: BOB, created_at: T0 + 44, tags: tags(['A', `1:${ALICE}:${D}`], ['O', D]) })
+    assert.deepEqual(anchorIdsOf(notAFile), [])
   })
 })
 

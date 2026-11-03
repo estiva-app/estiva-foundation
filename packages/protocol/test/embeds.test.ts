@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, linksAsReferences, toRenderTree } from '../dist/index.js'
+import { EMBED_TAG, addrToNaddr, cardsIn, embedTag, embedsOf, encodeNevent, linksAsReferences, partsNamedIn, toRenderTree, valuesIn } from '../dist/index.js'
 
 const PK = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
 const ISSUE = `30851:${PK}:f78c3b96-2a3b-4d92-910a-ac25aba672cd`
@@ -101,6 +101,38 @@ describe('which cards a message draws', () => {
 
   it('does not count a reference inside a code span', () => {
     assert.deepEqual(cardsIn([{ value: ISSUE, layout: 'compact' }], body(`example: \`${issueRef}\``)), [])
+  })
+})
+
+describe('a card by a file’s id is the card by its address (SPEC §13.6.2, C46)', () => {
+  const ID = PROJECT.split(':')[2]
+
+  it('reads an embed by id, and keeps the first of an address and an id of one file', () => {
+    assert.deepEqual(embedsOf({ tags: [embedTag(ID, 'detailed')] }), [{ value: ID, layout: 'detailed' }])
+    assert.deepEqual(embedsOf({ tags: [embedTag(PROJECT, 'compact'), embedTag(ID, 'detailed')] }), [{ value: PROJECT, layout: 'compact' }])
+    assert.deepEqual(embedsOf({ tags: [embedTag(ID, 'none'), embedTag(PROJECT, 'detailed')] }), [{ value: ID, layout: 'none' }])
+  })
+
+  it('draws one card under the address the body names, and an edit’s none by id removes it', () => {
+    // An edit replaces the set (§6.8): here the edit's set, by id.
+    assert.deepEqual(cardsIn(embedsOf({ tags: [embedTag(ID, 'detailed')] }), body(`see ${projectRef}`)), [{ value: PROJECT, layout: 'detailed' }])
+    assert.deepEqual(cardsIn(embedsOf({ tags: [embedTag(ID, 'none')] }), body(`see ${projectRef}`)), [{ value: PROJECT, layout: 'none' }])
+  })
+
+  it('draws no card for a file a part by its id already shows', () => {
+    const embeds = embedsOf({ tags: [embedTag(PROJECT, 'detailed')] })
+    assert.deepEqual(cardsIn(embeds, body(`see ${projectRef}`), [{ address: ID, block: 'b1' }]), [])
+  })
+
+  it('reads an uppercase UUID as no file id', () => {
+    assert.deepEqual(embedsOf({ tags: [embedTag(ID.toUpperCase(), 'detailed')] }), [])
+  })
+
+  it('gives a part by id the address the body names its file by, and drops one whose file the body does not name', () => {
+    const values = valuesIn(body(`see ${projectRef}`))
+    assert.deepEqual(partsNamedIn([{ address: ID, block: 'b1' }], values), [{ address: PROJECT, block: 'b1' }])
+    assert.deepEqual(partsNamedIn([{ address: ISSUE.split(':')[2], block: 'b1' }], values), [])
+    assert.deepEqual(partsNamedIn([{ address: ISSUE, block: 'b2' }], values), [{ address: ISSUE, block: 'b2' }])
   })
 })
 

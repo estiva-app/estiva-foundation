@@ -18,6 +18,7 @@ import {
   fetchReadState,
   fileContext,
   isPublishableContextId,
+  isUnread,
   loadSlotIdentity,
   MAX_BLOB_BYTES,
   MAX_CONTEXTS_BYTES,
@@ -55,6 +56,48 @@ describe('context ids (§11.1)', () => {
     assert.equal(threadContext(ROOT), `thread:${ROOT}`)
     assert.equal(threadContext('abc'), undefined)
     assert.equal(isPublishableContextId(`folder:${ISSUE}`), false)
+  })
+})
+
+describe('a file’s marker in two keys (§11.1, §11.8, C45)', () => {
+  const ID = '15e9b50a-825a-4537-8b4a-df46efb9c7e4'
+  const PROJECT = `30850:${'a'.repeat(64)}:${ID}`
+  const BY_ID = `file:${ID}`
+  const comment = (created_at: number) => ({ id: '1'.repeat(64), pubkey: 'b'.repeat(64), kind: 1111, created_at, tags: [], content: '' })
+  const judge = { stream: PROJECT, me: ME, member: true }
+
+  it('keeps a file:<d> key in a blob, and drops one whose rest is not a lowercase UUID', () => {
+    const blob = parseReadStateBlob(
+      serializeReadStateBlob({ v: 1, client_id: 'c', contexts: { [BY_ID]: 5, [`file:${ISSUE}`]: 6, 'file:x': 7, [`file:${ID.toUpperCase()}`]: 8 } }),
+    )
+    assert.deepEqual(blob?.contexts, { [BY_ID]: 5 })
+  })
+
+  it('reads a file’s comments by the later of its address key and its file: key', () => {
+    // file:<d> at 200 is later than the address key at 100: a comment at 150 is read.
+    assert.equal(isUnread(comment(150), undefined, { [PROJECT]: 100, [BY_ID]: 200 }, judge), false)
+    assert.equal(isUnread(comment(250), undefined, { [PROJECT]: 100, [BY_ID]: 200 }, judge), true)
+    // The address key alone is still a marker, and the later of the two wins either way round.
+    assert.equal(isUnread(comment(150), undefined, { [PROJECT]: 200, [BY_ID]: 100 }, judge), false)
+    assert.equal(isUnread(comment(150), undefined, { [BY_ID]: 200 }, judge), false)
+    // A stream passed by the id reads a read stored under the address too (§11.1).
+    const byIdJudge = { ...judge, stream: BY_ID }
+    assert.equal(isUnread(comment(150), undefined, { [PROJECT]: 200 }, byIdJudge), false)
+    assert.equal(isUnread(comment(150), undefined, { [PROJECT]: 100, [BY_ID]: 200 }, byIdJudge), false)
+    assert.equal(isUnread(comment(250), undefined, { [PROJECT]: 200, [BY_ID]: 100 }, byIdJudge), true)
+    // A thread under the file reads its stream's marker by the same two keys.
+    assert.equal(effectiveReadAt({ [BY_ID]: 300 }, `thread:${ROOT}`, PROJECT, 1_000), 300)
+  })
+
+  it('keys a new read of a file by its id as file:<d>, and only for a lowercase UUID', async () => {
+    const { fileIdContext } = await import('../dist/index.js')
+    assert.equal(fileIdContext(ID), BY_ID)
+    assert.equal(fileIdContext(ID.toUpperCase()), undefined)
+    assert.equal(fileIdContext(PROJECT), undefined)
+  })
+
+  it('reads only the address of a file whose d is no UUID', () => {
+    assert.equal(isUnread(comment(150), undefined, { [ISSUE]: 100, 'file:Case-Sensitive-d': 200 }, { ...judge, stream: ISSUE }), true)
   })
 })
 

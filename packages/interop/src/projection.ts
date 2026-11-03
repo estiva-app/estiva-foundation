@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
+import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -22,7 +22,7 @@ import {
   imetaTag,
   parseBlockDocument,
 } from '@estiva-app/protocol'
-import { identifierOf, planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
+import { identifierOf, listedEntriesOf, listsFile, planPlaceFile, planUnlistFile, type FolderRef } from './folders.js'
 /*
   SPEC §6.4's comment strength and §6.3's ordering are the conversation
   package's (CON-5): one copy of each rule, read here for a file's `comments`,
@@ -2392,25 +2392,41 @@ function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | unde
 function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
   const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat }> = {}
   const folders = targetFolders(root)
+  const id = root && tagValue(root, 'd')
   for (const change of [...changes].filter((c) => inTargetFolder(c, folders)).sort(byOrder)) {
-    const field = tagValue(change, rule.fieldTag)
-    const value = tagValue(change, rule.valueTag)
-    if (!field || value === undefined) continue // a partial change sets nothing
-    // A summary is new, so it takes neither of §6.2's exceptions: a change the
-    // reader cannot check against the root's Folder is not read (SPEC §6.12).
-    if (field === SUMMARY_FIELD && !folders) continue
-    // The format travels with the *winning* change, not with the object. SPEC
-    // §13.4: "an app MUST read the tag from the event it took the value from,
-    // never from the object's root" — a description created as marker text and
-    // later edited into blocks is a root with no tag and a change with one.
-    fields[field] = {
-      value,
-      by: change.pubkey,
-      at: change.created_at,
-      format: contentFormatOf(change),
+    // A change whose `O` is not its `a`'s file is about neither (SPEC §6.2).
+    const O = tagValue(change, 'O')
+    if (O !== undefined && id !== undefined && O !== id) continue
+    for (const { field, value } of settingsOf(change, rule)) {
+      // A summary is new, so it takes neither of §6.2's exceptions: a change the
+      // reader cannot check against the root's Folder is not read (SPEC §6.12).
+      if (field === SUMMARY_FIELD && !folders) continue
+      // The format travels with the *winning* change, not with the object. SPEC
+      // §13.4: "an app MUST read the tag from the event it took the value from,
+      // never from the object's root" — a description created as marker text and
+      // later edited into blocks is a root with no tag and a change with one.
+      fields[field] = {
+        value,
+        by: change.pubkey,
+        at: change.created_at,
+        format: contentFormatOf(change),
+      }
     }
   }
   return fields
+}
+
+/**
+ * The fields one change sets under `rule`: one per `set` when it carries any
+ * (SPEC §6.2, applied at the change's time as that many one-field changes),
+ * else its field and value tags. A partial change sets nothing.
+ */
+function settingsOf(change: SignedEvent, rule: RecordsRule): { field: string; value: string }[] {
+  const sets = change.tags.filter((t) => t[0] === 'set' && t[1] && typeof t[2] === 'string')
+  if (sets.length) return sets.map((t) => ({ field: t[1], value: t[2] }))
+  const field = tagValue(change, rule.fieldTag)
+  const value = tagValue(change, rule.valueTag)
+  return field && value !== undefined ? [{ field, value }] : []
 }
 
 /**
@@ -2522,15 +2538,19 @@ function archiveOf(
   }
   const folders = targetFolders(root)
   let last: SignedEvent | undefined
+  let archived: string | undefined
   for (const change of changes) {
     // The target is the first target tag, as every other fold reads it: a
     // change archiving one file must not archive another it also mentions.
     if (change.kind !== rule.changeKind || tagValue(change, rule.targetTag) !== address) continue
     if (!inTargetFolder(change, folders)) continue
-    if (tagValue(change, rule.fieldTag) !== ARCHIVED_FIELD || tagValue(change, rule.valueTag) === undefined) continue
-    if (!last || byOrder(last, change) < 0) last = change
+    const O = tagValue(change, 'O')
+    if (O !== undefined && O !== identifier) continue
+    const set = settingsOf(change, rule).find((s) => s.field === ARCHIVED_FIELD)
+    if (!set) continue
+    if (!last || byOrder(last, change) < 0) [last, archived] = [change, set.value]
   }
-  if (!last || tagValue(last, rule.valueTag) !== 'true') return undefined
+  if (!last || archived !== 'true') return undefined
   const note = last.content.trim()
   return {
     by: last.pubkey,
@@ -6359,6 +6379,12 @@ export interface FolderSummary {
    */
   addresses?: string[]
   /**
+   * The files this folder's state lists by their id (an `o` entry, SPEC §3.3),
+   * other than one it already lists by address — present only when there are
+   * any. Ask whether a folder lists a file with `listsFile`, which reads both.
+   */
+  ids?: string[]
+  /**
    * The Folder's own address as a file — its `kind:39000`, `39000:<relay>:<id>`.
    * What a state lists when it holds this Folder, and what an `archived`
    * change on the Folder names. Absent only for a state whose channel the
@@ -6545,11 +6571,14 @@ async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[
     if (event.kind !== KIND_FOLDER_STATE && event.kind !== KIND_CHANNEL) continue
     const state = event.kind === KIND_FOLDER_STATE
     const existing = byId.get(id)
-    const addresses = state ? event.tags.filter((tag) => tag[0] === 'a' && tag[1]).map((tag) => tag[1]) : (existing?.addresses ?? [])
+    const { addresses, ids } = state
+      ? listedEntriesOf(event, new Map())
+      : { addresses: existing?.addresses ?? [], ids: existing?.ids ?? [] }
     byId.set(id, {
       id,
       hasState: state || (existing?.hasState ?? false),
       ...(addresses.length ? { addresses } : {}),
+      ...(ids.length ? { ids } : {}),
     })
   }
   // The title, privacy and admins are the channel's (§3.2), whichever order the events arrived.
@@ -6668,7 +6697,7 @@ export async function archiveImpact(
       for (const file of contents.files) {
         if (!file.address) continue
         const others = folders.filter(
-          (other) => !inTree.has(other.id) && !other.archived && other.addresses?.includes(file.address!),
+          (other) => !inTree.has(other.id) && !other.archived && listsFile(other, file.address!),
         )
         if (others.length) {
           staysVisible.push({ address: file.address, kind: file.kind, in: others.map(({ id, name }) => ({ id, name })) })
@@ -6809,15 +6838,18 @@ async function placeRecordChannels(
   query: QueryFn,
 ): Promise<{ recordsOf: Map<string, string[]>; archives: SignedEvent[]; rootOf: Map<string, SignedEvent> }> {
   const containersOf = new Map<string, { pointer: AddressPointer; containers: string[] }>()
-  for (const event of events) {
-    if (event.kind !== KIND_FOLDER_STATE) continue
+  const states = events.filter((event) => event.kind === KIND_FOLDER_STATE)
+  // A file listed by its id alone (§3.3) costs one read for every such entry, before the roots.
+  const ids = [...new Set(states.flatMap((state) => listedEntriesOf(state, new Map()).ids))]
+  const addressOfId = ids.length ? await addressesOfIds(ids, query) : new Map<string, string>()
+  for (const event of states) {
     const container = tagValue(event, 'd')
     if (!container) continue
-    for (const tag of event.tags) {
-      if (tag[0] !== 'a' || !tag[1]) continue
+    const listed = listedEntriesOf(event, addressOfId)
+    for (const address of [...listed.addresses, ...listed.ids.flatMap((id) => addressOfId.get(id) ?? [])]) {
       let pointer: AddressPointer
       try {
-        pointer = referenceToPointer(tag[1])
+        pointer = referenceToPointer(address)
       } catch {
         continue
       }
@@ -7001,7 +7033,7 @@ export async function resolveFolderContents(
     ? // §5.2: one tag type lists every file, topics included, with no special
       //  case. The order is the folder's, so it is preserved rather than sorted.
       {
-        addresses: [...new Set(state.tags.filter((t) => t[0] === 'a' && t[1]).map((t) => t[1]))],
+        addresses: await listedAddressesOf(state, query),
         placed: new Map<string, SignedEvent[]>(),
       }
     : options.listedOnly
@@ -7250,6 +7282,56 @@ export async function resolveFolderContents(
     source: state ? 'state' : 'channel',
   }
 }
+
+/**
+ * A Folder state's files as addresses, in its order, each once (SPEC §3.3).
+ *
+ * An `o` entry names a file by its id alone, so it costs a read: one request
+ * for every such entry, asking each id's addressable roots, and an id is
+ * the file whose one kind and author answer it, as a link by id is resolved
+ * (§7.7). An id answered by none, or by two files, is dropped like an `a`
+ * nothing parses. A state with no `o` entry reads nothing.
+ */
+async function listedAddressesOf(state: SignedEvent, query: QueryFn): Promise<string[]> {
+  const all = listedEntriesOf(state, new Map())
+  if (all.ids.length === 0) return all.order
+  const addressOf = await addressesOfIds(all.ids, query)
+  // Folded against the addresses found: an `a` with an `o`'s id and another kind or author is drawn beside it.
+  const { order, ids } = listedEntriesOf(state, addressOf)
+  const byId = new Set(ids)
+  const listed = order.flatMap((entry) => (byId.has(entry) ? (addressOf.get(entry) ?? []) : [entry]))
+  return [...new Set(listed)]
+}
+
+/**
+ * The address of each file named by its id alone: the one file kind and
+ * author whose root holds that `d`, as a link by id is resolved (§7.7). Only
+ * the file kinds are asked: the relay keeps a `d` unique across those alone,
+ * so under any other kind anyone could claim a listed file's id. One request
+ * for all of them; an id answered by none, or by two files, is absent.
+ */
+async function addressesOfIds(ids: readonly string[], query: QueryFn): Promise<Map<string, string>> {
+  const found = await queryChunked(
+    Array.from({ length: Math.ceil(ids.length / ID_GROUP) }, (_, i) => {
+      const group = ids.slice(i * ID_GROUP, (i + 1) * ID_GROUP)
+      return { kinds: [...FILE_KINDS], '#d': group, limit: group.length * 2 }
+    }),
+    query,
+  )
+  const asked = new Set(ids)
+  const owners = new Map<string, Set<string>>()
+  for (const event of found) {
+    const id = tagValue(event, 'd')
+    if (id === undefined || !asked.has(id) || !FILE_KINDS.includes(event.kind)) continue
+    owners.set(id, (owners.get(id) ?? new Set()).add(`${event.kind}:${event.pubkey.toLowerCase()}`))
+  }
+  const out = new Map<string, string>()
+  for (const [id, one] of owners) if (one.size === 1) out.set(id, `${[...one][0]}:${id}`)
+  return out
+}
+
+/** Ids per filter when a Folder state's `o` entries are resolved. */
+const ID_GROUP = 50
 
 /**
  * The contents of a folder that has no state event — containment by `h`.

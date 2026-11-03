@@ -24,6 +24,7 @@
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
+import { fileKeyOf, isFileId, sameFile } from './fileId.js'
 import type { RenderBlock, RenderInline } from './render.js'
 
 export const EMBED_TAG = 'embed'
@@ -62,8 +63,8 @@ export function embedTagsOf(set: readonly Embed[]): string[][] {
     const value = normalise(e.value)
     if (!value) throw new Error(`not an address or event id: ${e.value}`)
     if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
-    if (seen.has(value)) return []
-    seen.add(value)
+    if (seen.has(fileKeyOf(value))) return []
+    seen.add(fileKeyOf(value))
     return [[EMBED_TAG, value, (e.layout === 'compact' && e.written) || e.layout]]
   })
 }
@@ -90,8 +91,9 @@ export function embedsOf(event: { tags: readonly (readonly string[])[] }): Embed
   for (const tag of event.tags) {
     if (tag[0] !== EMBED_TAG || !tag[1]) continue
     const value = normalise(tag[1])
-    if (!value || seen.has(value)) continue
-    seen.add(value)
+    // A file's address and its id are one value (§13.6.2): the first wins.
+    if (!value || seen.has(fileKeyOf(value))) continue
+    seen.add(fileKeyOf(value))
     const layout = layoutOf(tag[2])
     out.push(tag[2] && tag[2] !== layout ? { value, layout, written: tag[2] } : { value, layout })
   }
@@ -104,6 +106,7 @@ function layoutOf(raw: string | undefined): EmbedLayout {
 
 function normalise(value: string): string | undefined {
   if (EVENT_ID.test(value.toLowerCase())) return value.toLowerCase()
+  if (isFileId(value)) return value
   if (!ADDRESS.test(value)) return undefined
   // The kind and pubkey are hex and compared as such; the `d` is the author's and kept as written.
   const [kind, pubkey, ...d] = value.split(':')
@@ -180,11 +183,13 @@ export function valueOfReference(reference: string): string | undefined {
  */
 export function cardsIn(embeds: readonly Embed[], blocks: readonly RenderBlock[], parts: readonly PartPointer[] = [], resolveLink?: LinkResolver): Embed[] {
   if (embeds.length === 0) return []
-  const byValue = new Map(embeds.map((e) => [e.value, e]))
-  const withPart = new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v))
+  // By file, so an `embed` or a `part` by a file's id meets the body's address for it (§13.6.2).
+  const byValue = new Map(embeds.map((e) => [fileKeyOf(e.value), e]))
+  const withPart = partKeysOf(parts)
   return valuesIn(blocks, resolveLink).flatMap((value) => {
-    const embed = withPart.has(value) ? undefined : byValue.get(value)
-    return embed ? [embed] : []
+    const embed = withPart.has(fileKeyOf(value)) ? undefined : byValue.get(fileKeyOf(value))
+    // Under the value the body names, so a reader resolves an id-valued card as it does its link.
+    return embed ? [embed.value === value ? embed : { ...embed, value }] : []
   })
 }
 
@@ -342,8 +347,8 @@ export function lineDrawOf(
   if (!value) return isReference ? { draw: 'unreadable', reference: only } : { draw: 'url', url: only }
   if (isFolderValue(value)) return { draw: 'sentence' }
   const carded =
-    (context.cards ?? []).some((e) => e.value === value && e.layout !== 'none') ||
-    (context.parts ?? []).some((p) => normalise(p.address) === value)
+    (context.cards ?? []).some((e) => sameFile(e.value, value) && e.layout !== 'none') ||
+    partKeysOf(context.parts ?? []).has(fileKeyOf(value))
   return { draw: carded ? 'nothing' : 'row', value, ...(isReference ? {} : { url: only }) }
 }
 
@@ -441,14 +446,40 @@ export function defaultCardOf(
   options: { here?: string; previous?: readonly string[] } = {},
 ): string | undefined {
   const here = normalise(options.here ?? '')
-  const withPart = new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v))
-  const isFile = (v: string | undefined): v is string => !!v && ADDRESS.test(v) && !isFolderValue(v) && v !== here
-  const files = new Set([...values.map(normalise), ...withPart].filter(isFile))
+  const withPart = partKeysOf(parts)
+  const isFile = (v: string | undefined): v is string =>
+    !!v && (ADDRESS.test(v) || isFileId(v)) && !isFolderValue(v) && !(here && sameFile(v, here))
+  // By file, keeping the first value each is named by: an address and an id of one file are one (§13.6.2).
+  const files = new Map<string, string>()
+  for (const v of [...values.map(normalise), ...parts.map((p) => normalise(p.address))].filter(isFile)) {
+    if (!files.has(fileKeyOf(v))) files.set(fileKeyOf(v), v)
+  }
   if (files.size !== 1) return undefined
-  const [file] = files
-  if (withPart.has(file)) return undefined
-  if (options.previous?.some((v) => normalise(v) === file)) return undefined
+  const [[key, file]] = files
+  if (withPart.has(key)) return undefined
+  if (options.previous?.some((v) => sameFile(normalise(v) ?? v, file))) return undefined
   return file
+}
+
+/**
+ * A message's parts as a reader resolves them: one naming a file by its id
+ * (§13.6.1) takes the address the body names that file by (`values`, from
+ * {@link valuesIn}), so it is read as its link is. One by id whose file the
+ * body does not name is left out: a reader draws a part only while the body
+ * names its file.
+ */
+export function partsNamedIn(parts: readonly PartPointer[], values: readonly string[]): PartPointer[] {
+  const byKey = new Map(values.map((v) => [fileKeyOf(v), v]))
+  return parts.flatMap((part) => {
+    if (!isFileId(part.address)) return [part]
+    const address = byKey.get(part.address)
+    return address ? [{ ...part, address }] : []
+  })
+}
+
+/** The files a message's `part` tags name, by {@link fileKeyOf}. */
+function partKeysOf(parts: readonly PartPointer[]): Set<string> {
+  return new Set(parts.map((p) => normalise(p.address)).filter((v): v is string => !!v).map(fileKeyOf))
 }
 
 /**
@@ -460,8 +491,9 @@ export function defaultCardOf(
 export function withCard(set: readonly Embed[], value: string, layout: EmbedLayout): Embed[] {
   const v = normalise(value)
   if (!v) throw new Error(`not an address or event id: ${value}`)
-  const out = set.filter((e) => e.value !== v)
-  const at = set.findIndex((e) => e.value === v)
+  // Its address and its id are one card: either form replaces the other (§13.6.2).
+  const out = set.filter((e) => !sameFile(e.value, v))
+  const at = set.findIndex((e) => sameFile(e.value, v))
   out.splice(at === -1 ? out.length : at, 0, { value: v, layout })
   return out
 }

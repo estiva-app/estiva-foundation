@@ -24,6 +24,7 @@
  */
 import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS as ADDRESS_RE, FOLDER_ID as UUID_RE, KIND_APP_DATA } from './kinds.js'
+import { fileIdOf, isFileId } from '@estiva-app/protocol'
 import type { QueryFn } from './decorations.js'
 
 /** NIP-RS's own `t` tag. */
@@ -105,6 +106,39 @@ export function fileContext(address: string | null | undefined): string | undefi
   return ADDRESS_RE.test(address) ? address : undefined
 }
 
+/**
+ * A file's context by its id: `file:<d>`, for a lowercase UUID (§11.1, *added
+ * 2026-10-30*). Where a new read of a file is written once its comments name
+ * it by id; {@link streamMarkerOf} reads it beside the address key.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-unread-state-is-keyed-file-and-its-id.md
+ */
+export function fileIdContext(id: string | null | undefined): string | undefined {
+  return id && isFileId(id) ? `${FILE_ID_PREFIX}${id}` : undefined
+}
+
+const FILE_ID_PREFIX = 'file:'
+
+/**
+ * A stream's marker. For a file, the later of its address key and its
+ * `file:<d>` key (§11.1, §11.6, *added 2026-11-02*): either one is a marker,
+ * so a file whose comments moved to its id keeps what was read, whichever form
+ * the stream is passed in. A `file:<d>` stream reads every address key whose
+ * `d` is that id. Any other stream reads its own key.
+ */
+export function streamMarkerOf(merged: Readonly<Record<string, number>>, stream: string): number | undefined {
+  const own = merged[stream]
+  if (ADDRESS_RE.test(stream)) {
+    const byId = fileIdContext(fileIdOf(stream))
+    return byId === undefined ? own : later(own, merged[byId])
+  }
+  if (!stream.startsWith(FILE_ID_PREFIX)) return own
+  const id = stream.slice(FILE_ID_PREFIX.length)
+  let out: number | undefined = own
+  for (const [key, at] of Object.entries(merged)) if (ADDRESS_RE.test(key) && fileIdOf(key) === id) out = later(out, at)
+  return out
+}
+
 /** `thread:<root-event-id>`, NIP-RS's own scheme. */
 export function threadContext(rootEventId: string | null | undefined): string | undefined {
   if (!rootEventId) return undefined
@@ -136,6 +170,8 @@ export function isPublishableContextId(id: string): boolean {
   if (id.length === 0 || utf8(id) > MAX_CONTEXT_ID_BYTES) return false
   if (id.startsWith('thread:')) return EVENT_ID_RE.test(id.slice('thread:'.length))
   if (id.startsWith('msg:')) return EVENT_ID_RE.test(id.slice('msg:'.length))
+  // A key beginning `file:` whose remainder is not a lowercase UUID is not a file context (§11.1).
+  if (id.startsWith(FILE_ID_PREFIX)) return isFileId(id.slice(FILE_ID_PREFIX.length))
   return UUID_RE.test(id) || ADDRESS_RE.test(id)
 }
 
@@ -450,7 +486,7 @@ export function effectiveReadAt(
   from: number = THREAD_RULE_FROM,
 ): number | undefined {
   const own = merged[context]
-  const parent = stream === undefined ? undefined : merged[stream]
+  const parent = stream === undefined ? undefined : streamMarkerOf(merged, stream)
   if (isThreadKey(context)) return threadReadAt({ thread: own, stream: parent, floor: merged[REPLY_FLOOR_CONTEXT] }, from)
   return later(own, parent)
 }

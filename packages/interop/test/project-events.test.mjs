@@ -156,3 +156,30 @@ test('an archive signed in another Folder does not archive the held object (SPEC
   assert.equal(issueObject.slots.title.value, 'Renamed')
   assert.equal(issueObject.archived, undefined)
 })
+
+test('a change setting several fields folds each `set` at its time, as that many one-field changes (SPEC §6.2, C37)', async () => {
+  const resolved = await resolveManifest(pointer(ISSUE), query)
+  const both = event({
+    kind: 1851,
+    pubkey: OTHER,
+    tags: [['a', ISSUE], ['O', 'i1'], ['h', FOLDER], ['set', 'title', 'Set title', 'p1'], ['set', 'status', 'done', 'p2'], ['set', 'archived', 'true', 'p3']],
+  })
+  const issueObject = projectEvents([manifest, project, issue, renamed, both], () => resolved).find((o) => o.address === ISSUE)
+  assert.equal(issueObject.slots.title.value, 'Set title')
+  assert.equal(issueObject.slots.status.value, 'Done')
+  assert.ok(issueObject.archived, 'an archived set archives it')
+  // A later one-field change still wins over the earlier `set`.
+  const later = change('title', 'Later')
+  const again = projectEvents([manifest, project, issue, both, later], () => resolved).find((o) => o.address === ISSUE)
+  assert.equal(again.slots.title.value, 'Later')
+  assert.equal(again.slots.status.value, 'Done')
+})
+
+test('a change whose O names another file folds nothing into this one (SPEC §6.2)', async () => {
+  const resolved = await resolveManifest(pointer(ISSUE), query)
+  const crossed = event({ kind: 1851, pubkey: OTHER, tags: [['a', ISSUE], ['O', 'i9'], ['field', 'title'], ['value', 'Wrong'], ['h', FOLDER]] })
+  const archivedElsewhere = event({ kind: 1851, pubkey: OTHER, tags: [['a', ISSUE], ['O', 'i9'], ['field', 'archived'], ['value', 'true'], ['h', FOLDER]] })
+  const issueObject = projectEvents([manifest, project, issue, renamed, crossed, archivedElsewhere], () => resolved).find((o) => o.address === ISSUE)
+  assert.equal(issueObject.slots.title.value, 'Renamed')
+  assert.equal(issueObject.archived, undefined)
+})

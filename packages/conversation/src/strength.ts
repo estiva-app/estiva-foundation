@@ -27,7 +27,7 @@
  * reply `e` — a `kind:9` with any `e`, a `kind:1111` with a lowercase `e` that
  * differs from its `E` — is not a comment of its own, whatever `a` it carries.
  */
-import { decodeNaddr, decodeNpub, findNaddrs, findNostrUris, pointerToAddress, type NostrTag, type SignedEvent } from '@estiva-app/protocol'
+import { decodeNaddr, decodeNpub, findNaddrs, findNostrUris, FILE_KINDS, fileIdOf, pointerToAddress, type NostrTag, type SignedEvent } from '@estiva-app/protocol'
 import { KIND_COMMENT } from './kinds.js'
 
 type Tagged = Pick<SignedEvent, 'kind' | 'tags'>
@@ -77,10 +77,75 @@ export function isReply(event: Pick<SignedEvent, 'kind' | 'tags'>): boolean {
  * test for whether the event itself lists as a comment.
  */
 export function anchorsOf(event: Tagged): string[] {
-  if (event.kind !== KIND_COMMENT) return []
+  if (event.kind !== KIND_COMMENT || crossed(event)) return []
   const roots = values(event, 'A')
   return [...new Set(roots.length > 0 ? roots : values(event, 'a'))]
 }
+
+/**
+ * The ids of the files the event's thread is about by its `O` tags (§6.4, "A
+ * comment in both forms"), beside {@link anchorsOf}'s addresses. Empty for a
+ * comment whose `A` and `O` name different files: that one is about neither.
+ */
+export function anchorIdsOf(event: Tagged): string[] {
+  if (event.kind !== KIND_COMMENT || crossed(event)) return []
+  return [...new Set(values(event, 'O'))]
+}
+
+/**
+ * A comment §6.4 ignores, as a change is (§6.2): two `O`s or two `A`s, or a
+ * root and an `O` that name different files, or it would show under one file
+ * for a reader asking by address and under another for one asking `#O`. The
+ * root is its `A`, or its `a` when it carries no `A`, as {@link anchorsOf}
+ * reads it, and names the `O`'s file only as a file kind's address with that
+ * id. That the author is the file's is {@link isAbout}'s to check: the
+ * comment is about its root.
+ */
+function crossed(event: Pick<SignedEvent, 'tags'>): boolean {
+  const ids = new Set(values(event, 'O'))
+  const roots = new Set(values(event, 'A'))
+  if (ids.size > 1 || roots.size > 1) return true
+  if (ids.size === 0) return false
+  const [id] = ids
+  return [...(roots.size > 0 ? roots : values(event, 'a'))].some(
+    (address) => !FILE_KINDS.includes(Number(address.split(':')[0])) || fileIdOf(address) !== id,
+  )
+}
+
+/** Whether the event is a comment whose root and `O` name different files: one ignored under every file (§6.4). */
+export function isCrossedComment(event: Tagged): boolean {
+  return event.kind === KIND_COMMENT && crossed(event)
+}
+
+/**
+ * {@link isCrossedComment}, or a comment whose `O` has the id of the file at
+ * `address` under a root that is not that address (another author's): its
+ * root and `O` disagree for this file, so under it it is nothing, not even a
+ * mention (§6.4).
+ */
+export function isCrossedCommentOn(event: Tagged, address: string): boolean {
+  if (event.kind !== KIND_COMMENT) return false
+  if (crossed(event)) return true
+  const roots = anchorsOf(event)
+  return roots.length > 0 && !roots.includes(address) && values(event, 'O').some((id) => namesById(id, address))
+}
+
+/**
+ * Whether a `kind:1111`'s thread is about the file at `address`: by its
+ * {@link anchorsOf} root when it has one, so an `O` with the file's id under
+ * an address of another author is not about it; by its `O` only when it
+ * carries neither `A` nor `a` (§6.4). A root or a reply alike;
+ * {@link isCommentOn} adds the root test.
+ */
+export function isAbout(event: Tagged, address: string): boolean {
+  const roots = anchorsOf(event)
+  if (roots.length > 0) return roots.includes(address)
+  // No root: neither `A` nor `a`, or an ignored comment, whose `O`s are none.
+  return anchorIdsOf(event).some((id) => namesById(id, address))
+}
+
+/** Whether a tag naming a file by its id (`O`, `o`) names the file at `address`. */
+const namesById = (id: string, address: string) => fileIdOf(address) === id
 
 /**
  * Is the event a **comment** on the address: a root whose thread is about it
@@ -98,14 +163,21 @@ export function anchorsOf(event: Tagged): string[] {
  */
 export function isCommentOn(event: Readable, address: string, declaredKinds: readonly number[] = [KIND_COMMENT]): boolean {
   if (isReply(event)) return false
-  if (event.kind === KIND_COMMENT) return anchorsOf(event).includes(address)
+  if (event.kind === KIND_COMMENT) return isAbout(event, address)
   if (!declaredKinds.includes(event.kind)) return false
   return event.tags.some((t) => t[0] === 'a' && t[1] === address) && !namedInBody(event.content).has(address)
 }
 
-/** Does the event name the address at all — any `a` or `A`, or a `nostr:naddr…` in its body. */
+/**
+ * Does the event name the address at all — any `a` or `A`, an `o` or `O` with
+ * the file's id (§6.4), or a `nostr:naddr…` in its body. A comment whose `A`
+ * and `O` disagree names nothing: it is ignored under every file (§6.4), and
+ * one whose `O` has this file's id under another address is about that one.
+ */
 export function referencesAddress(event: Readable, address: string): boolean {
+  if (isCrossedCommentOn(event, address)) return false
   if (event.tags.some((t) => (t[0] === 'a' || t[0] === 'A') && t[1] === address)) return true
+  if (event.tags.some((t) => (t[0] === 'o' || t[0] === 'O') && typeof t[1] === 'string' && namesById(t[1], address))) return true
   return namedInBody(event.content).has(address)
 }
 
