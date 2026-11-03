@@ -32,6 +32,7 @@ import {
   KIND_BARE_FILE,
   KIND_FOLDER_STATE,
 } from '../dist/index.js'
+import { FILE_KINDS } from '@estiva-app/protocol'
 
 const KEEPER = 'a'.repeat(64)
 const HELPER = 'c'.repeat(64)
@@ -538,11 +539,17 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(nested.find((f) => f.id === APIARY).listedIn, [ORCHARD], 'a nested Folder is still not top-level')
   })
 
-  // The relay's list read (§6.13): a filter with `fields` answers its first records and each one's current changes.
+  // The relay's list read (§6.13), as buzz answers it: a request of `fields`
+  // filters answers their first records and each one's current changes; one
+  // mixing them with plain filters, or asking it of a kind the relay does not
+  // keep as a file, is refused whole.
   const listing = (events) => async (filters) => {
-    const roots = await relay(events)(filters.filter((f) => f.fields))
-    const current = filesOf(events).filter((file) => roots.includes(file.root)).flatMap((file) => file.events.slice(1))
-    return [...(await relay(events)(filters.filter((f) => !f.fields))), ...roots, ...current]
+    const byFields = filters.filter((f) => f.fields)
+    if (byFields.length === 0) return relay(events)(filters)
+    if (byFields.length !== filters.length) throw new Error('fields: every filter must ask for "fields": "newest"')
+    if (byFields.some((f) => f.kinds.some((kind) => !FILE_KINDS.includes(kind)))) throw new Error('fields: kinds must be file kinds')
+    const roots = await relay(events)(byFields)
+    return [...roots, ...filesOf(events).filter((file) => roots.includes(file.root)).flatMap((file) => file.events.slice(1))]
   }
   const spying = (events) => {
     const asked = []
@@ -553,15 +560,16 @@ describe('a Folder is archived the way any file is', () => {
     // Every value asked for by `#a`: what reads a file's changes one by one.
     return { query, byA: () => asked.flatMap((f) => f['#a'] ?? []) }
   }
+  const drones = event({ kind: KIND_BARE_FILE, tags: [['d', 'drones'], ['title', 'Drones'], ['h', APIARY]] })
 
-  test('with the list read, a record’s archive comes with its root and no listed file is read by `#a` (ALO-5)', async () => {
-    const base = [apiary, hiveTalk, hive, topic, stateOf(APIARY, 'Apiary', both)]
+  test('with the list read, a file’s archive comes with its root, and only other kinds are read by `#a` (ALO-5)', async () => {
+    const base = [apiary, hiveTalk, hive, topic, drones, stateOf(APIARY, 'Apiary', [...both, addressOf(drones)])]
     const archived = archive(addressOf(hive), { folder: HIVE_TALK })
-    const read = spying([...base, archived])
+    const read = spying([...base, archived, archive(addressOf(topic))])
     const folders = await listFolders(read.query, { listRead: true })
-    assert.equal(folders.find((f) => f.id === HIVE_TALK).archived?.with, addressOf(hive))
+    assert.equal(folders.find((f) => f.id === HIVE_TALK).archived?.with, addressOf(hive), 'a hive is no file kind: read as before')
     assert.deepEqual(
-      read.byA().filter((value) => [addressOf(hive), addressOf(topic)].includes(value)),
+      read.byA().filter((value) => [addressOf(topic), addressOf(drones)].includes(value)),
       [],
       'no listed file’s changes are asked for',
     )
@@ -571,31 +579,31 @@ describe('a Folder is archived the way any file is', () => {
   })
 
   test('with the list read, a Folder’s files are folded from their current changes, none read by `#a` (ALO-5)', async () => {
-    const base = [hiveLog, hiveTalk, hive, spring, summer]
+    const base = [hiveLog, apiary, hiveTalk, hive, topic, drones, stateOf(APIARY, 'Apiary', [...both, addressOf(drones)])]
     const live = spying(base)
-    assert.deepEqual(titles(await resolveFolderContents(HIVE_TALK, live.query, noPeople, undefined, { listRead: true })).sort(), [
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, live.query, noPeople, undefined, { listRead: true })).sort(), [
+      'Drones',
       'North hive',
-      'Spring inspection',
-      'Summer inspection',
+      'Queens',
     ])
-    const archived = archive(addressOf(hive), { folder: HIVE_TALK })
-    const hidden = spying([...base, archived])
-    assert.deepEqual(titles(await resolveFolderContents(HIVE_TALK, hidden.query, noPeople, undefined, { listRead: true })), [])
+    const hidden = spying([...base, archive(addressOf(topic)), archive(addressOf(hive), { folder: HIVE_TALK })])
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, hidden.query, noPeople, undefined, { listRead: true })), ['Drones'])
     assert.deepEqual(
-      hidden.byA().filter((value) => [hive, spring, summer].map(addressOf).includes(value)),
+      hidden.byA().filter((value) => [addressOf(topic), addressOf(drones)].includes(value)),
       [],
       'no file’s changes are asked for',
     )
   })
 
   test('with the list read, a file’s text is unread, never the words it was created with (ALO-5)', async () => {
+    const PLAN = 30850
     const own = JSON.parse(hiveLog.content)
-    own.projections[HIVE].slots.body = { fold: 'description', tag: 'description' }
-    const log = event({ ...hiveLog, id: 'd'.repeat(64), content: JSON.stringify(own), created_at: hiveLog.created_at + 1 })
-    const seeded = event({ kind: HIVE, tags: [['d', 'south'], ['title', 'South hive'], ['description', 'First words'], ['h', HIVE_TALK]] })
-    const edited = event({ kind: 1851, tags: [['a', addressOf(seeded)], ['field', 'description'], ['value', 'Newer words'], ['h', HIVE_TALK]] })
-    const events = [log, hiveTalk, seeded, edited]
-    const bodyOf = (contents) => contents.files.find((f) => f.slots.title?.value === 'South hive').slots.body?.value
+    own.projections[PLAN] = { widget: 'card', slots: { title: { tag: 'title' }, body: { fold: 'description', tag: 'description' } } }
+    const log = event({ ...hiveLog, id: 'd'.repeat(64), tags: [...hiveLog.tags, ['k', String(PLAN)]], content: JSON.stringify(own), created_at: hiveLog.created_at + 1 })
+    const plan = event({ kind: PLAN, tags: [['d', 'season'], ['title', 'Season plan'], ['description', 'First words'], ['h', HIVE_TALK]] })
+    const edited = event({ kind: 1851, tags: [['a', addressOf(plan)], ['field', 'description'], ['value', 'Newer words'], ['h', HIVE_TALK]] })
+    const events = [log, hiveTalk, plan, edited]
+    const bodyOf = (contents) => contents.files.find((f) => f.slots.title?.value === 'Season plan').slots.body?.value
     assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, relay(events), noPeople)), 'Newer words')
     assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, listing(events), noPeople, undefined, { listRead: true })), undefined)
   })
