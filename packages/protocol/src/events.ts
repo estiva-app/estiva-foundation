@@ -568,8 +568,9 @@ export function buildJoinGroup(pubkey: string, createdAtMs: number, args: { chan
 }
 
 /**
- * kind:9022 — the signer leaves the team (§3.3). The relay refuses it on the
- * Company team (§3.4), and NIP-29's own rule keeps a sole owner in.
+ * kind:9022 — the signer leaves the team (§3.3). NIP-29's own rule keeps a
+ * sole owner in. Nobody leaves the Company team (§3.4), but the relay does not
+ * refuse that yet: an app does not offer Leave there.
  */
 export function buildLeaveGroup(pubkey: string, createdAtMs: number, args: { channelUuid: string }): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')

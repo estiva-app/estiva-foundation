@@ -279,4 +279,9 @@ describe('teamMembersOf', () => {
   it('lists nobody for a team whose roster it has not read (TEA-5)', () => {
     assert.deepEqual(teamMembersOf(TEAM, [joinTeam(BOB, T0)]), [])
   })
+
+  it('lists only this team’s people when another team’s newer roster was read with it (TEA-5)', () => {
+    const otherTeam = event({ kind: 39002, pubkey: RELAY, created_at: T0 + 500, tags: [['d', '0e5d8c1f-2b7a-4c3e-9f6d-1a2b3c4d5e6f'], ['p', CAROL]] })
+    assert.deepEqual(teamMembersOf(TEAM, [roster(T0 + 400, ALICE), createTeam(ALICE, T0), otherTeam]), [{ pubkey: ALICE, since: T0 }])
+  })
 })
