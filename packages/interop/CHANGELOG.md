@@ -21,7 +21,9 @@ relay's `files.requires_prev` (`relayFileReadsOf(info).inOrder`, passed as
   `content-format`, then each staged field's `stage`. `writeChanges` writes
   it and answers `conflict:` for every field at once: a field someone set
   since is set again after theirs, the text merges by blocks, a block both
-  changed asks and nothing is saved, and the change is sent again whole.
+  changed asks and nothing is saved, and the change is sent again whole. It
+  takes `inOrder` and sends nothing for a type the relay does not keep in
+  order: a reader before 0.76.0 folds nothing from a `set`.
 - **Comments.** `buildActionEvent` (`comment`) takes `inOrder`: a comment on a
   file of a kept type carries `O` and its type's `K` after `P`, and a
   top-level one `o` and the type's `k` after its `k`; a reply carries the
@@ -31,9 +33,10 @@ relay's `files.requires_prev` (`relayFileReadsOf(info).inOrder`, passed as
 - **Links.** `linkTagsOf` and `LinkReader.tagsFor` take `inOrder`: an address
   of a kept type earns an `o` after its `a` (a send and an edit), and a
   `part` names it by its id.
-- **Chips.** `fileCandidates` takes `inOrder` and `projectOrigin`: a project
-  picked from `[` goes in as `<projectOrigin>/project/<d>`, with no title
-  (`pickedFileUri`, new). Anything else stays `nostr:naddr…`.
+- **Chips.** `fileCandidates` takes `inOrder`: a project picked from `[` goes
+  in as `https://ship.estiva.app/project/<d>` from every app, with no title
+  (`pickedFileUri` and `SHIP_ORIGIN`, new; `projectOrigin` overrides the host).
+  Anything else stays `nostr:naddr…`.
 
 ## 0.76.0 — 2026-11-03
 

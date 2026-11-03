@@ -281,8 +281,14 @@ describe('answering conflict: — §6.2, §13.3', () => {
   })
 })
 
-const agentWriteMany = (relay: ReturnType<typeof keptRelay>, fields: { field: string; value: string; prev: string }[], now = T0 + 60_000) =>
+const agentWriteMany = (
+  relay: ReturnType<typeof keptRelay>,
+  fields: { field: string; value: string; prev: string }[],
+  now = T0 + 60_000,
+  inOrder: string[] = ['osnova.project'],
+) =>
   writeChanges({
+    inOrder,
     fields: fields.map((f) => (f.field === 'description' ? { ...f, format: 'estiva-blocks-1' } : f)),
     build: (input) => change(AGENT, input.field, input.value, input.prev, input.createdAtMs),
     sign: async (e) => sign(e),
@@ -355,6 +361,16 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     ])
     assert.equal(relay.head('status').id, sent.id)
     assert.equal(relay.head('title').id, sent.id, 'the later title stands')
+  })
+
+  it('is never sent before the relay keeps the type in order, when today\'s apps would fold nothing from it', async () => {
+    const relay = keptRelay()
+    const result = await agentWriteMany(relay, [
+      { field: 'status', value: 'done', prev: root.id },
+      { field: 'title', value: 'Launch 2', prev: root.id },
+    ], T0 + 60_000, [])
+    assert.ok(!result.ok && 'refused' in result && /writeChange/.test(result.refused))
+    assert.equal(relay.published.length, 0)
   })
 
   it('merges a text QA-1 changed in another block, inside the same several-field change', async () => {

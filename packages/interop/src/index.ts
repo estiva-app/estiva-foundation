@@ -119,6 +119,7 @@ export { createLoadQuery, type LoadQueryOptions } from './loadQuery.js'
 export {
   fileCandidates,
   pickedFileUri,
+  SHIP_ORIGIN,
   REFERENCE_FILE_TYPES,
   searchFileReferences,
   type FileCandidatesOptions,

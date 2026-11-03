@@ -23,6 +23,7 @@
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/merging-two-changes-to-one-text-never-loses-words.md
  */
 import {
+  BASE_TYPE_OF_KIND,
   CONTENT_FORMAT_TAG,
   mergeTexts,
   type MergeAsk,
@@ -427,6 +428,13 @@ export interface FieldWrite {
 /** What {@link writeChanges} is handed: {@link WriteChangeArgs}, for several fields of one file. */
 export interface WriteChangesArgs extends Omit<WriteChangeArgs, 'field' | 'value' | 'format' | 'prev' | 'build'> {
   fields: readonly FieldWrite[]
+  /**
+   * The types the relay keeps in order (`RelayFileReads.inOrder`). A change
+   * setting several fields is sent only for one of them: a reader older than
+   * interop 0.76.0 folds nothing from a `set`, and the switch is what says
+   * every app reads it (record one-change-may-set-several-fields…).
+   */
+  inOrder: readonly string[]
   /** The unsigned one-field change for one field: `buildActionEvent` bound to that field's action. */
   build: (input: FieldWrite & { createdAtMs: number }) => UnsignedEvent | string
 }
@@ -457,6 +465,10 @@ export async function writeChanges(args: WriteChangesArgs): Promise<WriteChangeR
     }
     const change = combineChanges(built)
     if (typeof change === 'string') return { ok: false, refused: change }
+    const type = BASE_TYPE_OF_KIND[change.tags[0][1].split(':').map(Number)[0]]
+    if (!type || !args.inOrder.includes(type)) {
+      return { ok: false, refused: 'Several fields go in one change only once the relay keeps this type in order: write each with writeChange.' }
+    }
     const signed = await args.sign(change)
     const answer = await args.publish(signed)
     if (answer.ok) return { ok: true, id: answer.eventId ?? signed.id, event: signed, ...(mergedOnto ? { mergedOnto } : {}) }
