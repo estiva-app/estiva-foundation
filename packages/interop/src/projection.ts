@@ -386,7 +386,16 @@ export async function conversationsOf(
   query: QueryFn,
   /** Warm from the read that produced these files; see {@link ProjectionCache}. */
   cache?: ProjectionCache,
-  options: { replies?: boolean } = {},
+  options: {
+    replies?: boolean
+    /**
+     * With `replies`, the second each file's replies are read from, or `null`
+     * to read none for it: a list that judges a dot on only some files, and
+     * knows no reply before a second can be unread, sends a smaller `#A`
+     * filter (SHIPS-2). Undefined reads every file's, unbounded.
+     */
+    repliesSince?: (address: string) => number | null
+  } = {},
 ): Promise<Record<string, ConversationMessage[]>> {
   const addressed = files.flatMap((file) => {
     if (!file.address) return []
@@ -434,11 +443,12 @@ export async function conversationsOf(
   const conversations: Record<string, ConversationMessage[]> = {}
   for (const a of asked) conversations[a.ref] = []
 
-  const filters: Record<string, unknown>[] = asked.flatMap((a) =>
-    options.replies
-      ? [a.filter, { kinds: [KIND_COMMENT], '#A': [a.address], limit: CONVERSATION_LIMIT }]
-      : [a.filter],
-  )
+  const filters: Record<string, unknown>[] = asked.flatMap((a) => {
+    if (!options.replies) return [a.filter]
+    const since = options.repliesSince?.(a.address)
+    if (since === null) return [a.filter]
+    return [a.filter, { kinds: [KIND_COMMENT], '#A': [a.address], limit: CONVERSATION_LIMIT, ...(since === undefined ? {} : { since }) }]
+  })
   /** The file in this list an event is a comment on (§6.4), by every `a` it carries. */
   const commentedFile = (event: SignedEvent): string | undefined =>
     event.tags
@@ -3823,6 +3833,8 @@ export async function resolveForeignRoots(
   references: readonly string[],
   query: QueryFn,
   cache?: ProjectionCache,
+  /** `archivedWith` marks a file archived with an archived parent, as {@link resolveForeignObject}'s does (SHIPS-2). */
+  options: Pick<ArchiveReadOptions, 'archivedWith'> = {},
 ): Promise<ForeignObject[]> {
   const pointers = new Map<string, AddressPointer>()
   for (const reference of references) {
@@ -3856,7 +3868,15 @@ export async function resolveForeignRoots(
   }
   if (filters.length === 0) return []
   const events = await queryChunked(filters, query)
-  return projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  const objects = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  if (options.archivedWith) {
+    const manifestOf = (object: ForeignObject) => {
+      const pointer = object.address ? addressPointerOf(object.address) : undefined
+      return pointer ? manifests.get(manifestKeyOf(pointer))?.manifest : undefined
+    }
+    await markArchivedParents(objects.map((object) => ({ object, manifest: manifestOf(object) })), query, cache)
+  }
+  return objects
 }
 
 /**
