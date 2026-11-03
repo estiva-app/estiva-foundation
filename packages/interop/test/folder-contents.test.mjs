@@ -129,6 +129,70 @@ describe('a folder lists files from different apps as peers', () => {
   })
 })
 
+describe('a folder lists a file by its address or by its id, once (SPEC §3.3, C43)', () => {
+  const byTags = (tags) => event({ kind: KIND_FOLDER_STATE, pubkey: RELAY, tags: [['d', FOLDER], ...tags] })
+  // A file's id is a lowercase UUID, and only the file kinds hold one (§6.4): a project and a document here.
+  const PROJECT = 30850
+  const DOCUMENT = 30842
+  const WEIR = '0c1d2e3f-0000-4000-8000-00000000000a'
+  const SPRING = '0c1d2e3f-0000-4000-8000-00000000000b'
+  const NOWHERE = '0c1d2e3f-0000-4000-8000-00000000000c'
+  const manifestOf = (pubkey, kind, name) =>
+    event({ kind: 31990, pubkey, tags: [['d', name], ['k', String(kind)]], content: JSON.stringify({ name, projections: { [kind]: { widget: 'card', slots: { title: { tag: 'title' } } } } }) })
+  const manifests = [manifestOf(RINGER, PROJECT, 'Projects'), manifestOf(TIDES, DOCUMENT, 'Documents')]
+  const weir = event({ kind: PROJECT, pubkey: RINGER, tags: [['d', WEIR], ['title', 'Weir colony'], ['h', FOLDER]] })
+  const spring = event({ kind: DOCUMENT, pubkey: TIDES, tags: [['d', SPRING], ['title', 'Spring tides'], ['h', FOLDER]] })
+  const drawn = async (events) => (await resolveFolderContents(FOLDER, relay([...manifests, channel, ...events]), async () => ({}))).files.map((f) => f.slots.title?.value)
+
+  test('an `o` entry draws the file its id names, in the state’s order', async () => {
+    assert.deepEqual(await drawn([weir, spring, byTags([['o', SPRING], ['a', addressOf(weir)]])]), ['Spring tides', 'Weir colony'])
+  })
+
+  test('a file named by its address and by its id is drawn once, at its first entry', async () => {
+    for (const tags of [
+      [['a', addressOf(weir)], ['a', addressOf(spring)], ['o', WEIR]],
+      [['o', WEIR], ['a', addressOf(spring)], ['a', addressOf(weir)]],
+    ]) {
+      assert.deepEqual(await drawn([weir, spring, byTags(tags)]), ['Weir colony', 'Spring tides'], JSON.stringify(tags))
+    }
+  })
+
+  test('an address with a file’s id and another author or kind is another entry: the file is still drawn, beside it', async () => {
+    for (const [tags, want] of [
+      [[['a', `${DOCUMENT}:${TIDES}:${WEIR}`], ['o', WEIR]], ['Weir colony']],
+      [[['o', WEIR], ['a', `${PROJECT}:${TIDES}:${WEIR}`]], ['Weir colony']],
+      [[['a', `${COLONY}:${RINGER}:${WEIR}`], ['o', WEIR]], ['Weir colony']],
+    ]) {
+      assert.deepEqual(await drawn([weir, spring, byTags(tags)]), want, JSON.stringify(tags))
+    }
+  })
+
+  test('an id no file answers, or two authors answer, is dropped', async () => {
+    const twin = event({ kind: PROJECT, pubkey: TIDES, tags: [['d', SPRING], ['title', 'Imposter'], ['h', FOLDER]] })
+    assert.deepEqual(await drawn([weir, spring, twin, byTags([['o', NOWHERE], ['o', SPRING], ['o', WEIR]])]), ['Weir colony'])
+  })
+
+  test('an `o` that is not a file’s id names nothing, even where an event holds it as its `d`', async () => {
+    assert.deepEqual(await drawn([ringingManifest, colony, byTags([['a', addressOf(colony)]])]), ['Weir colony'], 'control: listed by address it is drawn')
+    assert.deepEqual(await drawn([ringingManifest, colony, byTags([['o', 'weir']])]), [])
+  })
+
+  test('an event of another kind holding a listed file’s id neither takes the file’s place nor drops it', async () => {
+    // Anyone can write a 30023, or an app record, with any `d`: the relay keeps an id unique across the file kinds alone.
+    const article = event({ kind: 30023, pubkey: TIDES, tags: [['d', WEIR], ['title', 'Squatter'], ['h', FOLDER]] })
+    const record = event({ kind: COLONY, pubkey: TIDES, tags: [['d', NOWHERE], ['title', 'Squatter'], ['h', FOLDER]] })
+    assert.deepEqual(await drawn([weir, article, record, byTags([['o', WEIR], ['o', NOWHERE]])]), ['Weir colony'])
+  })
+
+  test('the folder list says which files it lists by address and by id, and lists a file planted beside under its own id', async () => {
+    const planted = `${DOCUMENT}:${TIDES}:${SPRING}`
+    const [summary] = await listFolders(relay([channel, byTags([['a', addressOf(weir)], ['o', WEIR], ['a', planted], ['o', SPRING], ['o', 'weir']])]))
+    assert.deepEqual(summary.addresses, [addressOf(weir), planted])
+    // SPRING, listed by id after an address of another author with its id, is still listed.
+    assert.deepEqual(summary.ids, [WEIR, SPRING])
+  })
+})
+
 describe('what is not a file', () => {
   test('a message is conversation, not contents — it has no address', async () => {
     const message = event({ kind: SIGHTING, pubkey: RINGER, tags: [['h', FOLDER]], content: 'a chiffchaff' })
@@ -408,6 +472,28 @@ describe('listFolders: a record’s own channel is listed wherever the record is
     assert.deepEqual(find(folders, COLONY_TALK).listedIn, [FOLDER])
     assert.deepEqual(find(folders, READING_TALK).listedIn, [FOLDER])
     assert.equal(find(folders, FOLDER).listedIn, undefined, 'the container was placed inside something')
+  })
+
+  // Listed by id, a record is a file kind with a UUID `d` (§6.4): a named first record and a document here.
+  const DUNLIN = '0c1d2e3f-0000-4000-8000-0000000000d1'
+  const NEAP = '0c1d2e3f-0000-4000-8000-0000000000d2'
+  const dunlinFile = event({ kind: 30852, pubkey: RINGER, tags: [['d', DUNLIN], ['k', 'colony'], ['buzz-channel', COLONY_TALK]] })
+  const neapFile = event({ kind: 30842, pubkey: TIDES, tags: [['d', NEAP], ['title', 'Neap tides'], ['h', READING_TALK]] })
+  const listsById = (...ids) => event({ kind: KIND_FOLDER_STATE, pubkey: RELAY, tags: [['d', FOLDER], ...ids.map((id) => ['o', id])] })
+
+  test('a record listed by its id places its channel as one listed by address does (SPEC §3.3)', async () => {
+    const query = relay([channel, talk(COLONY_TALK, 'Dunlin talk'), talk(READING_TALK, 'Neap talk'), dunlinFile, neapFile, listsById(DUNLIN, NEAP)])
+    const folders = await listFolders(query)
+    assert.deepEqual(find(folders, COLONY_TALK).listedIn, [FOLDER])
+    assert.deepEqual(find(folders, READING_TALK).listedIn, [FOLDER])
+  })
+
+  test('an event of another kind holding a listed id places none of its channels, even when the file itself is out of reach', async () => {
+    // The real root of NEAP is unreadable here; a 30023 with its `d` must not stand in for it.
+    const squatter = event({ kind: 30023, pubkey: TIDES, tags: [['d', NEAP], ['title', 'Squatter'], ['h', OTHER]] })
+    const query = relay([channel, talk(OTHER, 'Elsewhere'), squatter, listsById(NEAP)])
+    const folders = await listFolders(query)
+    assert.equal(find(folders, OTHER).listedIn, undefined)
   })
 
   test('a record listed in two folders places its channel in both', async () => {

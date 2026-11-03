@@ -216,6 +216,7 @@ export {
 } from './links.js'
 export {
   mentionedInFilter,
+  mentionedInFilters,
   mentionedInOf,
   readMentionedIn,
   MENTIONED_IN_LIMIT,

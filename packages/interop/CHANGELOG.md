@@ -6,6 +6,42 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.76.0 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing written changes. Reading: a file named by
+its id, and a change setting several fields** (ALO-4; SPEC §3.3, §6.2, §6.4,
+C37, C43, C44, C47). Readers first: no app writes these forms until its type
+switches. Needs protocol 0.50.0 and conversation 0.26.0.
+
+- **Folder listings by id.** A Folder state's `o` entry lists the file whose
+  one file kind (protocol's `FILE_KINDS`) and author hold that `d`; an event
+  of any other kind holding it is never asked, and an `o` that is not a
+  lowercase UUID lists nothing. A file listed by its address and by its id is
+  one entry, at the first. `resolveFolderContents` and `listFolders`'
+  record-channel placement resolve the ids in one read, made only when a
+  state has an `o` entry. `FolderSummary.ids` (and `FolderRef.ids`) holds the
+  files listed by id; `listsFile` (new) asks whether a Folder lists a file in
+  either form, and `planMoveFromFolders` and the archive check read it.
+  `listedEntriesOf` (new) reads a state's entries.
+- **`set`.** The fold (`projectEvents`, `resolveFolderContents`, every
+  object read) applies each `["set", field, value, prev]` at its change's time;
+  an `archived` set archives. A change whose `O` is not its file's id folds
+  nothing into it.
+- **Comments and mentions.** `conversationsOf`, `planObject` and
+  `resolveForeignObject` drop a comment whose `A` and `O` disagree (through
+  conversation 0.26.0). `readMentionedIn` also asks `#o` with the file's id
+  (`mentionedInFilters`, new: one more filter in the same request), and a
+  message pointing at the file by `o` alone lists under it. A crossed comment
+  lists under no file's Mentioned in, whatever its words link.
+- **One listing entry per file, at its full address** (§3.3, 2026-11-03).
+  `listedEntriesOf` takes the addresses ids resolved to (required): an `a`
+  and an `o` fold only when the `a` is that address, so one with the id and
+  another kind or author is drawn beside the file, never in its place.
+  `listFolders` resolves nothing and folds nothing: a Folder's `addresses`
+  and `ids` keep both forms, and `listsFile` reads either. A comment whose
+  `O` has a file's id under another author's address is not in that file's
+  Mentioned in (`isCrossedCommentOn`, conversation 0.26.0).
+
 ## 0.75.0 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing new; reads only** (SHIPS-2). Needs

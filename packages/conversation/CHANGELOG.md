@@ -6,6 +6,37 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.26.0 — 2026-11-03
+
+**SPEC: §6.4 "A comment in both forms", §6.2, §11.1 and §11.8 — a file named
+by its id is read beside its address** (ALO-4; C44, C45). Nothing this
+package writes changes; readers first, so every app reads these forms before
+any app writes them. Needs protocol 0.50.0.
+
+- **Comments.** A `kind:1111` whose root (its `A`, or its `a` when it has no
+  `A`) and `O` name different files is about neither: `anchorsOf` and
+  `anchorIdsOf` return nothing for it, so it lists under no file and is in no
+  file's stream. `isCrossedComment` (new) says so. `isAbout` (new) says whether a
+  comment or a reply is about a file by its `A`, or by its `O` where it has no
+  `A`; `isCommentOn` and `streamOf` read it. `referencesAddress` counts an `o`
+  or `O` with the file's id, and a crossed comment names no file, so
+  `strengthOn` and `threadStrength` make it no mention either.
+- **Read state.** A blob keeps a `file:<d>` key (a lowercase UUID; any other
+  `file:` key is dropped). A file's marker is the later of its address key and
+  its `file:<d>` key (`streamMarkerOf`, new), wherever `isUnread` and
+  `effectiveReadAt` read a file's stream. `fileIdContext` writes the key.
+- **Membership.** A change counts for a file when its first `a` names it, the
+  one the relay checks it against, and any `O` it carries is the file's id. A
+  change with no `a` (the relay checks it against nothing), one whose first
+  `a` is another file, and one whose `O` names another file add nobody. A several-field change (`set`) places the people its `p` names when
+  a field it sets has a value; it never carries a `member:<P>`.
+- **An address and an id are one file only at the full address** (§6.4,
+  2026-11-03). A comment is about its `A`, or its `a` when it has no `A`; its
+  `O` decides only when it has neither. One with two `O`s or two `A`s, or
+  whose root is not a file kind's address with the `O`'s id, is ignored. An
+  `O` with a file's id under another author's address names that file
+  nothing: not a comment, not a mention, not in its stream.
+
 ## 0.25.0 — 2026-11-03
 
 **SPEC: none changed.** Peek's rule for a list row's dot moves here, so Ship

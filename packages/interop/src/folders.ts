@@ -50,6 +50,7 @@ import {
   buildDeleteChannel,
   buildEditChannelMetadata,
   buildFolderCommand,
+  isFileId,
   KIND,
   type ChannelVisibility,
   type UnsignedEvent,
@@ -77,6 +78,8 @@ export interface FolderRef {
    * file even when the file's row did not resolve.
    */
   addresses?: readonly string[]
+  /** `FolderSummary.ids`: the files its state lists by id. Read with {@link listsFile}. */
+  ids?: readonly string[]
 }
 
 /**
@@ -228,6 +231,61 @@ export function planArchiveFolder(
 /** The file's id, the `d` of an address `<kind>:<pubkey>:<d>`; undefined for anything else. */
 export function identifierOf(address: string): string | undefined {
   return /^\d+:[0-9a-f]{64}:([^]*)$/.exec(address)?.[1]
+}
+
+/**
+ * A Folder state's entries (SPEC §3.3), each file once, at its first entry: an
+ * `a` by its address, an `o` by its id. A file's address and its id are one
+ * entry only when the address is the full address of the file holding the id
+ * (its kind, its first record's author, the id), so an `o` and an `a` with
+ * that `d` fold into the first of them only then.
+ *
+ * `holders` is each id's address as a reader resolved it (`addressesOfIds` in
+ * projection): an `a` folds with an `o` only when it is that address, so one
+ * with another kind or author is drawn beside the file. A reader that has
+ * not resolved them passes an empty map, which folds nothing: both entries
+ * stay, as §3.3 says of a reader that cannot tell.
+ */
+export function listedEntriesOf(
+  state: { tags: string[][] },
+  holders: ReadonlyMap<string, string>,
+): { addresses: string[]; ids: string[]; order: string[] } {
+  const addresses: string[] = []
+  const ids: string[] = []
+  const order: string[] = []
+  const seenAddress = new Set<string>()
+  const seenId = new Set<string>()
+  const idsOfAddresses = new Set<string>()
+  const holds = (address: string, id: string) => holders.get(id)?.toLowerCase() === address.toLowerCase()
+  for (const [name, value] of state.tags) {
+    if (!value) continue
+    if (name === 'a') {
+      const id = identifierOf(value)
+      const folded = id !== undefined && seenId.has(id) && holds(value, id)
+      if (seenAddress.has(value) || folded) continue
+      seenAddress.add(value)
+      if (id !== undefined && holds(value, id)) idsOfAddresses.add(id)
+      addresses.push(value)
+      order.push(value)
+    } else if (name === 'o') {
+      // An `o` is a file's id; any other value names no file (§3.3).
+      if (!isFileId(value) || seenId.has(value) || idsOfAddresses.has(value)) continue
+      seenId.add(value)
+      ids.push(value)
+      order.push(value)
+    }
+  }
+  return { addresses, ids, order }
+}
+
+/**
+ * Whether a Folder lists the file at `address`, by its address or by its id
+ * (`FolderSummary.addresses` and `.ids`, SPEC §3.3).
+ */
+export function listsFile(folder: { addresses?: readonly string[]; ids?: readonly string[] }, address: string): boolean {
+  if (folder.addresses?.includes(address)) return true
+  const id = identifierOf(address)
+  return id !== undefined && !!folder.ids?.includes(id)
 }
 
 /**
@@ -422,7 +480,7 @@ export function planMoveFromFolders(
   for (const from of sources) {
     const listing = args.listings.get(from.id) ?? null
     const unresolved =
-      !!listing && !!file.address && !!from.addresses?.includes(file.address) && !listing.some((candidate) => candidate.address === file.address)
+      !!listing && !!file.address && listsFile(from, file.address) && !listing.some((candidate) => candidate.address === file.address)
     const plan = planMoveFile(pubkey, createdAtMs, {
       file,
       from,

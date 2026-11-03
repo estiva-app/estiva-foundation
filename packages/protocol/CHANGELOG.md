@@ -4,6 +4,27 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.50.0 — 2026-11-02
+
+**Wire: nothing written changes. Reading: a `part` or an `embed` may name a
+file by its id** (ALO-4; SPEC §13.6.1, §13.6.2, C46; record
+[a-file-is-named-by-its-id-in-a-capital-and-small-tag](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md)).
+Readers first: no app writes these forms until its type switches.
+
+- `isFileId`, `fileIdOf`, `fileKeyOf`, `sameFile`: a file's id is a lowercase
+  UUID, and a file's address and its id are one file. `FILE_KINDS`: the kinds
+  whose `d` is a file's id (30840, 30842, 30850, 30851, 30852), the only ones
+  the relay keeps an id unique across, so a lookup by id names them.
+- `partsOf` reads a `part` whose value is a file's id, and keeps one part per
+  file across its address and its id (the first). `partsNamedIn` gives a part
+  by id the address the body names its file by, so an app resolves it as it
+  does the link, and leaves out one whose file the body does not name.
+- `embedsOf` and `embedTagsOf` read an `embed` by id, one per file. `cardsIn`,
+  `lineDrawOf`, `defaultCardOf` and `withCard` count an address and an id of
+  one file as one card: an `embed` by id draws under the address the body
+  names (returned with that address as its value), `["embed", <id>, "none"]`
+  removes the card the address drew, and a `part` by id keeps the card off.
+
 ## 0.49.0 — 2026-11-02
 
 **Wire behaviour: a new Folder command, `op: move`** (TEA-3; SPEC §3.3;

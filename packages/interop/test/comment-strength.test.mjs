@@ -129,3 +129,17 @@ test('a reply carries the root\'s `A` and stays in the conversation', async () =
   const counts = await conversationCountsOf([{ ref: THIS, address: THIS }], relay([manifest, issue, comment, reply]))
   assert.equal(counts[THIS], 2)
 })
+
+test('a comment in both forms lists under its file, and one whose A and O disagree under neither (SPEC §6.4, C44)', async () => {
+  const ID = '15e9b50a-825a-4537-8b4a-df46efb9c7e4'
+  const P = `${ISSUE}:${AUTHOR}:${ID}`
+  const file = event({ kind: ISSUE, tags: [['d', ID], ['title', 'By id'], ['h', FOLDER]] })
+  const both = event({
+    kind: 1111,
+    tags: [['A', P], ['K', String(ISSUE)], ['P', AUTHOR], ['O', ID], ['K', 'osnova.project'], ['a', P], ['k', String(ISSUE)], ['o', ID], ['k', 'osnova.project'], ['h', FOLDER]],
+    content: 'both forms',
+  })
+  const crossed = event({ kind: 1111, tags: [['A', P], ['O', '0b7e2a4c-1111-4c3e-9d2f-2a1f0c9e8b7d'], ['a', P], ['h', FOLDER]], content: 'crossed' })
+  const conversations = await conversationsOf([{ ref: P, address: P }], relay([manifest, file, both, crossed]))
+  assert.deepEqual(conversations[P].map((m) => m.id), [both.id])
+})

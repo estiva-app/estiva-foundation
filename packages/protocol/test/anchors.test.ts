@@ -163,6 +163,14 @@ describe('a message pointing at a block of another object — §13.6.1', () => {
     assert.equal(blockAnchorOf(event), 'mine')
     assert.deepEqual(partsOf(event), [{ address: issue, block: 'theirs' }])
   })
+
+  it('reads a part by the file’s id, and one part per file across its address and id (§13.6.1, C46)', () => {
+    const id = 'f78c3b96-2a3b-4d92-910a-ac25aba672cd'
+    const address = `30851:${'b'.repeat(64)}:${id}`
+    assert.deepEqual(partsOf({ tags: [partTag(id, 'p1'), partTag(address, 'p2')] }), [{ address: id, block: 'p1' }])
+    assert.deepEqual(partsOf({ tags: [partTag(address, 'p2'), partTag(id, 'p1')] }), [{ address, block: 'p2' }])
+    assert.deepEqual(partsOf({ tags: [partTag('not-an-id', 'p1')] }), [])
+  })
 })
 
 describe('the five states of a part, none collapsed', () => {

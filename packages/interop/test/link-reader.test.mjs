@@ -63,7 +63,7 @@ function relayOf(events) {
           (e) =>
             (!f.kinds || f.kinds.includes(e.kind)) &&
             (!f.ids || f.ids.includes(e.id)) &&
-            ['d', 'a', 'e'].every((name) => !f[`#${name}`] || e.tags.some((t) => t[0] === name && f[`#${name}`].includes(t[1]))),
+            ['d', 'a', 'e', 'o'].every((name) => !f[`#${name}`] || e.tags.some((t) => t[0] === name && f[`#${name}`].includes(t[1]))),
         )
         return f.limit ? hits.slice(0, f.limit) : hits
       })
@@ -209,6 +209,32 @@ describe('a file lists a comment while its latest words link it', () => {
     const relay = relayOf([...issues, comment])
     const links = linkReader({ query: (f) => (f[0]['#d'] ? Promise.reject(new Error('429')) : relay.query(f)), retries: 0 })
     assert.deepEqual((await readMentionedIn(relay.query, ISSUE1, { links })).map((m) => m.event.id), [comment.id])
+  })
+
+  test('a comment naming the file by its id alone, through a picked link with no title (C47’s `/project/<d>` shape, on an issue route), lists under it (§6.4, §13.1)', async () => {
+    const picked = `https://ship.estiva.app/issue/${D1}`
+    const comment = event(1111, WRITER, [...page(PAGE), ['o', D1]], `look: ${picked}`)
+    const relay = relayOf([...issues, comment])
+    const links = linkReader({ query: relay.query })
+    assert.deepEqual((await readMentionedIn(relay.query, ISSUE1, { links })).map((m) => m.event.id), [comment.id])
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE2, { links }), [])
+  })
+
+  test('a comment whose root and O name different files lists under neither, whatever its words link (§6.4)', async () => {
+    const crossed = event(1111, WRITER, [...page(ISSUE1), ['O', D2], ['o', D2]], `look: ${URL1} and ${URL2}`)
+    const relay = relayOf([...issues, crossed])
+    const links = linkReader({ query: relay.query })
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE1, { links }), [])
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE2, { links }), [])
+  })
+
+  test('a comment whose O has the file’s id under another author’s address lists under neither, whatever its words link (§6.4)', async () => {
+    const elsewhere = `30851:${OTHER}:${D1}`
+    const crossed = event(1111, WRITER, [...page(elsewhere), ['O', D1], ['o', D1]], `look: ${URL1}`)
+    const relay = relayOf([...issues, crossed])
+    const links = linkReader({ query: relay.query })
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE1, { links }), [])
+    assert.deepEqual(await readMentionedIn(relay.query, ISSUE1), [])
   })
 })
 

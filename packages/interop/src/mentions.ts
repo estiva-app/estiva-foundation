@@ -15,8 +15,8 @@
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-edit-says-what-the-message-links-now.md
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/activity-lists-only-mentions-from-elsewhere.md
  */
-import { anchorsOf, editsByTarget, editTargetOf, isCommentOn, KIND_COMMENT, KIND_EDIT, KIND_MESSAGE } from '@estiva-app/conversation'
-import { toRenderTree, valuesIn, type LinkResolver, type SignedEvent } from '@estiva-app/protocol'
+import { editsByTarget, editTargetOf, isAbout, isCommentOn, isCrossedCommentOn, KIND_COMMENT, KIND_EDIT, KIND_MESSAGE } from '@estiva-app/conversation'
+import { fileIdOf, toRenderTree, valuesIn, type LinkResolver, type SignedEvent } from '@estiva-app/protocol'
 import { linksIn, within, MAX_LINKS_ASKED, type LinkReader } from './links.js'
 import type { QueryFn } from './projection.js'
 
@@ -50,10 +50,24 @@ export const MAX_MENTIONED_IN_LINKS_ASKED = 64
  */
 const linksNaming = (tree: ReturnType<typeof toRenderTree>) => linksIn(tree).slice(0, MAX_LINKS_ASKED)
 
-/** The one filter for the candidates: every message, comment and edit pointing at the file. */
+/** The filter for the candidates pointing at the file by its address: every message, comment and edit with its `a`. */
 export function mentionedInFilter(address: string, limit = MENTIONED_IN_LIMIT): Record<string, unknown> {
   return { kinds: [KIND_COMMENT, KIND_MESSAGE, KIND_EDIT], '#a': [address], limit }
 }
+
+/**
+ * Every filter for the candidates: {@link mentionedInFilter}, and the one
+ * asking by the file's id, since a mention names a file by `o` alone once its
+ * type's apps name it by id (§6.4). One request either way.
+ */
+export function mentionedInFilters(address: string, limit = MENTIONED_IN_LIMIT): Record<string, unknown>[] {
+  const id = fileIdOf(address)
+  return [mentionedInFilter(address, limit), ...(id ? [{ kinds: [KIND_COMMENT, KIND_MESSAGE, KIND_EDIT], '#o': [id], limit }] : [])]
+}
+
+/** Whether a tag points at the file: an `a` with its address, or an `o` with its id. */
+const pointsAt = (t: readonly string[], address: string, id: string | undefined) =>
+  (t[0] === 'a' && t[1] === address) || (id !== undefined && t[0] === 'o' && t[1] === id)
 
 const isMessage = (event: SignedEvent) => event.kind === KIND_COMMENT || event.kind === KIND_MESSAGE
 
@@ -79,8 +93,9 @@ export function mentionedInOf(
   for (const event of events) if (isMessage(event)) messages.set(event.id.toLowerCase(), event)
   const edits = editsByTarget(events)
   const pointed = new Set<string>()
+  const fileId = fileIdOf(address)
   for (const event of events) {
-    if (!event.tags.some((t) => t[0] === 'a' && t[1] === address)) continue
+    if (!event.tags.some((t) => pointsAt(t, address, fileId))) continue
     const id = event.kind === KIND_EDIT ? editTargetOf(event) : isMessage(event) ? event.id.toLowerCase() : undefined
     if (id) pointed.add(id)
   }
@@ -88,13 +103,14 @@ export function mentionedInOf(
   const out: MentionedIn[] = []
   for (const id of pointed) {
     const event = messages.get(id)
-    if (!event) continue
-    if (anchorsOf(event).includes(address) || isCommentOn(event, address, commentKinds)) continue
+    // A comment whose root and `O` disagree is ignored under every file (§6.4), its body's links included.
+    if (!event || isCrossedCommentOn(event, address)) continue
+    if ((event.kind === KIND_COMMENT && isAbout(event, address)) || isCommentOn(event, address, commentKinds)) continue
     // An edit by anyone but the author is not the message's (the relay refuses one; a reader does not trust that).
     const edit = edits.get(id)?.filter((e) => e.pubkey === event.pubkey).at(-1)
     const body = edit?.content ?? event.content
     const tree = toRenderTree(body, 'marker')
-    const pointsNow = (edit ?? event).tags.some((t) => t[0] === 'a' && t[1] === address)
+    const pointsNow = (edit ?? event).tags.some((t) => pointsAt(t, address, fileId))
     const first = linksNaming(tree)
     const named = new Set(first)
     const resolve: LinkResolver | undefined = resolveLink && ((url) => (named.has(url) ? resolveLink(url) : undefined))
@@ -116,7 +132,7 @@ export async function readMentionedIn(
   address: string,
   options: { links?: LinkReader; limit?: number; waitMs?: number; commentKinds?: readonly number[] } = {},
 ): Promise<MentionedIn[]> {
-  const candidates = await query([mentionedInFilter(address, options.limit)])
+  const candidates = await query(mentionedInFilters(address, options.limit))
   const held = new Set(candidates.filter(isMessage).map((e) => e.id.toLowerCase()))
   const missing = [...new Set(candidates.filter((e) => e.kind === KIND_EDIT).map(editTargetOf))].filter((id): id is string => !!id && !held.has(id))
   const targets = missing.length ? await query([{ ids: missing, kinds: [KIND_COMMENT, KIND_MESSAGE] }]) : []

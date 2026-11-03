@@ -18,6 +18,7 @@
  */
 import { type Block, type BlockDocument, findBlock, parseBlockDocument } from './blocks.js'
 import type { ContentFormat } from './render.js'
+import { fileKeyOf, isFileId } from './fileId.js'
 
 /** The tag SPEC §13.6 defines. */
 export const BLOCK_ANCHOR_TAG = 'block'
@@ -103,7 +104,10 @@ export const PART_TAG = 'part'
 
 /** One `part` tag, read. */
 export interface PartPointer {
-  /** `kind:pubkey:d` — the object the block is in. */
+  /**
+   * `kind:pubkey:d` — the object the block is in — or, once its type's apps
+   * name it by its id, that `<d>` alone (§13.6.1; compare with `sameFile`).
+   */
   address: string
   /** §13.3's block id within that object's body. */
   block: string
@@ -133,8 +137,11 @@ export function partsOf(event: { tags: string[][] }): PartPointer[] {
   for (const tag of event.tags) {
     if (tag[0] !== PART_TAG) continue
     const [, address, block] = tag
-    if (!address || !block || !isAddress(address) || !BLOCK_ID.test(block) || seen.has(address)) continue
-    seen.add(address)
+    if (!address || !block || !(isAddress(address) || isFileId(address)) || !BLOCK_ID.test(block)) continue
+    // One part per file: its address and its id are one file (§13.6.1).
+    const key = fileKeyOf(address)
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push({ address, block })
   }
   return out
