@@ -30,6 +30,7 @@ import {
   type ProjectionCache,
   type QueryFn,
 } from './projection.js'
+import { fileIdFormOf } from '@estiva-app/protocol'
 
 const KIND_PROJECT = 30850
 const KIND_ISSUE = 30851
@@ -76,6 +77,22 @@ export interface FileCandidatesOptions {
   cache?: ProjectionCache
   /** When each address was last written or read, in seconds — newer first within a tier. */
   at?: ReadonlyMap<string, number>
+  /** The types the relay keeps in order (`RelayFileReads.inOrder`): a project of one is picked as its link. */
+  inOrder?: readonly string[]
+  /** The host Ship serves projects from, such as `https://ship.estiva.app`: a picked project's link is `<it>/project/<d>`. */
+  projectOrigin?: string
+}
+
+/**
+ * How a picked file goes in the text (§13.1): a project whose type the relay
+ * keeps in order as Ship's path link with its id and no title, which every
+ * app's host answers; anything else as `nostr:naddr…`.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md
+ */
+export function pickedFileUri(address: string, { inOrder = [], projectOrigin }: Pick<FileCandidatesOptions, 'inOrder' | 'projectOrigin'> = {}): string {
+  const byId = projectOrigin ? fileIdFormOf(inOrder, address) : undefined
+  return byId?.type === 'osnova.project' ? `${projectOrigin!.replace(/\/+$/, '')}/project/${byId.id}` : fileReference(address)
 }
 
 /**
@@ -93,7 +110,7 @@ export async function fileCandidates(
   objects: readonly (ForeignObject | null | undefined)[],
   tier: number,
   query: QueryFn,
-  { cache, at }: FileCandidatesOptions = {},
+  { cache, at, inOrder, projectOrigin }: FileCandidatesOptions = {},
 ): Promise<ReferenceCandidate[]> {
   const files = objects.filter(offerable)
   const parents = new Map<string, ForeignObject>()
@@ -111,7 +128,7 @@ export async function fileCandidates(
     const summary = summaryOf(o)
     return {
       id: o.address,
-      uri: fileReference(o.address),
+      uri: pickedFileUri(o.address, { inOrder, projectOrigin }),
       type: typeOf(o.kind)!,
       kind: o.kind,
       title: o.slots.title!.value,

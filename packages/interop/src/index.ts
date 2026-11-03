@@ -118,6 +118,7 @@ export { createLoadQuery, type LoadQueryOptions } from './loadQuery.js'
  */
 export {
   fileCandidates,
+  pickedFileUri,
   REFERENCE_FILE_TYPES,
   searchFileReferences,
   type FileCandidatesOptions,
@@ -189,11 +190,15 @@ export {
   openFile,
   textOf,
   conflictOf,
+  combineChanges,
   writeChange,
+  writeChanges,
   type CurrentField,
   type FileFields,
   type Conflict,
+  type FieldWrite,
   type WriteChangeArgs,
+  type WriteChangesArgs,
   type WriteChangeResult,
 } from './fields.js'
 

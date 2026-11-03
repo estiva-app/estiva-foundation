@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING } from '@estiva-app/protocol'
+import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -228,7 +228,7 @@ export const KIND_MESSAGE = 9
 const KIND_DELETION = 5
 
 /** The tags a comment's body earns for what it names: `ActionEventArgs.linkTags`. */
-const LINK_TAG_NAMES = new Set(['a', 'q', 'part'])
+const LINK_TAG_NAMES = new Set(['a', 'o', 'q', 'part'])
 
 /**
  * Every kind an app's comments might be under — what it publishes **now**, plus
@@ -5933,6 +5933,13 @@ export interface ActionEventArgs {
    * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
    */
   prev?: string
+  /**
+   * The types the relay keeps in order (`RelayFileReads.inOrder`): a comment
+   * on a file of one names it by its id too, and a Folder command lists it by
+   * its id (SPEC §6.4, "Apps move to the pair type by type"). Absent, by its
+   * address alone, as every reader reads it.
+   */
+  inOrder?: readonly string[]
   pubkey: string
   createdAtMs: number
 }
@@ -5993,7 +6000,7 @@ export function buildActionEvents(
     return [
       first,
       ...folders.flatMap((listing) =>
-        planUnlistFile(args.pubkey, args.createdAtMs, { folder: listing.id, address: args.address, hasState: listing.hasState }),
+        planUnlistFile(args.pubkey, args.createdAtMs, { folder: listing.id, address: args.address, hasState: listing.hasState, inOrder: args.inOrder }),
       ),
     ]
   }
@@ -6007,7 +6014,7 @@ export function buildActionEvents(
       return `"${declared.label}" lists what it creates, and a kind ${first.kind} has no address to list.`
     }
     const created = pointerToAddress({ kind: first.kind, pubkey: first.pubkey, identifier, relays: [] })
-    return [first, ...planPlaceFile(args.pubkey, args.createdAtMs, { folder: args.folder, address: created, hasState: args.folderHasState })]
+    return [first, ...planPlaceFile(args.pubkey, args.createdAtMs, { folder: args.folder, address: created, hasState: args.folderHasState, inOrder: args.inOrder })]
   }
   // A change or a comment adds nothing to a Folder and removes nothing from it.
   return [first]
@@ -6136,6 +6143,8 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   // The file the change is about, by its id, beside its address (§6.2): the
   // relay keeps each field in order by it.
   const fileId = records.targetTag === 'a' ? identifierOf(address) : undefined
+  // A comment names its file by its id too once its type is kept in order (§6.4, "A comment in both forms").
+  const byId = fileIdFormOf(args.inOrder ?? [], address)
   const tags: string[][] = declared.emits.field
     ? [
         [records.targetTag, address],
@@ -6154,6 +6163,7 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
         ['A', address],
         ['K', String(kind)],
         ['P', args.objectAuthor],
+        ...(byId ? [['O', byId.id], ['K', byId.type]] : []),
         ...(replyTo
           ? [
               ['e', replyTo.id],
@@ -6169,6 +6179,7 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
           : [
               ['a', address],
               ['k', String(kind)],
+              ...(byId ? [['o', byId.id], ['k', byId.type]] : []),
               ['p', args.objectAuthor],
             ]),
         ['h', folder],
@@ -6202,6 +6213,8 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
     for (const tag of args.linkTags ?? []) {
       if (!LINK_TAG_NAMES.has(tag[0]) || typeof tag[1] !== 'string') continue
       if ((tag[0] === 'a' || tag[0] === 'part') && tag[1] === address) continue
+      // The comment's own file by its id is its `o`/`O` already, never a link.
+      if ((tag[0] === 'o' || tag[0] === 'part') && fileId !== undefined && tag[1] === fileId) continue
       if (tag[0] === 'q' && tag[1] === replyTo?.id) continue
       if (!tags.some((t) => t[0] === tag[0] && t[1] === tag[1])) tags.push([...tag])
     }

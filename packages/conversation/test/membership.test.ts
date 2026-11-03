@@ -253,9 +253,9 @@ describe('C18 — unread for a member', () => {
 })
 
 describe('membership change, discovery and the mute list', () => {
-  it('the change has the SPEC’s tag order and refuses a bad Folder', () => {
+  it('the change has the SPEC’s tag order, names its file by its id in O beside its a, and refuses a bad Folder', () => {
     const unsigned = buildMembershipChange(ALICE, 1_700_000_000_123, { file: ISSUE, folder: FOLDER, person: BOB, member: true })
-    assert.deepEqual(unsigned.tags, [['a', ISSUE], ['field', `member:${BOB}`], ['value', 'true'], ['h', FOLDER], ['ts', '1700000000123'], ['p', BOB]])
+    assert.deepEqual(unsigned.tags, [['a', ISSUE], ['O', D], ['field', `member:${BOB}`], ['value', 'true'], ['h', FOLDER], ['ts', '1700000000123'], ['p', BOB]])
     assert.equal(unsigned.created_at, 1_700_000_000)
     assert.equal(unsigned.content, 'Add')
     assert.equal(buildMembershipChange(BOB, 0, { file: ISSUE, folder: FOLDER, person: BOB, member: true }).content, 'Join')

@@ -49,3 +49,39 @@ export function fileIdOf(address: string): string | undefined {
 export function sameFile(a: string, b: string): boolean {
   return a === b || fileKeyOf(a) === fileKeyOf(b)
 }
+
+/**
+ * The base types that keep their own first-record kinds, by kind (SPEC §6.1):
+ * a `30852` names its type in its `k`, which its address does not carry.
+ */
+export const BASE_TYPE_OF_KIND: Readonly<Record<number, string>> = {
+  30840: 'osnova.topic',
+  30842: 'osnova.document',
+  30850: 'osnova.project',
+  30851: 'osnova.issue',
+}
+
+/** A file as a writer names it by its id: the id, and its type for a `K` or `k`. */
+export interface FileIdForm {
+  id: string
+  type: string
+}
+
+/**
+ * How to name the file at `address` by its id, when its type's apps write it
+ * so: once the relay keeps the type in order (its NIP-11 `files.requires_prev`,
+ * `RelayFileReads.inOrder`; SPEC §6.4, "Apps move to the pair type by type").
+ * Undefined before, and for an address whose `d` is not a file's id: a writer
+ * then names the file by its address alone, as every reader reads it.
+ *
+ * The id forms ride behind this switch because four of them are not additive
+ * for a reader that knows only the address: a listing entry, a `part`, an
+ * `embed` and a read under `file:<d>`.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md
+ */
+export function fileIdFormOf(inOrder: readonly string[], address: string): FileIdForm | undefined {
+  const id = fileIdOf(address)
+  const type = BASE_TYPE_OF_KIND[Number(address.slice(0, address.indexOf(':')))]
+  return id !== undefined && type !== undefined && inOrder.includes(type) ? { id, type } : undefined
+}

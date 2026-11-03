@@ -344,3 +344,144 @@ export async function writeChange(args: WriteChangeArgs): Promise<WriteChangeRes
   }
   return { ok: false, refused: `still refused after ${tries} tries: ${last}` }
 }
+
+/** The tags of a one-field change that belong to its field, and so go after the `set` tags. */
+const FIELD_OWN = new Set(['a', 'O', 'field', 'value', 'h', 'ts', 'prev', 'stage', CONTENT_FORMAT_TAG])
+
+/**
+ * One change setting several fields of one file (§6.2), from the one-field
+ * changes for each — `buildActionEvent`'s, each with its `prev`, so the
+ * manifest has checked every value and staged every status. Tag order: `a`,
+ * `O`, `h`, `ts`, one `["set", field, value, prev]` per field, then the
+ * text's `content-format`, any other tag once (`A`, `o`, `imeta`, `p`), then
+ * one `stage` per staged field. The relay takes it whole or refuses it whole.
+ *
+ * A string when they are not one file's changes in one Folder, when one sets
+ * no field or follows no change, when a field is named twice, or when the
+ * file has no id for the `O` a several-field change must carry.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/one-change-may-set-several-fields-taken-whole-or-refused-whole.md
+ */
+export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent | string {
+  const [first] = changes
+  if (!first) return 'A change sets at least one field.'
+  const file = tagValue(first, 'a')
+  const id = tagValue(first, 'O')
+  const folder = tagValue(first, 'h')
+  if (!file || !folder) return 'A change names its file and its Folder.'
+  if (!id) return `${file} has no id, and a change setting several fields names its file by it.`
+  const sets: string[][] = []
+  const rest: string[][] = []
+  const stages: string[][] = []
+  let format: string[] | undefined
+  let ms = 0
+  for (const change of changes) {
+    if (change.kind !== KIND_CHANGE || tagValue(change, 'a') !== file || tagValue(change, 'O') !== id || tagValue(change, 'h') !== folder) {
+      return 'A change setting several fields sets them on one file, in its Folder.'
+    }
+    const field = tagValue(change, 'field')
+    const prev = tagValue(change, 'prev')
+    if (!field || !prev) return 'Each field of a several-field change names the change it follows.'
+    if (sets.some((s) => s[1] === field)) return `A change names ${field} once.`
+    sets.push(['set', field, tagValue(change, 'value') ?? '', prev])
+    for (const tag of change.tags) {
+      if (tag[0] === 'stage') stages.push([...tag])
+      else if (tag[0] === CONTENT_FORMAT_TAG && field === TEXT_FIELD) format = [...tag]
+      else if (!FIELD_OWN.has(tag[0]) && !rest.some((t) => t.length === tag.length && t.every((v, i) => v === tag[i]))) rest.push([...tag])
+    }
+    ms = Math.max(ms, Number(tagValue(change, 'ts')) || change.created_at * 1000)
+  }
+  return {
+    pubkey: first.pubkey,
+    created_at: Math.floor(ms / 1000),
+    kind: KIND_CHANGE,
+    tags: [['a', file], ['O', id], ['h', folder], ['ts', String(ms)], ...sets, ...(format ? [format] : []), ...rest, ...stages],
+    content: first.content,
+  }
+}
+
+/** One field of a several-field change, as {@link writeChanges} is handed it. */
+export interface FieldWrite {
+  field: string
+  value: string
+  format?: string
+  /** As {@link WriteChangeArgs.prev}: this field's current change as the writer read it. */
+  prev: string
+}
+
+/** What {@link writeChanges} is handed: {@link WriteChangeArgs}, for several fields of one file. */
+export interface WriteChangesArgs extends Omit<WriteChangeArgs, 'field' | 'value' | 'format' | 'prev' | 'build'> {
+  fields: readonly FieldWrite[]
+  /** The unsigned one-field change for one field: `buildActionEvent` bound to that field's action. */
+  build: (input: FieldWrite & { createdAtMs: number }) => UnsignedEvent | string
+}
+
+/**
+ * Write several fields of one file as one change, and answer a `conflict:` as
+ * §6.2 says for one: read every field's current change, set again each field
+ * other than the text that someone changed since, merge the text by §13.3,
+ * and send them again as one change. A text that asks stops it, and nothing is
+ * saved; a text whose merge says nothing theirs does not is left out of the
+ * change. Each attempt is landed whole or refused whole by the relay.
+ */
+export async function writeChanges(args: WriteChangesArgs): Promise<WriteChangeResult> {
+  const now = args.now ?? Date.now
+  const tries = args.tries ?? 4
+  let fields = args.fields.map((f) => ({ ...f, base: undefined as MergeText | undefined }))
+  let after = 0
+  let mergedOnto: SignedEvent | undefined
+  let last = ''
+
+  for (let attempt = 0; attempt < tries; attempt++) {
+    const createdAtMs = Math.max(now(), after)
+    const built: UnsignedEvent[] = []
+    for (const f of fields) {
+      const one = args.build({ field: f.field, value: f.value, ...(f.format ? { format: f.format } : {}), prev: f.prev, createdAtMs })
+      if (typeof one === 'string') return { ok: false, refused: one }
+      built.push(one)
+    }
+    const change = combineChanges(built)
+    if (typeof change === 'string') return { ok: false, refused: change }
+    const signed = await args.sign(change)
+    const answer = await args.publish(signed)
+    if (answer.ok) return { ok: true, id: answer.eventId ?? signed.id, event: signed, ...(mergedOnto ? { mergedOnto } : {}) }
+    last = answer.reason ?? 'refused with no reason'
+    const conflict = conflictOf(last)
+    if (!conflict || conflict.kind === 'other' || !fields.some((f) => f.field === conflict.field)) return { ok: false, refused: last }
+
+    if (conflict.kind === 'sorts-before') {
+      const followed = await byId(args.query, fields.find((f) => f.field === conflict.field)!.prev)
+      if (!followed) return { ok: false, refused: last }
+      after = changedAt(followed) + 1
+      continue
+    }
+
+    const next: typeof fields = []
+    for (const f of fields) {
+      const head =
+        f.field === conflict.field && conflict.current ? await byId(args.query, conflict.current) : await args.current(f.field)
+      if (!head) return { ok: false, refused: last }
+      after = Math.max(after, changedAt(head) + 1)
+      if (head.id === f.prev) {
+        next.push(f)
+        continue
+      }
+      if (f.field !== TEXT_FIELD) {
+        next.push({ ...f, prev: head.id })
+        continue
+      }
+      const base = f.base ?? (await byId(args.query, f.prev).then((e) => e && textOf(e)))
+      if (!base) return { ok: false, refused: `${last} (the text it followed, ${f.prev}, could not be read to merge onto)` }
+      const theirs = textOf(head)
+      if (!theirs) return { ok: false, refused: last }
+      const merge = mergeTexts(base, theirs, { value: f.value, ...(f.format ? { format: f.format } : {}) })
+      if (merge.asks) return { ok: false, asks: merge.asks, theirs: head }
+      mergedOnto = head
+      if (merge.merged.value === theirs.value && (merge.merged.format ?? '') === (theirs.format ?? '')) continue
+      next.push({ field: f.field, value: merge.merged.value, ...(merge.merged.format ? { format: merge.merged.format } : {}), prev: head.id, base: theirs })
+    }
+    if (!next.length) return { ok: true, unchanged: true, id: mergedOnto!.id, mergedOnto: mergedOnto! }
+    fields = next
+  }
+  return { ok: false, refused: `still refused after ${tries} tries: ${last}` }
+}

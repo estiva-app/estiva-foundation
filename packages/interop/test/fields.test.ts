@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeEventId, serializeBlockDocument, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { buildActionEvent, changedAt, fieldsSetBy, listFiles, openFile, textOf, writeChange, type QueryFn } from '../dist/index.js'
+import { buildActionEvent, changedAt, combineChanges, fieldsSetBy, listFiles, openFile, textOf, writeChange, writeChanges, type QueryFn } from '../dist/index.js'
 
 const OWNER = 'a'.repeat(64)
 const AGENT = 'c'.repeat(64)
@@ -87,13 +87,16 @@ function keptRelay(options: { readerOfHome?: boolean } = {}) {
   }
   const publish = async (e: SignedEvent) => {
     published.push(e)
-    const prev = tag(e, 'prev')
-    const [{ field }] = fieldsSetBy(e)
-    if (!prev) return { ok: false, reason: 'invalid: a change to a project needs prev' }
-    const head = heads.get(field) ?? root.id
-    if (prev !== head) return { ok: false, reason: options.readerOfHome === false ? `conflict: ${field}` : `conflict: ${field} follows ${head}` }
-    if (changedAt(e) <= changedAt(events.get(prev)!)) {
-      return { ok: false, reason: `conflict: ${field} does not sort after its prev ${prev}; stamp it at least 1 ms later, ts and created_at agreeing` }
+    // Every field the change sets, by either form: whole or not at all.
+    const sets = e.tags.filter((t) => t[0] === 'set')
+    const fields = sets.length ? sets.map((t) => ({ field: t[1], prev: t[3] })) : [{ field: fieldsSetBy(e)[0].field, prev: tag(e, 'prev') }]
+    for (const { field, prev } of fields) {
+      if (!prev) return { ok: false, reason: 'invalid: a change to a project needs prev' }
+      const head = heads.get(field) ?? root.id
+      if (prev !== head) return { ok: false, reason: options.readerOfHome === false ? `conflict: ${field}` : `conflict: ${field} follows ${head}` }
+      if (changedAt(e) <= changedAt(events.get(prev)!)) {
+        return { ok: false, reason: `conflict: ${field} does not sort after its prev ${prev}; stamp it at least 1 ms later, ts and created_at agreeing` }
+      }
     }
     accept(e)
     return { ok: true, eventId: e.id }
@@ -275,5 +278,94 @@ describe('answering conflict: — §6.2, §13.3', () => {
     })
     assert.deepEqual(result, { ok: false, refused: 'invalid: a change to a project needs prev' })
     assert.equal(relay.published.length, 1)
+  })
+})
+
+const agentWriteMany = (relay: ReturnType<typeof keptRelay>, fields: { field: string; value: string; prev: string }[], now = T0 + 60_000) =>
+  writeChanges({
+    fields: fields.map((f) => (f.field === 'description' ? { ...f, format: 'estiva-blocks-1' } : f)),
+    build: (input) => change(AGENT, input.field, input.value, input.prev, input.createdAtMs),
+    sign: async (e) => sign(e),
+    publish: relay.publish,
+    query: relay.query,
+    current: relay.current,
+    now: () => now,
+  })
+
+describe('a change setting several fields — §6.2, ALO-4', () => {
+  it('is one event: a, O, h, ts, one set per field with its prev, then each staged field\'s stage', () => {
+    const built = combineChanges([change(AGENT, 'status', 'done', root.id, T0 + 1), change(AGENT, 'title', 'Launch 2', root.id, T0 + 1)])
+    assert.ok(typeof built !== 'string')
+    assert.deepEqual(built.tags, [
+      ['a', ADDRESS],
+      ['O', D],
+      ['h', FOLDER],
+      ['ts', String(T0 + 1)],
+      ['set', 'status', 'done', root.id],
+      ['set', 'title', 'Launch 2', root.id],
+      ['stage', 'status', 'done'],
+    ])
+    assert.equal(built.created_at, Math.floor((T0 + 1) / 1000))
+  })
+
+  it('keeps the text\'s content-format beside its set, and names a field once', () => {
+    const built = combineChanges([change(AGENT, 'title', 'x', root.id, T0), change(AGENT, 'description', blocks(p('b1', 'one')), root.id, T0)])
+    assert.ok(typeof built !== 'string')
+    assert.deepEqual(built.tags.filter((t) => t[0] === 'content-format'), [['content-format', 'estiva-blocks-1']])
+    assert.match(String(combineChanges([change(AGENT, 'title', 'x', root.id, T0), change(AGENT, 'title', 'y', root.id, T0)])), /names title once/)
+  })
+
+  it('refuses changes to two files, or one that follows no change', () => {
+    const other = change(AGENT, 'title', 'x', root.id, T0)
+    const elsewhere = { ...other, tags: other.tags.map((t) => (t[0] === 'a' ? ['a', `${PROJECT}:${OWNER}:p2`] : t[0] === 'O' ? ['O', 'p2'] : t)) }
+    assert.equal(typeof combineChanges([change(AGENT, 'status', 'done', root.id, T0), elsewhere]), 'string')
+    const unfollowed = { ...other, tags: other.tags.filter((t) => t[0] !== 'prev') }
+    assert.equal(typeof combineChanges([unfollowed]), 'string')
+  })
+
+  it('both land from one copy: QA-1 renamed it meanwhile, so the whole change is sent again with title after QA-1\'s and stands', async () => {
+    const relay = keptRelay()
+    const qa = relay.theirs(QA1, 'title', 'Launch, by QA-1', T0 + 10_000)
+    const result = await agentWriteMany(relay, [
+      { field: 'status', value: 'done', prev: root.id },
+      { field: 'title', value: 'Launch, by the agent', prev: root.id },
+    ])
+    assert.equal(result.ok, true)
+    assert.equal(relay.published.length, 2, 'refused whole, then sent again whole')
+    const sent = relay.published[1]
+    assert.deepEqual(sent.tags.filter((t) => t[0] === 'set'), [
+      ['set', 'status', 'done', root.id],
+      ['set', 'title', 'Launch, by the agent', qa.id],
+    ])
+    assert.equal(relay.head('status').id, sent.id)
+    assert.equal(relay.head('title').id, sent.id, 'the later title stands')
+  })
+
+  it('merges a text QA-1 changed in another block, inside the same several-field change', async () => {
+    const relay = keptRelay()
+    const base = relay.theirs(OWNER, 'description', blocks(p('b1', 'one'), p('b2', 'two')), T0 + 1000)
+    relay.theirs(QA1, 'description', blocks(p('b1', 'one, by QA-1'), p('b2', 'two')), T0 + 10_000)
+    const result = await agentWriteMany(relay, [
+      { field: 'title', value: 'Launch 2', prev: root.id },
+      { field: 'description', value: blocks(p('b1', 'one'), p('b2', 'two, by the agent')), prev: base.id },
+    ])
+    assert.equal(result.ok, true)
+    const sent = relay.published.at(-1)!
+    const text = sent.tags.find((t) => t[0] === 'set' && t[1] === 'description')!
+    assert.deepEqual(JSON.parse(text[2]).content.map((b: { content: { text: string }[] }) => b.content[0].text), ['one, by QA-1', 'two, by the agent'])
+    assert.equal(relay.head('title').id, sent.id)
+  })
+
+  it('asks when a block both changed, and saves none of its fields', async () => {
+    const relay = keptRelay()
+    const base = relay.theirs(OWNER, 'description', blocks(p('b1', 'one')), T0 + 1000)
+    relay.theirs(QA1, 'description', blocks(p('b1', 'one, by QA-1')), T0 + 10_000)
+    const result = await agentWriteMany(relay, [
+      { field: 'title', value: 'Launch 2', prev: root.id },
+      { field: 'description', value: blocks(p('b1', 'one, by the agent')), prev: base.id },
+    ])
+    assert.ok(!result.ok && 'asks' in result && result.asks[0].block === 'b1')
+    assert.equal(relay.published.length, 1)
+    assert.equal(relay.head('title').id, root.id, 'the title waits with the text')
   })
 })

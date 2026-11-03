@@ -6,6 +6,35 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.77.0 — 2026-11-03
+
+**Manifest: nothing. Wire: behind the switch, a file is written by its id, and
+a change may set several fields** (ALO-4; SPEC §3.3, §6.2, §6.4, §13.1,
+§13.6.1; C37, C43, C44, C47). Every id form is written only for a type in the
+relay's `files.requires_prev` (`relayFileReadsOf(info).inOrder`, passed as
+`inOrder`); without it, every byte written is as in 0.76.0. Needs protocol
+0.51.0 and conversation 0.27.0.
+
+- **`set`.** `combineChanges` makes one change setting several fields of one
+  file from `buildActionEvent`'s one-field changes (each with its `prev`):
+  `a`, `O`, `h`, `ts`, one `["set", field, value, prev]` per field, the text's
+  `content-format`, then each staged field's `stage`. `writeChanges` writes
+  it and answers `conflict:` for every field at once: a field someone set
+  since is set again after theirs, the text merges by blocks, a block both
+  changed asks and nothing is saved, and the change is sent again whole.
+- **Comments.** `buildActionEvent` (`comment`) takes `inOrder`: a comment on a
+  file of a kept type carries `O` and its type's `K` after `P`, and a
+  top-level one `o` and the type's `k` after its `k`; a reply carries the
+  `O` pair before its `e`. Its own file by id is never a link `o` or `part`.
+- **Listings.** `planPlaceFile`, `planUnlistFile` and `buildActionEvents`
+  (a listed creation or deletion) take `inOrder` and name the file by `o`.
+- **Links.** `linkTagsOf` and `LinkReader.tagsFor` take `inOrder`: an address
+  of a kept type earns an `o` after its `a` (a send and an edit), and a
+  `part` names it by its id.
+- **Chips.** `fileCandidates` takes `inOrder` and `projectOrigin`: a project
+  picked from `[` goes in as `<projectOrigin>/project/<d>`, with no title
+  (`pickedFileUri`, new). Anything else stays `nostr:naddr…`.
+
 ## 0.76.0 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing written changes. Reading: a file named by

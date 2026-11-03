@@ -288,7 +288,7 @@ export {
   resolveBlockAnchor,
   resolvePart,
 } from './anchors.js'
-export { FILE_KINDS, fileIdOf, fileKeyOf, isFileId, sameFile } from './fileId.js'
+export { BASE_TYPE_OF_KIND, FILE_KINDS, fileIdFormOf, fileIdOf, fileKeyOf, isFileId, sameFile, type FileIdForm } from './fileId.js'
 export {
   type CommentAnchor,
   type Quote,

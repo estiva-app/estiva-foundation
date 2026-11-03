@@ -123,6 +123,29 @@ describe('the tags a comment earns for its links', () => {
     assert.deepEqual(await links.tagsFor(body, {}, { edit: true }), [['a', ISSUE1]])
   })
 
+  test('once the relay keeps the type in order, a link names its file by its id too: an o after the a, and the part by the id (ALO-4)', async () => {
+    const links = linkReader({ query: relayOf(issues).query })
+    const body = marker(`${URL1}#block-b1 ${URL2}`)
+    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'] }), [
+      ['a', ISSUE1],
+      ['o', D1],
+      ['a', ISSUE2],
+      ['o', D2],
+      ['part', D1, 'b1'],
+    ])
+    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'], edit: true }), [
+      ['a', ISSUE1],
+      ['o', D1],
+      ['a', ISSUE2],
+      ['o', D2],
+    ], 'an edit carries the o as a send does')
+    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.project'] }), [
+      ['a', ISSUE1],
+      ['a', ISSUE2],
+      ['part', ISSUE1, 'b1'],
+    ], 'another type kept in order changes nothing')
+  })
+
   test('a d two authors hold, and a d under a kind that is not addressable, name nothing', async () => {
     const links = linkReader({ query: relayOf(issues).query })
     const body = `https://ship.estiva.app/issue/x-${SHARED} https://ship.estiva.app/note/n-${D1}`

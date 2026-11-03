@@ -9,6 +9,7 @@ import { decodeNevent, encodeNaddr, encodeNpub, type SignedEvent } from '@estiva
 import {
   anchorsOf,
   buildComment,
+  buildReply,
   byOrder,
   CONVERSATION_VERSION,
   createDraftStore,
@@ -129,6 +130,35 @@ describe('writing a comment', () => {
       ['ts', '1700500000042'],
       ['p', ALICE],
     ])
+  })
+
+  it('once issues are kept in order, names its file in both forms: A K P O K a k o k p, the first K and k the kind (ALO-4)', () => {
+    const D = ISSUE.split(':')[2]
+    const unsigned = buildComment(BOB, 1_700_500_000_042, { about: ISSUE, folder: FOLDER, body: 'hi', inOrder: ['osnova.issue'] })
+    assert.deepEqual(unsigned.tags.slice(0, 10), [
+      ['A', ISSUE],
+      ['K', '30851'],
+      ['P', ALICE],
+      ['O', D],
+      ['K', 'osnova.issue'],
+      ['a', ISSUE],
+      ['k', '30851'],
+      ['o', D],
+      ['k', 'osnova.issue'],
+      ['p', ALICE],
+    ])
+    const reply = buildReply(BOB, 1_700_500_000_043, { comment: { id: '1'.repeat(64), anchor: ISSUE, author: ALICE }, folder: FOLDER, body: 'yes', inOrder: ['osnova.issue'] })
+    assert.deepEqual(reply.tags.slice(0, 8), [
+      ['A', ISSUE],
+      ['K', '30851'],
+      ['P', ALICE],
+      ['O', D],
+      ['K', 'osnova.issue'],
+      ['e', '1'.repeat(64)],
+      ['k', '1111'],
+      ['p', ALICE],
+    ])
+    assert.equal(buildComment(BOB, 0, { about: ISSUE, folder: FOLDER, body: 'x', inOrder: ['osnova.project'] }).tags.some((t) => t[0] === 'O'), false)
   })
 
   it('refuses a Folder that is not a lowercase UUID v4 — a 1111 with no valid h is world-readable', () => {

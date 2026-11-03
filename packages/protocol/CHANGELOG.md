@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.51.0 — 2026-11-03
+
+**Wire: a Folder command names a file's id by `o`, and behind the switch a card
+names a file by its id** (ALO-4; SPEC §3.3, §6.4, §13.6.2; C43).
+
+- `fileIdFormOf(inOrder, address)` (new): the file's id and type when the
+  relay keeps its type in order (`RelayFileReads.inOrder`), the switch every
+  writer asks before writing an id form. `BASE_TYPE_OF_KIND` (new) reads a
+  base type's kind as its type.
+- `buildFolderCommand` writes a value that is a file's id as `["o", <d>]`, an
+  address as `["a", …]` as before.
+- `embedTagsOf` and `buildEdit` take `inOrder`: a card for a file of a kept
+  type is written by its id. Without it, as before.
+
 ## 0.50.0 — 2026-11-02
 
 **Wire: nothing written changes. Reading: a `part` or an `embed` may name a

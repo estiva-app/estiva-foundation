@@ -57,6 +57,7 @@ describe('C28 — a mention in a file’s text', () => {
     assert.equal(adds[0].kind, 1851)
     assert.deepEqual(adds[0].tags, [
       ['a', ISSUE],
+      ['O', ISSUE.split(':')[2]],
       ['field', `member:${BOB}`],
       ['value', 'true'],
       ['h', FOLDER],

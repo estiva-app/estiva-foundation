@@ -24,7 +24,7 @@
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-edit-says-what-the-message-links-now.md
  */
 import { MAX_PARTS } from '@estiva-app/conversation'
-import { partTag, valuesIn, type LinkResolver, type PartPointer, type RenderBlock } from '@estiva-app/protocol'
+import { fileIdFormOf, partTag, valuesIn, type LinkResolver, type PartPointer, type RenderBlock } from '@estiva-app/protocol'
 import { matchObjectUrl, urlPatternsOf, type UrlPattern } from './objectUrl.js'
 import type { QueryFn } from './projection.js'
 
@@ -79,7 +79,11 @@ export interface LinkReader {
    * first what its links name and waiting at most `waitMs` (default 5 s): a
    * link not answered by then earns nothing, and the body keeps it.
    */
-  tagsFor(blocks: readonly RenderBlock[], own: OwnPlace, options?: { waitMs?: number; edit?: boolean }): Promise<string[][]>
+  tagsFor(
+    blocks: readonly RenderBlock[],
+    own: OwnPlace,
+    options?: { waitMs?: number; edit?: boolean; inOrder?: readonly string[] },
+  ): Promise<string[][]>
   /** {@link writtenOpenerOf} against the hosts the manifests read so far declare. */
   opener(url: string | undefined, opens: string | undefined, origin: string): string | undefined
   /** Every host an app declares its paths on, as the manifests read so far said. */
@@ -217,13 +221,13 @@ export function linkReader(options: LinkReaderOptions): LinkReader {
       }
     },
     version: () => answered,
-    async tagsFor(blocks, own, { waitMs = 5000, edit = false } = {}) {
+    async tagsFor(blocks, own, { waitMs = 5000, edit = false, inOrder = [] } = {}) {
       const urls = linksIn(blocks).slice(0, MAX_LINKS_ASKED)
       const waiting = urls.filter((url) => !known.has(url))
       if (waiting.length > 0) await within(Promise.allSettled(waiting.map(answerOf)), waitMs)
       const first = new Set(urls)
       const resolve: LinkResolver = (url) => (first.has(url) ? knownValue(url) : undefined)
-      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (first.has(url) ? knownBlock(url) : undefined))
+      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (first.has(url) ? knownBlock(url) : undefined), inOrder)
     },
     opener: (url, opens, origin) => writtenOpenerOf(url, opens, origin, origins),
     declaredOrigins: () => origins,
@@ -256,13 +260,19 @@ export function linksIn(blocks: readonly RenderBlock[]): string[] {
  * message links now. An edit carries no `part` (pass no `blockOf`), and a
  * person is never here: `p` and `urgent` stay as the send wrote them.
  *
+ * A file whose type the relay keeps in order (`inOrder`) is named by its id
+ * too: an `o` after its `a`, and its `part` by the id (§6.4, §13.6.1). An
+ * edit carries the `o` as a send does (§6.8).
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-edit-says-what-the-message-links-now.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md
  */
 export function linkTagsOf(
   blocks: readonly RenderBlock[],
   own: OwnPlace,
   resolve: LinkResolver,
   blockOf?: (url: string) => PartPointer | undefined,
+  inOrder: readonly string[] = [],
 ): string[][] {
   const file = own.file && sameValue(own.file)
   const parent = own.parent?.toLowerCase()
@@ -270,7 +280,11 @@ export function linkTagsOf(
   for (const value of valuesIn(blocks, resolve)) {
     if (EVENT_ID.test(value)) {
       if (value !== parent) tags.push(['q', value])
-    } else if (value !== file) tags.push(['a', value])
+    } else if (value !== file) {
+      tags.push(['a', value])
+      const byId = fileIdFormOf(inOrder, value)
+      if (byId && !tags.some((t) => t[0] === 'o' && t[1] === byId.id)) tags.push(['o', byId.id])
+    }
   }
   if (blockOf) {
     const parts = new Map<string, string>()
@@ -279,7 +293,7 @@ export function linkTagsOf(
       if (part && sameValue(part.address) !== file && !parts.has(part.address)) parts.set(part.address, part.block)
     }
     // As many as a box shows under it (conversation's `boxLinksOf`): a part the box did not draw is not sent.
-    for (const [address, block] of [...parts].slice(0, MAX_PARTS)) tags.push(partTag(address, block))
+    for (const [address, block] of [...parts].slice(0, MAX_PARTS)) tags.push(partTag(fileIdFormOf(inOrder, address)?.id ?? address, block))
   }
   return tags
 }

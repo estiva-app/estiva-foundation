@@ -151,6 +151,7 @@ export {
   channelContext,
   fileContext,
   fileIdContext,
+  fileReadMarkers,
   streamMarkerOf,
   threadContext,
   messageContext,

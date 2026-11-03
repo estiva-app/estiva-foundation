@@ -438,3 +438,65 @@ describe('actionProblems — the declarations checked before signing', () => {
     assert.match(problems[3], /only format is estiva-blocks-1/)
   })
 })
+
+describe('a project named by its id once the relay keeps projects in order — SPEC §6.4, §3.3 (ALO-4)', () => {
+  const ID = '0f8a7c1e-5b2d-4e6f-9a3b-c4d5e6f7a8b9'
+  const PROJECT_BY_ID = `${PROJECT}:${AUTHOR}:${ID}`
+  const KEPT = ['osnova.project']
+
+  test('a comment carries A, K kind, P, O, K type, then a, k kind, o, k type, p: the first K and k stay the kind', () => {
+    const event = buildActionEvent(args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: KEPT }))
+    assert.deepEqual(event.tags.slice(0, 10), [
+      ['A', PROJECT_BY_ID],
+      ['K', String(PROJECT)],
+      ['P', AUTHOR],
+      ['O', ID],
+      ['K', 'osnova.project'],
+      ['a', PROJECT_BY_ID],
+      ['k', String(PROJECT)],
+      ['o', ID],
+      ['k', 'osnova.project'],
+      ['p', AUTHOR],
+    ])
+  })
+
+  test('a reply carries O and the type beside its A, and its lowercase tags stay e, k 1111 and p', () => {
+    const event = buildActionEvent(
+      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'yes', inOrder: KEPT, replyTo: { id: 'f'.repeat(64), kind: 1111, author: ACTOR } }),
+    )
+    assert.deepEqual(event.tags.slice(0, 8), [
+      ['A', PROJECT_BY_ID],
+      ['K', String(PROJECT)],
+      ['P', AUTHOR],
+      ['O', ID],
+      ['K', 'osnova.project'],
+      ['e', 'f'.repeat(64)],
+      ['k', '1111'],
+      ['p', ACTOR],
+    ])
+  })
+
+  test('before the switch a comment names the project by its address alone, as every reader reads it', () => {
+    const event = buildActionEvent(args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: [] }))
+    assert.equal(event.tags.some((t) => t[0] === 'O' || t[0] === 'o'), false)
+  })
+
+  test('the comment\'s own file by its id is not a link: a body naming it earns no second o', () => {
+    const event = buildActionEvent(
+      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: KEPT, linkTags: [['a', PROJECT_BY_ID], ['o', ID], ['part', ID, 'b1']] }),
+    )
+    assert.deepEqual(event.tags.filter((t) => t[0] === 'o' || t[0] === 'part'), [['o', ID]])
+  })
+
+  test('a new project is listed in its Folder by its id', () => {
+    const events = buildActionEvents(
+      args('add-project', { kind: 39000, address: `39000:${AUTHOR}:${TEAM}`, value: { name: 'Launch' }, newId: ID, folderHasState: true, inOrder: KEPT }),
+    )
+    assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'add'], ['o', ID]])
+  })
+
+  test('a deleted project is taken off its Folder by its id', () => {
+    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: PROJECT_BY_ID, listedIn: [{ id: TEAM, hasState: true }], inOrder: KEPT }))
+    assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'remove'], ['o', ID]])
+  })
+})

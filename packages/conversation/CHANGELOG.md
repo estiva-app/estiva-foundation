@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.27.0 — 2026-11-03
+
+**SPEC: §6.4 "A comment in both forms", §11.6 and §11.8 — behind the switch, a
+file is written by its id** (ALO-4; C44). Needs protocol 0.51.0.
+
+- `buildComment` and `buildReply` take `inOrder` (the relay's
+  `files.requires_prev`, `RelayFileReads.inOrder`): on a file of a kept type a
+  comment carries `A`, `K` kind, `P`, `O`, `K` type, `a`, `k` kind, `o`, `k`
+  type, then `p`; a reply `A`, `K`, `P`, `O`, `K` type, then `e`, `k 1111`,
+  `p`. Without it, as before.
+- `fileReadMarkers` (new): the markers a read of a file writes, under
+  `file:<d>` and its address once its type is kept in order, under its address
+  alone before.
+- **Wire, always:** `buildMembershipChange` carries `["O", <d>]` after its `a`
+  when the file's `d` is an id (§6.2's SHOULD, as every change interop builds
+  since 0.73.0). Additive: a reader that knows only `a` reads it as before.
+
 ## 0.26.0 — 2026-11-03
 
 **SPEC: §6.4 "A comment in both forms", §6.2, §11.1 and §11.8 — a file named
