@@ -138,6 +138,7 @@ export {
   planDeleteFolder,
   planPlaceFile,
   planUnlistFile,
+  planMarkSpace,
   planMoveFile,
   planMoveFromFolders,
   readMoveRefusal,

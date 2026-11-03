@@ -16,6 +16,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildAddMember,
+  buildJoinGroup,
+  buildLeaveGroup,
   buildUnsignedRelayAuthEvent,
   relayAuthUrl,
   buildCreateChannel,
@@ -81,6 +83,13 @@ describe('shape rules taken from builders.rs', () => {
       ['role', 'member'],
     ])
     assert.equal(event.content, '')
+  })
+
+  it('kind:9021 and kind:9022 name only the team, signed by the person joining or leaving (TEA-5)', () => {
+    const join = buildJoinGroup(PUBKEY, 1_753_300_100_000, { channelUuid: CHANNEL })
+    const leave = buildLeaveGroup(PUBKEY, 1_753_300_100_000, { channelUuid: CHANNEL })
+    assert.deepEqual([join.kind, join.pubkey, join.tags, join.content], [9021, PUBKEY, [['h', CHANNEL]], ''])
+    assert.deepEqual([leave.kind, leave.pubkey, leave.tags, leave.content], [9022, PUBKEY, [['h', CHANNEL]], ''])
   })
 
   it('kind:0 serializes profile keys alphabetically, as serde_json’s BTreeMap does', () => {

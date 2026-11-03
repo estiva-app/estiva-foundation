@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.51.0'
+export const PROTOCOL_VERSION = '0.52.0'
 
 export {
   // types
@@ -86,6 +86,8 @@ export {
   buildEditChannelMetadata,
   buildFolderCommand,
   buildAddMember,
+  buildJoinGroup,
+  buildLeaveGroup,
   buildDmOpen,
   buildDmHide,
   buildReaction,

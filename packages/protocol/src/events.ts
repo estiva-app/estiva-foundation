@@ -70,7 +70,12 @@ export const KIND = {
   REACTION: 7,
   STREAM_MESSAGE: 9,
   NIP29_PUT_USER: 9000,
+  NIP29_REMOVE_USER: 9001,
   NIP29_EDIT_METADATA: 9002,
+  /** A person joins a team, signed by them (§3.3). See {@link buildJoinGroup}. */
+  NIP29_JOIN: 9021,
+  /** A person leaves a team, signed by them (§3.3). See {@link buildLeaveGroup}. */
+  NIP29_LEAVE: 9022,
   NIP29_CREATE_GROUP: 9007,
   NIP29_DELETE_GROUP: 9008,
   /**
@@ -500,7 +505,20 @@ const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set', 'move']
 export function buildFolderCommand(
   pubkey: string,
   createdAtMs: number,
-  args: { folder: string; op: FolderOp; from?: string; addresses?: string[]; name?: string },
+  args: {
+    folder: string
+    op: FolderOp
+    from?: string
+    addresses?: string[]
+    name?: string
+    /**
+     * The addresses whose entry carries the `space` role (§3.3): the fourth
+     * element, after an empty third. Each must be one of `addresses`. On an
+     * `add` an entry without it unmarks the topic; a `move` carries it only
+     * when the mover keeps the topic a space in the target.
+     */
+    spaces?: string[]
+  },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
   if (!args.folder) throw new Error('a folder command names the folder')
@@ -514,10 +532,16 @@ export function buildFolderCommand(
     ['op', args.op],
   ]
   if (args.from !== undefined) tags.push(['from', args.from])
+  const spaces = new Set(args.spaces ?? [])
+  for (const space of spaces) if (!args.addresses?.includes(space)) throw new Error('a space must be one of the addresses the command names')
+  if (spaces.size && args.op !== 'add' && args.op !== 'move' && args.op !== 'set') throw new Error(`a ${args.op} carries no role`)
   // A file named by its id is named by `o`, where an address would be (§3.3).
   for (const address of args.addresses ?? []) {
     if (!address) throw new Error('a folder command address must not be empty')
-    tags.push([isFileId(address) ? 'o' : 'a', address])
+    const entry: NostrTag = [isFileId(address) ? 'o' : 'a', address]
+    // The role is the fourth element; the third stays empty, as NIP-01 reads it as a relay hint.
+    if (spaces.has(address)) entry.push('', 'space')
+    tags.push(entry)
   }
   if (args.name !== undefined) {
     const name = canonicalChannelName(args.name)
@@ -531,6 +555,27 @@ export function buildFolderCommand(
     tags,
     content: '',
   }
+}
+
+/**
+ * kind:9021 — the signer joins the team (§3.3). Anyone in the company may join
+ * an open team; the relay refuses it on a team that is not open.
+ */
+export function buildJoinGroup(pubkey: string, createdAtMs: number, args: { channelUuid: string }): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  if (!args.channelUuid) throw new Error('a join names the team')
+  return { pubkey, created_at: toNostrSeconds(createdAtMs), kind: KIND.NIP29_JOIN, tags: [['h', args.channelUuid]], content: '' }
+}
+
+/**
+ * kind:9022 — the signer leaves the team (§3.3). NIP-29's own rule keeps a
+ * sole owner in. Nobody leaves the Company team (§3.4), but the relay does not
+ * refuse that yet: an app does not offer Leave there.
+ */
+export function buildLeaveGroup(pubkey: string, createdAtMs: number, args: { channelUuid: string }): UnsignedEvent {
+  assertHex64(pubkey, 'pubkey')
+  if (!args.channelUuid) throw new Error('a leave names the team')
+  return { pubkey, created_at: toNostrSeconds(createdAtMs), kind: KIND.NIP29_LEAVE, tags: [['h', args.channelUuid]], content: '' }
 }
 
 export type MemberRole = 'owner' | 'admin' | 'member'

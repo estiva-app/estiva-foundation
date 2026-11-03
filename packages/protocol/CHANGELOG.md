@@ -4,6 +4,19 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.52.0 — 2026-11-03
+
+**Wire: join and leave a team, and a list entry's `space` role** (TEA-5; SPEC
+§3.3).
+
+- `buildJoinGroup` / `buildLeaveGroup` (new): `kind:9021` / `kind:9022` with
+  the team's `h` only, signed by the person joining or leaving. `KIND` gains
+  `NIP29_JOIN`, `NIP29_LEAVE` and `NIP29_REMOVE_USER`.
+- `buildFolderCommand` takes `spaces`: the addresses whose entry carries the
+  `space` role, as `[a|o, <address>, "", "space"]`. Each must be one of
+  `addresses`, and only an `add`, `move` or `set` carries one; anything else
+  throws before a round trip. Without `spaces` the bytes are unchanged.
+
 ## 0.51.0 — 2026-11-03
 
 **Wire: a Folder command names a file's id by `o`, and behind the switch a card
