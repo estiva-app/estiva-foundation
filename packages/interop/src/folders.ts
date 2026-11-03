@@ -166,6 +166,23 @@ export function planPlaceFile(
 }
 
 /**
+ * Mark a topic one of a team's spaces, or take the mark off: one `kind:1852
+ * add` naming it, with the `space` role or without it (§3.3). An `add` naming
+ * an entry already listed replaces its role. Only the team's members may send
+ * it; the relay refuses anyone else, and a topic another team lists.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-space-is-the-teams-own-mark-on-a-topic-it-lists.md
+ */
+export function planMarkSpace(
+  pubkey: string,
+  createdAtMs: number,
+  args: { team: string; address: string; space: boolean; inOrder?: readonly string[] },
+): UnsignedEvent {
+  const entry = listedAs(args.address, args.inOrder)
+  return buildFolderCommand(pubkey, createdAtMs, { folder: args.team, op: 'add', addresses: [entry], spaces: args.space ? [entry] : [] })
+}
+
+/**
  * How a command names a file: by its id once the relay keeps its type in
  * order (`RelayFileReads.inOrder`, §3.3 "lists by `o` once every app reading
  * the Folder reads both"), else by its address.
@@ -402,13 +419,18 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
  *
  * A move to the same Folder, or of a set the source does not list, plans nothing.
  *
+ * **A space's mark does not travel.** The target's entry for the file carries
+ * the `space` role only with `keepSpace` — the mover ticked "Keep it a space
+ * in <team>" — and only the file itself, never one listed beneath it (§3.3).
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/moving-a-file-never-changes-who-can-read-it.md
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-always-has-a-team-and-moves-in-one-action.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-space-is-the-teams-own-mark-on-a-topic-it-lists.md
  */
 export function planMoveFile(
   pubkey: string,
   createdAtMs: number,
-  args: { file: MovableFile; from: FolderRef; to: FolderRef; listing: readonly MovableFile[] | null },
+  args: { file: MovableFile; from: FolderRef; to: FolderRef; listing: readonly MovableFile[] | null; keepSpace?: boolean },
 ): MovePlan {
   if (args.from.id === args.to.id) return { ok: true, events: [], moved: [] }
   if (!args.from.hasState) return { ok: false, reason: 'source-has-no-state' }
@@ -421,9 +443,10 @@ export function planMoveFile(
   if (args.to.private && moving.some((candidate) => candidate.scopedTo !== args.to.id)) return { ok: false, reason: 'target-is-private' }
   const moved = [...new Set(moving.map((candidate) => candidate.address!))]
   if (!moved.length) return { ok: true, events: [], moved }
+  const kept = args.keepSpace && file.address && moved.includes(file.address) ? [file.address] : []
   return {
     ok: true,
-    events: [buildFolderCommand(pubkey, createdAtMs, { folder: args.to.id, op: 'move', from: args.from.id, addresses: moved })],
+    events: [buildFolderCommand(pubkey, createdAtMs, { folder: args.to.id, op: 'move', from: args.from.id, addresses: moved, spaces: kept })],
     moved,
   }
 }
@@ -480,7 +503,14 @@ export type MoveFromFoldersPlan =
 export function planMoveFromFolders(
   pubkey: string,
   createdAtMs: number,
-  args: { file: MovableFile; from: readonly FolderRef[]; to: FolderRef; listings: ReadonlyMap<string, readonly MovableFile[] | null> },
+  args: {
+    file: MovableFile
+    from: readonly FolderRef[]
+    to: FolderRef
+    listings: ReadonlyMap<string, readonly MovableFile[] | null>
+    /** The mover ticked "Keep it a space in <team>": the target's entry for the file carries the `space` role ({@link planMoveFile}). */
+    keepSpace?: boolean
+  },
 ): MoveFromFoldersPlan {
   const { file, to } = args
   const sources = args.from.filter((folder) => folder.id !== to.id)
@@ -497,6 +527,7 @@ export function planMoveFromFolders(
       to,
       // By its address, so the walk finds what the listing draws beneath it.
       listing: unresolved ? [{ ...file, ref: file.address! }, ...listing] : listing,
+      keepSpace: args.keepSpace,
     })
     if (!plan.ok) return plan
     for (const address of plan.moved) moved.add(address)

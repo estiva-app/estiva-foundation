@@ -24,6 +24,28 @@ describe('buildFolderCommand', () => {
     ])
   })
 
+  it('marks a space with the role in the fourth element after an empty third, and leaves other entries plain (TEA-5)', () => {
+    const space = `30840:${PUB}:bug`
+    const plain = `30840:${PUB}:speed`
+    const event = buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'add', addresses: [space, plain], spaces: [space] })
+    assert.deepEqual(event.tags.slice(2), [
+      ['a', space, '', 'space'],
+      ['a', plain],
+    ])
+  })
+
+  it('carries the space role on a move only for the entry kept a space (TEA-5)', () => {
+    const SOURCE = '5c1f7a3e-0b4d-4f7e-9a51-3d2c8e6b7f10'
+    const space = `30840:${PUB}:bug`
+    const event = buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'move', from: SOURCE, addresses: [space], spaces: [space] })
+    assert.deepEqual(event.tags.at(-1), ['a', space, '', 'space'])
+  })
+
+  it('refuses a space it does not name, or a role on a remove (TEA-5)', () => {
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'add', addresses: [`30840:${PUB}:a`], spaces: [`30840:${PUB}:b`] }), /one of the addresses/)
+    assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'remove', addresses: [`30840:${PUB}:a`], spaces: [`30840:${PUB}:a`] }), /carries no role/)
+  })
+
   it('refuses an op the relay would refuse, rather than sending it', () => {
     assert.throws(() => buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'rename' as FolderOp }), /unknown folder op/)
   })

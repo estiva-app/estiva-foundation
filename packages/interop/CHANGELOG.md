@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.81.0 — 2026-11-03
+
+**Manifest: nothing. Wire: a space's mark, and keeping it on a move** (TEA-5;
+SPEC §3.3). Needs protocol 0.52.0.
+
+- `planMarkSpace` (new): one `kind:1852 add` naming the topic in the team,
+  with the `space` role to mark it and without it to unmark it. Only the
+  team's members may send it; the relay checks.
+- `planMoveFile` and `planMoveFromFolders` take `keepSpace`: the mover ticked
+  "Keep it a space in <team>", so the target's entry for the moved topic
+  carries the role. Files moved beneath it never do. Without it, a move writes
+  what it wrote before, and the space's mark stays behind with its old team.
+
 ## 0.80.0 — 2026-11-03
 
 **Manifest: nothing. Wire: nothing written; reads narrower where asked**

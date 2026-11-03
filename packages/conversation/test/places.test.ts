@@ -16,6 +16,7 @@ import {
   parseTeamsBlob,
   placeFilters,
   serializeTeamsBlob,
+  teamMembersOf,
   unreadOnPlace,
   type Following,
   type PlaceFacts,
@@ -263,5 +264,19 @@ describe('the level change, the teams list and the reads', () => {
     assert.deepEqual(filters[0], { kinds: [1851], '#a': [TOPIC] })
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [1852], '#a': [TOPIC] })))
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [30078], authors: [BOB], '#d': ['estiva:teams:v1'], limit: 1 })))
+  })
+})
+
+describe('teamMembersOf', () => {
+  it('lists who the current roster names, each since they last joined, never a follower (TEA-5)', () => {
+    const rosterEvents = [roster(T0 + 400, ALICE, BOB), createTeam(ALICE, T0), joinTeam(BOB, T0 + 150), leaveTeam(BOB, T0 + 250), joinTeam(BOB, T0 + 300), joinTeam(CAROL, T0 + 100), leaveTeam(CAROL, T0 + 120)]
+    assert.deepEqual(teamMembersOf(TEAM, rosterEvents), [
+      { pubkey: ALICE, since: T0 },
+      { pubkey: BOB, since: T0 + 300 },
+    ])
+  })
+
+  it('lists nobody for a team whose roster it has not read (TEA-5)', () => {
+    assert.deepEqual(teamMembersOf(TEAM, [joinTeam(BOB, T0)]), [])
   })
 })

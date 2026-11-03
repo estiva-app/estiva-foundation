@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.29.0 — 2026-11-03
+
+**Wire: nothing written or read differently** (TEA-5; SPEC §11.8).
+`teamMembersOf(team, roster)` (new): everyone the team's current `kind:39002`
+lists, each with when the team reached them (their last `9000`, `9021` or
+`9007` since a `9001` or `9022`, else the roster's time), in the order they
+joined. Read from the same roster facts `placeFilters` asks for, so a team's
+people are the same in every app. Followers are never listed: which teams you
+follow is yours alone.
+
 ## 0.28.0 — 2026-11-03
 
 **SPEC: §11.8 *Places and following* — the shared fold for places, and a

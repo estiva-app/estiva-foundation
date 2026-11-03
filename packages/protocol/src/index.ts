@@ -86,6 +86,8 @@ export {
   buildEditChannelMetadata,
   buildFolderCommand,
   buildAddMember,
+  buildJoinGroup,
+  buildLeaveGroup,
   buildDmOpen,
   buildDmHide,
   buildReaction,

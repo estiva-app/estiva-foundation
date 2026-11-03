@@ -142,6 +142,7 @@ export {
 
 export {
   followingOf,
+  teamMembersOf,
   placeKindOf,
   placeFilters,
   unreadOnPlace,
@@ -161,6 +162,7 @@ export {
   type Following,
   type PlaceJudge,
   type TeamsList,
+  type TeamMember,
 } from './places.js'
 
 export {

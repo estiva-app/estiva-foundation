@@ -232,6 +232,28 @@ function joinedTeamAt(team: string, person: string, roster: readonly Event[], li
   return since ?? list.created_at
 }
 
+/** One of a team's members: who, and since when the team reached them (unix seconds). */
+export interface TeamMember {
+  pubkey: string
+  since: number
+}
+
+/**
+ * A team's members, from the roster facts {@link placeFilters} reads (`kind:39002`
+ * and the stored `9000`, `9001`, `9021`, `9022`, `9007`): everyone its current
+ * `kind:39002` lists, each with when they joined, in the order they joined. Who
+ * is in a team is visible to anyone who can read it; who follows it is not, so
+ * this never lists a follower (§11.8).
+ */
+export function teamMembersOf(team: string, roster: readonly Event[]): TeamMember[] {
+  const list = latest(roster.filter((e) => e.kind === KIND_ROSTER && tag(e, 'd') === team))
+  if (!list) return []
+  const people = [...new Set(list.tags.filter((t) => t[0] === 'p' && t[1]).map((t) => t[1]))]
+  return people
+    .map((pubkey) => ({ pubkey, since: joinedTeamAt(team, pubkey, roster, list) }))
+    .sort((a, b) => a.since - b.since || a.pubkey.localeCompare(b.pubkey))
+}
+
 /** The team's own start: its `kind:9007`, when held. */
 function teamStartOf(team: string, roster: readonly Event[]): number | undefined {
   return roster.find((e) => e.kind === KIND_CREATE_TEAM && tag(e, 'h') === team)?.created_at

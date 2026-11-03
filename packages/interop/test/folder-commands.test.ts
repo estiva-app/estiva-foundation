@@ -14,6 +14,7 @@ import {
   planArchiveFolder,
   planCreateFolder,
   planDeleteFolder,
+  planMarkSpace,
   planMoveFile,
   planMoveFromFolders,
   planPlaceFile,
@@ -127,6 +128,17 @@ describe('listedBeneath', () => {
   })
 })
 
+describe('planMarkSpace', () => {
+  it('marks a topic a space with an add carrying the role, and unmarks it with an add without it (TEA-5)', () => {
+    assert.deepEqual(shape([planMarkSpace(PUB, MS, { team: A, address: FILE, space: true })]), [
+      { kind: 1852, tags: [['h', A], ['op', 'add'], ['a', FILE, '', 'space']] },
+    ])
+    assert.deepEqual(shape([planMarkSpace(PUB, MS, { team: A, address: FILE, space: false })]), [
+      { kind: 1852, tags: [['h', A], ['op', 'add'], ['a', FILE]] },
+    ])
+  })
+})
+
 describe('planMoveFile', () => {
   const from = { id: A, hasState: true }
   const to = { id: B, hasState: true }
@@ -136,6 +148,15 @@ describe('planMoveFile', () => {
     assert.ok(plan.ok)
     assert.deepEqual(shape(plan.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', FILE]] }])
     assert.deepEqual(plan.moved, [FILE])
+  })
+
+  it('keeps a space a space in the target only when ticked, and only the moved topic itself (TEA-5)', () => {
+    const listing = [file(FILE), file(CHILD, FILE)]
+    const kept = planMoveFile(PUB, MS, { file: listing[0], from, to, listing, keepSpace: true })
+    const dropped = planMoveFile(PUB, MS, { file: listing[0], from, to, listing })
+    assert.ok(kept.ok && dropped.ok)
+    assert.deepEqual(shape(kept.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', FILE, '', 'space'], ['a', CHILD]] }])
+    assert.deepEqual(shape(dropped.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', FILE], ['a', CHILD]] }])
   })
 
   it('moves the subtree whole: one move naming every file', () => {
