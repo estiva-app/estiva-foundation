@@ -116,6 +116,11 @@ describe('§11.8 ways in — a level, an Add, the author', () => {
     assert.deepEqual(brief(following(BOB, { events: [root(), member(ALICE, T0 + 5, BOB, true), leave, add] })), { in: true, level: 'important', since: T0 + 10 })
   })
 
+  it('an Add filed in another Folder does not put P in the place', () => {
+    const elsewhere = event({ ...buildMembershipChange(CAROL, (T0 + 10) * 1000, { file: TOPIC, folder: 'f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b', person: BOB, member: true }), created_at: T0 + 10 })
+    assert.equal(following(BOB, { events: [root(), elsewhere] }).in, false)
+  })
+
   it('a leave signed by someone else is ignored', () => {
     assert.equal(following(BOB, { events: [root(), member(ALICE, T0 + 5, BOB, true), member(ALICE, T0 + 20, BOB, false)] }).in, true)
   })
@@ -204,6 +209,15 @@ describe('§11.8 what is unread on a place', () => {
     const mine = reply(BOB, top, T0 + 12)
     const late = reply(CAROL, top, T0 + 13)
     assert.deepEqual(ids(unreadOnPlace([top, early, mine, late], {}, judge(inAt('important')))), [top.id, late.id])
+  })
+
+  it('choosing All lights replies P is not in from that moment, never the older ones', () => {
+    const top = comment(ALICE, T0 + 10, 'new')
+    const before = reply(CAROL, top, T0 + 11, 'before All')
+    const after = reply(CAROL, top, T0 + 30, 'after All')
+    const events = [root(), member(ALICE, T0 + 5, BOB, true), level(BOB, T0 + 20, 'all')]
+    const f = following(BOB, { events })
+    assert.deepEqual(ids(unreadOnPlace([top, before, after], {}, judge(f))), [top.id, after.id])
   })
 
   it('not in the place: only a message that mentions P lights', () => {

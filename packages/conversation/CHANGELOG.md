@@ -23,8 +23,10 @@ level is never a placement** (TEA-4). Needs protocol 0.51.0.
   `placeKindOf` and `placeFilters` (the reads it needs) beside it.
 - `unreadOnPlace` / `isUnreadOnPlace` (new): what lights on a place — at
   Important a new conversation, a reply in a conversation the person is in
-  and a mention; at All everything; a mute already kept still lights only
-  mentions.
+  and a mention; at All everything from the moment All was chosen (Miky,
+  2026-11-03: choosing All never brings back older replies); a mute already
+  kept still lights only mentions. A `member:` or `follow:` change filed in
+  another Folder is ignored (§6.2).
 - `buildLevelChange` and `followField` (new): the `follow:<P>` change, signed
   by `P` for `P`, value `all`, `important` or empty.
 - `parseTeamsBlob`, `serializeTeamsBlob`, `buildTeamsEvent`, `teamsFilter`,

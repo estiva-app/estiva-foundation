@@ -98,6 +98,12 @@ export interface Following {
   level?: Level
   /** Unix seconds: the earliest start among the ways that hold. Undefined when not in, or no way's start is known. */
   since?: number
+  /**
+   * Unix seconds the person chose All: what All lights beyond Important counts
+   * from then, so choosing it never brings back older replies (Miky,
+   * 2026-11-03). Undefined unless the level is All.
+   */
+  allSince?: number
   /** Every way in that holds now. */
   ways: WayIn[]
 }
@@ -110,8 +116,10 @@ function actsOf(place: Place, person: string, events: readonly Event[]): Act[] {
   const acts: Act[] = []
   const versions = place.address.startsWith(`${KIND_TEAM}:`) ? [] : events.filter((e) => addressOf(e) === place.address).sort(byOrder)
   if (versions[0]?.pubkey === person) acts.push({ event: { ...versions[0], created_at: Math.min(...versions.map((v) => v.created_at)) }, act: 'creation' })
+  // A change filed in another Folder is ignored (§6.2): the place's own Folder is the team for its chat, else its root's `h`.
+  const folder = versions.length ? (tag(versions[versions.length - 1], 'h') ?? place.team) : place.team
   for (const change of events) {
-    if (change.kind !== KIND_CHANGE || tag(change, 'a') !== place.address) continue
+    if (change.kind !== KIND_CHANGE || tag(change, 'a') !== place.address || tag(change, 'h') !== folder) continue
     const O = tag(change, 'O')
     if (O !== undefined && O !== id) continue
     // A level or a membership change is never in a `set` (§11.8): one there is not read.
@@ -248,10 +256,12 @@ export function followingOf(place: Place, person: string, facts: PlaceFacts): Fo
   const named = acts.slice(0, Math.max(lastLeave, 0)).filter((a) => a.act === 'join' && leaveId !== undefined && tag(a.event, 'prev') === leaveId)
   const after = [...named, ...acts.slice(lastLeave + 1)]
   // 1. A level chosen since the last leave, and not cleared since; changing it keeps its start.
-  let chosen: { level: Level; since: number } | undefined
+  let chosen: { level: Level; since: number; allSince?: number } | undefined
   for (const a of after) {
-    if (a.act === 'level') chosen = { level: a.level!, since: chosen?.since ?? a.event.created_at }
-    else if (a.act === 'clear') chosen = undefined
+    if (a.act === 'level') {
+      const allSince = a.level === 'all' ? (chosen?.allSince ?? a.event.created_at) : undefined
+      chosen = { level: a.level!, since: chosen?.since ?? a.event.created_at, ...(allSince !== undefined ? { allSince } : {}) }
+    } else if (a.act === 'clear') chosen = undefined
   }
   if (chosen) {
     out.ways.push('level')
@@ -287,7 +297,7 @@ export function followingOf(place: Place, person: string, facts: PlaceFacts): Fo
   }
 
   if (out.ways.length === 0) return out
-  return { ...out, in: true, level: chosen?.level ?? 'important', since: Math.min(...starts) }
+  return { ...out, in: true, level: chosen?.level ?? 'important', since: Math.min(...starts), ...(chosen?.allSince !== undefined ? { allSince: chosen.allSince } : {}) }
 }
 
 /**
@@ -344,7 +354,8 @@ export interface PlaceJudge {
  *
  * At **Important** a new conversation lights, and a reply in a conversation
  * `me` is in — wrote its root or a reply, or was mentioned in it — from the
- * moment they were. At **All** every message lights. A mention of `me` lights
+ * moment they were. At **All** every message lights from the moment they
+ * chose All (`allSince`), and Important's rule before it. A mention of `me` lights
  * at any level, and when they are not in. A file the place lists is judged
  * at All the same way, by passing its own stream and context with this
  * following.
@@ -382,7 +393,7 @@ export function isUnreadOnPlace(
   const mentioned = peopleNamedInBody(message.content).has(judge.me)
   const started = following.in && (following.since === undefined || message.created_at >= following.since)
   const levelLights =
-    following.level === 'all' ||
+    (following.level === 'all' && message.created_at >= (following.allSince ?? following.since ?? 0)) ||
     root === undefined ||
     (inConversationSince !== undefined && message.created_at >= inConversationSince)
   if (!mentioned && (judge.muted || !started || !levelLights)) return false
