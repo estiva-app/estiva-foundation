@@ -24,7 +24,7 @@
  */
 import { addrToNaddr, bech32Decode, convertBits, decodeNevent, encodeNevent, naddrToAddr } from './nip19.js'
 import type { PartPointer } from './anchors.js'
-import { fileKeyOf, isFileId, sameFile } from './fileId.js'
+import { fileIdFormOf, fileKeyOf, isFileId, sameFile } from './fileId.js'
 import type { RenderBlock, RenderInline } from './render.js'
 
 export const EMBED_TAG = 'embed'
@@ -56,12 +56,16 @@ export function embedTag(value: string, layout: EmbedLayout): string[] {
  * a layout this writer does not know carried as it was written (`written`).
  * Throws on a value that is neither an address nor an event id, or on a
  * layout that is neither known nor carried, rather than write a tag readers skip.
+ * An address whose type is in `inOrder` (`RelayFileReads.inOrder`) is written
+ * as the file's id.
  */
-export function embedTagsOf(set: readonly Embed[]): string[][] {
+export function embedTagsOf(set: readonly Embed[], inOrder: readonly string[] = []): string[][] {
   const seen = new Set<string>()
   return set.flatMap((e) => {
-    const value = normalise(e.value)
-    if (!value) throw new Error(`not an address or event id: ${e.value}`)
+    const normal = normalise(e.value)
+    if (!normal) throw new Error(`not an address or event id: ${e.value}`)
+    // A file whose type the relay keeps in order is carded by its id (§13.6.2).
+    const value = fileIdFormOf(inOrder, normal)?.id ?? normal
     if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
     if (seen.has(fileKeyOf(value))) return []
     seen.add(fileKeyOf(value))

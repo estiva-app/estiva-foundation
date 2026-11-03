@@ -27,7 +27,7 @@
  * Muting is private and separate (§11.8 *Muting is private*): see
  * {@link parseMutedBlob}.
  */
-import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { fileIdOf, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS as ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { byOrder } from './order.js'
 import { anchorsOf, isAbout, isCommentOn, peopleNamedInBody } from './strength.js'
@@ -240,7 +240,7 @@ export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): str
 /**
  * A membership change (§11.8 *The membership change*): `true` adds a person,
  * by anyone; `false` is a leave and counts only when the person signs it
- * themselves. Tag order: `a`, `field`, `value`, `h`, `ts`, `p`.
+ * themselves. Tag order: `a`, `[O]`, `field`, `value`, `h`, `ts`, `p`.
  *
  * Sign one only when the person chose it — joining, leaving, or adding
  * somebody. Never to migrate a private follow (§11.8 *Following, retired*).
@@ -264,6 +264,8 @@ export function buildMembershipChange(
     kind: KIND_CHANGE,
     tags: [
       ['a', args.file],
+      // The file the change is about, by its id (§6.2, §11.8): the same file, so additive for every reader.
+      ...(fileIdOf(args.file) !== undefined ? [['O', fileIdOf(args.file)!]] : []),
       ['field', memberField(args.person)],
       ['value', args.member ? 'true' : 'false'],
       ['h', args.folder],

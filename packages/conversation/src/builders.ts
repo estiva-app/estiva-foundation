@@ -7,7 +7,7 @@
  * already Buzz-shaped and byte-pinned. What is conversation-specific is the
  * NIP-22 pair below, whose shape the SPEC decided rather than Buzz.
  */
-import { imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'
+import { fileIdFormOf, fileIdOf, imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'
 import { FOLDER_ID, KIND_COMMENT } from './kinds.js'
 
 /**
@@ -27,8 +27,12 @@ function kindAndAuthor(address: string): [string, string] {
 }
 
 /**
- * A top-level comment on an object. Tag order: `A`, `K`, `P`, `a`, `k`, `p`,
- * `[block]`, `h`, `ts`, `[imeta…]`, then `tags`.
+ * A top-level comment on an object. Tag order: `A`, `K`, `P`, `[O, K]`, `a`,
+ * `k`, `[o, k]`, `p`, `[block]`, `h`, `ts`, `[imeta…]`, then `tags`.
+ *
+ * The bracketed pairs name the file by its id and its type once the relay
+ * keeps that type in order (§6.4, "A comment in both forms"): the first `K`
+ * and `k` stay the address's kind, for a reader that takes the first.
  *
  * Uppercase and lowercase name the same object, as NIP-22 says for a
  * top-level comment. `K` and `P` come from the address, so a caller cannot
@@ -40,10 +44,20 @@ function kindAndAuthor(address: string): [string, string] {
 export function buildComment(
   pubkey: string,
   createdAtMs: number,
-  args: { about: string; folder: string; body: string; blockId?: string; files?: readonly Imeta[]; tags?: readonly NostrTag[] },
+  args: {
+    about: string
+    folder: string
+    body: string
+    blockId?: string
+    files?: readonly Imeta[]
+    tags?: readonly NostrTag[]
+    /** The types the relay keeps in order (`RelayFileReads.inOrder`): a file of one is named by its id too. */
+    inOrder?: readonly string[]
+  },
 ): UnsignedEvent {
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.about)
+  const byId = fileIdFormOf(args.inOrder ?? [], args.about)
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
@@ -52,8 +66,10 @@ export function buildComment(
       ['A', args.about],
       ['K', kind],
       ['P', author],
+      ...(byId ? [['O', byId.id], ['K', byId.type]] : []),
       ['a', args.about],
       ['k', kind],
+      ...(byId ? [['o', byId.id], ['k', byId.type]] : []),
       ['p', author],
       ...(args.blockId ? [['block', args.blockId]] : []),
       ['h', args.folder],
@@ -100,8 +116,8 @@ export function placeOf(comment: { tags: readonly NostrTag[] }): NostrTag[] {
 }
 
 /**
- * A reply to a comment — §6.4 *Replies*, C16. Tag order: `A`, `K`, `P`, `e`,
- * `k`, `[p]`, `[block, quote]`, `h`, `ts`, `[imeta…]`, then `tags`.
+ * A reply to a comment — §6.4 *Replies*, C16. Tag order: `A`, `K`, `P`,
+ * `[O, K]`, `e`, `k`, `[p]`, `[block, quote]`, `h`, `ts`, `[imeta…]`, then `tags`.
  *
  * **Flat, one level deep**: `e` names the thread's top-level comment, never
  * another reply. **No lowercase `a`** for the object: NIP-22 reads it as the
@@ -115,11 +131,27 @@ export function placeOf(comment: { tags: readonly NostrTag[] }): NostrTag[] {
 export function buildReply(
   pubkey: string,
   createdAtMs: number,
-  args: { comment: CommentRef; folder: string; body: string; files?: readonly Imeta[]; tags?: readonly NostrTag[] },
+  args: {
+    comment: CommentRef
+    folder: string
+    body: string
+    files?: readonly Imeta[]
+    tags?: readonly NostrTag[]
+    /** As {@link buildComment}'s: the reply names its file by its id as its comment does. */
+    inOrder?: readonly string[]
+  },
 ): UnsignedEvent {
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.comment.anchor)
-  const earned = (args.tags ?? []).filter((t) => !(t[0] === 'a' && t[1] === args.comment.anchor) && !PLACE_TAGS.has(t[0]))
+  const byId = fileIdFormOf(args.inOrder ?? [], args.comment.anchor)
+  // Its own file is its `A`/`O`, never a link: not by address, and not by id in an `o` or a `part`.
+  const ownId = fileIdOf(args.comment.anchor)
+  const earned = (args.tags ?? []).filter(
+    (t) =>
+      !(t[0] === 'a' && t[1] === args.comment.anchor) &&
+      !((t[0] === 'o' || t[0] === 'part') && ownId !== undefined && t[1] === ownId) &&
+      !PLACE_TAGS.has(t[0]),
+  )
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
@@ -128,6 +160,7 @@ export function buildReply(
       ['A', args.comment.anchor],
       ['K', kind],
       ['P', author],
+      ...(byId ? [['O', byId.id], ['K', byId.type]] : []),
       ['e', args.comment.id],
       ['k', String(KIND_COMMENT)],
       ...(args.comment.author ? [['p', args.comment.author]] : []),

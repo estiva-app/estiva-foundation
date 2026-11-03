@@ -50,6 +50,7 @@ import {
   buildDeleteChannel,
   buildEditChannelMetadata,
   buildFolderCommand,
+  fileIdFormOf,
   isFileId,
   KIND,
   type ChannelVisibility,
@@ -158,10 +159,19 @@ export function planDeleteFolder(pubkey: string, createdAtMs: number, args: { fo
 export function planPlaceFile(
   pubkey: string,
   createdAtMs: number,
-  args: { folder: string; address: string; hasState: boolean },
+  args: { folder: string; address: string; hasState: boolean; inOrder?: readonly string[] },
 ): UnsignedEvent[] {
   if (!args.hasState) return []
-  return [buildFolderCommand(pubkey, createdAtMs, { folder: args.folder, op: 'add', addresses: [args.address] })]
+  return [buildFolderCommand(pubkey, createdAtMs, { folder: args.folder, op: 'add', addresses: [listedAs(args.address, args.inOrder)] })]
+}
+
+/**
+ * How a command names a file: by its id once the relay keeps its type in
+ * order (`RelayFileReads.inOrder`, §3.3 "lists by `o` once every app reading
+ * the Folder reads both"), else by its address.
+ */
+function listedAs(address: string, inOrder: readonly string[] = []): string {
+  return fileIdFormOf(inOrder, address)?.id ?? address
 }
 
 /**
@@ -177,10 +187,10 @@ export function planPlaceFile(
 export function planUnlistFile(
   pubkey: string,
   createdAtMs: number,
-  args: { folder: string; address: string; hasState: boolean },
+  args: { folder: string; address: string; hasState: boolean; inOrder?: readonly string[] },
 ): UnsignedEvent[] {
   if (!args.hasState) return []
-  return [buildFolderCommand(pubkey, createdAtMs, { folder: args.folder, op: 'remove', addresses: [args.address] })]
+  return [buildFolderCommand(pubkey, createdAtMs, { folder: args.folder, op: 'remove', addresses: [listedAs(args.address, args.inOrder)] })]
 }
 
 /**

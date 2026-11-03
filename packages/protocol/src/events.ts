@@ -36,6 +36,7 @@ import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils'
 import { type BlockDocument, serializeBlockDocument } from './blocks.js'
 import { type Embed, embedTagsOf } from './embeds.js'
+import { isFileId } from './fileId.js'
 
 /** A Nostr tag: an array of strings whose first element is the tag name. */
 export type NostrTag = string[]
@@ -476,7 +477,7 @@ const FOLDER_OPS: readonly string[] = ['add', 'remove', 'set', 'move']
  * (`buzz-relay/src/handlers/side_effects.rs`, `nfb-demo-kinds`). Buzz has no
  * builder for it: the kind is the relay's own and only clients send it.
  *
- * Tag order: h, op, [from], a…, [name]. `a` tags keep the order given, because
+ * Tag order: h, op, [from], a… (or `o` for a file's id), [name]. `a` tags keep the order given, because
  * the relay appends them in that order and a Folder's order is the Folder's.
  *
  * - `add` and `remove` act on the addresses named and leave the rest alone;
@@ -513,9 +514,10 @@ export function buildFolderCommand(
     ['op', args.op],
   ]
   if (args.from !== undefined) tags.push(['from', args.from])
+  // A file named by its id is named by `o`, where an address would be (§3.3).
   for (const address of args.addresses ?? []) {
     if (!address) throw new Error('a folder command address must not be empty')
-    tags.push(['a', address])
+    tags.push([isFileId(address) ? 'o' : 'a', address])
   }
   if (args.name !== undefined) {
     const name = canonicalChannelName(args.name)
@@ -733,6 +735,8 @@ export function buildEdit(
     embeds?: readonly Embed[]
     /** The whole `imeta` set after this edit, when it changes it; it folds the same way (§6.8). */
     mediaTags?: NostrTag[]
+    /** The types the relay keeps in order: a card for a file of one names it by its id (`embedTagsOf`). */
+    inOrder?: readonly string[]
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
@@ -752,7 +756,7 @@ export function buildEdit(
       // and a rounded `ts` could land in the next second and be discarded by
       // its own agreement rule.
       ['ts', String(Math.floor(createdAtMs))],
-      ...embedTagsOf(args.embeds ?? []),
+      ...embedTagsOf(args.embeds ?? [], args.inOrder),
       ...(args.mediaTags ?? []),
     ],
     content: args.body,

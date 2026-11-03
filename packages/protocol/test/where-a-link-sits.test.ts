@@ -238,6 +238,14 @@ describe('C26 — the card replaces the row (§13.6.2)', () => {
     const cards = cardsIn(embedsOf(edit), tree(edit.content)).filter((e) => e.layout !== 'none')
     assert.deepEqual(cards, [{ value: PROJECT, layout: 'compact' }])
   })
+
+  it('once projects are kept in order, a project\'s card is written by its id and still draws under its reference; an issue\'s keeps its address (ALO-4)', () => {
+    const set: Embed[] = [{ value: ISSUE, layout: 'compact' }, { value: PROJECT, layout: 'detailed' }]
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `${ref(ISSUE)} and ${ref(PROJECT)}`, embeds: set, inOrder: ['osnova.project'] })
+    const ID = PROJECT.split(':')[2]
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(ISSUE, 'compact'), embedTag(ID, 'detailed')])
+    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)).map((e) => e.layout), ['compact', 'detailed'])
+  })
 })
 
 describe('C27 — the default card (§13.6.2)', () => {

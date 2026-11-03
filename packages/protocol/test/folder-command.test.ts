@@ -65,6 +65,17 @@ describe('buildFolderCommand', () => {
     assert.equal(event.tags.some(([t]) => t === 'name'), false)
   })
 
+  it('names a file given by its id with o, and one given by its address with a, in the order given (§3.3, ALO-4)', () => {
+    const ID = '0f8a7c1e-5b2d-4e6f-9a3b-c4d5e6f7a8b9'
+    const event = buildFolderCommand(PUB, 0, { folder: FOLDER, op: 'add', addresses: [ID, `30840:${PUB}:t1`] })
+    assert.deepEqual(event.tags, [
+      ['h', FOLDER],
+      ['op', 'add'],
+      ['o', ID],
+      ['a', `30840:${PUB}:t1`],
+    ])
+  })
+
   it('refuses a malformed signer', () => {
     assert.throws(() => buildFolderCommand('B'.repeat(64), 0, { folder: FOLDER, op: 'add' }), /pubkey/)
   })

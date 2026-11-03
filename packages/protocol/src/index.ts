@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.50.0'
+export const PROTOCOL_VERSION = '0.51.0'
 
 export {
   // types
@@ -288,7 +288,7 @@ export {
   resolveBlockAnchor,
   resolvePart,
 } from './anchors.js'
-export { FILE_KINDS, fileIdOf, fileKeyOf, isFileId, sameFile } from './fileId.js'
+export { BASE_TYPE_OF_KIND, FILE_KINDS, fileIdFormOf, fileIdOf, fileKeyOf, isFileId, sameFile, type FileIdForm } from './fileId.js'
 export {
   type CommentAnchor,
   type Quote,
