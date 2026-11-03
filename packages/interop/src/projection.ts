@@ -7197,7 +7197,9 @@ export async function resolveFolderContents(
     // The list read carries no text (§6.13), and a change that set it with
     // other fields may be stale: the text is unread, never the seed the file
     // was created with drawn as if it were current.
-    if (listRead && pointer.kind !== KIND_CHANNEL) folded.description = { value: '' }
+    if (listRead && pointer.kind !== KIND_CHANNEL) {
+      folded.description = { value: '', by: root.pubkey, at: root.created_at, format: 'marker' }
+    }
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL
         ? new Set(
