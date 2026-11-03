@@ -594,6 +594,7 @@ export async function topicConversations(
       }
       const topicTerms = terms(topic.address)
       const frontier = { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS }
+      // Every thread here is one of the topic's: `conversationsOf` keeps a reply only under a root of this file.
       for (const thread of threads.values()) {
         if (streamHasUnread(thread, context, topicTerms, frontier, (id) => read.membership.mentioned.has(id))) fresh++
       }

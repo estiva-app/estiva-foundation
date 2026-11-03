@@ -169,7 +169,6 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     const firstRead = { ...merged, [`thread:${first.id}`]: NOW }
     assert.deepEqual(await topicConversations(read, query, { merged: firstRead, muted: new Set(), nowSeconds: NOW }).then((out) => out.get(alpha.address)), { conversations: 3, unread: true, fresh: 1 })
   })
-
   it('lights a topic of the viewer’s for a new reply until its thread is read', async () => {
     const { query } = relay([...world, ...talk, reply(THEM, first, NOW - 100)])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
