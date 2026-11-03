@@ -585,11 +585,17 @@ export async function topicConversations(
     let fresh = 0
     if (context && judged.has(topic.address)) {
       // A reply from before the thread rule's cut-over never lit a row (CON-34).
-      const threads = new Map<string, typeof messages>()
-      for (const m of messages) if (m.root === m.id || m.at >= THREAD_RULE_FROM) threads.set(m.root, [...(threads.get(m.root) ?? []), m])
+      const threads = new Map<string, (typeof messages)[number][]>()
+      for (const m of messages) {
+        if (m.root !== m.id && m.at < THREAD_RULE_FROM) continue
+        const thread = threads.get(m.root)
+        if (thread) thread.push(m)
+        else threads.set(m.root, [m])
+      }
+      const topicTerms = terms(topic.address)
       const frontier = { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS }
       for (const thread of threads.values()) {
-        if (streamHasUnread(thread, context, terms(topic.address), frontier, (id) => read.membership.mentioned.has(id))) fresh++
+        if (streamHasUnread(thread, context, topicTerms, frontier, (id) => read.membership.mentioned.has(id))) fresh++
       }
     }
     out.set(topic.address, { conversations: messages.filter((m) => m.root === m.id).length, unread: fresh > 0, fresh })
