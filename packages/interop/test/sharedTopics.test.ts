@@ -117,6 +117,19 @@ describe('readTopics — every topic the viewer can read, once', () => {
     const yours = read.topics.filter((t) => t.yours).map((t) => t.object.slots.title?.value).sort()
     assert.deepEqual(yours, ['Alpha', 'Bravo', 'Echo', 'Foxtrot', 'Hotel'])
   })
+
+  it('marks a topic a space only where a team’s list gives its entry the role, by address or by id', async () => {
+    const teamList = (folder: string, tags: string[][]) =>
+      signed({ pubkey: 'c'.repeat(64), created_at: NOW - DAY, kind: 30890, tags: [['d', folder], ...tags], content: '' })
+    const lists = [
+      teamList(FOLDER, [['a', bravo.address, '', 'space'], ['a', charlie.address], ['o', 'delta', '', 'space']]),
+      // A relay hint in the third place and an unknown role leave the entry a plain listing.
+      teamList(OTHER_FOLDER, [['a', echo.address, 'wss://relay.example'], ['a', alpha.address, '', 'pinned']]),
+    ]
+    const read = await readTopics(relay([...world, ...lists]).query, ME, { nowSeconds: NOW })
+    const spaces = read.topics.filter((t) => t.space).map((t) => t.object.slots.title?.value).sort()
+    assert.deepEqual(spaces, ['Bravo', 'Delta'])
+  })
 })
 
 describe('addableTopics — what Add to topic offers', () => {

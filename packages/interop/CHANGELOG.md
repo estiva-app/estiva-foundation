@@ -6,7 +6,16 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.77.0 — 2026-11-03
+## 0.78.0 — 2026-11-03
+
+**Manifest: nothing. Wire: nothing written; one read added** (SHIPS-3; SPEC
+§3.3, C37). `readTopics` gives each topic `space`: a team's relay-signed list
+(`kind:30890`) marks its entry with the role `space`, as
+`["a", <address>, "", "space"]` or `["o", <d>, "", "space"]`. A relay hint in
+the third place, or a role it does not know, leaves the topic a plain listing.
+The lists naming the topics are read in the same round as their lists, by `#a`
+and `#o`, so `readTopics` stays three rounds. Ship's Topics draws no space.
+
 
 **Manifest: nothing. Wire: behind the switch, a file is written by its id, and
 a change may set several fields** (ALO-4; SPEC §3.3, §6.2, §6.4, §13.1,
