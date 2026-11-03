@@ -587,6 +587,18 @@ describe('a Folder is archived the way any file is', () => {
       'no file’s changes are asked for',
     )
   })
+
+  test('with the list read, a file’s text is unread, never the words it was created with (ALO-5)', async () => {
+    const own = JSON.parse(hiveLog.content)
+    own.projections[HIVE].slots.body = { fold: 'description', tag: 'description' }
+    const log = event({ ...hiveLog, id: 'd'.repeat(64), content: JSON.stringify(own), created_at: hiveLog.created_at + 1 })
+    const seeded = event({ kind: HIVE, tags: [['d', 'south'], ['title', 'South hive'], ['description', 'First words'], ['h', HIVE_TALK]] })
+    const edited = event({ kind: 1851, tags: [['a', addressOf(seeded)], ['field', 'description'], ['value', 'Newer words'], ['h', HIVE_TALK]] })
+    const events = [log, hiveTalk, seeded, edited]
+    const bodyOf = (contents) => contents.files.find((f) => f.slots.title?.value === 'South hive').slots.body?.value
+    assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, relay(events), noPeople)), 'Newer words')
+    assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, listing(events), noPeople, undefined, { listRead: true })), undefined)
+  })
 })
 
 describe('a Folder read for some kinds only (43e9a775)', () => {

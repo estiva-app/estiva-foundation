@@ -6504,8 +6504,8 @@ export async function listFolders(
      * `list`): each listed file is read as its first record and its fields'
      * current changes (§6.13), so finding which are archived costs about a
      * change a field instead of every change ever made to them, a text save
-     * being a whole document. A deleted file is not in that answer, so it
-     * places no channel. Only where the relay advertises it: one that does
+     * being a whole document. A deleted file is not in that answer, so its
+     * channel is neither placed nor archived with it. Only where the relay advertises it: one that does
      * not answers the read as a plain one, with no changes at all.
      *
      * Measured on production 29 Oct: 25.7 MB of a cold Ship load was every
@@ -7034,6 +7034,10 @@ export async function resolveFolderContents(
      * (§6.13) rather than every change ever made to it. The text is not in
      * that answer, so a slot drawing a file's `description` is empty, and a
      * deleted file is left out. Nested Folders are read as before.
+     *
+     * Each field is the relay's newest change by §6.3's order: where an app's
+     * fold would refuse that change, the field reads as its first record's,
+     * not as the change before it.
      */
     listRead?: boolean
   } = {},
@@ -7190,6 +7194,10 @@ export async function resolveFolderContents(
       records,
       root,
     )
+    // The list read carries no text (§6.13), and a change that set it with
+    // other fields may be stale: the text is unread, never the seed the file
+    // was created with drawn as if it were current.
+    if (listRead && pointer.kind !== KIND_CHANNEL) folded.description = { value: '' }
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL
         ? new Set(
