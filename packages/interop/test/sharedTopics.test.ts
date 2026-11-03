@@ -122,7 +122,9 @@ describe('readTopics — every topic the viewer can read, once', () => {
     const teamList = (folder: string, tags: string[][]) =>
       signed({ pubkey: 'c'.repeat(64), created_at: NOW - DAY, kind: 30890, tags: [['d', folder], ...tags], content: '' })
     const lists = [
-      teamList(FOLDER, [['a', bravo.address, '', 'space'], ['a', charlie.address], ['o', 'delta', '', 'space']]),
+      teamList(FOLDER, [['a', bravo.address, '', 'space'], ['a', charlie.address]]),
+      // A list naming its topic only by id: found only by reading the lists by `#o`.
+      teamList('7e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b', [['o', 'delta', '', 'space']]),
       // A relay hint in the third place, with or without the role, and an unknown role leave the entry a plain listing.
       teamList(OTHER_FOLDER, [['a', echo.address, 'wss://relay.example', 'space'], ['a', alpha.address, '', 'pinned']]),
       // Left on a second list without the role, as a move that failed halfway would: not a space.
