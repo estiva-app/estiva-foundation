@@ -12,7 +12,7 @@
  * | created it | the root, ordered before every other event for the file |
  * | took part | a message in the stream, by `P` |
  * | was mentioned | a message in the stream whose content names `P` (`nostr:npub…`) |
- * | was placed | a `kind:1851` on the file, not a membership field, with a non-empty `value`, carrying `["p", P]` |
+ * | was placed | a `kind:1851` on the file, not a membership field (`member:` or `follow:`), with a non-empty `value`, carrying `["p", P]` |
  * | was added, or joined | a `kind:1851` setting `member:<P>` to `true`, by anyone |
  *
  * A **leave** is a `member:<P>` = `false` signed by `P`; one signed by anybody
@@ -37,6 +37,18 @@ export { KIND_CHANGE }
 
 /** The field prefix of a membership change: `member:<pubkey>`. */
 export const MEMBER_FIELD_PREFIX = 'member:'
+
+/** The field prefix of a level on a place: `follow:<pubkey>` (§11.8 *Places and following*). */
+export const FOLLOW_FIELD_PREFIX = 'follow:'
+
+/**
+ * Whether a field is a membership field, `member:<P>` or `follow:<P>` (§11.8).
+ * Its `p` places nobody: a level is not a placement, and read as one it would
+ * make whoever chose Important a member of every conversation on the place.
+ */
+export function isMembershipField(field: string | undefined): boolean {
+  return !!field && (field.startsWith(MEMBER_FIELD_PREFIX) || field.startsWith(FOLLOW_FIELD_PREFIX))
+}
 
 const PUBKEY = /^[0-9a-f]{64}$/
 
@@ -139,9 +151,9 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
     if (change.kind !== KIND_CHANGE || !isChangeTo(change, file, id)) continue
     const sets = change.tags.filter((t) => t[0] === 'set' && typeof t[1] === 'string')
     if (sets.length) {
-      // A several-field change never carries a `member:<P>` (§11.8), so one is not read here;
-      // the `p` it carries places people when any field it sets has a value.
-      if (sets.some((t) => !t[1].startsWith(MEMBER_FIELD_PREFIX) && t[2])) addNamed(change)
+      // A several-field change never carries a `member:<P>` or `follow:<P>` (§11.8), so one is not
+      // read here; the `p` it carries places people when any other field it sets has a value.
+      if (sets.some((t) => !isMembershipField(t[1]) && t[2])) addNamed(change)
       continue
     }
     const field = tag(change, 'field')
@@ -152,8 +164,9 @@ function stepsOf(file: string, events: readonly Event[]): Map<string, Step[]> {
       else if (value === 'false' && change.pubkey === member) add(member, change, false)
       continue
     }
-    // A change with an empty value takes someone off (an unassign) and places nobody, whatever `p` it carries.
-    if (field?.startsWith(MEMBER_FIELD_PREFIX) || !value) continue
+    // A level (`follow:<P>`) is read by the places fold, not here. A change with an empty
+    // value takes someone off (an unassign) and places nobody, whatever `p` it carries.
+    if (isMembershipField(field) || !value) continue
     addNamed(change)
   }
   return steps
@@ -233,7 +246,11 @@ export function membershipFilters(person: string, since?: number): Filter[] {
  * file, if any, is its root's, which the app resolves by reading the thread.
  */
 export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): string[] {
-  if (event.kind === KIND_CHANGE) return event.tags.filter((t) => t[0] === 'a' && ADDRESS.test(t[1] ?? '')).map((t) => t[1])
+  if (event.kind === KIND_CHANGE) {
+    // A level says nothing about file membership: counted as a candidate, it would read as a word that the person is not a member.
+    if (tag(event, 'field')?.startsWith(FOLLOW_FIELD_PREFIX)) return []
+    return event.tags.filter((t) => t[0] === 'a' && ADDRESS.test(t[1] ?? '')).map((t) => t[1])
+  }
   return anchorsOf(event).filter((a) => ADDRESS.test(a))
 }
 
