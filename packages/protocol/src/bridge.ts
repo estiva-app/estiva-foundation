@@ -604,8 +604,12 @@ function discriminate(filters: Record<string, unknown>[]): Discriminator | null 
 const runsBefore = (a: SignedEvent, b: SignedEvent): boolean =>
   a.created_at > b.created_at || (a.created_at === b.created_at && a.id < b.id)
 
-/** Past this many events times filters, or steps, a batch is not split by position. */
-const MAX_POSITION_SPLIT = 1_000_000
+/**
+ * Past this many events times filters, or steps, a batch is not split by
+ * position: the split runs on the app's main thread. Topics' read on Miky's
+ * open is 5 × 729.
+ */
+const MAX_POSITION_SPLIT = 250_000
 
 /**
  * A batched answer of plain NIP-01 filters cut into each filter's run by
