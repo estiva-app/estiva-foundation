@@ -45,7 +45,7 @@ const event = (id, createdAt, kind, folder) => ({
  * `match` decides what a filter selects, so one double serves both the `#h`
  * shape and the `kinds` shape.
  */
-function fakeRelay(events, serverCeiling = 1000, { maxFilters = MAX_FILTERS_PER_QUERY } = {}) {
+function fakeRelay(events, serverCeiling = 1000, { maxFilters = MAX_FILTERS_PER_QUERY, also = () => false } = {}) {
   const calls = []
   const fetch = async (_url, init) => {
     const filters = JSON.parse(init.body)
@@ -58,7 +58,10 @@ function fakeRelay(events, serverCeiling = 1000, { maxFilters = MAX_FILTERS_PER_
       const eligible = events
         .filter((e) => (filter.kinds ? filter.kinds.includes(e.kind) : true))
         .filter((e) => (filter['#h'] ? filter['#h'].includes(e.tags.find((t) => t[0] === 'h')?.[1]) : true))
-        .filter((e) => (filter['#a'] ? e.tags.some((t) => t[0] === 'a' && filter['#a'].includes(t[1])) : true))
+        .filter((e) => (filter['#a'] ? e.tags.some((t) => t[0] === 'a' && filter['#a'].includes(t[1])) || also(e, filter) : true))
+        .filter((e) => (filter['#A'] ? e.tags.some((t) => t[0] === 'A' && filter['#A'].includes(t[1])) : true))
+        .filter((e) => (filter['#p'] ? e.tags.some((t) => t[0] === 'p' && filter['#p'].includes(t[1])) : true))
+        .filter((e) => (filter.authors ? filter.authors.includes(e.pubkey) : true))
         .filter((e) => (filter.until === undefined ? true : e.created_at <= filter.until))
         .sort((a, b) => b.created_at - a.created_at)
       out.push(...eligible.slice(0, Math.min(filter.limit ?? serverCeiling, serverCeiling)))
@@ -221,6 +224,88 @@ test('a change naming files in two groups cannot be attributed, and the answer i
 
   const serial = await fakeRelay(events, 100).relay.queryAll(filters, { batch: false })
   assert.deepEqual(got.map((e) => e.id).sort(), serial.map((e) => e.id).sort(), 'every change once, the shared one and the first group’s oldest included')
+})
+
+/*
+  A person's part in some topics (interop's `personInFilesFilters`): the
+  changes naming them, the comments they wrote, the comments naming them —
+  five filters, no Folder, and a comment on a topic carries both its `A` and
+  its `a`, so it answers two filters and comes back twice. On Miky's Leaf open,
+  4 Nov, the answer was 727 events, over the largest page seen, so it was
+  thrown away and each filter asked again: 0.94 MB twice.
+*/
+const ME = hex(7)
+const TOPICS = ['30840:x:t0', '30840:x:t1', '30840:x:t2']
+const partIn = (topics, person) => [
+  { kinds: [1851], '#a': topics, '#p': [person] },
+  { kinds: [1111], '#A': topics, authors: [person] },
+  { kinds: [1111], '#a': topics, authors: [person] },
+  { kinds: [1111], '#A': topics, '#p': [person] },
+  { kinds: [1111], '#a': topics, '#p': [person] },
+]
+const changesNaming = (person, count, base) =>
+  Array.from({ length: count }, (_, i) => ({ ...event(base + i, 3_000_000 - i, 1851), tags: [['a', TOPICS[i % 3]], ['p', person]] }))
+const commentsBy = (person, count, base) =>
+  Array.from({ length: count }, (_, i) => ({ ...event(base + i, 2_000_000 - i, 1111), pubkey: person, tags: [['A', TOPICS[i % 3]], ['a', TOPICS[i % 3]]] }))
+const commentsNaming = (person, count, base) =>
+  Array.from({ length: count }, (_, i) => ({ ...event(base + i, 1_000_000 - i, 1111), tags: [['A', TOPICS[i % 3]], ['a', TOPICS[i % 3]], ['p', person]] }))
+
+/** A relay that has handed back a page of 120 events, as Leaf's has by the time it reads its Topics. */
+async function warmed(relay, calls) {
+  await relay.queryAll([{ kinds: [9] }], { batch: false })
+  calls.length = 0
+}
+
+test("a person's part in some topics is one request when each filter's run is under the largest page seen", async () => {
+  const events = [...inFolder('w', 9, 120, 900_000), ...changesNaming(ME, 40, 0), ...commentsBy(ME, 50, 10_000), ...commentsNaming(ME, 30, 20_000)]
+  const { relay, calls } = fakeRelay(events)
+  await warmed(relay, calls)
+  const filters = partIn(TOPICS, ME)
+
+  const got = await relay.queryAll(filters)
+
+  assert.equal(calls.length, 1, `the five filters were asked ${calls.length} times, not once`)
+  assert.equal(calls[0].length, 5, 'and that one request carried all five')
+  const serial = await fakeRelay(events).relay.queryAll(filters, { batch: false })
+  assert.deepEqual(got.map((e) => e.id), serial.map((e) => e.id), 'the same events in the same order as reading one filter at a time')
+})
+
+test("a person's part in some topics still pages on the filters whose runs reach the largest page seen", async () => {
+  const events = [...inFolder('w', 9, 120, 900_000), ...changesNaming(ME, 40, 0), ...commentsBy(ME, 150, 10_000), ...commentsNaming(ME, 30, 20_000)]
+  const { relay, calls } = fakeRelay(events)
+  await warmed(relay, calls)
+  const filters = partIn(TOPICS, ME)
+
+  const got = await relay.queryAll(filters)
+
+  const which = ({ limit, until, ...f }) => filters.findIndex((g) => JSON.stringify(g) === JSON.stringify(f))
+  const askedAgain = new Set(calls.slice(1).flatMap((call) => call.map(which)))
+  assert.deepEqual([...askedAgain].sort(), [1, 2], 'after the batch, only the two filters of my comments, over the largest page seen, are asked again')
+  assert.ok(calls.slice(1).every(([f]) => f.until !== undefined), 'from where their page ended, not their first page a second time')
+  const serial = await fakeRelay(events).relay.queryAll(filters, { batch: false })
+  assert.deepEqual(got.map((e) => e.id).sort(), serial.map((e) => e.id).sort(), 'all 150 of my comments, none cut at a page')
+})
+
+test('a batch is not cut into runs when the relay sent an event no filter matches as NIP-01 reads it', async () => {
+  /*
+    A relay matching more widely than NIP-01 (here, `#a` also answered by an
+    older address form) sends events nothing here can attribute: the first
+    filter's run is clamped at 100, though only its newest 60 match by NIP-01.
+    Cut where those 60 end, it would look short and settle, and the rest of
+    the changes naming me would be lost.
+  */
+  const legacy = Array.from({ length: 140 }, (_, i) => ({ ...event(50_000 + i, 2_500_000 - i, 1851), tags: [['a', 'old:t0'], ['p', ME]] }))
+  const events = [...inFolder('w', 9, 120, 900_000), ...changesNaming(ME, 60, 0), ...legacy, ...commentsNaming(ME, 30, 20_000)]
+  const also = (e, filter) => filter['#a'].includes('30840:x:t0') && e.tags.some((t) => t[0] === 'a' && t[1] === 'old:t0')
+  const { relay, calls } = fakeRelay(events, 100, { also })
+  await relay.queryAll([{ kinds: [9] }], { batch: false })
+  calls.length = 0
+  const filters = partIn(TOPICS, ME)
+
+  const got = await relay.queryAll(filters)
+
+  const serial = await fakeRelay(events, 100, { also }).relay.queryAll(filters, { batch: false })
+  assert.deepEqual(got.map((e) => e.id).sort(), serial.map((e) => e.id).sort(), 'every change naming me, the older address form included')
 })
 
 test('more filters than one request will take are chunked', async () => {
