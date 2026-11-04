@@ -12,7 +12,6 @@
  */
 import {
   BLOCK_ANCHOR_TAG,
-  embedsOf,
   imetaOf,
   partsOf,
   quoteOf,
@@ -23,8 +22,8 @@ import {
   type Quote,
   type SignedEvent,
 } from '@estiva-app/protocol'
-import { editsByTarget, foldEdits } from './edits.js'
-import { isConversationKind, isEventId, KIND_COMMENT, KIND_DELETION } from './kinds.js'
+import { editsByTarget, foldEdits, foldEmbeds } from './edits.js'
+import { isConversationKind, isEventId, KIND_COMMENT, KIND_DELETION, KIND_REACTION } from './kinds.js'
 import { orderingMs } from './order.js'
 import { groupReactions, reactionEventsOf, type Reaction } from './reactions.js'
 import { resolutionOf, resolutionsByTarget, type Resolution } from './resolution.js'
@@ -52,7 +51,7 @@ export interface Message {
   cards: Embed[]
   /** The blocks drawn live under it (`part`, §13.6.1). An edit carries none, so these are the message's own. */
   parts: PartPointer[]
-  /** What its words link: its `a` and `q` values, the latest edit's when it carries any (§6.4, §6.8). */
+  /** What its words link: its `a` and `q` values, or the latest edit's when it was edited, since an edit is the whole new message (§6.4, §6.8). */
   links: string[]
   /**
    * What a comment on part of a document is about (§13.6): the run of blocks
@@ -136,12 +135,28 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
   const unique = [...new Map(events.map((e) => [e.id, e])).values()]
   const deletions = deletionsOf(unique)
   const deletedBy = (id: string, author: string | undefined) => author !== undefined && deletions.get(id.toLowerCase())?.has(author) === true
+  /*
+    A top-level message the read did not return is known deleted only by its
+    author's `kind:5`, and its author only from its replies: a reply's
+    lowercase `p` names the comment's author (§6.4). Every `kind:1111` reply
+    must name the deletion's signer, so one reply's tags cannot speak for a
+    thread others answered; a channel `kind:9` names no author, and stays
+    `missing`.
+  */
+  const deletedUnseen = (id: string, answers: readonly SignedEvent[]) => {
+    const comments = answers.filter((r) => r.kind === KIND_COMMENT)
+    const signers = deletions.get(id.toLowerCase())
+    if (!signers || comments.length === 0) return false
+    return [...signers].some((signer) => comments.every((r) => r.tags.some((t) => t[0] === 'p' && t[1] === signer)))
+  }
 
   const messages = unique.filter((e) => isConversationKind(e.kind))
   const edits = foldEdits(unique)
   const edited = editsByTarget(unique)
+  const cardsOf = foldEmbeds(unique)
+  // A taken-back reaction leaves before the one-per-person fold, so the same person's later one counts.
   const reactions = groupReactions(
-    reactionEventsOf(unique).filter((r) => !deletedBy(r.id, r.by)),
+    reactionEventsOf(unique.filter((e) => e.kind !== KIND_REACTION || !deletedBy(e.id, e.pubkey))),
     options.viewer,
   )
   const resolutions = resolutionsByTarget(unique)
@@ -149,11 +164,8 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
   const messageOf = (event: SignedEvent): Message => {
     const id = event.id.toLowerCase()
     const fold = edits[id]
-    const its = edited.get(id) ?? []
-    // The latest edit carrying any card replaces the set (C20, `foldEmbeds`).
-    const cards = [...its].reverse().map(embedsOf).find((set) => set.length > 0) ?? embedsOf(event)
-    const latest = its.at(-1)
-    const linkSource = latest && (values(latest, 'a').length > 0 || values(latest, 'q').length > 0) ? latest : event
+    // An edit is the whole new message (§6.8): what its words link is the latest edit's `a` and `q`.
+    const linkSource = edited.get(id)?.at(-1) ?? event
     const blockTag = event.tags.find((t) => t[0] === BLOCK_ANCHOR_TAG)
     const blocks = blockTag ? readRunIds(blockTag.slice(1)) : undefined
     const quote = blocks ? quoteOf(event) : undefined
@@ -168,7 +180,7 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
       edited: fold?.edited ?? false,
       ...(fold?.editedAt !== undefined ? { editedAt: fold.editedAt } : {}),
       files: fold ? fold.attachments : imetaOf(event),
-      cards,
+      cards: cardsOf[id] ?? [],
       parts: partsOf(event),
       links: [...new Set([...values(linkSource, 'a'), ...values(linkSource, 'q')])],
       ...(blocks && event.kind === KIND_COMMENT ? { anchor: { blocks, ...(quote ? { quote } : {}) } } : {}),
@@ -180,11 +192,12 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
   const { roots, replies, missingRoots } = groupThreads(messages)
   const threads: Thread[] = []
   const thread = (id: string, root: SignedEvent | undefined): Thread => {
-    const kept = (replies[id] ?? []).filter((r) => !deletedBy(r.id, r.pubkey)).map(messageOf)
-    // A reply's lowercase `p` is its comment's author (§6.4): how a deletion of a comment the read did not return is known to be its author's.
-    const author = root?.pubkey ?? (replies[id] ?? []).find((r) => r.kind === KIND_COMMENT)?.tags.find((t) => t[0] === 'p')?.[1]
-    const state: RootState = deletedBy(id, author) ? 'deleted' : root ? 'present' : 'missing'
-    const folder = (root && values(root, 'h')[0]) || kept[0]?.folder
+    const all = replies[id] ?? []
+    const kept = all.filter((r) => !deletedBy(r.id, r.pubkey)).map(messageOf)
+    const state: RootState = (root ? deletedBy(id, root.pubkey) : deletedUnseen(id, all)) ? 'deleted' : root ? 'present' : 'missing'
+    // Not returned, the thread is in its replies' Folder only when they all agree on one.
+    const replyFolders = new Set(kept.map((r) => r.folder))
+    const folder = root ? values(root, 'h')[0] : replyFolders.size === 1 ? kept[0]?.folder : undefined
     const resolution = resolutionOf(resolutions[id.toLowerCase()] ?? [], { folder, replies: kept.map((r) => r.id) })
     return {
       id: id.toLowerCase(),

@@ -11,7 +11,7 @@
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, type SignedEvent } from '@estiva-app/protocol'
 import { editTargetOf, foldEdits, type EditFold } from './edits.js'
 import { KIND_ASSERTION, KIND_EDIT, KIND_REACTION } from './kinds.js'
-import { resolutionsByTarget, resolutionTargetOf, type Resolution, type resolutionOf } from './resolution.js'
+import { resolutionsByTarget, resolutionTargetOf, type Resolution } from './resolution.js'
 
 export type { Resolution }
 import { reactionEventsOf, reactionHorizon, reactionTargetOf, type ReactionEvent } from './reactions.js'
@@ -32,7 +32,7 @@ export interface Decoration {
   /**
    * Every resolve and reopen naming it, oldest first by §6.3. Which one counts
    * — `h` checked, a `support` outside the thread dropped — is
-   * {@link resolutionOf}'s: the last one here is not the state on its own.
+   * `resolutionOf`'s: the last one here is not the state on its own.
    */
   resolutions: Resolution[]
 }
@@ -84,7 +84,7 @@ const chunked = (list: readonly string[]) => {
  * - **Resolutions** are `kind:9101` carrying `t=resolution`; the `action` tag
  *   is the state, the content the rationale, and an `e` marked `support` names
  *   the reply that carried it. The target is the first unmarked `e`
- *   ({@link resolutionTargetOf}), and a thread's state is {@link resolutionOf}'s.
+ *   ({@link resolutionTargetOf}), and a thread's state is `resolutionOf`'s.
  *
  * Edits and resolutions have no horizon: they are one event per change, not
  * one per reader. A refused read is whatever `query` does with one.

@@ -12,7 +12,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { embedTag, encodeNaddr, linksAsReferences, toRenderTree, type SignedEvent } from '@estiva-app/protocol'
+import { encodeNaddr, linksAsReferences, toRenderTree, type SignedEvent } from '@estiva-app/protocol'
 import { foldThreads, placeLines, resolutionOf, resolutionsByTarget, urlNames, writtenUrlOf, type Thread } from '../dist/index.js'
 
 const production = JSON.parse(readFileSync(new URL('./production-threads.json', import.meta.url), 'utf8')) as Record<string, { note: string; events: SignedEvent[] }>
@@ -224,6 +224,28 @@ describe('§6.5 — a top-level message in three states', () => {
     assert.deepEqual(thread.replies.map((r) => r.id), [kept.id])
   })
 
+  it('not returned, it is deleted only when every reply names the deletion’s signer as the comment’s author', () => {
+    const gone = comment()
+    const honest = reply(gone)
+    // Bob answers too, naming himself as the comment's author, and asks the relay to delete it.
+    const forged = event({ kind: 1111, pubkey: BOB, tags: [['A', ISSUE], ['e', gone.id], ['k', '1111'], ['p', BOB], ['h', FOLDER]] })
+    const byBob = event({ kind: 5, pubkey: BOB, tags: [['e', gone.id]] })
+    assert.equal(only(foldThreads([honest, forged, byBob])).state, 'missing')
+    assert.equal(only(foldThreads([honest, forged, byBob, event({ kind: 5, pubkey: ALICE, tags: [['e', gone.id]] })])).state, 'missing')
+    assert.equal(only(foldThreads([honest, event({ kind: 5, pubkey: ALICE, tags: [['e', gone.id]] })])).state, 'deleted')
+  })
+
+  it('not returned, its thread is in its replies’ Folder only when they agree on one', () => {
+    const gone = comment()
+    const here = reply(gone)
+    const there = event({ kind: 1111, pubkey: BOB, tags: [['A', ISSUE], ['e', gone.id], ['k', '1111'], ['p', ALICE], ['h', ELSEWHERE]] })
+    const resolveThere = resolution(gone, 'resolved', { h: ELSEWHERE })
+    assert.equal(only(foldThreads([here, resolution(gone, 'resolved')])).resolution?.action, 'resolved')
+    const split = only(foldThreads([here, there, resolveThere]))
+    assert.equal(split.folder, undefined)
+    assert.equal(split.resolution, undefined)
+  })
+
   it('a deleted top-level message with no reply left draws nothing', () => {
     const root = comment()
     assert.deepEqual(foldThreads([root, event({ kind: 5, tags: [['e', root.id]] })]), [])
@@ -249,6 +271,25 @@ describe('a message’s reactions', () => {
     const reactions = only(foldThreads([root, mine, theirs, again, party, back], { viewer: ALICE })).root!.reactions
     assert.deepEqual(reactions, [{ emoji: '+', count: 2, by: [ALICE, BOB], mine: mine.id }])
   })
+
+  it('one taken back and given again counts once, as the later one', () => {
+    const root = comment()
+    const first = event({ kind: 7, pubkey: BOB, content: '+', tags: [['e', root.id]] })
+    const back = event({ kind: 5, pubkey: BOB, tags: [['e', first.id]] })
+    const again = event({ kind: 7, pubkey: BOB, content: '+', tags: [['e', root.id]] })
+    const reactions = only(foldThreads([root, first, back, again], { viewer: BOB })).root!.reactions
+    assert.deepEqual(reactions, [{ emoji: '+', count: 1, by: [BOB], mine: again.id }])
+  })
+})
+
+describe('an edited message’s links', () => {
+  it('are the latest edit’s: an edit that took a link out lists none', () => {
+    const root = comment()
+    root.tags.push(['a', `30851:${ALICE}:linked-issue`])
+    const edit = event({ kind: 40003, content: 'no link now', tags: [['e', root.id], ['h', FOLDER]] })
+    assert.deepEqual(only(foldThreads([root])).root!.links, [ISSUE, `30851:${ALICE}:linked-issue`])
+    assert.deepEqual(only(foldThreads([root, edit])).root!.links, [])
+  })
 })
 
 describe('the one line rule (§13.2, §13.6.2, C21)', () => {
@@ -264,7 +305,7 @@ describe('the one line rule (§13.2, §13.6.2, C21)', () => {
   })
 
   it('the same line draws nothing when the file’s card is under the message', () => {
-    const placed = placeLines(tree(`see\n${URL}`), { resolveLink, cards: [{ value: ISSUE, layout: embedTag(ISSUE, 'detailed')[2] as 'detailed' }] })
+    const placed = placeLines(tree(`see\n${URL}`), { resolveLink, cards: [{ value: ISSUE, layout: 'detailed' }] })
     assert.equal(placed.blocks.some((b) => placed.rowOf(b)), false)
     assert.equal(placed.blocks.length, 1)
   })
