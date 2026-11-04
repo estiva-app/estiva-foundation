@@ -632,7 +632,15 @@ const MAX_POSITION_SPLIT = 250_000
  * 727-event answer and the total was over the largest page seen, so the
  * 0.94 MB was thrown away and each filter asked again.
  */
-function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[]): SignedEvent[][] | null {
+function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[], pageSize: number): SignedEvent[][] | null {
+  /*
+    No `#h`: buzz answers it beyond NIP-01 (a reaction or deletion with no `h`
+    of its own, by its target's) and narrows it per filter (a named-only
+    channel only to a filter naming it). Together, in one batch, one wrong cut
+    can be the only one that fits (review of PR #203). A Folder's filters are
+    split by `h` instead.
+  */
+  if (filters.some((filter) => '#h' in filter)) return null
   const matchers = filters.map(matcherOf)
   if (matchers.some((matcher) => matcher === null)) return null
   const n = events.length
@@ -684,7 +692,8 @@ function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[
     runs[i] = events.slice(p, q)
     q = p
   }
-  return runs
+  // A run longer than was asked for is no run the relay sent.
+  return runs.every((run) => run.length <= pageSize) ? runs : null
 }
 
 /** The batched response split into one run per filter, or `null` if any event is unclaimed. */
@@ -1027,7 +1036,7 @@ export class Relay {
       */
       const events = await this.query(indices.map((i) => ({ ...filters[i], limit: pageSize })))
 
-      const runs = which ? splitRuns(indices.length, events, which) : runsByPosition(indices.map((i) => filters[i]), events)
+      const runs = which ? splitRuns(indices.length, events, which) : runsByPosition(indices.map((i) => filters[i]), events, pageSize)
       if (runs) {
         /*
           Update the observed ceiling from each run *before* testing it, exactly
