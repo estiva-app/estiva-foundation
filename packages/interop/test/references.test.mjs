@@ -211,6 +211,59 @@ describe('searchFileReferences', () => {
   })
 })
 
+describe('searchFileReferences by fields (ALO-5)', () => {
+  const status = (address, value) => event({ kind: CHANGE, tags: [['a', address], ['field', 'status'], ['value', value], ['h', 'f1']] })
+  /** The relay's list read with `search`: the hits' first records and current changes, and why each matched. */
+  const listSearch = (answer) => {
+    const calls = []
+    const query = async (filters) => {
+      calls.push(filters)
+      return answer
+    }
+    return { query, calls }
+  }
+
+  test('finds a project by a word only in its text, showing the words around it, without reading its changes', async () => {
+    const relay = searchingRelay([manifest, project, rename(P1, 'Quoxalbit once'), rename(P1, 'Conversation standard')])
+    const search = listSearch({
+      events: [project, status(P1, 'planned')],
+      matches: [{ a: P1, match: { fields: ['text'], around: 'the third\nblock mentions quoxalbit' } }],
+    })
+    const found = await searchFileReferences('quoxalbit', relay.query, { byFields: { kinds: [PROJECT], query: search.query } })
+    assert.deepEqual(found.map((c) => [c.id, c.title, c.summary, c.matched]), [
+      [P1, 'Conversation standard', '…the third block mentions quoxalbit', ['text']],
+    ])
+    assert.deepEqual(search.calls, [[{ kinds: [PROJECT], search: 'quoxalbit', limit: 20, fields: 'newest' }]])
+    // The title search no longer asks for projects, and nothing reads the project's changes.
+    assert.ok(relay.own().flat().every((f) => !f.kinds?.includes(PROJECT) && !f['#a']?.includes(P1)))
+  })
+
+  test('a project found by its summary keeps its own summary, and is offered in the relay\'s order ahead of title hits', async () => {
+    const other = event({ kind: PROJECT, tags: [['d', 'p2'], ['title', 'Roadmap'], ['h', 'f1']] })
+    const P2 = `${PROJECT}:${AUTHOR}:p2`
+    const relay = searchingRelay([manifest, project, issue('i9', 'Launch checklist')])
+    const search = listSearch({
+      events: [project, other],
+      matches: [
+        { a: P2, match: { fields: ['title'] } },
+        { a: P1, match: { fields: ['summary'], around: 'not drawn' } },
+      ],
+    })
+    const found = await searchFileReferences('launch', relay.query, { byFields: { kinds: [PROJECT], query: search.query } })
+    assert.deepEqual(found.map((c) => [c.id, c.summary, c.matched]), [
+      [P2, undefined, ['title']],
+      [P1, undefined, ['summary']],
+      [I('i9'), undefined, undefined],
+    ])
+  })
+
+  test('a file the relay found but did not hand back is not offered', async () => {
+    const relay = searchingRelay([manifest])
+    const search = listSearch({ events: [], matches: [{ a: P1, match: { fields: ['text'], around: 'secret' } }] })
+    assert.deepEqual(await searchFileReferences('secret', relay.query, { byFields: { kinds: [PROJECT], query: search.query } }), [])
+  })
+})
+
 describe('fileCandidates', () => {
   test('a project picked once the relay keeps projects in order goes in as Ship\'s path link with its id and no title, from any app (ALO-4)', async () => {
     const ID = '0f8a7c1e-5b2d-4e6f-9a3b-c4d5e6f7a8b9'

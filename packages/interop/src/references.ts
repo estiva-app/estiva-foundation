@@ -25,12 +25,13 @@ import {
 import {
   isClosedStatus,
   KIND_BARE_FILE,
+  projectListedFiles,
   resolveForeignRoots,
   type ForeignObject,
   type ProjectionCache,
   type QueryFn,
 } from './projection.js'
-import { fileIdFormOf } from '@estiva-app/protocol'
+import { fileIdFormOf, type SearchMatch, type SignedEvent } from '@estiva-app/protocol'
 
 const KIND_PROJECT = 30850
 const KIND_ISSUE = 30851
@@ -81,6 +82,8 @@ export interface FileCandidatesOptions {
   inOrder?: readonly string[]
   /** The host Ship serves projects from: a picked project's link is `<it>/project/<d>`. Ship's own unless said, so every app picks the same link. */
   projectOrigin?: string
+  /** The relay offers the list read: an issue's project, read for its caption, is read by its current fields (`resolveForeignRoots`). */
+  listRead?: boolean
 }
 
 /** Where Ship serves projects (§13.1, decided 2026-11-03): one link for a project, whichever app picked it. */
@@ -116,7 +119,7 @@ export async function fileCandidates(
   objects: readonly (ForeignObject | null | undefined)[],
   tier: number,
   query: QueryFn,
-  { cache, at, inOrder, projectOrigin }: FileCandidatesOptions = {},
+  { cache, at, inOrder, projectOrigin, listRead }: FileCandidatesOptions = {},
 ): Promise<ReferenceCandidate[]> {
   const files = objects.filter(offerable)
   const parents = new Map<string, ForeignObject>()
@@ -125,7 +128,7 @@ export async function fileCandidates(
     ...new Set(files.flatMap((o) => (o.kind === KIND_ISSUE && o.parentRef && !parents.has(o.parentRef) ? [o.parentRef] : []))),
   ]
   if (missing.length) {
-    const read = await resolveForeignRoots(missing, query, cache).catch(() => [])
+    const read = await resolveForeignRoots(missing, query, cache, { listRead }).catch(() => [])
     for (const parent of read) if (parent.address) parents.set(parent.address, parent)
   }
   return files.map((o) => {
@@ -150,9 +153,24 @@ export async function fileCandidates(
   })
 }
 
+/** A `/query` that keeps what a `search` found besides its events (protocol's `Relay.queryWithMatches`). */
+export type SearchQueryFn = (filters: Record<string, unknown>[]) => Promise<{ events: SignedEvent[]; matches: readonly SearchMatch[] }>
+
 export interface SearchFileReferencesOptions extends Omit<FileCandidatesOptions, 'at'> {
   /** How many roots, and separately how many renames, the relay is asked for. Default 32. */
   limit?: number
+  /**
+   * The kinds the relay finds by the words of their current fields (NIP-11
+   * `file_search`, `RelayFileReads.search`), and the read that asks it. Those
+   * kinds are found by their summary, key and text too, through the list read;
+   * every other kind by its title as before.
+   */
+  byFields?: {
+    kinds: readonly number[]
+    query: SearchQueryFn
+    /** The relay's `file_search.max_page_size`, which refuses a larger page. Default 20, production's. */
+    limit?: number
+  }
 }
 
 const tagOf = (event: { tags: string[][] }, name: string) => event.tags.find((t) => t[0] === name)?.[1]
@@ -181,17 +199,38 @@ const searchedChange = (field: string | undefined, address: string | undefined) 
  * still sent for a relay from before that rule. A relay that indexes none of these
  * kinds answers nothing, and so does this. A failed read rejects, for
  * `referenceSearch` to answer no hits for a while.
+ *
+ * With `byFields`, its kinds are found by the words of their current fields
+ * instead, ahead of the title hits (`searchByFields`).
  */
 export async function searchFileReferences(
   text: string,
   query: QueryFn,
-  { limit = 32, ...options }: SearchFileReferencesOptions = {},
+  { limit = 32, byFields, ...options }: SearchFileReferencesOptions = {},
 ): Promise<ReferenceCandidate[]> {
   const wanted = text.trim()
   if (!wanted) return []
+  const fieldKinds = new Set(byFields?.kinds.filter((kind) => typeOf(kind)) ?? [])
+  const [byTitle, found] = await Promise.all([
+    searchByTitle(wanted, query, limit, fieldKinds, options),
+    byFields && fieldKinds.size ? searchByFields(wanted, byFields.query, [...fieldKinds], byFields.limit ?? 20, query, options) : [],
+  ])
+  return [...found, ...byTitle]
+}
+
+/** The files of every kind but `skip` whose current title or ref holds `wanted`. */
+async function searchByTitle(
+  wanted: string,
+  query: QueryFn,
+  limit: number,
+  skip: ReadonlySet<number>,
+  options: Omit<FileCandidatesOptions, 'at'>,
+): Promise<ReferenceCandidate[]> {
+  const kinds = Object.keys(REFERENCE_FILE_TYPES).map(Number).filter((kind) => !skip.has(kind))
+  if (!kinds.length) return []
   const asked = { search: wanted, search_mode: 'prefix', limit }
   const hits = await query([
-    { kinds: Object.keys(REFERENCE_FILE_TYPES).map(Number), ...asked },
+    { kinds, ...asked },
     { kinds: [KIND_CHANGE], ...asked },
   ])
   const at = new Map<string, number>()
@@ -200,11 +239,48 @@ export async function searchFileReferences(
       hit.kind === KIND_CHANGE
         ? searchedChange(tagOf(hit, 'field'), tagOf(hit, 'a'))
         : typeOf(hit.kind) && `${hit.kind}:${hit.pubkey}:${tagOf(hit, 'd') ?? ''}`
-    if (!address || !typeOf(Number(address.split(':')[0]))) continue
+    const kind = Number(address?.split(':')[0])
+    if (!address || !typeOf(kind) || skip.has(kind)) continue
     at.set(address, Math.max(at.get(address) ?? 0, hit.created_at))
   }
   if (at.size === 0) return []
   const objects = await resolveForeignRoots([...at.keys()], query, options.cache)
   const matching = objects.filter((o) => (o.slots.title && referenceMatch(o.slots.title.value, wanted) > 0) || refMatch(refOf(o), wanted) > 0)
   return fileCandidates(matching, FILE_TIER.search, query, { ...options, at })
+}
+
+/**
+ * The files of `kinds` whose current title, summary, key or text holds
+ * `wanted`, by the relay's list read with `search` (§6.13): each hit is its
+ * first record and its fields' current changes, so nothing is folded from its
+ * history and nothing older than its current values matches. A hit found only
+ * in its text shows the words around the match as its second line.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/search-finds-a-file-by-the-words-of-its-current-fields.md
+ */
+async function searchByFields(
+  wanted: string,
+  search: SearchQueryFn,
+  kinds: readonly number[],
+  limit: number,
+  query: QueryFn,
+  options: Omit<FileCandidatesOptions, 'at'>,
+): Promise<ReferenceCandidate[]> {
+  const { events, matches } = await search([{ kinds, search: wanted, limit, fields: 'newest' }])
+  const why = new Map(matches.map((m) => [m.a, m.match]))
+  const at = new Map<string, number>()
+  const objects = (await projectListedFiles(events, query, options.cache)).filter((o) => o.address && why.has(o.address))
+  for (const event of events) {
+    const address = event.kind === KIND_CHANGE ? tagOf(event, 'a') : `${event.kind}:${event.pubkey}:${tagOf(event, 'd') ?? ''}`
+    if (address && why.has(address)) at.set(address, Math.max(at.get(address) ?? 0, event.created_at))
+  }
+  const rank = new Map(matches.map((m, i) => [m.a, i]))
+  objects.sort((a, b) => rank.get(a.address!)! - rank.get(b.address!)!)
+  const rows = await fileCandidates(objects, FILE_TIER.search, query, { ...options, at })
+  return rows.map((row) => {
+    const match = why.get(row.id)!
+    const around = match.fields[0] === 'text' ? match.around?.replace(/\s+/g, ' ').trim() : undefined
+    // "…" marks words from inside the text, not the file's own summary; the relay does not say where they start.
+    return { ...row, matched: match.fields, ...(around ? { summary: `…${around}` } : {}) }
+  })
 }

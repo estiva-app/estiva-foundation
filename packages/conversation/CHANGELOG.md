@@ -6,6 +6,18 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.31.0 — 2026-11-04
+
+**SPEC: §6.13's `matches` is read for `[`; nothing written** (ALO-5; record
+search-finds-a-file-by-the-words-of-its-current-fields).
+
+- A `ReferenceCandidate` may carry `matched`, the fields a relay's search found
+  the typed words in, best first. `rankReferences` offers such a file though
+  its title does not hold the words: after every title match, a summary or key
+  match before a text-only one.
+- A file offered from a nearer tier keeps what a search found it by and the
+  words shown for it.
+
 ## 0.30.0 — 2026-11-04
 
 **Wire: nothing written or read differently** (TEA-8; SPEC §3.2). A team is

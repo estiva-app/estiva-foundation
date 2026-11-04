@@ -6,6 +6,27 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.83.0 — 2026-11-04
+
+**Manifest: nothing. Wire: a new read, nothing written** (ALO-5; SPEC §6.13;
+record search-finds-a-file-by-the-words-of-its-current-fields). Pairs with
+conversation 0.31.0.
+
+- `searchFileReferences` takes `byFields: { kinds, query }`: the kinds the relay
+  finds by the words of their current fields (NIP-11 `file_search.types`), and a
+  read that keeps the answer's `matches` (protocol's `Relay.queryWithMatches`).
+  Those kinds are asked for by the list read with `search`, one page of 20, and
+  are found by their summary, key and text as well as their title; each row
+  carries `matched`, and a file found only by its text has the words around the
+  match as its second line. Nothing of their history is read, and the title
+  search no longer asks for those kinds. Without `byFields`, nothing changes.
+- `resolveForeignRoots` takes `listRead`: where the relay offers the list read,
+  a file of the relay's file kinds is read as its first record and its fields'
+  current changes instead of its root and up to 500 changes. No text, and a
+  deleted file is absent. Other kinds are read as before.
+- `projectListedFiles(events, query, cache)` folds a list read's answer through
+  its apps' manifests.
+
 ## 0.82.0 — 2026-11-04
 
 **Manifest: the built-in team's noun. Wire: nothing** (TEA-8; SPEC §3.2;

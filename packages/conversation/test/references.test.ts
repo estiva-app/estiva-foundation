@@ -167,6 +167,31 @@ describe('rankReferences', () => {
     assert.deepEqual(titles(rankReferences({ messages: [], files: withRef, query: '33' }).files), [])
   })
 
+  it('offers a file the relay found by its text or summary, after every title match, text last (ALO-5)', () => {
+    const found = [
+      ...files,
+      file('in-text', 'Launch plan', FILE_TIER.search, { matched: ['text'], summary: 'the unread count' }),
+      file('in-summary', 'Q4 goals', FILE_TIER.search, { matched: ['summary', 'text'] }),
+    ]
+    assert.deepEqual(titles(rankReferences({ messages: [], files: found, query: 'unread' }).files), [
+      'Unread',
+      'Unread dots in the sidebar',
+      'Unread dots on Desk',
+      'Q4 goals',
+      'Launch plan',
+    ])
+  })
+
+  it('a file in your Folder that a search found by its text keeps the words around them', () => {
+    const both = [
+      file('p', 'Launch plan', FILE_TIER.folder),
+      file('p', 'Launch plan', FILE_TIER.search, { matched: ['text'], summary: 'mentions quoxalbit here' }),
+    ]
+    const [row] = rankReferences({ messages: [], files: both, query: 'quoxalbit' }).files
+    assert.equal(row?.tier, FILE_TIER.folder)
+    assert.equal(row?.summary, 'mentions quoxalbit here')
+  })
+
   it('drops what does not match what was typed', () => {
     const { files: shown } = rankReferences({ messages: [], files, query: 'rate' })
     assert.deepEqual(titles(shown), ['Relay rate limits'])

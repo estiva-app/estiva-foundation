@@ -3854,8 +3854,13 @@ export async function resolveForeignRoots(
   references: readonly string[],
   query: QueryFn,
   cache?: ProjectionCache,
-  /** `archivedWith` marks a file archived with an archived parent, as {@link resolveForeignObject}'s does (SHIPS-2). */
-  options: Pick<ArchiveReadOptions, 'archivedWith'> = {},
+  /**
+   * `archivedWith` marks a file archived with an archived parent, as {@link resolveForeignObject}'s does (SHIPS-2).
+   * `listRead`, where the relay offers the list read (NIP-11 `file_list`), reads each file of the relay's file kinds
+   * as its first record and its fields' current changes (§6.13), not every change ever made to it: no text, and a
+   * deleted file is absent. Other kinds are read as before.
+   */
+  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean } = {},
 ): Promise<ForeignObject[]> {
   const pointers = new Map<string, AddressPointer>()
   for (const reference of references) {
@@ -3863,32 +3868,38 @@ export async function resolveForeignRoots(
     if (pointer) pointers.set(`${pointer.kind}:${pointer.pubkey}:${pointer.identifier}`, pointer)
   }
   if (pointers.size === 0) return []
-
-  const manifests = new Map<string, ResolvedManifest>()
-  const byApp = new Map<string, AddressPointer>()
-  for (const pointer of pointers.values()) byApp.set(manifestKeyOf(pointer), pointer)
-  await Promise.all(
-    [...byApp].map(async ([key, pointer]) => {
-      const resolved = await resolveManifest(pointer, query, cache)
-      if (resolved) manifests.set(key, resolved)
-    }),
-  )
+  const manifests = await manifestsOf(pointers.values(), query, cache)
 
   const filters: Record<string, unknown>[] = []
+  // One list read per author and kind: `limit` counts first records there, not the changes beside them.
+  const listedBy = new Map<string, { kind: number; pubkey: string; identifiers: string[] }>()
   for (const [address, pointer] of pointers) {
     const resolved = manifests.get(manifestKeyOf(pointer))
     if (!resolved?.manifest.projections?.[String(pointer.kind)]) continue
+    if (options.listRead && FILE_KINDS.includes(pointer.kind)) {
+      const key = `${pointer.kind}:${pointer.pubkey}`
+      const group = listedBy.get(key) ?? { kind: pointer.kind, pubkey: pointer.pubkey, identifiers: [] }
+      group.identifiers.push(pointer.identifier)
+      listedBy.set(key, group)
+      continue
+    }
+    const root = { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 }
     // A manifest without `records` folds by a placeholder kind 0, never sent.
     const changeKinds = new Set(
       [foldRuleOf(resolved.manifest).changeKind, archiveRuleOf(resolved.manifest).changeKind].filter((k) => k !== 0),
     )
-    filters.push(
-      { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
-      { kinds: [...changeKinds], '#a': [address], limit: 500 },
-    )
+    filters.push(root, { kinds: [...changeKinds], '#a': [address], limit: 500 })
   }
-  if (filters.length === 0) return []
-  const events = await queryChunked(filters, query)
+  const listed: Record<string, unknown>[] = []
+  for (const { kind, pubkey, identifiers } of listedBy.values()) {
+    for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
+      const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
+      listed.push({ kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length, fields: 'newest' })
+    }
+  }
+  if (filters.length === 0 && listed.length === 0) return []
+  // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
+  const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
   const objects = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
   if (options.archivedWith) {
     const manifestOf = (object: ForeignObject) => {
@@ -3898,6 +3909,37 @@ export async function resolveForeignRoots(
     await markArchivedParents(objects.map((object) => ({ object, manifest: manifestOf(object) })), query, cache)
   }
   return objects
+}
+
+/** The manifest each pointer's author reads it through, one read per `kind:pubkey`. */
+async function manifestsOf(pointers: Iterable<AddressPointer>, query: QueryFn, cache?: ProjectionCache): Promise<Map<string, ResolvedManifest>> {
+  const manifests = new Map<string, ResolvedManifest>()
+  const byApp = new Map<string, AddressPointer>()
+  for (const pointer of pointers) byApp.set(manifestKeyOf(pointer), pointer)
+  await Promise.all(
+    [...byApp].map(async ([key, pointer]) => {
+      const resolved = await resolveManifest(pointer, query, cache)
+      if (resolved) manifests.set(key, resolved)
+    }),
+  )
+  return manifests
+}
+
+/**
+ * The files a list read answered (§6.13) — each first record with its fields'
+ * current changes — folded through their apps' manifests as
+ * {@link resolveForeignRoots} folds them. Nothing more is read but the manifests.
+ */
+export async function projectListedFiles(events: readonly SignedEvent[], query: QueryFn, cache?: ProjectionCache): Promise<ForeignObject[]> {
+  const pointers: AddressPointer[] = []
+  for (const event of events) {
+    // A change names its file by `a` and carries no `d`.
+    const identifier = tagValue(event, 'd')
+    if (identifier !== undefined) pointers.push({ kind: event.kind, pubkey: event.pubkey, identifier, relays: [] })
+  }
+  if (pointers.length === 0) return []
+  const manifests = await manifestsOf(pointers, query, cache)
+  return projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
 }
 
 /**
