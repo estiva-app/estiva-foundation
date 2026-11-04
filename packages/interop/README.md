@@ -582,6 +582,12 @@ Reuse one `ProjectionCache` across folders. Round trips are flat in the number
 of files and linear in the number of *apps*: 24, 25 and 9 files measured at 5, 5
 and 4 requests warm.
 
+A deleted file (SPEC §6.5) stays listed in its Folder, and no list returns it.
+An Archive's Deleted filter reads them on its own, when it is drawn:
+`resolveDeletedFiles(folderId, query, people, cache, { listRead })` answers the
+Folder's deleted files, each with `deleted: { by, at }`; with `listRead` only
+the files the list read leaves out are read whole.
+
 ### A whole tree: one load query
 
 A sidebar reads `listFolders`, then each Folder's contents, and both read every

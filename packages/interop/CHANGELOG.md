@@ -6,12 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
-## 0.84.1 — 2026-11-04
+## 0.85.0 — 2026-11-04
 
-**Manifest: nothing. Wire: nothing** (ALO-6; SPEC §6.5). `[` and the launcher no
-longer offer a deleted file: `fileCandidates` and `searchFileReferences` leave
-out a file whose newest `deleted` change is `true`, as the list read already
-did. Restored, it is offered again.
+**Manifest: nothing. Wire: a read, nothing written** (ALO-6; SPEC §6.5, §6.13).
+
+- `[` and the launcher no longer offer a deleted file: `fileCandidates` and
+  `searchFileReferences` leave out a file whose newest `deleted` change is
+  `true`, as the list read already did. Restored, it is offered again.
+- `resolveDeletedFiles(folder, query, people?, cache?, { listRead })`: the
+  deleted files a Folder lists, each with its `deleted`, for an Archive's
+  Deleted filter. With `listRead`, the Folder's files are listed by their
+  fields in one request and only the ones it leaves out are read whole.
+- `planMoveFile` and `planMoveFromFolders` take `inOrder`, as `planPlaceFile`
+  does: a moved (or placed) file of a type the relay keeps in order is named by
+  its id (`o`), its space role kept. `moved` still lists addresses.
 
 ## 0.84.0 — 2026-11-04
 

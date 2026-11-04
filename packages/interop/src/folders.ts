@@ -430,7 +430,15 @@ export function listedBeneath<T extends MovableFile>(listing: readonly T[], file
 export function planMoveFile(
   pubkey: string,
   createdAtMs: number,
-  args: { file: MovableFile; from: FolderRef; to: FolderRef; listing: readonly MovableFile[] | null; keepSpace?: boolean },
+  args: {
+    file: MovableFile
+    from: FolderRef
+    to: FolderRef
+    listing: readonly MovableFile[] | null
+    keepSpace?: boolean
+    /** The types the relay keeps in order: a moved file of one is named by its id, as {@link planPlaceFile} names it. */
+    inOrder?: readonly string[]
+  },
 ): MovePlan {
   if (args.from.id === args.to.id) return { ok: true, events: [], moved: [] }
   if (!args.from.hasState) return { ok: false, reason: 'source-has-no-state' }
@@ -446,7 +454,15 @@ export function planMoveFile(
   const kept = args.keepSpace && file.address && moved.includes(file.address) ? [file.address] : []
   return {
     ok: true,
-    events: [buildFolderCommand(pubkey, createdAtMs, { folder: args.to.id, op: 'move', from: args.from.id, addresses: moved, spaces: kept })],
+    events: [
+      buildFolderCommand(pubkey, createdAtMs, {
+        folder: args.to.id,
+        op: 'move',
+        from: args.from.id,
+        addresses: moved.map((address) => listedAs(address, args.inOrder)),
+        spaces: kept.map((address) => listedAs(address, args.inOrder)),
+      }),
+    ],
     moved,
   }
 }
@@ -510,6 +526,8 @@ export function planMoveFromFolders(
     listings: ReadonlyMap<string, readonly MovableFile[] | null>
     /** The mover ticked "Keep it a space in <team>": the target's entry for the file carries the `space` role ({@link planMoveFile}). */
     keepSpace?: boolean
+    /** The types the relay keeps in order: a moved or placed file of one is named by its id ({@link planMoveFile}). */
+    inOrder?: readonly string[]
   },
 ): MoveFromFoldersPlan {
   const { file, to } = args
@@ -528,6 +546,7 @@ export function planMoveFromFolders(
       // By its address, so the walk finds what the listing draws beneath it.
       listing: unresolved ? [{ ...file, ref: file.address! }, ...listing] : listing,
       keepSpace: args.keepSpace,
+      inOrder: args.inOrder,
     })
     if (!plan.ok) return plan
     for (const address of plan.moved) moved.add(address)
@@ -540,7 +559,7 @@ export function planMoveFromFolders(
     // A topic on no list goes home: its `h` team, or the Company team when its `h` is no team. Which `h`
     // is a team is the relay's to know, so the Company team is let through here and the relay decides.
     if (file.address.startsWith(`${KIND.FILE}:`) &&file.scopedTo !== to.id && !to.company) return { ok: false, reason: 'target-is-not-home' }
-    return { ok: true, events: planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true }), moved: [file.address] }
+    return { ok: true, events: planPlaceFile(pubkey, createdAtMs, { folder: to.id, address: file.address, hasState: true, inOrder: args.inOrder }), moved: [file.address] }
   }
   return { ok: true, events, moved: [...moved] }
 }

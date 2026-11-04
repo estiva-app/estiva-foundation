@@ -173,3 +173,40 @@ describe('opening a file by the open read (ALO-6)', () => {
     assert.deepEqual(relay.changesByA(), [])
   })
 })
+
+describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", () => {
+  const launch = plan('d-launch', 'Launch')
+  const gone = plan('d-gone', 'Gone')
+  const back = plan('d-back', 'Back')
+  const deleted = change(gone, 'deleted', 'true', OTHER)
+  const events = [
+    app,
+    launch,
+    gone,
+    back,
+    change(gone, 'title', 'Gone, renamed'),
+    deleted,
+    change(back, 'deleted', 'true'),
+    change(back, 'deleted', ''),
+    event({ kind: 30890, tags: [['d', TEAM], ...[launch, gone, back].map((file) => ['a', addressOf(file)])] }),
+  ]
+
+  test('lists only the deleted one, with its current title and who deleted it, reading only it whole', async () => {
+    const relay = opening(events)
+    assert.equal(typeof interop.resolveDeletedFiles, 'function', 'resolveDeletedFiles is exported')
+    const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople, undefined, { listRead: true })
+    assert.deepEqual(
+      files.map((file) => [file.slots.title?.value, file.deleted]),
+      [['Gone, renamed', { by: OTHER, at: deleted.created_at }]],
+    )
+    assert.deepEqual(relay.changesByA(), [addressOf(gone)], 'the live and the restored ones are not read by `#a`')
+  })
+
+  test('without the list read, the same one, each file read whole', async () => {
+    const relay = opening(events)
+    assert.equal(typeof interop.resolveDeletedFiles, 'function', 'resolveDeletedFiles is exported')
+    const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople)
+    assert.deepEqual(files.map((file) => file.slots.title?.value), ['Gone, renamed'])
+    assert.deepEqual(relay.opens(), [])
+  })
+})

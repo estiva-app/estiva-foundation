@@ -7502,6 +7502,59 @@ export async function resolveFolderContents(
 }
 
 /**
+ * The deleted files a Folder lists, each with its `deleted` (SPEC §6.5): what
+ * an Archive's Deleted filter draws, with who deleted each and when. A deleted
+ * file stays listed in its Folder and every list leaves it out
+ * ({@link resolveFolderContents}), so this is a read of its own, made where it
+ * is drawn and nowhere else.
+ *
+ * With `listRead`, the Folder's files of the relay's file kinds are listed by
+ * their fields first, in one request, and only the ones that answer nothing —
+ * deleted, or not this reader's — are read whole: a deleted file is in no read
+ * by its fields (§6.13), but stays readable by its id. Without it, each is read
+ * whole, as every read was before.
+ */
+export async function resolveDeletedFiles(
+  folder: string,
+  query: QueryFn,
+  lookupPeople?: PeopleFn,
+  cache?: ProjectionCache,
+  options: { listRead?: boolean } = {},
+): Promise<ForeignObject[]> {
+  const [state] = await query([{ kinds: [KIND_FOLDER_STATE], '#d': [folder], limit: 1 }])
+  const everyAddress =
+    state && tagValue(state, 'd') === folder
+      ? await listedAddressesOf(state, query)
+      : (await addressesByContainment(folder, query)).addresses
+  const files = everyAddress.flatMap((address) => {
+    const pointer = addressPointerOf(address)
+    return pointer && FILE_KINDS.includes(pointer.kind) ? [{ address, pointer }] : []
+  })
+  let asked = files.map(({ address }) => address)
+  if (options.listRead && files.length) {
+    const groups = new Map<string, { pointer: AddressPointer; ds: string[] }>()
+    for (const { pointer } of files) {
+      const key = `${pointer.kind}:${pointer.pubkey}`
+      const group = groups.get(key)
+      if (group) group.ds.push(pointer.identifier)
+      else groups.set(key, { pointer, ds: [pointer.identifier] })
+    }
+    const listed = await queryChunked(
+      [...groups.values()].map(({ pointer, ds }) => ({ kinds: [pointer.kind], authors: [pointer.pubkey], '#d': ds, limit: ds.length, fields: 'newest' })),
+      query,
+    )
+    const answered = new Set(listed.filter((e) => FILE_KINDS.includes(e.kind)).map((e) => `${e.kind}:${e.pubkey}:${tagValue(e, 'd') ?? ''}`))
+    asked = asked.filter((address) => !answered.has(address))
+  }
+  if (!asked.length) return []
+  const objects = await resolveForeignObjects(asked, query, lookupPeople, cache)
+  return asked.flatMap((address) => {
+    const object = objects[address]
+    return object && !object.unreachable && object.deleted ? [object] : []
+  })
+}
+
+/**
  * A Folder state's files as addresses, in its order, each once (SPEC §3.3).
  *
  * An `o` entry names a file by its id alone, so it costs a read: one request
