@@ -37,6 +37,7 @@ export {
   resolveForeignEvent,
   resolveFolderProject,
   resolveFolderContents,
+  resolveDeletedFiles,
   listFolders,
   listFolderRecords,
   topLevelFolders,
