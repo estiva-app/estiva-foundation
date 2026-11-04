@@ -297,6 +297,61 @@ export function relayFileReadsOf(info: unknown): RelayFileReads {
   }
 }
 
+/** A project's type, as NIP-11 names it (TYPES.md). */
+export const PROJECT_TYPE = 'osnova.project'
+
+/** How an app reads projects once switched: opened with their text, and found by their words where the relay says so. */
+export interface ProjectFields {
+  text: boolean
+  search?: true
+}
+
+/**
+ * Whether an app reads and writes projects by their fields (§6.13) — one rule
+ * for Ship, Leaf and Peek (ALO-5, ALO-6).
+ *
+ * On when the relay announces it keeps projects in order (NIP-11 `files`,
+ * `requires_prev` naming `osnova.project`), the one announced moment, or when
+ * this tab opted in ({@link fieldsOptedIn}) to try it on the Folders the relay
+ * already fences. Either way only where the relay offers the list read and the
+ * opened file's text with it: without that a project's page could not read
+ * what it edits. Undefined is off: read and write as before.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+ */
+export function projectFieldsOf(reads: RelayFileReads, optedIn: boolean): ProjectFields | undefined {
+  const announced = reads.switched && reads.inOrder.includes(PROJECT_TYPE)
+  if (!reads.list || !reads.text || !(announced || optedIn)) return undefined
+  return { text: reads.text, ...(reads.search.includes(PROJECT_TYPE) ? { search: true as const } : {}) }
+}
+
+/** The part of the browser's `sessionStorage` {@link fieldsOptedIn} keeps the opt-in in. */
+export interface OptInStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
+
+/**
+ * A tab's opt-in to reading projects by their fields: `?fields=on` in the
+ * address it opened with turns it on, `?fields=off` off — `search` is the
+ * page's query, and a hash-routed app passes its hash's query too — and it is kept in
+ * `storage` — the tab's `sessionStorage`, never anything longer: nothing
+ * narrows it to the fenced Folders, so a link carrying it must not switch a
+ * browser for good. False when the storage cannot be read.
+ */
+export function fieldsOptedIn(search: string, storage: OptInStorage | undefined, key = 'estiva.projectFields'): boolean {
+  try {
+    if (!storage) return false
+    const asked = /(?:^|[?&])fields=([^&#]*)/.exec(search)?.[1]
+    if (asked === 'on') storage.setItem(key, 'on')
+    if (asked === 'off') storage.removeItem(key)
+    return storage.getItem(key) === 'on'
+  } catch {
+    return false
+  }
+}
+
 /** What a person reads when the relay stays busy through the quiet retries. */
 export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
 

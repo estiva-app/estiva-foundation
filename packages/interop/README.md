@@ -93,6 +93,13 @@ lists children its app folds — their changes, so a moved or archived child is
 not drawn under its old parent (MAN-7). Event references (`nevent`) are not addresses
 and come back `null`; resolve those with `resolveForeignEvent`.
 
+Where the relay offers the open read with text (NIP-11 `file_list.text`), pass
+the kinds you have switched as `openRead` — `{ openRead: [30850] }` for
+projects. Each such file then costs its first record, one current change per
+field and one text, however long its history (SPEC §6.13), and every object
+carries `prevs` for the next change to name (`prevOf(object, field)`). A
+deleted file is read as before and comes back with `deleted: { by, at }`.
+
 Need only where each file sits? Ask for that alone — the roots, and the moves
 where a kind can be moved, without anybody's comments or children:
 

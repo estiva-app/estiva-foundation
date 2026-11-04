@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.53.1'
+export const PROTOCOL_VERSION = '0.54.0'
 
 export {
   // types
@@ -149,6 +149,11 @@ export {
   type SearchMatch,
   type RelayFileReads,
   relayFileReadsOf,
+  PROJECT_TYPE,
+  type ProjectFields,
+  projectFieldsOf,
+  type OptInStorage,
+  fieldsOptedIn,
   type RelayHeaders,
   type RelayOptions,
   type FetchLike,

@@ -2,7 +2,13 @@
 // The NIP-11 document is the one production served on 2026-11-02 (buzz#46).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Relay, parseQueryResponse, relayFileReadsOf, secretKeySigner } from '../dist/index.js'
+// By namespace, so on a build without the switch only its tests fail.
+import * as protocol from '../dist/index.js'
+
+const { Relay, parseQueryResponse, relayFileReadsOf, secretKeySigner } = protocol
+const missing = (name) => () => assert.fail(`${name} is not exported`)
+const projectFieldsOf = protocol.projectFieldsOf ?? missing('projectFieldsOf')
+const fieldsOptedIn = protocol.fieldsOptedIn ?? missing('fieldsOptedIn')
 
 const SECRET = '1'.repeat(64)
 
@@ -54,4 +60,34 @@ test('Relay.info reads the NIP-11 document from the relay\'s own address, unauth
   assert.equal(seen[0].init.method, 'GET')
   assert.equal(seen[0].init.headers.accept, 'application/nostr+json')
   assert.equal(seen[0].init.headers.authorization, undefined)
+})
+
+// ALO-6: the switch Ship, Leaf and Peek share, read as production announced it on 2026-11-04.
+const ANNOUNCED = { files: { requires_prev: ['osnova.project'] }, file_list: { newest: true, text: true }, file_search: { max_page_size: 20, types: ['osnova.project'] } }
+
+test('a relay that keeps projects in order and finds them by their words switches projects on, with `[` by their fields', () => {
+  assert.deepEqual(projectFieldsOf(relayFileReadsOf(ANNOUNCED), false), { text: true, search: true })
+  assert.deepEqual(projectFieldsOf(relayFileReadsOf({ ...ANNOUNCED, file_search: { types: ['osnova.issue'] } }), false), { text: true })
+})
+
+test('a relay that has not made the switch turns projects on only for a tab that opted in, and never without the opened text', () => {
+  const before = { file_list: { newest: true, text: true }, file_search: ANNOUNCED.file_search }
+  assert.equal(projectFieldsOf(relayFileReadsOf(before), false), undefined)
+  assert.deepEqual(projectFieldsOf(relayFileReadsOf(before), true), { text: true, search: true })
+  assert.equal(projectFieldsOf(relayFileReadsOf({ ...ANNOUNCED, file_list: { newest: true } }), true), undefined)
+  // The rule itself, apart from how NIP-11 is parsed: types kept in order count only once the relay has switched.
+  assert.equal(projectFieldsOf({ list: true, text: true, switched: false, inOrder: ['osnova.project'], search: [] }, false), undefined)
+})
+
+test('a tab opts in with ?fields=on, keeps it on reload, and leaves with ?fields=off', () => {
+  const held = new Map()
+  const storage = { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v), removeItem: (k) => held.delete(k) }
+  assert.equal(fieldsOptedIn('', storage), false)
+  assert.equal(fieldsOptedIn('?fields=on', storage), true)
+  assert.equal(fieldsOptedIn('?x=1', storage), true, 'kept for the tab')
+  assert.equal(fieldsOptedIn('?fields=off', storage), false)
+  assert.equal(fieldsOptedIn('?fields=on', undefined), false, 'no storage, no opt-in')
+  assert.equal(fieldsOptedIn('#/project/x?tab=a&fields=on', storage), true, 'a hash route’s query counts')
+  held.clear()
+  assert.equal(fieldsOptedIn('?subfields=on', storage), false, 'only the key itself')
 })
