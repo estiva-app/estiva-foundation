@@ -655,6 +655,102 @@ function discriminate(filters: Record<string, unknown>[]): Discriminator | null 
   return byFolder(filters) ?? byKind(filters) ?? byMatch(filters)
 }
 
+/** Whether `a` comes before `b` in one filter's run: the relay's `created_at DESC, id ASC`. */
+const runsBefore = (a: SignedEvent, b: SignedEvent): boolean =>
+  a.created_at > b.created_at || (a.created_at === b.created_at && a.id < b.id)
+
+/**
+ * Past this many events times filters, or steps, a batch is not split by
+ * position: the split runs on the app's main thread. Topics' read on Miky's
+ * open is 5 × 729.
+ */
+const MAX_POSITION_SPLIT = 250_000
+
+/**
+ * A batched answer of plain NIP-01 filters cut into each filter's run by
+ * position, or `null` unless exactly one cut fits.
+ *
+ * The answer is the runs end to end in filter order, and each run is its
+ * filter's newest matches in the relay's order (`created_at DESC, id ASC`,
+ * buzz-db's event query). So a run is a stretch every event of which its
+ * filter matches, strictly in that order, holding every distinct event of the
+ * answer that the filter matches up to its last (a copy in another run is the
+ * same event, not a newer one it skipped); a run is empty only when nothing
+ * in the answer matches its filter. Every cut keeping
+ * to that is counted, and the answer is used only when there is one: two
+ * would be a guess. An event no filter matches leaves no cut, which is also
+ * what a relay matching differently from {@link matcherOf} looks like.
+ *
+ * This is Topics' read of a person's part in the topics: five filters with no
+ * Folder, overlapping, where a comment on a topic answers two of them and
+ * comes back twice. On Miky's Leaf open, 4 Nov, no discriminator split its
+ * 727-event answer and the total was over the largest page seen, so the
+ * 0.94 MB was thrown away and each filter asked again.
+ */
+function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[], pageSize: number): SignedEvent[][] | null {
+  /*
+    No `#h`: buzz answers it beyond NIP-01 (a reaction or deletion with no `h`
+    of its own, by its target's) and narrows it per filter (a named-only
+    channel only to a filter naming it). Together, in one batch, one wrong cut
+    can be the only one that fits (review of PR #203). A Folder's filters are
+    split by `h` instead.
+  */
+  if (filters.some((filter) => '#h' in filter)) return null
+  const matchers = filters.map(matcherOf)
+  if (matchers.some((matcher) => matcher === null)) return null
+  const n = events.length
+  if (n * filters.length > MAX_POSITION_SPLIT) return null
+  const matches = matchers.map((matcher) => events.map((event) => matcher!(event)))
+  // The end of the longest stretch from each position that the filter matches, in run order.
+  const reach = matches.map((matched) => {
+    const out = new Array<number>(n + 1).fill(n)
+    for (let p = n - 1; p >= 0; p--) {
+      if (!matched[p]) out[p] = p
+      else out[p] = p + 1 < n && matched[p + 1] && runsBefore(events[p], events[p + 1]) ? out[p + 1] : p + 1
+    }
+    return out
+  })
+  // Each event's place, in run order, among the filter's distinct matches in the answer.
+  const ranks = matches.map((matched) => {
+    const distinct = new Map<string, SignedEvent>()
+    for (const [k, event] of events.entries()) if (matched[k]) distinct.set(event.id, event)
+    const ordered = [...distinct.values()].sort((a, b) => (runsBefore(a, b) ? -1 : 1))
+    return new Map(ordered.map((event, rank) => [event.id, rank]))
+  })
+
+  // Ways to cut the answer up to each position, counted to two; and where each filter's run began.
+  let ways = new Map<number, number>([[0, 1]])
+  const starts: Map<number, number>[] = []
+  let steps = 0
+  for (let i = 0; i < filters.length; i++) {
+    const next = new Map<number, number>()
+    const start = new Map<number, number>()
+    const reached = (q: number, p: number, count: number) => {
+      if (!start.has(q)) start.set(q, p)
+      next.set(q, Math.min(2, (next.get(q) ?? 0) + count))
+    }
+    for (const [p, count] of ways) {
+      if (ranks[i].size === 0) reached(p, p, count)
+      for (let q = p + 1; q <= reach[i][p]; q++) {
+        if (++steps > MAX_POSITION_SPLIT) return null
+        // Its newest matches: as many as the stretch holds come no later than its last.
+        if (ranks[i].get(events[q - 1].id) === q - p - 1) reached(q, p, count)
+      }
+    }
+    starts.push(start)
+    ways = next
+  }
+  if (ways.get(n) !== 1) return null
+  const runs: SignedEvent[][] = new Array(filters.length)
+  for (let i = filters.length - 1, q = n; i >= 0; i--) {
+    const p = starts[i].get(q)!
+    runs[i] = events.slice(p, q)
+    q = p
+  }
+  // A run longer than was asked for is no run the relay sent.
+  return runs.every((run) => run.length <= pageSize) ? runs : null
+}
+
 /** The batched response split into one run per filter, or `null` if any event is unclaimed. */
 function splitRuns(
   count: number,
@@ -944,7 +1040,13 @@ export class Relay {
    *    bound either, so none was clamped. Weaker, and it cannot fire on a cold
    *    `Relay` that has no evidence yet — deliberately, per SHA-15.
    *
-   * When neither applies the chunk is simply left unresolved: one request is
+   * 3. **By position**, when no discriminator applies but the filters are
+   *    plain NIP-01: the answer is cut into its runs where exactly one cut
+   *    fits ({@link runsByPosition}), and those runs are settled or seeded as
+   *    the first way's are. Tried before the total, since a run's own length
+   *    is better evidence than the sum.
+   *
+   * When none applies the chunk is simply left unresolved: one request is
    * spent and the old path runs, which is a cost in requests and never in
    * correctness.
    */
@@ -989,7 +1091,7 @@ export class Relay {
       */
       const events = await this.query(indices.map((i) => ({ ...filters[i], limit: pageSize })))
 
-      const runs = which ? splitRuns(indices.length, events, which) : null
+      const runs = which ? splitRuns(indices.length, events, which) : runsByPosition(indices.map((i) => filters[i]), events, pageSize)
       if (runs) {
         /*
           Update the observed ceiling from each run *before* testing it, exactly

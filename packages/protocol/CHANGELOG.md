@@ -13,6 +13,16 @@ it keeps `osnova.project` in order (`files.requires_prev`) or the tab opted in;
 `fieldsOptedIn(search, sessionStorage)` reads that opt-in from `?fields=on|off`
 and keeps it for the tab. `PROJECT_TYPE` and `ProjectFields` with them.
 
+## 0.53.1 — 2026-11-04
+
+**Wire: nothing.** `Relay.queryAll` keeps a batch's first page when no
+discriminator splits it, by cutting the answer into each filter's run by
+position (`created_at DESC, id ASC` within a run, runs in filter order) when
+exactly one cut fits; the runs are then settled or seeded as before. Topics'
+read of a person's part in the topics (interop's five filters, no Folder) was
+sent batched and then once per filter again: on Miky's Leaf open, 62 requests
+and 73.56 MB → 56 and 72.61 MB, the same events.
+
 ## 0.53.0 — 2026-11-04
 
 **Wire: `buildResolution` writes `ts`** (ONE-2; SPEC §6.4, "Resolving a
