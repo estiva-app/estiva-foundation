@@ -416,13 +416,14 @@ export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, 
     const asked = new Map(asks.map((ask) => [ask.block!, ask.theirsBlock]))
     const settle = (content: Block[]): Block[] =>
       content.flatMap((block) => {
+        const children = childBlocksOf(block)
         if (asked.has(block.id)) {
           const kept = asked.get(block.id)
-          return kept ? [kept] : []
+          if (!kept) return []
+          // Its own content asked, not its children's: those are merged on their own (§13.3).
+          return [children && childBlocksOf(kept) ? { ...kept, content: settle(children) } : kept]
         }
-        const children = block.content
-        if (!children?.length || !('id' in (children[0] as object))) return [block]
-        return [{ ...block, content: settle(children as Block[]) }]
+        return [children ? { ...block, content: settle(children) } : block]
       })
     const doc = parseBlockDocument(mine.value)
     const settled = { value: serializeBlockDocument({ ...doc, content: settle(doc.content) }), format: BLOCKS_FORMAT }

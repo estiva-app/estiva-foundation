@@ -188,6 +188,31 @@ describe('textAsksOf — what the editor holds while a save asks (ALO-1\'s story
     assert.equal(held.sinceOpened, true)
   })
 
+  it('a list whose numbering both changed asks for the list alone, and my words in its items are kept', () => {
+    const list = (start: number, ...items: Block[]): Block => ({ type: 'orderedList', id: 'l', attrs: { start }, content: items })
+    const item = (id: string, text: string): Block => ({ type: 'listItem', id, content: [p(`${id}p`, text)] })
+    const base = blocks(doc(list(1, item('i1', 'first'), item('i2', 'second'))))
+    const theirs = blocks(doc(list(2, item('i1', 'first'), item('i2', 'second, theirs'))))
+    const mine = blocks(doc(list(3, item('i1', 'first, mine'), item('i2', 'second'))))
+    const { asks } = mergeTexts(base, theirs, mine)
+    assert.deepEqual(asks?.map((a) => a.block), ['l'])
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.ok(held.value.includes('first, mine'), 'my words in an item are not lost')
+    assert.ok(held.value.includes('second, theirs'))
+    assert.equal(JSON.parse(held.value).content[0].attrs.start, 2, 'the asked list holds theirs until chosen')
+  })
+
+  it('a block theirs deleted and I changed is left out of the text it opens on', () => {
+    const base = blocks(doc(p('b1', 'one'), p('b2', 'two')))
+    const theirs = blocks(doc(p('b1', 'one, theirs')))
+    const mine = blocks(doc(p('b1', 'one'), p('b2', 'two, mine')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.deepEqual(held.blocks, ['b2'])
+    assert.deepEqual(words(JSON.parse(held.value)), ['one, theirs'])
+    assert.equal(held.sinceOpened, undefined)
+  })
+
   it('a marker text both changed holds their text and says the page changed, with no block to point at', () => {
     const base = { value: 'the plan' }, theirs = { value: 'the plan, theirs' }, mine = { value: 'the plan, mine' }
     const held = textAsksOf(base, theirs, mine, mergeTexts(base, theirs, mine).asks!)

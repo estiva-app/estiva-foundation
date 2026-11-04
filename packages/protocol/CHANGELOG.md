@@ -13,6 +13,9 @@ asks: their text with every change of mine that did not clash merged in, and
 the asked blocks to choose between; their text alone, with `sinceOpened`, when
 that cannot be built. It returns `TextAsks`, the shape `@estiva-app/ui/editor`'s
 `DocumentAsks` takes. Here rather than in ui, whose runtime takes no protocol.
+One fix on the way: a list (or quote) that asks for its own content, its
+numbering say, now keeps my words in its items; Ship's copy put their whole
+list in, so my item edits were gone if I kept theirs.
 
 ## 0.54.0 — 2026-11-04
 
