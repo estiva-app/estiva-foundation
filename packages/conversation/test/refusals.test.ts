@@ -48,7 +48,7 @@ describe('refusalReason', () => {
 
   it('takes an app’s own cause as it is', () => {
     assert.equal(refusalReason({ cause: 'gone' }), 'this message was deleted, or you can no longer write here')
-    assert.equal(refusalReason({ cause: 'empty' }), 'a message needs words or a file; Delete removes it')
+    assert.equal(refusalReason({ cause: 'no-access' }), 'you can no longer write here')
   })
 })
 

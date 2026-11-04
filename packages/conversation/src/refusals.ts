@@ -25,7 +25,6 @@ export type RefusalCause =
   | 'busy'
   | 'clock'
   | 'signed-out'
-  | 'empty'
   | 'unknown'
 
 /**
@@ -41,7 +40,6 @@ export const REFUSAL_REASONS: Readonly<Record<RefusalCause, string>> = {
   busy: 'too many at once, try again in a moment',
   clock: 'your computer’s clock is wrong; set it and try again',
   'signed-out': 'you are signed out; sign in again',
-  empty: 'a message needs words or a file; Delete removes it',
   unknown: 'something went wrong, try again',
 }
 
@@ -75,8 +73,14 @@ const CAUSES = new Set<string>(Object.keys(REFUSAL_REASONS))
 
 /*
   In order: the first that matches is the cause. Scope and identity before
-  `restricted:`, which also prefixes "insufficient scope"; "archived" before
-  the target rules, as an archived team's reaction is refused as not found.
+  `restricted:`, which also prefixes "insufficient scope". Each reason above
+  maps back to its own cause, so a reason passed on twice stays the same.
+
+  Words, because the relay sends no reason code yet (SPEC: "until then a
+  refusal is its sentence alone"). When the TEA issue "When the server says
+  no, every app knows why" adds them, `refusalCause` reads the code first and
+  these rules stay only for a refusal that carries none.
+  why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-refusal-starts-with-a-reason-code-every-app-reads.md
 */
 const RULES: readonly [RegExp, RefusalCause][] = [
   [/content (is \d+ bytes, max|exceeds maximum size)|too long/i, 'too-long'],
@@ -113,9 +117,10 @@ const MB = 1024 * 1024
  * The relay's size limits (buzz `BUZZ_MAX_*_BYTES`, read back on production on
  * 4 Nov): a GIF 10 MB, another picture 50 MB, anything else 100 MB, since
  * Cloudflare refuses a larger body before the relay sees it (a video's 500 MB
- * is never reached).
+ * is never reached). Cloudflare's 100 MB is taken as decimal, the lower
+ * reading, so nothing that passes here is turned away there.
  */
-export const UPLOAD_LIMITS = { gif: 10 * MB, image: 50 * MB, other: 100 * MB } as const
+export const UPLOAD_LIMITS = { gif: 10 * MB, image: 50 * MB, other: 100_000_000 } as const
 
 /** The most a file of this type may be, in bytes. */
 export function uploadLimit(type: string | undefined): number {
@@ -125,7 +130,8 @@ export function uploadLimit(type: string | undefined): number {
   return UPLOAD_LIMITS.other
 }
 
-const tooLargeLine = (bytes: number) => `Too large: the most is ${Math.round(bytes / MB)} MB`
+// Whole MB either way: 10,485,760 bytes and 100,000,000 bytes both say what the limit is called.
+const tooLargeLine = (bytes: number) => `Too large: the most is ${bytes % MB === 0 ? bytes / MB : Math.round(bytes / 1e6)} MB`
 
 /** The line for a file over its limit, said before it uploads; undefined when it fits. */
 export function tooLarge(file: { size: number; type?: string }): string | undefined {
@@ -151,7 +157,7 @@ export function uploadRefusal(reason: unknown, file?: { type?: string }): string
   if (reason && typeof reason === 'object' && 'cause' in reason) {
     const cause = (reason as { cause: unknown }).cause
     if (cause === 'too-large') return tooLargeLine(uploadLimit(file?.type))
-    if (typeof cause === 'string' && cause in UPLOAD_LINES) return UPLOAD_LINES[cause as keyof typeof UPLOAD_LINES]
+    if (typeof cause === 'string' && Object.hasOwn(UPLOAD_LINES, cause)) return UPLOAD_LINES[cause as keyof typeof UPLOAD_LINES]
   }
   const raw = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : textOf(reason)
   const status = Number(/upload failed:\s*(\d{3})/i.exec(raw)?.[1] ?? 0)
