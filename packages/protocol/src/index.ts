@@ -47,7 +47,7 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.54.0'
+export const PROTOCOL_VERSION = '0.55.0'
 
 export {
   // types
@@ -236,8 +236,10 @@ export {
   type MergeAsk,
   type TextMerge,
   type BlockMerge,
+  type TextAsks,
   mergeBlockDocuments,
   mergeTexts,
+  textAsksOf,
 } from './merge.js'
 
 export {

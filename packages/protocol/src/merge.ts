@@ -379,3 +379,56 @@ export function mergeTexts(base: MergeText, theirs: MergeText, mine: MergeText):
   }
   return { asks: [{ block: null, why: 'changed-by-both', base: plain(base), theirs: plain(theirs), mine: plain(mine) }] }
 }
+
+/**
+ * What a text editor holds while a save asks: the `value` it opens on, and
+ * each asked block's `theirs` and `mine` to choose between. The shape
+ * `@estiva-app/ui/editor`'s `DocumentAsks` takes.
+ */
+export interface TextAsks {
+  /** The text the editor opens on: theirs, with every change of mine that did not clash merged in. */
+  value: string
+  theirs: string
+  mine: string
+  /** The asked blocks' ids. */
+  blocks: string[]
+  /** Set when the editor holds their text alone, so it says the page changed since it was opened. */
+  sinceOpened?: boolean
+}
+
+/**
+ * What the editor holds when a save asks (ALO-1's story): their text, with
+ * every change of mine that did not clash merged in and their words in each
+ * block that asks, beside mine as I saved it. Nothing is saved until each
+ * asked block is chosen.
+ *
+ * Mine is merged again with each asked block taken as theirs (theirs deleted
+ * it: left out), which §13.3 then merges quietly. A block I deleted that they
+ * changed cannot be put back where it was from mine, so that merge may ask
+ * again: then the editor holds their text alone, and none of their words are
+ * lost. So does a text that is not a block document.
+ */
+export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, asks: readonly MergeAsk[]): TextAsks {
+  const blocks = asks.flatMap((ask) => (ask.block === null ? [] : [ask.block]))
+  const plain = { value: theirs.value, theirs: theirs.value, mine: mine.value, blocks, sinceOpened: true }
+  if (mine.format !== BLOCKS_FORMAT || theirs.format !== BLOCKS_FORMAT || blocks.length !== asks.length) return plain
+  try {
+    const asked = new Map(asks.map((ask) => [ask.block!, ask.theirsBlock]))
+    const settle = (content: Block[]): Block[] =>
+      content.flatMap((block) => {
+        if (asked.has(block.id)) {
+          const kept = asked.get(block.id)
+          return kept ? [kept] : []
+        }
+        const children = block.content
+        if (!children?.length || !('id' in (children[0] as object))) return [block]
+        return [{ ...block, content: settle(children as Block[]) }]
+      })
+    const doc = parseBlockDocument(mine.value)
+    const settled = { value: serializeBlockDocument({ ...doc, content: settle(doc.content) }), format: BLOCKS_FORMAT }
+    const merged = mergeTexts(base, theirs, settled)
+    return merged.merged ? { ...plain, value: merged.merged.value, sinceOpened: undefined } : plain
+  } catch {
+    return plain
+  }
+}
