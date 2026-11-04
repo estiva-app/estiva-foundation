@@ -3358,8 +3358,8 @@ export interface ForeignObject {
    * Each changed field's current change id: the `prev` a change to that field
    * names (SPEC §6.2). A field never changed is absent, and its first change
    * names the first record — {@link prevOf} answers both. Absent on a regular
-   * event and an unreachable stub. A file read by a list carries no text, so a
-   * text change follows what opening it reads, never this.
+   * event and an unreachable stub. A file read by a list carries no text: its
+   * text's entry is `''`, and {@link prevOf} answers undefined for it.
    *
    * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
    */
@@ -3372,9 +3372,15 @@ export interface ForeignObject {
   deleted?: { by: string; at: number }
 }
 
-/** The change a change to `field` of `object` follows (SPEC §6.2): its current change, else the first record. */
-export function prevOf(object: Pick<ForeignObject, 'prevs' | 'eventId'>, field: string): string {
-  return object.prevs?.[field] ?? object.eventId
+/**
+ * The change a change to `field` of `object` follows (SPEC §6.2): its current
+ * change, else the first record. Undefined for the text of a file read by a
+ * list, which carries no text: open it to write it.
+ */
+export function prevOf(object: Pick<ForeignObject, 'prevs' | 'eventId'>, field: string): string | undefined {
+  const id = object.prevs?.[field]
+  if (id === '') return undefined
+  return id ?? object.eventId
 }
 
 /** The newest of a root's `created_at` and its folded fields' changes. */
@@ -3404,7 +3410,8 @@ function buildObject(args: {
   const naddr = encodeNaddr(pointer)
   const { slots, meta } = resolveSlots(projection, root, folded, manifest)
   const objectAddress = pointerToAddress(pointer)
-  const prevs = Object.fromEntries(Object.entries(folded).flatMap(([field, f]) => (f.id ? [[field, f.id]] : [])))
+  // A list read's text placeholder keeps its empty id: the text's `prev` is unknown there, not the first record.
+  const prevs = Object.fromEntries(Object.entries(folded).flatMap(([field, f]) => (f.id !== undefined ? [[field, f.id]] : [])))
   const deleted = folded[DELETED_FIELD]
   return {
     // An addressable object's `ref` is its address: stable across the author

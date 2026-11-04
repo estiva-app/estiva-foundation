@@ -334,7 +334,8 @@ export interface OptInStorage {
 
 /**
  * A tab's opt-in to reading projects by their fields: `?fields=on` in the
- * address it opened with turns it on, `?fields=off` off, and it is kept in
+ * address it opened with turns it on, `?fields=off` off — `search` is the
+ * page's query, and a hash-routed app passes its hash's query too — and it is kept in
  * `storage` — the tab's `sessionStorage`, never anything longer: nothing
  * narrows it to the fenced Folders, so a link carrying it must not switch a
  * browser for good. False when the storage cannot be read.
@@ -342,7 +343,7 @@ export interface OptInStorage {
 export function fieldsOptedIn(search: string, storage: OptInStorage | undefined, key = 'estiva.projectFields'): boolean {
   try {
     if (!storage) return false
-    const asked = /(?:^\?|&)fields=([^&#]*)/.exec(search)?.[1]
+    const asked = /(?:^|[?&])fields=([^&#]*)/.exec(search)?.[1]
     if (asked === 'on') storage.setItem(key, 'on')
     if (asked === 'off') storage.removeItem(key)
     return storage.getItem(key) === 'on'

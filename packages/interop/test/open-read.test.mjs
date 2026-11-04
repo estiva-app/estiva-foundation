@@ -14,7 +14,10 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, resolveForeignObjects, prevOf, filesOf } from '../dist/index.js'
+// By namespace, so on a build without `prevOf` only the test that calls it fails.
+import * as interop from '../dist/index.js'
+
+const { resolveForeignObject, resolveForeignObjects, filesOf } = interop
 
 const OWNER = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -115,8 +118,16 @@ describe('opening a file by the open read (ALO-6)', () => {
     const object = await resolveForeignObject(addressOf(launch), opening(events).query, noPeople, 0, undefined, { openRead: [PLAN] })
     assert.equal(object.prevs?.title, renamed.id)
     assert.equal(object.prevs?.description, words.id)
-    assert.equal(prevOf(object, 'title'), renamed.id)
-    assert.equal(prevOf(object, 'status'), launch.id)
+    assert.equal(typeof interop.prevOf, 'function', 'prevOf is exported')
+    assert.equal(interop.prevOf(object, 'title'), renamed.id)
+    assert.equal(interop.prevOf(object, 'status'), launch.id)
+  })
+
+  test('a project read by a list names no `prev` for its text, which the list does not carry', async () => {
+    const [listed] = await interop.resolveForeignRoots([addressOf(launch)], opening(events).query, undefined, { listRead: true })
+    assert.equal(listed.prevs?.title, renamed.id)
+    assert.equal(typeof interop.prevOf, 'function', 'prevOf is exported')
+    assert.equal(interop.prevOf(listed, 'description'), undefined, 'not the first record: its text is unread')
   })
 
   test('a deleted project, which the open read leaves out, is read whole and says who deleted it', async () => {

@@ -2,7 +2,13 @@
 // The NIP-11 document is the one production served on 2026-11-02 (buzz#46).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Relay, parseQueryResponse, relayFileReadsOf, projectFieldsOf, fieldsOptedIn, secretKeySigner } from '../dist/index.js'
+// By namespace, so on a build without the switch only its tests fail.
+import * as protocol from '../dist/index.js'
+
+const { Relay, parseQueryResponse, relayFileReadsOf, secretKeySigner } = protocol
+const missing = (name) => () => assert.fail(`${name} is not exported`)
+const projectFieldsOf = protocol.projectFieldsOf ?? missing('projectFieldsOf')
+const fieldsOptedIn = protocol.fieldsOptedIn ?? missing('fieldsOptedIn')
 
 const SECRET = '1'.repeat(64)
 
@@ -69,6 +75,8 @@ test('a relay that has not made the switch turns projects on only for a tab that
   assert.equal(projectFieldsOf(relayFileReadsOf(before), false), undefined)
   assert.deepEqual(projectFieldsOf(relayFileReadsOf(before), true), { text: true, search: true })
   assert.equal(projectFieldsOf(relayFileReadsOf({ ...ANNOUNCED, file_list: { newest: true } }), true), undefined)
+  // The rule itself, apart from how NIP-11 is parsed: types kept in order count only once the relay has switched.
+  assert.equal(projectFieldsOf({ list: true, text: true, switched: false, inOrder: ['osnova.project'], search: [] }, false), undefined)
 })
 
 test('a tab opts in with ?fields=on, keeps it on reload, and leaves with ?fields=off', () => {
@@ -79,4 +87,7 @@ test('a tab opts in with ?fields=on, keeps it on reload, and leaves with ?fields
   assert.equal(fieldsOptedIn('?x=1', storage), true, 'kept for the tab')
   assert.equal(fieldsOptedIn('?fields=off', storage), false)
   assert.equal(fieldsOptedIn('?fields=on', undefined), false, 'no storage, no opt-in')
+  assert.equal(fieldsOptedIn('#/project/x?tab=a&fields=on', storage), true, 'a hash route’s query counts')
+  held.clear()
+  assert.equal(fieldsOptedIn('?subfields=on', storage), false, 'only the key itself')
 })
