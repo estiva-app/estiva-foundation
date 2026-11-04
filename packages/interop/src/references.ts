@@ -124,13 +124,14 @@ export async function fileCandidates(
 ): Promise<ReferenceCandidate[]> {
   const files = objects.filter(offerable)
   const parents = new Map<string, ForeignObject>()
-  for (const o of objects) if (o?.address && !o.unreachable) parents.set(o.address, o)
+  // A deleted project names no issue's caption: it is found nowhere else either (SPEC §6.5).
+  for (const o of objects) if (o?.address && !o.unreachable && !o.deleted) parents.set(o.address, o)
   const missing = [
     ...new Set(files.flatMap((o) => (o.kind === KIND_ISSUE && o.parentRef && !parents.has(o.parentRef) ? [o.parentRef] : []))),
   ]
   if (missing.length) {
     const read = await resolveForeignRoots(missing, query, cache, { listRead }).catch(() => [])
-    for (const parent of read) if (parent.address) parents.set(parent.address, parent)
+    for (const parent of read) if (parent.address && !parent.deleted) parents.set(parent.address, parent)
   }
   return files.map((o) => {
     const parent = o.kind === KIND_ISSUE && o.parentRef ? parents.get(o.parentRef) : undefined
