@@ -235,7 +235,7 @@ describe('§6.5 — a top-level message in three states', () => {
     assert.equal(only(foldThreads([honest, event({ kind: 5, pubkey: ALICE, tags: [['e', gone.id]] })])).state, 'deleted')
   })
 
-  it('not returned, its thread is in its replies’ Folder only when they agree on one', () => {
+  it('not returned, its thread is in the Folder most replies were filed in, and none on a tie', () => {
     const gone = comment()
     const here = reply(gone)
     const there = event({ kind: 1111, pubkey: BOB, tags: [['A', ISSUE], ['e', gone.id], ['k', '1111'], ['p', ALICE], ['h', ELSEWHERE]] })
@@ -244,6 +244,16 @@ describe('§6.5 — a top-level message in three states', () => {
     const split = only(foldThreads([here, there, resolveThere]))
     assert.equal(split.folder, undefined)
     assert.equal(split.resolution, undefined)
+    const most = only(foldThreads([here, reply(gone), there, resolveThere, resolution(gone, 'reopened')]))
+    assert.equal(most.folder, FOLDER)
+    assert.equal(most.resolution?.action, 'reopened')
+  })
+
+  it('a reply filed in another Folder cannot clear a deleted comment', () => {
+    const gone = comment()
+    const stray = event({ kind: 1111, pubkey: BOB, tags: [['A', ISSUE], ['e', gone.id], ['k', '1111'], ['p', BOB], ['h', ELSEWHERE]] })
+    const thread = only(foldThreads([reply(gone), reply(gone), stray, event({ kind: 5, pubkey: ALICE, tags: [['e', gone.id]] })]))
+    assert.equal(thread.state, 'deleted')
   })
 
   it('a deleted top-level message with no reply left draws nothing', () => {

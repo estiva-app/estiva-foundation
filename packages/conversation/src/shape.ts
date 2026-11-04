@@ -143,6 +143,16 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
     thread others answered; a channel `kind:9` names no author, and stays
     `missing`.
   */
+  /** A comment the read did not return is in the Folder most of its replies were filed in, or none on a tie (§6.5). */
+  const replyFolderOf = (answers: readonly SignedEvent[]): string | undefined => {
+    const count = new Map<string, number>()
+    for (const r of answers) {
+      const h = values(r, 'h')[0]
+      if (h) count.set(h, (count.get(h) ?? 0) + 1)
+    }
+    const ranked = [...count].sort((a, b) => b[1] - a[1])
+    return ranked.length > 0 && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : undefined
+  }
   const deletedUnseen = (id: string, answers: readonly SignedEvent[]) => {
     const comments = answers.filter((r) => r.kind === KIND_COMMENT)
     const signers = deletions.get(id.toLowerCase())
@@ -194,10 +204,10 @@ export function foldThreads(events: readonly SignedEvent[], options: { viewer?: 
   const thread = (id: string, root: SignedEvent | undefined): Thread => {
     const all = replies[id] ?? []
     const kept = all.filter((r) => !deletedBy(r.id, r.pubkey)).map(messageOf)
-    const state: RootState = (root ? deletedBy(id, root.pubkey) : deletedUnseen(id, all)) ? 'deleted' : root ? 'present' : 'missing'
-    // Not returned, the thread is in its replies' Folder only when they all agree on one.
-    const replyFolders = new Set(kept.map((r) => r.folder))
-    const folder = root ? values(root, 'h')[0] : replyFolders.size === 1 ? kept[0]?.folder : undefined
+    const folder = root ? values(root, 'h')[0] : replyFolderOf(all)
+    // Not returned, only the replies filed in the thread's Folder speak for its comment: one filed elsewhere neither deletes nor clears.
+    const speaking = root ? all : all.filter((r) => values(r, 'h')[0] === folder)
+    const state: RootState = (root ? deletedBy(id, root.pubkey) : folder !== undefined && deletedUnseen(id, speaking)) ? 'deleted' : root ? 'present' : 'missing'
     const resolution = resolutionOf(resolutions[id.toLowerCase()] ?? [], { folder, replies: kept.map((r) => r.id) })
     return {
       id: id.toLowerCase(),
