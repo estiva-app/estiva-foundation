@@ -118,7 +118,7 @@ const stalePeek = () =>
   })
 
 describe('a Folder is drawn from the specification', () => {
-  it('has its name, its about, the noun folder, and opens where conversations open', async () => {
+  it('has its name, its about, the noun team, and opens where conversations open', async () => {
     const found = await resolveForeignObject(FOLDER_ADDRESS, relay([peek(), folder()]).query)
     assert.ok(found)
     assert.equal(found.slots.title.value, 'Accounts')
@@ -163,7 +163,7 @@ describe('a Folder is drawn from the specification', () => {
     )
   })
 
-  it('is the unreachable stub, called a Folder, when this reader cannot see it', async () => {
+  it('is the unreachable stub, called a team, when this reader cannot see it', async () => {
     const found = await resolveForeignObject(FOLDER_ADDRESS, relay([peek()]).query)
     assert.equal(found?.unreachable, true)
     assert.equal(found?.noun, 'team')
