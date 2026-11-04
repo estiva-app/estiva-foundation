@@ -527,7 +527,7 @@
     },
     {
       "name": "resolution-resolved",
-      "note": "Peek only before SHA-3.",
+      "note": "Peek only before SHA-3. `ts` since ONE-2 (protocol 0.53.0): a resolve and a reopen in one second fold by it.",
       "producedBy": [
         "peek"
       ],
@@ -557,15 +557,19 @@
             "d92ac2b87ffb4a15982400044cce9cf50000000000000000000000000000abcd",
             "",
             "support"
+          ],
+          [
+            "ts",
+            "1787142018561"
           ]
         ],
         "content": "shipped"
       },
-      "id": "0f3a758dc9dfff833e19c1711f043a54b384faa183d9d76fde5c98db45278322"
+      "id": "e92961b1920bbdd1f125a94b880e681f6ff7721e96b8fe5d3b5bd99c8c3401dd"
     },
     {
       "name": "resolution-reopened",
-      "note": "Peek only before SHA-3.",
+      "note": "Peek only before SHA-3. `ts` since ONE-2 (protocol 0.53.0): a resolve and a reopen in one second fold by it.",
       "producedBy": [
         "peek"
       ],
@@ -589,11 +593,15 @@
           [
             "action",
             "reopened"
+          ],
+          [
+            "ts",
+            "1787142018561"
           ]
         ],
         "content": ""
       },
-      "id": "1bb9c2bd39afbb53fc310170ca88a88350260b3de4b870dfc4021b8423b01f6d"
+      "id": "8aaa8774df48294e3ffee0b40ca186af8ebda2806d76380e57b293fbccce9a3c"
     },
     {
       "name": "relayAuth",

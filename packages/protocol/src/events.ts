@@ -925,15 +925,17 @@ export const MAX_RATIONALE_BYTES = MAX_MESSAGE_BYTES
  * read off a single canonical event. That is why this is a regular kind rather
  * than a replaceable one — see `KIND.ASSERTION`.
  *
- * The event carries the claim and who made it. It does **not** carry authority:
- * there is no "proposed" or "endorsed" mode here, because how much weight a
- * given actor's assertion deserves is a policy question that belongs to the app
- * reading it, not to the protocol. That is also why the *fold* of these
- * assertions is not in this package — see the README on the line this package
+ * The event carries the claim and who made it, and every reader weighs it the
+ * same: anyone who may write in the message's Folder resolves or reopens, and
+ * the newest counts (SPEC §6.4, "Resolving a thread"). `channelUuid` is the
+ * Folder of the message it is about. The fold is `@estiva-app/conversation`'s
+ * `resolutionOf`, not this package's — see the README on the line this package
  * does not cross.
  *
  * Tag order is fixed so the event id is reproducible: h, e(target), t, action,
- * [e(support)].
+ * [e(support)], ts.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/anyone-who-may-comment-resolves-or-reopens-a-thread-and-the-newest-counts.md
  */
 export function buildResolution(
   pubkey: string,
@@ -970,6 +972,8 @@ export function buildResolution(
   // Marked so a reader can tell the supporting reply from the target, which
   // share the `e` tag name.
   if (args.supportingEventId) tags.push(['e', args.supportingEventId, '', 'support'])
+  // The newest counts (SPEC §6.4): a resolve and a reopen in one second fold by `ts` (§6.2).
+  tags.push(['ts', String(Math.floor(createdAtMs))])
 
   return {
     pubkey,

@@ -4,6 +4,16 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.53.0 — 2026-11-04
+
+**Wire: `buildResolution` writes `ts`** (ONE-2; SPEC §6.4, "Resolving a
+thread"). A `kind:9101` now ends with `["ts", <ms>]` (§6.2), so a resolve and a
+reopen in one second are told apart; the `resolution-resolved` and
+`resolution-reopened` wire vectors were regenerated for it, and no other bytes
+moved. Its docs say the fold is shared and normative, in
+`@estiva-app/conversation`'s `resolutionOf`, and no longer the reading app's
+policy.
+
 ## 0.52.0 — 2026-11-03
 
 **Wire: join and leave a team, and a list entry's `space` role** (TEA-5; SPEC

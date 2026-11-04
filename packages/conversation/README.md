@@ -24,6 +24,9 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | --- | --- | --- |
 | comment or mention | §6.4 | `isCommentOn`, `strengthOn`, `threadStrength`, `anchorsOf`, `isReply`, `namedInBody` |
 | threading | §6.4 *Replies* | `parentOf`, `groupThreads` |
+| one shape for a message, a reply and a thread, every app's: a top-level message present, deleted or not returned | §6.3–§6.8 | `foldThreads`, `Message`, `Thread` |
+| resolving a thread: the newest counts, in its message's Folder | §6.4 *Resolving a thread*, C51 | `resolutionOf`, `resolutionsByTarget`, `resolutionTargetOf` |
+| where a message's lines draw: a link alone on its line is its file's row | §13.2, §13.6.2, C21 | `placeLines`, `writtenUrlOf`, `urlNames` |
 | writing | §6.4, §13.6 | `buildComment`, `buildReply`, `placeOf`, `referenceTagsFor`, `mentionTagsFor` |
 | what a composer's pick writes | §13.1 | `mentionText`, `messageReference`, `urgentTagsFor`, `URGENT_TAG` |
 | what the shared comment box holds, as the message it writes, and back | §13.1 | `composerText`, `composerDocument`, `withoutNewUrgency`, `composerDraft` |

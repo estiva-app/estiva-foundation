@@ -1,0 +1,770 @@
+{
+  "deletedWithReplies": {
+    "note": "comment f592a17107a1dbae04672809df3b442548888cbe555c14a4f17af06333a5c1bb deleted by its author (kind:5 f443ef5efdc24b5c8b285426716907c400946b0fb9b00b566265a6fe79845ade); 1 replies; the relay returned the comment: false",
+    "events": [
+      {
+        "content": "COMM-7 111802 reply from QA-2",
+        "created_at": 1792488648,
+        "id": "0f277d551a29f75442ddd6870bd1858e6445e48c2f463ed8e097d4b19eff0ffb",
+        "kind": 1111,
+        "pubkey": "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71",
+        "sig": "2f8be8ea434a51285d478693073dd3802b526fb1d8091428e38c8d448863c022b438174eb2257a45a254ab3ad1b0b42a0d5ce0279336e491f0ff68abcefd71f2",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:aad53290-3a07-41c1-b68e-25d6b48117ec"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "e",
+            "f592a17107a1dbae04672809df3b442548888cbe555c14a4f17af06333a5c1bb"
+          ],
+          [
+            "k",
+            "1111"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1792488648792"
+          ]
+        ]
+      },
+      {
+        "content": "",
+        "created_at": 1792489165,
+        "id": "f443ef5efdc24b5c8b285426716907c400946b0fb9b00b566265a6fe79845ade",
+        "kind": 5,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "27111282dd7b3e6e044bdd1751da4397363a12829699aa7773f4e1ca050b019d0e1ea106a1ea5bb5644074217130210cad991e27857236d754b8ced50c326ace",
+        "tags": [
+          [
+            "e",
+            "f592a17107a1dbae04672809df3b442548888cbe555c14a4f17af06333a5c1bb"
+          ]
+        ]
+      }
+    ]
+  },
+  "replyCarriesResolve": {
+    "note": "resolve ca8cd9c2e4e849c2b5404273791815f5c628b0f57df57bea5eef008062ac1459 on 28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed, carried by reply fb1eba4b50e2261aa487068b89ab252af8495093573699b160b9d62be51a37c9",
+    "events": [
+      {
+        "content": "EDITED PEEKM-3 run s2. Hi nostr:npub18wes66ph3qqkhpwgxczd64nqunsh962agm2w86atvglltprmracsr0p0sf  urgent nostr:npub18wes66ph3qqkhpwgxczd64nqunsh962agm2w86atvglltprmracsr0p0sf  see nostr:naddr1qqjxxvfsvf3rsdmx943kgvmp956xxdty95ur2dm995mnzen9xu6rqd3nvsekzq3qkw8ay6rmz7aaut5q09thewnqrym2elsmwvwj62a8ehhjngrrmdrqxpqqqpugxekpkjh  and a **boldword** here.\n\nfiller line 1\n\nfiller line 2\n\nfiller line 3\n\nfiller line 4\n\nfiller line 5\n\nfiller line 6\n\nfiller line 7\n\nfiller line 8\n\nfiller line 9\n\nfiller line 10\n\nfiller line 11\n\nfiller line 12\n\nfiller line 13\n\nfiller line 14\n\nfiller line 15\n\nfiller line 16\n\nfiller line 17\n\nfiller line 18\n\nfiller line 19\n\nfiller line 20\n\nfiller line 21\n\nfiller line 22\n\n- top item\n  - nested item",
+        "created_at": 1793013781,
+        "id": "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "da4fa30fd9bd4c78fc443da3afa5bbff0b4423b89b06033527ca0643c1bb4c1a9cc7f19e3d9f59b3c8735a69173ae78c9834859872beb0ec28b1a8c72ac12164",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "k",
+            "30851"
+          ],
+          [
+            "p",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793013781825"
+          ],
+          [
+            "p",
+            "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/df076dbfbd107bd1e678527fffceb2d7d3bbb3fb3808c0159377a9a3894a8590.bin",
+            "m application/octet-stream",
+            "x df076dbfbd107bd1e678527fffceb2d7d3bbb3fb3808c0159377a9a3894a8590",
+            "size 53",
+            "filename peekm3-note.txt"
+          ],
+          [
+            "urgent",
+            "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71"
+          ],
+          [
+            "a",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c10bb87f-cd3a-4c5d-857e-71fe74063d3a"
+          ],
+          [
+            "embed",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:c10bb87f-cd3a-4c5d-857e-71fe74063d3a",
+            "detailed"
+          ]
+        ]
+      },
+      {
+        "content": "",
+        "created_at": 1793015941,
+        "id": "fb1eba4b50e2261aa487068b89ab252af8495093573699b160b9d62be51a37c9",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "6dbf476eebc337144be77a5ec7cd98f18978220ad2c68637e1890247a63c9c9bba67fbc7cd2eb5a0c5ccbd0e4327020f1aa27ea9656932db041971331b10d2cb",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "e",
+            "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed"
+          ],
+          [
+            "k",
+            "1111"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793015941597"
+          ]
+        ]
+      },
+      {
+        "content": "-> PEEKM-3 resolve x3",
+        "created_at": 1793014519,
+        "id": "ecc4cdbe81edf8bea996e55dee5c121d17f998d2961930e45d2f7b0a5be4ae1f",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "419d3b0328d5150a36f31acaa2b0f38bdc4b0f3fd28551295d7cb63fd1bd5a9027ae85d43452a07fca43e3be348c12e3809e662beae4f5d74747f71f87ddaf91",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "e",
+            "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed"
+          ],
+          [
+            "k",
+            "1111"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793014519506"
+          ]
+        ]
+      },
+      {
+        "content": "P-> EEKM-3 resolve x2",
+        "created_at": 1793014462,
+        "id": "4ecb20c807a3a570576c7e16f06b24251a5ddbb61bed6174b63b503c9c00abd5",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "9699ef12be7f7927e1def77ceee28d3bb5c7eb55a7912c4306f7c2f972e4ebb52b63271b21c335317924fadeda95ad1f5a983245a8a823af636bf5de90502fed",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "e",
+            "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed"
+          ],
+          [
+            "k",
+            "1111"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793014462828"
+          ]
+        ]
+      },
+      {
+        "content": "PEEKM-3 reply r1\n\nsecond line of the reply",
+        "created_at": 1793013959,
+        "id": "a1d6d5b64bc6ce0493ab434a804b6cb42f8ce8362cafd3b041c05041baec0b00",
+        "kind": 1111,
+        "pubkey": "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71",
+        "sig": "dacf7ba4a22840806b40a76dbff4b8f37e354d9cb5cff7c5c6f95de951fab8c8f8565a84110b4072039fe8893bf2046724c9f4a8fb9b759308be6ecedde55792",
+        "tags": [
+          [
+            "A",
+            "30851:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:15d8ea46-7da2-4bc8-b844-fe696dab5b5b"
+          ],
+          [
+            "K",
+            "30851"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "e",
+            "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed"
+          ],
+          [
+            "k",
+            "1111"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793013959085"
+          ]
+        ]
+      },
+      {
+        "content": "PEEKM-3 resolve p1",
+        "created_at": 1793015941,
+        "id": "ca8cd9c2e4e849c2b5404273791815f5c628b0f57df57bea5eef008062ac1459",
+        "kind": 9101,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "9806bfb95b689b6b69dba1fa90ce4349df43bb4537963621b4e0b56cf7dc6b2380066c70c1be7da0031d2b6164a5f6d98dfe956253be30795bdcfa7eda2d7d25",
+        "tags": [
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "e",
+            "28c2eeb743b575766ebfb5fee622f03610e0fb297891ed469ec90ca9f907e9ed"
+          ],
+          [
+            "t",
+            "resolution"
+          ],
+          [
+            "action",
+            "resolved"
+          ],
+          [
+            "e",
+            "fb1eba4b50e2261aa487068b89ab252af8495093573699b160b9d62be51a37c9",
+            "",
+            "support"
+          ]
+        ]
+      }
+    ]
+  },
+  "edited": {
+    "note": "comment 317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77 edited",
+    "events": [
+      {
+        "content": "COMM-6 121723 files",
+        "created_at": 1792405070,
+        "id": "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "567e42e0e200baaae8a32c0319ea7f5d80992533314869043d91a9f465565979b88a6f10e360063531019cc6c343fde82e457dd45a73c4e177c8318d8b2d896f",
+        "tags": [
+          [
+            "A",
+            "30842:3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71:9d29ace4-2781-4fd3-bb6b-6b0b2e6422a2"
+          ],
+          [
+            "K",
+            "30842"
+          ],
+          [
+            "P",
+            "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71"
+          ],
+          [
+            "a",
+            "30842:3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71:9d29ace4-2781-4fd3-bb6b-6b0b2e6422a2"
+          ],
+          [
+            "k",
+            "30842"
+          ],
+          [
+            "p",
+            "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71"
+          ],
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "ts",
+            "1792405070928"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.png",
+            "m image/png",
+            "x 9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a",
+            "size 7855",
+            "dim 64x64",
+            "thumb https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.thumb.jpg",
+            "filename comm6-shot.png"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f.pdf",
+            "m application/pdf",
+            "x d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f",
+            "size 193",
+            "filename comm6-plan.pdf"
+          ],
+          [
+            "block",
+            "c9c21051f6e0"
+          ]
+        ]
+      },
+      {
+        "content": "COMM-6 121723 files w075256 w092454",
+        "created_at": 1793089568,
+        "id": "008b4bbdb3aac5d35f4859734ecc03dacbd13565bf18f1e85b2b3dede350a529",
+        "kind": 40003,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "07456048b818b9a7f86502223376be933d1fbd56d087d3e9422dc0c67aa0890f503974e2b682fc8c4e3a28b8ff01c0b4e843f377e95ee8a708824f1090c2f933",
+        "tags": [
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "e",
+            "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77"
+          ],
+          [
+            "ts",
+            "1793089568165"
+          ]
+        ]
+      },
+      {
+        "content": "COMM-6 121723 files w075256 w092454",
+        "created_at": 1793089540,
+        "id": "c3ba6a9ade0701104c5050524e49e6793ecc2dc0b406462c6860d726fe8a8d51",
+        "kind": 40003,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "d41a8d393f8d2bd4aeea8758d85a7cafa1aa3f48314260ad4835679f877f2fa992df9f76bc60f4c6706e13bb41a333407fc4a1e00b9f0e2021205ebd5846d425",
+        "tags": [
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "e",
+            "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77"
+          ],
+          [
+            "ts",
+            "1793089540200"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.png",
+            "m image/png",
+            "x c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800",
+            "size 1818",
+            "dim 40x24",
+            "thumb https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.thumb.jpg",
+            "filename leaf-pic.png"
+          ]
+        ]
+      },
+      {
+        "content": "COMM-6 121723 files w075256 w092454",
+        "created_at": 1793089511,
+        "id": "8f36f504207608b59a78d90f0094521e240a409a1bcde083eeb0b627b01db73a",
+        "kind": 40003,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "728b50af5208d9d0dbf19faa3df668a069497075f47d21d8170c75f2760fa7c473e844da261d956b5ca89c4dd8e3ef7294e61e1b3307964efcfe731616f5dcb6",
+        "tags": [
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "e",
+            "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77"
+          ],
+          [
+            "ts",
+            "1793089511997"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.png",
+            "m image/png",
+            "x 9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a",
+            "size 7855",
+            "dim 64x64",
+            "thumb https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.thumb.jpg",
+            "filename comm6-shot.png"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f.pdf",
+            "m application/pdf",
+            "x d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f",
+            "size 193",
+            "filename comm6-plan.pdf"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.png",
+            "m image/png",
+            "x c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800",
+            "size 1818",
+            "dim 40x24",
+            "thumb https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.thumb.jpg",
+            "filename leaf-pic.png"
+          ]
+        ]
+      },
+      {
+        "content": "COMM-6 121723 files w075256",
+        "created_at": 1793084034,
+        "id": "3dc77b7a8ee65d3eade607ce1e1f0f372cc4d45f683f6242af69b0618c3c22c5",
+        "kind": 40003,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "38510f8c02abb40a56920c68c2443fd8e36b92b3b7ad46410c63f4dd553dd0ec0a8bd5cf18c8d7e7f75059dd7f4d88f065e1225c73b97946126181190fffbdbb",
+        "tags": [
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "e",
+            "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77"
+          ],
+          [
+            "ts",
+            "1793084034120"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.png",
+            "m image/png",
+            "x 9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a",
+            "size 7855",
+            "dim 64x64",
+            "thumb https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.thumb.jpg",
+            "filename comm6-shot.png"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f.pdf",
+            "m application/pdf",
+            "x d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f",
+            "size 193",
+            "filename comm6-plan.pdf"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.png",
+            "m image/png",
+            "x c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800",
+            "size 1818",
+            "dim 40x24",
+            "thumb https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.thumb.jpg",
+            "filename leaf-pic.png"
+          ]
+        ]
+      },
+      {
+        "content": "COMM-6 121723 files",
+        "created_at": 1793044145,
+        "id": "4323082aa616d34b8b6ef7a1c73b19728a07d7433d6b2d970c6008b731e4170a",
+        "kind": 40003,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "0bf056d7016c9f4178c4b373bbff8c1e15e29546a4c768e6e02cc47c42291807adce0f9336dce6afd3513daf14c0c3dfbb24a5c34eaa8282994b4e5925d705e1",
+        "tags": [
+          [
+            "h",
+            "67928b1f-23d8-4b7e-876d-3639f679d04e"
+          ],
+          [
+            "e",
+            "317160eabb01e1a46278d31bc9f70546336dd26f1f6d9d2dc7522b05987a2b77"
+          ],
+          [
+            "ts",
+            "1793044145214"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.png",
+            "m image/png",
+            "x 9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a",
+            "size 7855",
+            "dim 64x64",
+            "thumb https://estiva.estiva.app/media/9e0438c8724003ae5a03a7d74b4c00de5fb9c3bca4b7bf0dca8fde6d8563600a.thumb.jpg",
+            "filename comm6-shot.png"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f.pdf",
+            "m application/pdf",
+            "x d009639f2187c44b0fa8838f659b03ac0d0a54cbfcda6b36ae9c54c2e564d06f",
+            "size 193",
+            "filename comm6-plan.pdf"
+          ],
+          [
+            "imeta",
+            "url https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.png",
+            "m image/png",
+            "x c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800",
+            "size 1818",
+            "dim 40x24",
+            "thumb https://estiva.estiva.app/media/c3fc9387e2c2d752051f852de7670ad72a4addd69a67e753aa36789edeee1800.thumb.jpg",
+            "filename leaf-pic.png"
+          ]
+        ]
+      }
+    ]
+  },
+  "quoted": {
+    "note": "comment 13eb7f055b8e3b9679473b654d1a64feba855b135ef614b693a655d6ea25edcf on quoted words",
+    "events": [
+      {
+        "content": "QA-1 control comment LTX2-164122",
+        "created_at": 1792593693,
+        "id": "13eb7f055b8e3b9679473b654d1a64feba855b135ef614b693a655d6ea25edcf",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "2ceb99a3f4cb4380b1cb60979373de7e3160037f4f2834e70f5128df0d62bc8d66a314e78c06ab00462a93e6b474835f6a9edbb66a1338d18beefd8b29402c90",
+        "tags": [
+          [
+            "A",
+            "30850:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:7d48a718-03e5-4ebb-a4f0-5e6a154696d2"
+          ],
+          [
+            "K",
+            "30850"
+          ],
+          [
+            "P",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "a",
+            "30850:b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46:7d48a718-03e5-4ebb-a4f0-5e6a154696d2"
+          ],
+          [
+            "k",
+            "30850"
+          ],
+          [
+            "p",
+            "b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1792593693653"
+          ],
+          [
+            "block",
+            "8e9e47e4caf8"
+          ],
+          [
+            "quote",
+            "Probe target"
+          ]
+        ]
+      }
+    ]
+  },
+  "sameSecond": {
+    "note": "comment 4c5749d9541d89bb3d6ef1e456efb8996ed2bf93656016b55436f2ff8ccd82a3: QA-1 resolved and QA-2 reopened in one second, by ts",
+    "events": [
+      {
+        "content": "ONE-2 conformance: resolved and reopened in one second",
+        "created_at": 1793789318,
+        "id": "4c5749d9541d89bb3d6ef1e456efb8996ed2bf93656016b55436f2ff8ccd82a3",
+        "kind": 1111,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "0cd9546af2956971efe0ab42a3052abcf00ee4b4b4dd03c191fff07f3936f5d2e53da5e5f2dd841efd97d2b56affdf5bddf94b58b9ff897c8b94d88ed5c05995",
+        "tags": [
+          [
+            "A",
+            "30840:c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25:08b05792-ff4e-40ec-aebf-ff9be6b0b2b2"
+          ],
+          [
+            "K",
+            "30840"
+          ],
+          [
+            "P",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "a",
+            "30840:c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25:08b05792-ff4e-40ec-aebf-ff9be6b0b2b2"
+          ],
+          [
+            "k",
+            "30840"
+          ],
+          [
+            "p",
+            "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25"
+          ],
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "ts",
+            "1793789318111"
+          ]
+        ]
+      },
+      {
+        "content": "",
+        "created_at": 1793789320,
+        "id": "4cd8560b68193a6712e2dcb8e5bbcffd5ca0bce91737104693a8bde16a140251",
+        "kind": 9101,
+        "pubkey": "3bb30d683788016b85c83604dd5660e4e172e95d46d4e3ebab623ff5847b1f71",
+        "sig": "626ff54b03e14ee67915453f1e86a03723b320efdaf031d4b93fba4d1aa37100b8ade3be374620e0a30e7b6be1add64200a026fdc5e9b1fd0f26022f187e9fd9",
+        "tags": [
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "e",
+            "4c5749d9541d89bb3d6ef1e456efb8996ed2bf93656016b55436f2ff8ccd82a3"
+          ],
+          [
+            "t",
+            "resolution"
+          ],
+          [
+            "action",
+            "reopened"
+          ],
+          [
+            "ts",
+            "1793789320500"
+          ]
+        ]
+      },
+      {
+        "content": "",
+        "created_at": 1793789320,
+        "id": "dc1a88375943312e57ce7d17053f6cf920d7b21f9ecce68b0dcc9de624168bcf",
+        "kind": 9101,
+        "pubkey": "c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25",
+        "sig": "1e43cc08b0d40e3693836b9667c89c3d21757fa97b7cbf336068d6fbf4c2a611912cfd9915ca14d4a14526f473adab783c8f2bf8523608b77dd416e466b3bc66",
+        "tags": [
+          [
+            "h",
+            "a78e60b1-a41f-48c9-bcb0-6ceacdee8c69"
+          ],
+          [
+            "e",
+            "4c5749d9541d89bb3d6ef1e456efb8996ed2bf93656016b55436f2ff8ccd82a3"
+          ],
+          [
+            "t",
+            "resolution"
+          ],
+          [
+            "action",
+            "resolved"
+          ],
+          [
+            "ts",
+            "1793789320100"
+          ]
+        ]
+      }
+    ]
+  }
+}
