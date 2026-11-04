@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.54.0 — 2026-11-04
+
+**Wire: nothing** (ALO-6; SPEC §6.13). Ship's switch for projects moves here so
+Leaf and Peek read it the same way: `projectFieldsOf(reads, optedIn)` is on
+where the relay offers the list read and the opened text and either announces
+it keeps `osnova.project` in order (`files.requires_prev`) or the tab opted in;
+`fieldsOptedIn(search, sessionStorage)` reads that opt-in from `?fields=on|off`
+and keeps it for the tab. `PROJECT_TYPE` and `ProjectFields` with them.
+
 ## 0.53.0 — 2026-11-04
 
 **Wire: `buildResolution` writes `ts`** (ONE-2; SPEC §6.4, "Resolving a

@@ -186,6 +186,7 @@ function pubkeysIn(object: ForeignObject): string[] {
   for (const action of object.actions) {
     if (action.control === 'pubkey' && action.current) keys.push(action.current)
   }
+  if (object.deleted) keys.push(object.deleted.by)
   return keys
 }
 
@@ -2391,7 +2392,7 @@ function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | unde
  * version where several are.
  */
 function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
-  const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat }> = {}
+  const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat; id: string }> = {}
   const folders = targetFolders(root)
   const id = root && tagValue(root, 'd')
   for (const change of [...changes].filter((c) => inTargetFolder(c, folders)).sort(byOrder)) {
@@ -2411,6 +2412,7 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
         by: change.pubkey,
         at: change.created_at,
         format: contentFormatOf(change),
+        id: change.id,
       }
     }
   }
@@ -3352,6 +3354,27 @@ export interface ForeignObject {
    * `created_at`. Absent on an unreachable stub, which has no root to read.
    */
   changedAt?: number
+  /**
+   * Each changed field's current change id: the `prev` a change to that field
+   * names (SPEC §6.2). A field never changed is absent, and its first change
+   * names the first record — {@link prevOf} answers both. Absent on a regular
+   * event and an unreachable stub. A file read by a list carries no text, so a
+   * text change follows what opening it reads, never this.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+   */
+  prevs?: Record<string, string>
+  /**
+   * Set when the file's newest `deleted` change is `true` (SPEC §6.5): who
+   * deleted it and when, in seconds. A deleted file is still read by its id, for
+   * the notice that says so and its Restore.
+   */
+  deleted?: { by: string; at: number }
+}
+
+/** The change a change to `field` of `object` follows (SPEC §6.2): its current change, else the first record. */
+export function prevOf(object: Pick<ForeignObject, 'prevs' | 'eventId'>, field: string): string {
+  return object.prevs?.[field] ?? object.eventId
 }
 
 /** The newest of a root's `created_at` and its folded fields' changes. */
@@ -3371,7 +3394,7 @@ function buildObject(args: {
   pointer: AddressPointer
   manifest: Manifest
   projection: Projection
-  folded: Record<string, { value: string; format?: ContentFormat; at?: number }>
+  folded: Record<string, { value: string; format?: ContentFormat; at?: number; by?: string; id?: string }>
   viaRecommendation: boolean
   webTemplate?: string
   comments?: ForeignObject['comments']
@@ -3381,6 +3404,8 @@ function buildObject(args: {
   const naddr = encodeNaddr(pointer)
   const { slots, meta } = resolveSlots(projection, root, folded, manifest)
   const objectAddress = pointerToAddress(pointer)
+  const prevs = Object.fromEntries(Object.entries(folded).flatMap(([field, f]) => (f.id ? [[field, f.id]] : [])))
+  const deleted = folded[DELETED_FIELD]
   return {
     // An addressable object's `ref` is its address: stable across the author
     // replacing the event, which the event id is not.
@@ -3407,8 +3432,13 @@ function buildObject(args: {
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
     changedAt: changedAtOf(root, folded),
+    ...(Object.keys(prevs).length ? { prevs } : {}),
+    ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
   }
 }
+
+/** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
+const DELETED_FIELD = 'deleted'
 
 /**
  * An addressable file's actions, each with what its field holds now, however
@@ -3553,19 +3583,21 @@ export async function resolveForeignObject(
   if (!pointer) return null
   const resolved = await resolveManifest(pointer, query, cache)
   if (!resolved) return null
-  const plan = planObject(naddr, pointer, resolved, depth)
+  const plan = planObject(naddr, pointer, resolved, depth, options.openRead)
   if (!plan) return null
 
   // Beside the object's own read, not after it: the sweep is cached, and cold
   // it would otherwise add a round trip to every resolve that pays for it.
   // A Folder card's files too, for the same reason.
-  const [answered, creators, files] = await Promise.all([
+  const [read, opened, creators, files] = await Promise.all([
     query(plan.filters),
+    openedEvents([plan], query),
     creatorsOrNone(pointer.kind, query, cache),
     options.folderFiles && pointer.kind === KIND_CHANNEL_METADATA
       ? folderFilesOf(pointer.identifier, query, lookupPeople, cache)
       : undefined,
   ])
+  const answered = [...read, ...opened]
   const followUp = childChangeFilters(plan, answered)
   const childChanges = followUp.length ? await queryChunked(followUp, query) : []
   const childOwners = await childOwnersOf(plan, answered, childChanges, query, cache)
@@ -3662,7 +3694,7 @@ export async function resolveForeignObjects(
 
   const plans = asked.flatMap(({ reference, pointer }) => {
     const resolved = manifests.get(manifestKeyOf(pointer))
-    const plan = resolved && planObject(reference, pointer, resolved, 0)
+    const plan = resolved && planObject(reference, pointer, resolved, 0, options.openRead)
     return plan ? [{ reference, plan }] : []
   })
   if (plans.length === 0) return results
@@ -3687,11 +3719,13 @@ export async function resolveForeignObjects(
         ),
       ]
     : []
-  const [events, creatorLists, fileLists] = await Promise.all([
+  const [read, opened, creatorLists, fileLists] = await Promise.all([
     queryChunked(filters, query),
+    openedEvents(plans.map(({ plan }) => plan), query),
     Promise.all(kinds.map((kind) => creatorsOrNone(kind, query, cache))),
     Promise.all(folders.map((folder) => folderFilesOf(folder, query, lookupPeople, cache))),
   ])
+  const events = [...read, ...opened]
   const creatorsByKind = new Map(kinds.map((kind, i) => [kind, creatorLists[i]]))
   const filesByFolder = new Map(folders.map((folder, i) => [folder, fileLists[i]]))
 
@@ -4082,6 +4116,19 @@ export interface ArchiveReadOptions {
    * changes are read either way.
    */
   archivedChildren?: boolean
+  /**
+   * The file kinds to open by the relay's open read (SPEC §6.13, "Opening a
+   * file reads its current text too"): the first record, each field's current
+   * change and the current text, however long its history — not every change by
+   * `#a`. Pass it only where NIP-11's `file_list` says `text` (`relayFileReadsOf`
+   * in `@estiva-app/protocol`), and only the kinds the app has switched; the rest
+   * are read as before. A file the open read does not answer (deleted, or not
+   * this reader's) is read as before too, so a deleted one still says who
+   * deleted it.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
+   */
+  openRead?: readonly number[]
 }
 
 /**
@@ -4342,6 +4389,10 @@ interface ObjectPlan {
   commentKinds: number[]
   childFilter: ReturnType<typeof childFilterFor>
   filters: Record<string, unknown>[]
+  /** Read by the open read ({@link ArchiveReadOptions.openRead}), so `filters` holds neither its root nor its changes. */
+  opened: boolean
+  /** Its root and every change, as read before the open read: for a file that read does not answer. */
+  history: Record<string, unknown>[]
   openUrl?: string
 }
 
@@ -4351,6 +4402,7 @@ function planObject(
   pointer: AddressPointer,
   resolved: ResolvedManifest,
   depth: number,
+  openRead?: readonly number[],
 ): ObjectPlan | null {
   const { manifest } = resolved
   const address = pointerToAddress(pointer)
@@ -4380,18 +4432,55 @@ function planObject(
     one, and with the manifest memoised it is the whole cost of a tick.
   */
   const childFilter = childFilterFor({ projection, manifest, pointer, depth })
-  const filters = [
+  const history = [
     { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 },
     // Only when the app actually declares a change kind — see `foldRuleOf`.
     ...(manifest.records ? [{ kinds: [manifest.records.changeKind], '#a': [address], limit: 500 }] : []),
     // Every file may be archived, including one whose app folds nothing
     // (FOL-46). SPEC's change kind, when the app has not named its own.
     ...(manifest.records ? [] : [{ kinds: [ARCHIVE_RULE.changeKind], '#a': [address], limit: 500 }]),
+  ]
+  const opened = !!openRead?.includes(pointer.kind) && FILE_KINDS.includes(pointer.kind)
+  const filters = [
+    ...(opened ? [] : history),
     { kinds: commentKinds, '#a': [address], limit: CONVERSATION_LIMIT },
     ...(childFilter ? [childFilter.filter] : []),
     ...(childFilter?.movedIn ? [childFilter.movedIn] : []),
   ]
-  return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, openUrl }
+  return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, opened, history, openUrl }
+}
+
+/**
+ * What the open read answers for the planned files it opens (SPEC §6.13): one
+ * read per author and kind, apart from the plain reads, since a relay refuses a
+ * request mixing the two. A file it does not answer — deleted, or not this
+ * reader's — has its root and every change read as before, so a deleted file
+ * still says who deleted it and an unreadable one is still told apart from it.
+ */
+async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn): Promise<SignedEvent[]> {
+  const opened = new Map<string, ObjectPlan>()
+  for (const plan of plans) if (plan.opened) opened.set(plan.address, plan)
+  if (opened.size === 0) return []
+  const groups = new Map<string, { kind: number; pubkey: string; identifiers: string[] }>()
+  for (const { pointer } of opened.values()) {
+    const key = `${pointer.kind}:${pointer.pubkey}`
+    const group = groups.get(key) ?? { kind: pointer.kind, pubkey: pointer.pubkey, identifiers: [] }
+    group.identifiers.push(pointer.identifier)
+    groups.set(key, group)
+  }
+  const filters: Record<string, unknown>[] = []
+  for (const { kind, pubkey, identifiers } of groups.values()) {
+    for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
+      const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
+      filters.push({ fields: 'newest', kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length, text: true })
+    }
+  }
+  const answered = await queryChunked(filters, query)
+  const unanswered = [...opened.values()].filter(
+    ({ pointer }) => !answered.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier),
+  )
+  const history = unanswered.length ? await queryChunked(unanswered.flatMap((plan) => plan.history), query) : []
+  return [...answered, ...history]
 }
 
 /** An object and its children, before the people lookup that needs both. */
@@ -7251,7 +7340,7 @@ export async function resolveFolderContents(
     // other fields may be stale: the text is unread, never the seed the file
     // was created with drawn as if it were current.
     if (byFields(pointer.kind)) {
-      folded.description = { value: '', by: root.pubkey, at: root.created_at, format: 'marker' }
+      folded.description = { value: '', by: root.pubkey, at: root.created_at, format: 'marker', id: '' }
     }
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL

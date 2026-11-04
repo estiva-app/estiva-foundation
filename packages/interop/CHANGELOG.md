@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.84.0 — 2026-11-04
+
+**Manifest: nothing. Wire: a new read, nothing written** (ALO-6; SPEC §6.13
+"Opening a file reads its current text too", §6.2, §6.5; record
+opening-a-file-reads-its-current-text-not-its-history). Pairs with protocol
+0.54.0.
+
+- `resolveForeignObject` and `resolveForeignObjects` take `openRead`: the file
+  kinds to open by the relay's open read (`"fields": "newest"`, `"text": true`,
+  `#d`), one read per author and kind, apart from the plain reads. Such a file
+  is its first record, each field's current change and its current text, and
+  none of its changes is read by `#a`. One the open read does not answer
+  (deleted, or not the reader's) is read as before. Pass it only where NIP-11's
+  `file_list` says `text`, and only for the kinds the app has switched; without
+  it nothing changes.
+- A `ForeignObject` carries `prevs`, each changed field's current change id,
+  and `prevOf(object, field)` answers the `prev` a change to that field names:
+  that id, or the first record's for a field never changed (§6.2).
+- A `ForeignObject` carries `deleted: { by, at }` when its newest `deleted`
+  change is `true` (§6.5), and the people lookup names who deleted it. Before
+  this a deleted file resolved as a live one.
+
 ## 0.83.0 — 2026-11-04
 
 **Manifest: nothing. Wire: a new read, nothing written** (ALO-5; SPEC §6.13;
