@@ -282,6 +282,18 @@ describe('a message’s reactions', () => {
   })
 })
 
+describe('an edited message’s cards', () => {
+  it('are the latest edit carrying any: a later edit with none leaves them', () => {
+    const root = comment()
+    const A = `30851:${ALICE}:card-a`
+    const B = `30851:${ALICE}:card-b`
+    const first = event({ kind: 40003, content: 'one', tags: [['e', root.id], ['h', FOLDER], ['embed', A, 'detailed']] })
+    const second = event({ kind: 40003, content: 'two', tags: [['e', root.id], ['h', FOLDER], ['embed', B, 'compact']] })
+    const third = event({ kind: 40003, content: 'three', tags: [['e', root.id], ['h', FOLDER]] })
+    assert.deepEqual(only(foldThreads([root, third, first, second])).root!.cards.map((c) => c.value), [B])
+  })
+})
+
 describe('an edited message’s links', () => {
   it('are the latest edit’s: an edit that took a link out lists none', () => {
     const root = comment()
