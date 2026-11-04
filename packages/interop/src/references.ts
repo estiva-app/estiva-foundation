@@ -82,6 +82,8 @@ export interface FileCandidatesOptions {
   inOrder?: readonly string[]
   /** The host Ship serves projects from: a picked project's link is `<it>/project/<d>`. Ship's own unless said, so every app picks the same link. */
   projectOrigin?: string
+  /** The relay offers the list read: an issue's project, read for its caption, is read by its current fields (`resolveForeignRoots`). */
+  listRead?: boolean
 }
 
 /** Where Ship serves projects (§13.1, decided 2026-11-03): one link for a project, whichever app picked it. */
@@ -117,7 +119,7 @@ export async function fileCandidates(
   objects: readonly (ForeignObject | null | undefined)[],
   tier: number,
   query: QueryFn,
-  { cache, at, inOrder, projectOrigin }: FileCandidatesOptions = {},
+  { cache, at, inOrder, projectOrigin, listRead }: FileCandidatesOptions = {},
 ): Promise<ReferenceCandidate[]> {
   const files = objects.filter(offerable)
   const parents = new Map<string, ForeignObject>()
@@ -126,7 +128,7 @@ export async function fileCandidates(
     ...new Set(files.flatMap((o) => (o.kind === KIND_ISSUE && o.parentRef && !parents.has(o.parentRef) ? [o.parentRef] : []))),
   ]
   if (missing.length) {
-    const read = await resolveForeignRoots(missing, query, cache).catch(() => [])
+    const read = await resolveForeignRoots(missing, query, cache, { listRead }).catch(() => [])
     for (const parent of read) if (parent.address) parents.set(parent.address, parent)
   }
   return files.map((o) => {
@@ -163,11 +165,13 @@ export interface SearchFileReferencesOptions extends Omit<FileCandidatesOptions,
    * kinds are found by their summary, key and text too, through the list read;
    * every other kind by its title as before.
    */
-  byFields?: { kinds: readonly number[]; query: SearchQueryFn }
+  byFields?: {
+    kinds: readonly number[]
+    query: SearchQueryFn
+    /** The relay's `file_search.max_page_size`, which refuses a larger page. Default 20, production's. */
+    limit?: number
+  }
 }
-
-/** The relay's `file_search.max_page_size` on production: it refuses a larger page. */
-const FIELD_SEARCH_PAGE = 20
 
 const tagOf = (event: { tags: string[][] }, name: string) => event.tags.find((t) => t[0] === name)?.[1]
 
@@ -209,7 +213,7 @@ export async function searchFileReferences(
   const fieldKinds = new Set(byFields?.kinds.filter((kind) => typeOf(kind)) ?? [])
   const [byTitle, found] = await Promise.all([
     searchByTitle(wanted, query, limit, fieldKinds, options),
-    byFields && fieldKinds.size ? searchByFields(wanted, byFields.query, [...fieldKinds], query, options) : [],
+    byFields && fieldKinds.size ? searchByFields(wanted, byFields.query, [...fieldKinds], byFields.limit ?? 20, query, options) : [],
   ])
   return [...found, ...byTitle]
 }
@@ -258,10 +262,11 @@ async function searchByFields(
   wanted: string,
   search: SearchQueryFn,
   kinds: readonly number[],
+  limit: number,
   query: QueryFn,
   options: Omit<FileCandidatesOptions, 'at'>,
 ): Promise<ReferenceCandidate[]> {
-  const { events, matches } = await search([{ kinds, search: wanted, limit: FIELD_SEARCH_PAGE, fields: 'newest' }])
+  const { events, matches } = await search([{ kinds, search: wanted, limit, fields: 'newest' }])
   const why = new Map(matches.map((m) => [m.a, m.match]))
   const at = new Map<string, number>()
   const objects = (await projectListedFiles(events, query, options.cache)).filter((o) => o.address && why.has(o.address))

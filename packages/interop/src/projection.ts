@@ -3871,20 +3871,31 @@ export async function resolveForeignRoots(
   const manifests = await manifestsOf(pointers.values(), query, cache)
 
   const filters: Record<string, unknown>[] = []
-  const listed: Record<string, unknown>[] = []
+  // One list read per author and kind: `limit` counts first records there, not the changes beside them.
+  const listedBy = new Map<string, { kind: number; pubkey: string; identifiers: string[] }>()
   for (const [address, pointer] of pointers) {
     const resolved = manifests.get(manifestKeyOf(pointer))
     if (!resolved?.manifest.projections?.[String(pointer.kind)]) continue
-    const root = { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 }
     if (options.listRead && FILE_KINDS.includes(pointer.kind)) {
-      listed.push({ ...root, fields: 'newest' })
+      const key = `${pointer.kind}:${pointer.pubkey}`
+      const group = listedBy.get(key) ?? { kind: pointer.kind, pubkey: pointer.pubkey, identifiers: [] }
+      group.identifiers.push(pointer.identifier)
+      listedBy.set(key, group)
       continue
     }
+    const root = { kinds: [pointer.kind], authors: [pointer.pubkey], '#d': [pointer.identifier], limit: 1 }
     // A manifest without `records` folds by a placeholder kind 0, never sent.
     const changeKinds = new Set(
       [foldRuleOf(resolved.manifest).changeKind, archiveRuleOf(resolved.manifest).changeKind].filter((k) => k !== 0),
     )
     filters.push(root, { kinds: [...changeKinds], '#a': [address], limit: 500 })
+  }
+  const listed: Record<string, unknown>[] = []
+  for (const { kind, pubkey, identifiers } of listedBy.values()) {
+    for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
+      const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
+      listed.push({ kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length, fields: 'newest' })
+    }
   }
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
