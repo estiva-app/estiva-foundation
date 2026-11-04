@@ -11,6 +11,9 @@
 import { MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, type SignedEvent } from '@estiva-app/protocol'
 import { editTargetOf, foldEdits, type EditFold } from './edits.js'
 import { KIND_ASSERTION, KIND_EDIT, KIND_REACTION } from './kinds.js'
+import { resolutionsByTarget, resolutionTargetOf, type Resolution } from './resolution.js'
+
+export type { Resolution }
 import { reactionEventsOf, reactionHorizon, reactionTargetOf, type ReactionEvent } from './reactions.js'
 
 /**
@@ -20,25 +23,17 @@ import { reactionEventsOf, reactionHorizon, reactionTargetOf, type ReactionEvent
  */
 export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
 
-/** A `kind:9101` resolution assertion on a message (PEEK-128). */
-export interface Resolution {
-  id: string
-  action: 'resolved' | 'reopened'
-  by: string
-  at: number
-  /** The assertion's free text, when it carried one. */
-  message?: string
-  /** The reply that carried the resolution, when the writer named one. */
-  supportingEventId?: string
-}
-
 /** What has been done to one message since it was written. */
 export interface Decoration {
   /** Its edits, folded (§6.8). Absent when nobody edited it. */
   edit?: EditFold
   /** Its reactions, one per `(pubkey, emoji)`, oldest first. Empty inside the horizon means none. */
   reactions: ReactionEvent[]
-  /** Oldest first; the last one is the current state. Empty means never resolved. */
+  /**
+   * Every resolve and reopen naming it, oldest first by §6.3. Which one counts
+   * — `h` checked, a `support` outside the thread dropped — is
+   * `resolutionOf`'s: the last one here is not the state on its own.
+   */
   resolutions: Resolution[]
 }
 
@@ -74,7 +69,6 @@ const chunked = (list: readonly string[]) => {
   return out
 }
 
-const tagValue = (event: SignedEvent, name: string) => event.tags.find((t) => t[0] === name)?.[1]
 
 /**
  * Edits, reactions and resolutions for `targets`, in as few requests as the
@@ -89,8 +83,8 @@ const tagValue = (event: SignedEvent, name: string) => event.tags.find((t) => t[
  *   one per `(target, pubkey, emoji)`.
  * - **Resolutions** are `kind:9101` carrying `t=resolution`; the `action` tag
  *   is the state, the content the rationale, and an `e` marked `support` names
- *   the reply that carried it. The target is the first unmarked `e` naming a
- *   target.
+ *   the reply that carried it. The target is the first unmarked `e`
+ *   ({@link resolutionTargetOf}), and a thread's state is `resolutionOf`'s.
  *
  * Edits and resolutions have no horizon: they are one event per change, not
  * one per reader. A refused read is whatever `query` does with one.
@@ -155,7 +149,7 @@ export async function decorationsOf(
   }
   const reactionEventsCut = cut(reactionChunks, [KIND_REACTION], reactionTargetOf)
   const editEventsCut = cut(editChunks, [KIND_EDIT, KIND_ASSERTION], (e) =>
-    e.kind === KIND_EDIT ? editTargetOf(e) : e.tags.find((t) => t[0] === 'e' && ours(t[1]) && !t[3])?.[1],
+    e.kind === KIND_EDIT ? editTargetOf(e) : resolutionTargetOf(e),
   )
 
   const inHorizon = new Set(asked)
@@ -164,24 +158,9 @@ export async function decorationsOf(
     if (ours(reaction.target) && inHorizon.has(reaction.target)) byId[reaction.target].reactions.push(reaction)
   }
 
-  for (const event of events) {
-    if (event.kind !== KIND_ASSERTION || tagValue(event, 't') !== 'resolution') continue
-    const action = tagValue(event, 'action')
-    if (action !== 'resolved' && action !== 'reopened') continue
-    const target = event.tags.find((t) => t[0] === 'e' && ours(t[1]) && !t[3])?.[1]
-    if (!ours(target)) continue
-    const support = event.tags.find((t) => t[0] === 'e' && t[3] === 'support')?.[1]
-    byId[target].resolutions.push({
-      id: event.id,
-      action,
-      by: event.pubkey,
-      at: event.created_at,
-      ...(event.content ? { message: event.content } : {}),
-      ...(support ? { supportingEventId: support } : {}),
-    })
+  for (const [target, list] of Object.entries(resolutionsByTarget(events))) {
+    if (ours(target)) byId[target].resolutions = list
   }
-  const oldestFirst = (a: { at: number; id: string }, b: { at: number; id: string }) => a.at - b.at || (a.id < b.id ? -1 : 1)
-  for (const decoration of Object.values(byId)) decoration.resolutions.sort(oldestFirst)
 
   return { byId, reactionTargetsOmitted: omitted, reactionEventsCut, editEventsCut }
 }

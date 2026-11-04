@@ -18,8 +18,10 @@ header, and the `accepted` semantics of the HTTP bridge.
 
 **Not in: the fold, or anything that interprets events.** How an app turns a
 stream of events into current truth is where apps are *supposed* to differ
-(ADR 0001 §8). `foldFolder` stays in Ship, `foldResolution` and the projection
-stay in Peek, and each app's conformance fixture stays with it.
+(ADR 0001 §8). `foldFolder` and the projections stay in the apps, and each
+app's conformance fixture stays with it. The conversation fold — threads,
+edits, reactions, a thread's resolution — is normative and shared, so it lives
+in `@estiva-app/conversation`, never here (SPEC §10, ONE-2).
 
 When adding something here, the test is not "both apps need it". It is **"would
 the relay notice if the two apps disagreed?"**

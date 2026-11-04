@@ -116,8 +116,9 @@ test('an e naming a property of Object.prototype is nobody\'s target', async () 
     event({ kind: 9101, pubkey: OTHER, tags: [['h', FOLDER], ['e', key], ['e', c.id], ['t', 'resolution'], ['action', 'resolved']] }),
   )
   const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay(hostile))
-  // Past the hostile `e`, the next one names the comment: that is the resolution's target.
-  assert.equal(found.byId[c.id].resolutions.length, 3)
+  // The target is the first unmarked `e` and no later one (SPEC §6.4, "Resolving a thread"): these name nothing.
+  assert.equal(found.byId[c.id].resolutions.length, 0)
+  assert.equal(Object.hasOwn(found.byId, 'constructor'), false)
 })
 
 /*
@@ -204,8 +205,8 @@ test('resolutions come back oldest first with the current state last', async () 
   const reopened = event({ kind: 9101, tags: [['h', FOLDER], ['e', c.id], ['t', 'resolution'], ['action', 'reopened']] })
   const found = await decorationsOf([{ id: c.id, at: c.created_at }], relay([reopened, resolved]))
   assert.deepEqual(found.byId[c.id].resolutions, [
-    { id: resolved.id, action: 'resolved', by: AUTHOR, at: resolved.created_at, message: 'shipped', supportingEventId: reply.id },
-    { id: reopened.id, action: 'reopened', by: AUTHOR, at: reopened.created_at },
+    { id: resolved.id, action: 'resolved', by: AUTHOR, at: resolved.created_at, orderMs: resolved.created_at * 1000, folder: FOLDER, message: 'shipped', supportingEventId: reply.id },
+    { id: reopened.id, action: 'reopened', by: AUTHOR, at: reopened.created_at, orderMs: reopened.created_at * 1000, folder: FOLDER },
   ])
 })
 

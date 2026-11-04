@@ -6,6 +6,39 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.32.0 — 2026-11-04
+
+**SPEC: §6.4's new "Resolving a thread", §6.5's three states of a top-level
+message, and C51 — read differently; nothing written** (ONE-2; record
+anyone-who-may-comment-resolves-or-reopens-a-thread-and-the-newest-counts).
+
+- `foldThreads` (new): one shape for a message, a reply and a thread, folded
+  from a conversation's events — its messages, and the edits, reactions,
+  deletions and resolutions read by `#e` on them. A `Message` carries its
+  author, time, folded body and edited mark, files, cards, parts, links, a
+  comment's block run and quoted words, and its reactions by key. A `Thread`'s
+  top-level message is `present`, `deleted` (its author's `kind:5` came back)
+  or `missing` (only replies were read), and a deleted one keeps its replies
+  and its last state and is not `resolvable`. A reply or reaction its author
+  deleted is left out; a `kind:5` by anyone else hides nothing.
+- `resolutionOf` (new): a thread's state is its newest `kind:9101` in §6.3's
+  order (`ts`, then `created_at`, then the higher id), whoever wrote it. One
+  filed outside the message's Folder, or with no `h`, changes nothing, and a
+  `support` outside the thread is dropped. **Read differently:** a resolve and
+  a reopen in one second now fold by `ts`, where `decorationsOf` sorted by
+  `created_at` then id.
+- `decorationsOf`: a resolution's target is its **first unmarked `e`** and no
+  later one (it skipped to the first `e` naming a target). `Resolution` gains
+  `orderMs` and `folder`; its last entry is no longer the state on its own.
+- `placeLines`, `writtenUrlOf`, `urlNames` (moved in): the one line rule for a
+  link alone on its line (§13.2, §13.6.2, C21), replacing Peek's and Ship's
+  `messageLines.ts`, Leaf's `commentLines.ts` and Peek's `urlNames`. A row's
+  `url` is the URL as written only when it names the row's own file.
+- The conformance fixture folds real events read back off production, written
+  by QA-1 and QA-2: a deleted comment with a reply, a resolve carried by a
+  reply, a resolve and a reopen in one second, an edit and a comment on quoted
+  words.
+
 ## 0.31.0 — 2026-11-04
 
 **SPEC: §6.13's `matches` is read for `[`; nothing written** (ALO-5; record
