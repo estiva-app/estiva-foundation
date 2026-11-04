@@ -311,7 +311,7 @@ test('a manifest still claiming the Folder neither draws it nor adds a second ro
   const { query } = countingRelay([staleTalk, folder()])
   const found = await resolveForeignObject(FOLDER_ADDRESS, query)
   assert.equal(found.slots.title.value, 'Accounts', 'the name, not what the claim says the title is')
-  assert.equal(found.noun, 'folder')
+  assert.equal(found.noun, 'team')
   assert.equal(found.children, undefined, 'no messages listed as its contents')
   assert.deepEqual(
     found.actions.map((a) => [a.id, a.declaredBy?.address]),

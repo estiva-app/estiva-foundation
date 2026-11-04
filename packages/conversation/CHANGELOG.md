@@ -6,6 +6,13 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.30.0 — 2026-11-04
+
+**Wire: nothing written or read differently** (TEA-8; SPEC §3.2). A team is
+called a team: `openingWords` names a `39000` "Team", `archivedLine` writes
+the noun it is given in sentence case ("Unarchive the team"), and the
+builders' refusals say team id.
+
 ## 0.29.0 — 2026-11-03
 
 **Wire: nothing written or read differently** (TEA-5; SPEC §11.8).

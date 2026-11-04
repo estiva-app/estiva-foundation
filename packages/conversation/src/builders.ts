@@ -16,7 +16,7 @@ import { FOLDER_ID, KIND_COMMENT } from './kinds.js'
  * world-readable however private its object. Refused here, loudly.
  */
 function assertFolder(folder: string): void {
-  if (!FOLDER_ID.test(folder)) throw new Error(`not a Folder id (lowercase UUID v4): ${JSON.stringify(folder)}`)
+  if (!FOLDER_ID.test(folder)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(folder)}`)
 }
 
 /** `<kind>:<pubkey>:<d>` → the `K` and `P` it already carries. */

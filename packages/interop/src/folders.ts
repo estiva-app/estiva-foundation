@@ -143,7 +143,7 @@ export function planRenameFolder(
  * it from.
  */
 export function planDeleteFolder(pubkey: string, createdAtMs: number, args: { folder: string }): UnsignedEvent[] {
-  if (!args.folder) throw new Error('a Folder delete names the Folder')
+  if (!args.folder) throw new Error('a team delete names the team')
   return [buildDeleteChannel(pubkey, createdAtMs, { channelUuid: args.folder })]
 }
 

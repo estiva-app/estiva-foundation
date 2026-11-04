@@ -280,7 +280,7 @@ describe('placement and listed — where a new object lives, and the command tha
   })
 
   test('refused without the state, rather than guessing', () => {
-    assert.match(buildActionEvents(addProject()), /whether the Folder has state/)
+    assert.match(buildActionEvents(addProject()), /whether the team has state/)
   })
 
   test('buildActionEvent refuses a listed action rather than drop its command', () => {
@@ -307,7 +307,7 @@ describe('placement and listed — where a new object lives, and the command tha
   })
 
   test('a listed deletion refuses to run without knowing who lists it', () => {
-    assert.match(buildActionEvents(args('delete-project', { kind: PROJECT, address: P1 })), /Folders that list it/)
+    assert.match(buildActionEvents(args('delete-project', { kind: PROJECT, address: P1 })), /teams that list it/)
   })
 
   test('an action that is not listed is one event from either builder', () => {

@@ -373,7 +373,7 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
   const file = tagValue(first, 'a')
   const id = tagValue(first, 'O')
   const folder = tagValue(first, 'h')
-  if (!file || !folder) return 'A change names its file and its Folder.'
+  if (!file || !folder) return 'A change names its file and its team.'
   if (!id) return `${file} has no id, and a change setting several fields names its file by it.`
   const sets: string[][] = []
   const rest: string[][] = []
@@ -382,7 +382,7 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
   let ms = 0
   for (const change of changes) {
     if (change.kind !== KIND_CHANGE || tagValue(change, 'a') !== file || tagValue(change, 'O') !== id || tagValue(change, 'h') !== folder) {
-      return 'A change setting several fields sets them on one file, in its Folder.'
+      return 'A change setting several fields sets them on one file, in its team.'
     }
     const field = tagValue(change, 'field')
     const prev = tagValue(change, 'prev')
