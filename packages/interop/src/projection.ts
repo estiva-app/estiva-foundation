@@ -1524,7 +1524,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'comment',
       label: 'Comment',
       description:
-        'Say something about this file. The comment lands in the Folder the file lives in, ' +
+        'Say something about this file. The comment lands in the team the file lives in, ' +
         'and is what every reader of the file sees under it.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
@@ -1535,7 +1535,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'rename',
       label: 'Rename',
       description:
-        'Give this file a new title. A change event, so anyone in the Folder may, and every app ' +
+        'Give this file a new title. A change event, so anyone in the team may, and every app ' +
         'reading the file folds it into the title.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
@@ -1553,7 +1553,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       label: 'Summary',
       description:
         "Set this file's summary: one or two sentences of plain text, about 240 characters, shown under its " +
-        'title wherever it is met in one line. A change event, so anyone in the Folder may; an empty value clears it.',
+        'title wherever it is met in one line. A change event, so anyone in the team may; an empty value clears it.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: SUMMARY_FIELD },
@@ -1570,8 +1570,8 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'move',
       label: 'Move',
       description:
-        "Put this file under another file in the same Folder, or back at the top. A change event, so anyone in " +
-        'the Folder may; who can read the file does not change.',
+        "Put this file under another file in the same team, or back at the top. A change event, so anyone in " +
+        'the team may; who can read the file does not change.',
       effect: 'writes',
       appliesTo: [String(KIND_BARE_FILE)],
       emits: { kind: 1851, field: 'parent' },
@@ -1660,8 +1660,8 @@ export const FOLDER_ACTIONS_ADDRESS = 'spec:3.2'
  */
 const FOLDER_CREATOR: ResolvedManifest = {
   manifest: {
-    name: 'Folder',
-    about: 'What every app may do in a Folder, whichever app made it.',
+    name: 'Team',
+    about: 'What every app may do in a team, whichever app made it.',
     projections: {
       [String(KIND_BARE_FILE)]: BARE_FILE_MANIFEST.projections![String(KIND_BARE_FILE)],
       [String(KIND_MESSAGE)]: BARE_FILE_MANIFEST.projections![String(KIND_MESSAGE)],
@@ -1671,8 +1671,8 @@ const FOLDER_CREATOR: ResolvedManifest = {
         id: 'create-file',
         label: 'New file',
         description:
-          'Put a new file in this Folder: a title and, if you have one, a short summary. Everyone who can read the Folder can read ' +
-          'it, and the Folder lists it straight away. The app opening files calls it by its own word — Peek says topic.',
+          'Put a new file in this team: a title and, if you have one, a short summary. Everyone who can read the team can read ' +
+          'it, and the team lists it straight away. The app opening files calls it by its own word — Peek says topic.',
         effect: 'writes',
         appliesTo: String(KIND_CHANNEL_METADATA),
         emits: { kind: KIND_BARE_FILE, listed: true },
@@ -1694,9 +1694,9 @@ const FOLDER_CREATOR: ResolvedManifest = {
         id: 'start-a-conversation',
         label: 'Start a conversation',
         description:
-          'Start a new conversation in this Folder, as a root message that people can then reply to. ' +
+          'Start a new conversation in this team, as a root message that people can then reply to. ' +
           'Use when something is worth its own thread rather than an answer inside an existing one — ' +
-          'this cannot reply to a message. Everyone who can read the Folder reads it.',
+          'this cannot reply to a message. Everyone who can read the team reads it.',
         effect: 'writes',
         appliesTo: String(KIND_CHANNEL_METADATA),
         emits: { kind: KIND_MESSAGE, toAddressOf: 'self' },
@@ -1719,7 +1719,8 @@ const FOLDER_CREATOR: ResolvedManifest = {
  * No app owns a Folder, so no `kind:31990` may claim `39000`; until this
  * release Peek's did, and every app learned a Folder's name from it. The title
  * is the channel record's `name`, the subtitle its `about` (the built-in
- * subtitle, {@link defaultSubtitle}), and the noun "folder".
+ * subtitle, {@link defaultSubtitle}), and the noun "team" (SPEC §3.2; it was
+ * "folder" until every app renamed on the same day, TEA-8).
  *
  * **No `list` slot.** What a Folder holds is what its relay-signed `30890`
  * names, which no `children` declaration can say, and it is read by
@@ -1737,12 +1738,12 @@ const FOLDER_CREATOR: ResolvedManifest = {
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/folders-belong-to-the-protocol.md
  */
 const FOLDER_MANIFEST: Manifest = {
-  name: 'Folder',
-  about: 'A Folder no app owns: its name, its one-liner, and the files its state lists.',
+  name: 'Team',
+  about: 'A team no app owns: its name, its one-liner, and the files its state lists.',
   projections: {
     [String(KIND_CHANNEL_METADATA)]: {
       widget: 'card',
-      noun: 'folder',
+      noun: 'team',
       // The cut Peek's claim made, so no card grows when the claim goes.
       slots: { title: { tag: 'name' }, subtitle: { tag: 'about', truncate: 120 } },
     },
@@ -2774,14 +2775,14 @@ export function actionProblems(declared: unknown): string[] {
   if (emits?.placement !== undefined && !(creates && PLACEMENTS.includes(emits.placement as string))) {
     problems.push(
       creates
-        ? `${name} places its object with ${JSON.stringify(emits.placement)}, and a Folder is named by ${PLACEMENTS.join(' or ')} — a consumer refuses the action.`
-        : `${name} declares a placement and creates nothing; only a new root names its Folder, so it is ignored.`,
+        ? `${name} places its object with ${JSON.stringify(emits.placement)}, and a team is named by ${PLACEMENTS.join(' or ')} — a consumer refuses the action.`
+        : `${name} declares a placement and creates nothing; only a new root names its team, so it is ignored.`,
     )
   }
   if (emits?.listed !== undefined && emits.listed !== true) {
     problems.push(`${name} declares listed ${JSON.stringify(emits.listed)}; the only value is true.`)
   } else if (emits?.listed === true && !creates && emits.kind !== KIND_DELETION) {
-    problems.push(`${name} declares listed on an action that neither creates nor deletes, so no Folder command follows it.`)
+    problems.push(`${name} declares listed on an action that neither creates nor deletes, so no team command follows it.`)
   }
   const formats: [string, unknown, boolean][] = [
     // A scalar format means something on a change only: a comment's body is
@@ -5799,7 +5800,7 @@ function buildCreationEvent(args: {
 
   const placement = declared.emits.placement ?? 'h'
   if (!PLACEMENTS.includes(placement)) {
-    return `"${declared.label}" places its object with "${placement}", and a Folder is named by ${PLACEMENTS.join(' or ')}.`
+    return `"${declared.label}" places its object with "${placement}", and a team is named by ${PLACEMENTS.join(' or ')}.`
   }
 
   // Only the content field can be prose, so only its value is ever tagged.
@@ -5954,7 +5955,7 @@ export interface ActionEventArgs {
 export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | string {
   const declared = args.manifest.actions?.find((a) => a.id === args.actionId)
   if (declared?.emits.listed === true && (declared.emits.kind === KIND_DELETION || isCreationAction(declared))) {
-    return `"${declared.label}" is followed by a Folder command, so it is built with buildActionEvents.`
+    return `"${declared.label}" is followed by a team command, so it is built with buildActionEvents.`
   }
   return buildOneActionEvent(args)
 }
@@ -5994,7 +5995,7 @@ export function buildActionEvents(
   if (declared.emits.listed !== true) return [first]
 
   if (declared.emits.kind === KIND_DELETION) {
-    if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the Folders that list it.`
+    if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the teams that list it.`
     // One remove per Folder, however many reads it came back from.
     const folders = [...new Map(args.listedIn.map((listing) => [listing.id, listing])).values()]
     return [
@@ -6006,7 +6007,7 @@ export function buildActionEvents(
   }
   if (isCreationAction(declared)) {
     if (args.folderHasState === undefined) {
-      return `"${declared.label}" lists what it creates, and needs to know whether the Folder has state.`
+      return `"${declared.label}" lists what it creates, and needs to know whether the team has state.`
     }
     // A listing names addresses, and an object with no `d` has none.
     const identifier = first.tags.find((t) => t[0] === 'd')?.[1]

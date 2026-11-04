@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.82.0 — 2026-11-04
+
+**Manifest: the built-in team's noun. Wire: nothing** (TEA-8; SPEC §3.2;
+record a-team-is-the-folder-and-is-called-a-team). Pairs with conversation
+0.30.0.
+
+- A `39000` resolves with `noun: "team"`, no longer `"folder"`, and the
+  built-in manifest's `name` is `Team`. A consumer labelling by the noun says
+  team from this release; one still on 0.81.0 says folder until it updates.
+  Nothing on the relay changes: the noun was never published.
+- Every description an agent or a launcher reads says team where it said
+  Folder: the built-in `create-file` and `start-a-conversation`, the bare
+  file's `comment`, `rename`, `summarize` and `move`, and the builders'
+  refusals.
+
 ## 0.81.0 — 2026-11-03
 
 **Manifest: nothing. Wire: a space's mark, and keeping it on a move** (TEA-5;

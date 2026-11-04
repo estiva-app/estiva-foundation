@@ -123,7 +123,7 @@ describe('a Folder is drawn from the specification', () => {
     assert.ok(found)
     assert.equal(found.slots.title.value, 'Accounts')
     assert.equal(found.slots.subtitle?.value, 'Closing the books, every quarter')
-    assert.equal(found.noun, 'folder')
+    assert.equal(found.noun, 'team')
     assert.equal(found.appName, 'Peek', 'named only by where its link goes')
     assert.ok(found.openUrl?.startsWith('https://peek.example/o/naddr1'), found.openUrl)
   })
@@ -141,7 +141,7 @@ describe('a Folder is drawn from the specification', () => {
     const { query, asked } = relay([stalePeek(), folder(), message('one'), message('two')])
     const found = await resolveForeignObject(FOLDER_ADDRESS, query)
     assert.equal(found?.slots.title.value, 'Accounts', 'the name, not the claim’s title')
-    assert.equal(found?.noun, 'folder')
+    assert.equal(found?.noun, 'team')
     assert.equal(found?.widget, 'card')
     assert.equal(found?.children, undefined)
     assert.equal(found?.listsChildren, false)
@@ -166,7 +166,7 @@ describe('a Folder is drawn from the specification', () => {
   it('is the unreachable stub, called a Folder, when this reader cannot see it', async () => {
     const found = await resolveForeignObject(FOLDER_ADDRESS, relay([peek()]).query)
     assert.equal(found?.unreachable, true)
-    assert.equal(found?.noun, 'folder')
+    assert.equal(found?.noun, 'team')
     assert.deepEqual(found?.actions, [])
   })
 
@@ -174,7 +174,7 @@ describe('a Folder is drawn from the specification', () => {
     const { query } = relay([stalePeek(), folder()])
     const set = await resolveForeignObjects([FOLDER_ADDRESS], query, undefined, createProjectionCache())
     assert.equal(set[FOLDER_ADDRESS]?.slots.title.value, 'Accounts')
-    assert.equal(set[FOLDER_ADDRESS]?.noun, 'folder')
+    assert.equal(set[FOLDER_ADDRESS]?.noun, 'team')
   })
 })
 

@@ -453,7 +453,7 @@ export function buildLevelChange(
 ): UnsignedEvent {
   const field = followField(pubkey)
   if (!FILE_ADDRESS.test(args.place)) throw new Error(`not a place address: ${JSON.stringify(args.place)}`)
-  if (!FOLDER_ID.test(args.folder)) throw new Error(`not a Folder id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
+  if (!FOLDER_ID.test(args.folder)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
   if (args.level !== 'all' && args.level !== 'important' && args.level !== '') throw new Error(`not a level: ${JSON.stringify(args.level)}`)
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
   const id = fileIdOf(args.place)

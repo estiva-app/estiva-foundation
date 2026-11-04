@@ -26,8 +26,8 @@ describe('archivedLine', () => {
     assert.equal(archivedLine({ with: ABOVE }, 'PDF'), 'Unarchive the PDF to comment.')
   })
 
-  it('writes Folder as a proper noun', () => {
-    assert.equal(archivedLine({ with: ABOVE }, 'folder'), 'Unarchive the Folder to comment.')
+  it('names a team in sentence case, as every app says it', () => {
+    assert.equal(archivedLine({ with: ABOVE }, 'team'), 'Unarchive the team to comment.')
   })
 
   it('still says what to do when the app has no noun for what is above', () => {

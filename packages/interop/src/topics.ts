@@ -88,7 +88,7 @@ function entry(
 ): UnsignedEvent {
   const holder = ADDRESS.exec(args.list.address)
   if (!holder) throw new Error(`not a file address: ${JSON.stringify(args.list.address)}`)
-  if (!args.list.folder) throw new Error('a list entry names the Folder of the file that keeps the list')
+  if (!args.list.folder) throw new Error('a list entry names the team of the file that keeps the list')
   if (!args.file || /\s/.test(args.file)) throw new Error(`not a file id: ${JSON.stringify(args.file)}`)
   // A reader ignores a file on its own list (§6.14): refuse it here rather than publish an entry that shows nothing.
   if (args.file === holder[3]) throw new Error('a file is not on its own list')

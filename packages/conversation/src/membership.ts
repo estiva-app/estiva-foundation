@@ -273,7 +273,7 @@ export function buildMembershipChange(
 ): UnsignedEvent {
   const note = args.note ?? (!args.member ? 'Leave' : args.person === pubkey ? 'Join' : 'Add')
   if (!ADDRESS.test(args.file)) throw new Error(`not a file address: ${JSON.stringify(args.file)}`)
-  if (!FOLDER_ID.test(args.folder)) throw new Error(`not a Folder id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
+  if (!FOLDER_ID.test(args.folder)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
   return {
     pubkey,

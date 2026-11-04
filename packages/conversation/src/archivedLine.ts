@@ -28,8 +28,8 @@ export function archivedLine(
   const where = options.in?.trim() ? ` in ${options.in.trim()}` : ''
   const to = options.to?.trim() || 'comment'
   if (!archive.with) return `Archived. Unarchive it${where} to ${to}.`
-  // A noun arrives as the manifest wrote it; a Folder is a proper noun in every
-  // app's copy. With no noun, Peek's ArchivedNotice word.
+  // A noun arrives as the manifest wrote it, in sentence case as every app's
+  // copy is ("Unarchive the team"). With no noun, Peek's ArchivedNotice word.
   const word = noun?.trim()
-  return `Unarchive the ${word === 'folder' ? 'Folder' : word || 'parent'}${where} to ${to}.`
+  return `Unarchive the ${word || 'parent'}${where} to ${to}.`
 }
