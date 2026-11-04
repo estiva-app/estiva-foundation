@@ -45,9 +45,16 @@ export interface ReferenceCandidate {
   /**
    * A file's summary (SPEC §6.12), plain text on one line: the row's second
    * line, with `caption` moving up beside the title. Absent when the file has
-   * none, and on a message. Not matched: search keeps to titles.
+   * none, and on a message. For a file the relay found only by its text, the
+   * words around the match instead.
    */
   summary?: string
+  /**
+   * The fields a relay's search found the typed words in, best first (SPEC
+   * §6.13 `matches`): a file found by its summary, key or text is offered
+   * though its title does not hold them, after every title match.
+   */
+  matched?: readonly string[]
   /**
    * Matched beside `title`: a message's own words ({@link messageWords}), an
    * issue's ref (`CON-33`). A message without it is matched on `caption`.
@@ -279,12 +286,33 @@ export function refMatch(ref: string | undefined, query: string): number {
   return score === 8 || score % 4 === 3 ? score : 0
 }
 
-/** Keeps each id once, at its closest tier. */
+/**
+ * How well a relay's search says a file matched, below any title match (1 and
+ * up): its summary or key, then only its text. Title first, then summary and
+ * key, then text, as the relay ranks them.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/search-finds-a-file-by-the-words-of-its-current-fields.md
+ */
+function relayMatch(matched: readonly string[] | undefined): number {
+  const best = matched?.[0]
+  if (!best) return 0
+  return best === 'title' ? 1 : best === 'text' ? 0.25 : 0.5
+}
+
+/**
+ * Keeps each id once, at its closest tier, with what a search found it by: a
+ * file in your Folder found only by its text still shows the words around them.
+ */
 function closest(candidates: readonly ReferenceCandidate[]): ReferenceCandidate[] {
   const best = new Map<string, ReferenceCandidate>()
   for (const c of candidates) {
     const known = best.get(c.id)
-    if (!known || c.tier < known.tier) best.set(c.id, c)
+    if (!known) {
+      best.set(c.id, c)
+      continue
+    }
+    const [near, far] = c.tier < known.tier ? [c, known] : [known, c]
+    best.set(c.id, far.matched && !near.matched ? { ...near, matched: far.matched, ...(far.summary !== undefined ? { summary: far.summary } : {}) } : near)
   }
   return [...best.values()]
 }
@@ -315,7 +343,7 @@ export function rankReferences({ messages, files, query, ownKinds = [], caps = R
 
   const shownFiles = closest(files)
     .filter((f) => !excluded.has(f.id) && (typed || f.tier !== FILE_TIER.search))
-    .map((f) => ({ f, score: typed ? Math.max(referenceMatch(f.title, query), refMatch(f.search, query)) : 0 }))
+    .map((f) => ({ f, score: typed ? Math.max(referenceMatch(f.title, query), refMatch(f.search, query), relayMatch(f.matched)) : 0 }))
     .filter(({ score }) => !typed || score > 0)
     .sort(
       (a, b) =>

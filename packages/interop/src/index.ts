@@ -30,6 +30,7 @@ export {
   resolveForeignObject,
   resolveForeignObjects,
   resolveForeignRoots,
+  projectListedFiles,
   projectEvents,
   resolveParents,
   resolveForeignEvent,

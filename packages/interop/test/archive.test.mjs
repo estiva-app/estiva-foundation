@@ -21,6 +21,7 @@ import {
   resolveFolderContents,
   resolveForeignObject,
   resolveForeignObjects,
+  resolveForeignRoots,
   listFolders,
   topLevelFolders,
   archiveImpact,
@@ -593,6 +594,18 @@ describe('a Folder is archived the way any file is', () => {
       [],
       'no file’s changes are asked for',
     )
+  })
+
+  test('with the list read, files read by address are folded from their current changes, none read by `#a` (ALO-5)', async () => {
+    const renamed = event({ kind: 1851, tags: [['a', addressOf(drones)], ['field', 'title'], ['value', 'Drone frames'], ['h', APIARY]] })
+    const read = spying([hiveLog, apiary, hive, topic, drones, renamed, archive(addressOf(topic))])
+    const objects = await resolveForeignRoots([addressOf(drones), addressOf(topic), addressOf(hive)], read.query, undefined, { listRead: true })
+    assert.deepEqual(objects.map((o) => [o.slots.title?.value, !!o.archived]).sort(), [
+      ['Drone frames', false],
+      ['North hive', false],
+      ['Queens', true],
+    ])
+    assert.deepEqual(read.byA(), [addressOf(hive)], 'only a hive, no file kind, has its changes asked for')
   })
 
   test('with the list read, a file’s text is unread, never the words it was created with (ALO-5)', async () => {
