@@ -3941,7 +3941,8 @@ export async function resolveForeignRoots(
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
   const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
-  const objects = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  const projected = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  const objects = options.listRead ? textUnread(projected) : projected
   if (options.archivedWith) {
     const manifestOf = (object: ForeignObject) => {
       const pointer = object.address ? addressPointerOf(object.address) : undefined
@@ -3980,7 +3981,18 @@ export async function projectListedFiles(events: readonly SignedEvent[], query: 
   }
   if (pointers.length === 0) return []
   const manifests = await manifestsOf(pointers, query, cache)
-  return projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  return textUnread(projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer))))
+}
+
+/**
+ * Files read by a list carry no text (§6.13), and a change that set it with other
+ * fields may be stale: the text's `prev` is unknown, `''`, so {@link prevOf}
+ * answers nothing for it rather than an old change or the first record.
+ */
+function textUnread(objects: ForeignObject[]): ForeignObject[] {
+  return objects.map((object) =>
+    FILE_KINDS.includes(object.kind) ? { ...object, prevs: { ...object.prevs, description: '' } } : object,
+  )
 }
 
 /**
