@@ -59,11 +59,12 @@ const typeOf = (kind: number): ReferenceType | undefined => REFERENCE_FILE_TYPES
 
 type Addressed = ForeignObject & { address: string }
 
-/** An object `[` may offer: a file kind it knows, resolved, with a title. */
+/** An object `[` may offer: a file kind it knows, resolved, not deleted (SPEC §6.5), with a title. */
 const offerable = (object: ForeignObject | null | undefined): object is Addressed =>
   !!object &&
   !!object.address &&
   !object.unreachable &&
+  !object.deleted &&
   typeOf(object.kind) !== undefined &&
   !!object.slots.title?.value.trim()
 

@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.84.1 — 2026-11-04
+
+**Manifest: nothing. Wire: nothing** (ALO-6; SPEC §6.5). `[` and the launcher no
+longer offer a deleted file: `fileCandidates` and `searchFileReferences` leave
+out a file whose newest `deleted` change is `true`, as the list read already
+did. Restored, it is offered again.
+
 ## 0.84.0 — 2026-11-04
 
 **Manifest: nothing. Wire: a new read, nothing written** (ALO-6; SPEC §6.13

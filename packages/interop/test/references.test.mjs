@@ -313,6 +313,20 @@ describe('fileCandidates', () => {
     assert.equal('summary' in byId[I('s3')], false)
   })
 
+  test('leaves out a deleted file, and offers it again once restored (SPEC §6.5, ALO-6)', async () => {
+    const gone = event({ kind: CHANGE, tags: [['a', I('d1')], ['field', 'deleted'], ['value', 'true'], ['h', 'f1'], ['ts', String(Date.now())]] })
+    const relay = searchingRelay([manifest, project, issue('d1', 'Deleted work'), gone])
+    const objects = await resolveForeignObjects([P1, I('d1')], relay.query)
+    assert.ok(objects[I('d1')].deleted, 'folded as deleted')
+    const rows = await fileCandidates(Object.values(objects), 0, relay.query)
+    assert.deepEqual(rows.map((r) => r.id), [P1])
+    assert.deepEqual(await searchFileReferences('deleted', relay.query), [])
+    const back = event({ kind: CHANGE, tags: [['a', I('d1')], ['field', 'deleted'], ['value', ''], ['h', 'f1'], ['ts', String(Date.now() + 1000)]] })
+    const restored = searchingRelay([manifest, project, issue('d1', 'Deleted work'), gone, back])
+    const again = await resolveForeignObjects([I('d1')], restored.query)
+    assert.deepEqual((await fileCandidates(Object.values(again), 0, restored.query)).map((r) => r.id), [I('d1')])
+  })
+
   test('leaves out what did not resolve', async () => {
     const relay = searchingRelay([manifest, project])
     const objects = await resolveForeignObjects([I('gone')], relay.query)
