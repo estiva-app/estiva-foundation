@@ -4,6 +4,19 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.55.0 — 2026-11-04
+
+**Wire: nothing** (ALO-6; SPEC §13.3). `textAsksOf(base, theirs, mine, asks)`
+moves here from Ship (`src/nostr/textAsks.ts`, there `documentAsksOf`), beside
+`mergeTexts`, so Leaf and Peek open the same editor Ship does when a save
+asks: their text with every change of mine that did not clash merged in, and
+the asked blocks to choose between; their text alone, with `sinceOpened`, when
+that cannot be built. It returns `TextAsks`, the shape `@estiva-app/ui/editor`'s
+`DocumentAsks` takes. Here rather than in ui, whose runtime takes no protocol.
+One fix on the way: a list (or quote) that asks for its own content, its
+numbering say, now keeps my words in its items; Ship's copy put their whole
+list in, so my item edits were gone if I kept theirs.
+
 ## 0.54.0 — 2026-11-04
 
 **Wire: nothing** (ALO-6; SPEC §6.13). Ship's switch for projects moves here so

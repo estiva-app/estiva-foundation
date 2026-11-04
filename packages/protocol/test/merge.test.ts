@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { mergeBlockDocuments, mergeTexts, serializeBlockDocument, type Block, type BlockDocument } from '../dist/index.js'
+import * as protocol from '../dist/index.js'
 
 const p = (id: string, text: string): Block => ({ type: 'paragraph', id, content: [{ type: 'text', text }] })
 const doc = (...content: Block[]): BlockDocument => ({ type: 'doc', content })
@@ -152,5 +153,69 @@ describe('mergeTexts — §13.3', () => {
   it('a marker text changed by one side only takes that change', () => {
     assert.deepEqual(mergeTexts({ value: 'a' }, { value: 'a' }, { value: 'b' }).merged, { value: 'b' })
     assert.deepEqual(mergeTexts({ value: 'a' }, { value: 'c' }, { value: 'a' }).merged, { value: 'c' })
+  })
+})
+
+describe('textAsksOf — what the editor holds while a save asks (ALO-1\'s story)', () => {
+  const blocks = (d: BlockDocument) => ({ value: serializeBlockDocument(d), format: 'estiva-blocks-1' })
+  // By namespace, so on a build without it only these tests fail.
+  const textAsksOf = (...args: unknown[]) => {
+    assert.equal(typeof protocol.textAsksOf, 'function', 'textAsksOf is exported')
+    return (protocol.textAsksOf as (...a: unknown[]) => { value: string; theirs: string; mine: string; blocks: string[]; sinceOpened?: boolean })(...args)
+  }
+
+  it('opens on their text with my other changes merged in and their words in the block that asks, beside mine as saved', () => {
+    const base = blocks(doc(p('b1', 'one'), p('b2', 'two'), p('b3', 'three')))
+    const theirs = blocks(doc(p('b1', 'one, theirs'), p('b2', 'two'), p('b3', 'three, theirs')))
+    const mine = blocks(doc(p('b1', 'one, mine'), p('b2', 'two, mine'), p('b3', 'three')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.deepEqual(words(JSON.parse(held.value)), ['one, theirs', 'two, mine', 'three, theirs'])
+    assert.deepEqual(held.blocks, ['b1'])
+    assert.equal(held.mine, mine.value, 'mine as I saved it, to choose from')
+    assert.equal(held.theirs, theirs.value)
+    assert.equal(held.sinceOpened, undefined, 'no "changed since you opened it": my changes are in')
+  })
+
+  it('a block I deleted that they changed holds their text alone and says the page changed, losing none of their words', () => {
+    const base = blocks(doc(p('b1', 'one'), p('b2', 'two')))
+    const theirs = blocks(doc(p('b1', 'one'), p('b2', 'two, theirs')))
+    const mine = blocks(doc(p('b1', 'one, mine')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.equal(held.value, theirs.value)
+    assert.deepEqual(held.blocks, ['b2'])
+    assert.equal(held.sinceOpened, true)
+  })
+
+  it('a list whose numbering both changed asks for the list alone, and my words in its items are kept', () => {
+    const list = (start: number, ...items: Block[]): Block => ({ type: 'orderedList', id: 'l', attrs: { start }, content: items })
+    const item = (id: string, text: string): Block => ({ type: 'listItem', id, content: [p(`${id}p`, text)] })
+    const base = blocks(doc(list(1, item('i1', 'first'), item('i2', 'second'))))
+    const theirs = blocks(doc(list(2, item('i1', 'first'), item('i2', 'second, theirs'))))
+    const mine = blocks(doc(list(3, item('i1', 'first, mine'), item('i2', 'second'))))
+    const { asks } = mergeTexts(base, theirs, mine)
+    assert.deepEqual(asks?.map((a) => a.block), ['l'])
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.ok(held.value.includes('first, mine'), 'my words in an item are not lost')
+    assert.ok(held.value.includes('second, theirs'))
+    assert.equal(JSON.parse(held.value).content[0].attrs.start, 2, 'the asked list holds theirs until chosen')
+  })
+
+  it('a block theirs deleted and I changed is left out of the text it opens on', () => {
+    const base = blocks(doc(p('b1', 'one'), p('b2', 'two')))
+    const theirs = blocks(doc(p('b1', 'one, theirs')))
+    const mine = blocks(doc(p('b1', 'one'), p('b2', 'two, mine')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.deepEqual(held.blocks, ['b2'])
+    assert.deepEqual(words(JSON.parse(held.value)), ['one, theirs'])
+    assert.equal(held.sinceOpened, undefined)
+  })
+
+  it('a marker text both changed holds their text and says the page changed, with no block to point at', () => {
+    const base = { value: 'the plan' }, theirs = { value: 'the plan, theirs' }, mine = { value: 'the plan, mine' }
+    const held = textAsksOf(base, theirs, mine, mergeTexts(base, theirs, mine).asks!)
+    assert.deepEqual(held, { value: 'the plan, theirs', theirs: 'the plan, theirs', mine: 'the plan, mine', blocks: [], sinceOpened: true })
   })
 })
