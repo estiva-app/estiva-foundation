@@ -231,7 +231,7 @@ describe('searchFileReferences by fields (ALO-5)', () => {
     })
     const found = await searchFileReferences('quoxalbit', relay.query, { byFields: { kinds: [PROJECT], query: search.query } })
     assert.deepEqual(found.map((c) => [c.id, c.title, c.summary, c.matched]), [
-      [P1, 'Conversation standard', 'the third block mentions quoxalbit', ['text']],
+      [P1, 'Conversation standard', '…the third block mentions quoxalbit', ['text']],
     ])
     assert.deepEqual(search.calls, [[{ kinds: [PROJECT], search: 'quoxalbit', limit: 20, fields: 'newest' }]])
     // The title search no longer asks for projects, and nothing reads the project's changes.

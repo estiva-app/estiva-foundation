@@ -280,6 +280,7 @@ async function searchByFields(
   return rows.map((row) => {
     const match = why.get(row.id)!
     const around = match.fields[0] === 'text' ? match.around?.replace(/\s+/g, ' ').trim() : undefined
-    return { ...row, matched: match.fields, ...(around ? { summary: around } : {}) }
+    // "…" marks words from inside the text, not the file's own summary; the relay does not say where they start.
+    return { ...row, matched: match.fields, ...(around ? { summary: `…${around}` } : {}) }
   })
 }
