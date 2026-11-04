@@ -6,6 +6,30 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.33.0 — 2026-11-04
+
+**SPEC: none — nothing read or written changes; this is the words a person
+reads when a write is refused** (ONE-4; Miky, 4 Nov).
+
+- `refusalReason` / `refusalCause` (new): any refusal — the relay's `invalid:`,
+  `restricted:`, `rate-limited:` or `auth-required:` reason, an HTTP body, a
+  builder's `content is N bytes, max M`, a network error, or an app's own
+  `{ cause }` — comes to one plain reason, the same in every app: "it is too
+  long", "this message was deleted, or you can no longer write here", "you can
+  no longer write here", "this team is archived", "too many at once, try again
+  in a moment", "your computer’s clock is wrong; set it and try again", "you are
+  signed out; sign in again", and "something went wrong, try again" for
+  anything else. The relay's own words are never one of them.
+- `tooLarge` / `uploadLimit` / `UPLOAD_LIMITS` (new): the relay's size limits —
+  a GIF 10 MB, another picture 50 MB, anything else 100 MB (Cloudflare refuses
+  a larger body) — checked before a file uploads: "Too large: the most is 10
+  MB".
+- `uploadRefusal` (new): the line on a file's card when its upload is refused,
+  from protocol's `upload failed: <status> <body>`: the limit the relay named,
+  "This type of file can’t be added", "This file could not be read", "Too many
+  at once, try again in a moment", "Sign in again", "You can no longer add
+  files here" or "Could not upload, try again".
+
 ## 0.32.0 — 2026-11-04
 
 **SPEC: §6.4's new "Resolving a thread", §6.5's three states of a top-level
