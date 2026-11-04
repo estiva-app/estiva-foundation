@@ -144,6 +144,16 @@ describe('opening a file by the open read (ALO-6)', () => {
     assert.equal(restored.deleted, undefined)
   })
 
+  test('a file whose first record names no team is not deleted by a change, which no team can make', async () => {
+    const bare = event({ kind: PLAN, tags: [['d', 'bare'], ['title', 'Bare']] })
+    // No `h` either, so nothing tells it apart from the root's own team.
+    const gone = event({ kind: 1851, pubkey: OTHER, tags: [['a', addressOf(bare)], ['field', 'deleted'], ['value', 'true']] })
+    const object = await resolveForeignObject(addressOf(bare), opening([app, bare, gone]).query, noPeople, 0, undefined, { openRead: [PLAN] })
+    assert.equal(object.unreachable, undefined)
+    assert.equal(object.slots.title?.value, 'Bare')
+    assert.equal(object.deleted, undefined)
+  })
+
   test('a file nobody can read is still unreachable, not deleted', async () => {
     const missing = `${PLAN}:${OWNER}:nowhere`
     const object = await resolveForeignObject(missing, opening(events).query, noPeople, 0, undefined, { openRead: [PLAN] })
