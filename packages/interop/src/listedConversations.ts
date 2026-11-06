@@ -338,8 +338,10 @@ export function watchListedConversations(
     if (f.folder) teams.add(f.folder)
     for (const e of f.events) if (e.kind !== KIND_REACTION && e.kind !== KIND_DELETION) addTeam(teams, e)
   }
+  const nowSeconds = () => Math.floor((options.now ?? Date.now)() / 1000)
+  // `created_at` is the author's to write (the relay takes 15 min ahead): `since` never passes the reader's own clock.
   const newest = Math.max(0, ...read.files.flatMap((f) => f.events.map((e) => e.created_at)))
-  let since = options.since ?? (newest > 0 ? newest : Math.floor((options.now ?? Date.now)() / 1000))
+  let since = options.since ?? (newest > 0 ? Math.min(newest, nowSeconds()) : nowSeconds())
   const namesTeams = options.namesTeams ?? true
 
   let subs: { close(): void }[] = []
@@ -388,7 +390,7 @@ export function watchListedConversations(
         : filesNamedBy(event, fileOf, everyId, (i, kind) => files[i].olderKinds.includes(kind))
     if (owners.length === 0) return
     seen.add(event.id)
-    since = Math.max(since, event.created_at)
+    since = Math.max(since, Math.min(event.created_at, nowSeconds()))
     let learnt = false
     for (const i of owners) {
       if (event.kind !== KIND_DELETION && !files[i].ids.has(event.id)) {

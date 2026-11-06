@@ -20,7 +20,8 @@ manifests already published still mean what they meant.
   out. Two requests for a topic's files, whatever their number.
 - `watchListedConversations(relay, read, onEvent)`: the same files, live, each
   new event handed to its file once. One REQ, asked again from the newest second
-  seen when a new message or reaction adds an id to listen for. Until our relay
+  seen when a new message or reaction adds an id to listen for — never from past
+  the reader's own clock, so an event dated ahead cannot make the watch deaf. Until our relay
   delivers a team's event live to a subscription by file alone, each filter
   also names the files' teams (`namesTeams`, on by default).
 - `MAX_FILTERS_PER_REQ` (10): our relay answers a REQ of more filters with a

@@ -25,7 +25,7 @@ import {
   type ListedConversations,
   type ListedFile,
 } from '../dist/index.js'
-import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { RELAY_PAGE_CEILING, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 
 const QA1 = 'a'.repeat(64)
 const QA2 = 'b'.repeat(64)
@@ -263,6 +263,25 @@ function manualTimers() {
   }
 }
 
+describe("a topic's All, a full page of comments", () => {
+  it('says a file whose comments fill the relay\'s page may be missing its oldest, and a file one short is whole', async () => {
+    const fullD = '00000000-0000-4000-8000-0000000000f1'
+    const shortD = '00000000-0000-4000-8000-0000000000f2'
+    const full = `30840:${QA1}:${fullD}`
+    const short = `30840:${QA1}:${shortD}`
+    const stored = [
+      ...Array.from({ length: RELAY_PAGE_CEILING }, (_, i) => comment(full, LEAF_TEAM, `full ${i}`)),
+      ...Array.from({ length: RELAY_PAGE_CEILING - 1 }, (_, i) => comment(short, LEAF_TEAM, `short ${i}`)),
+    ]
+    const read = await listedConversationsOf(relayOver(stored).query, [
+      { file: fullD, address: full, folder: LEAF_TEAM, entry: undefined as never },
+      { file: shortD, address: short, folder: LEAF_TEAM, entry: undefined as never },
+    ])
+    assert.equal(fileOf(read, fullD)?.commentsCut, true)
+    assert.equal(fileOf(read, shortD)?.commentsCut, false)
+  })
+})
+
 describe("a topic's All, live", () => {
   const cold = async () => listedConversations(relayOver(world).query, TOPIC)
 
@@ -301,6 +320,25 @@ describe("a topic's All, live", () => {
     relay.publish(like)
     assert.deepEqual(heard, [fresh.id, like.id])
     assert.equal(relay.open.size, 1, 'the old REQ is closed when the new one opens')
+  })
+
+  it("starts from now, not from a fast clock's future, when the cold read holds a comment dated ahead", async () => {
+    const nowMs = 1_787_100_000_000
+    const ahead = { ...comment(PAGE, LEAF_TEAM, 'From a fast clock'), created_at: nowMs / 1000 + 600 }
+    const relay = liveRelay()
+    watchListedConversations(relay, await listedConversations(relayOver([...world, ahead]).query, TOPIC), () => {}, { ...manualTimers(), now: () => nowMs })
+    for (const f of relay.reqs[0]) assert.ok((f.since as number) <= nowMs / 1000, `asks from ${String(f.since)}, past now`)
+  })
+
+  it("asks again from now, not from a fast clock's future, after a comment dated ahead", async () => {
+    const relay = liveRelay()
+    const timers = manualTimers()
+    const nowMs = 1_787_100_000_000
+    watchListedConversations(relay, await cold(), () => {}, { ...timers, now: () => nowMs })
+    const ahead = { ...comment(PAGE, LEAF_TEAM, 'From a fast clock'), created_at: nowMs / 1000 + 600 }
+    relay.publish(ahead)
+    timers.fire()
+    for (const f of relay.reqs.at(-1)!) assert.ok((f.since as number) <= nowMs / 1000, `asks from ${String(f.since)}, past now`)
   })
 
   it('hands over nothing the cold read already held, and nothing about a file off the list', async () => {
