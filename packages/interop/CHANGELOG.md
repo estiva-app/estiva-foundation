@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.86.0 — 2026-11-06
+
+**Manifest: nothing new; an owner's `emits.alsoRead` is read as before. Wire: reads and a live REQ, nothing written** (SPEC §11.8, §6.4, §6.6).
+
+- `listedConversations(query, topic)` / `listedConversationsOf(query, listed)`:
+  the conversations of every file a topic lists, each file's events ready for
+  `foldThreads` — comments and replies by `#A` and `#O` (both, always), an
+  owner's older comment kinds by `#a`, then one `#e` read for edits, resolve and
+  reopen, deletions, older-kind replies, and reactions on each file's newest
+  100 messages, the cut reported per file. Nothing under a listed file: a listed
+  project's issues are not read. A listed id the reader cannot resolve is left
+  out. Two requests for a topic's files, whatever their number.
+- `watchListedConversations(relay, read, onEvent)`: the same files, live, each
+  new event handed to its file once. One REQ, asked again from the newest second
+  seen when a new message or reaction adds an id to listen for — never from past
+  the reader's own clock, so an event dated ahead cannot make the watch deaf. Until our relay
+  delivers a team's event live to a subscription by file alone, each filter
+  also names the files' teams (`namesTeams`, on by default).
+- `MAX_FILTERS_PER_REQ` (10): our relay answers a REQ of more filters with a
+  NOTICE only, so the watch never sends one.
+- `ListedFile.folder`: a listed file's team, from its root.
+
 ## 0.85.0 — 2026-11-04
 
 **Manifest: nothing. Wire: a read, nothing written** (ALO-6; SPEC §6.5, §6.13).
