@@ -1,5 +1,7 @@
 # Estiva Foundation, for Claude Code
 
+Say team to people; tool names and flags still say folder.
+
 ## Decision records: read them, and obey the accepted ones
 
 Why Estiva is the way it is (product, protocol and architecture calls, and the
