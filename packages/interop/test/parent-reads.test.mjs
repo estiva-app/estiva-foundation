@@ -111,6 +111,16 @@ describe('resolveParents by the list read', () => {
     assert.deepEqual(await resolveParents([addressOf(gone)], r.query, undefined, { listRead: true }), { [addressOf(gone)]: addressOf(p2) })
     assert.deepEqual(r.changesByA(), [addressOf(gone)])
   })
+
+  test('another author’s file with the same id does not answer for a deleted one, which keeps its moved parent', async () => {
+    const p1 = project('p1')
+    const p2 = project('p2')
+    const mine = issue('twin', p1)
+    const theirs = event({ kind: ISSUE, pubkey: OTHER, tags: [['d', 'twin'], ['title', 'twin'], ['a', addressOf(p1)], ['h', TEAM]] })
+    const r = relay([ship, p1, p2, mine, theirs, change(theirs, 'project', addressOf(p2), OTHER), change(theirs, 'deleted', 'true', OTHER)])
+    const parents = await resolveParents([addressOf(mine), addressOf(theirs)], r.query, undefined, { listRead: true })
+    assert.deepEqual(parents, { [addressOf(mine)]: addressOf(p1), [addressOf(theirs)]: addressOf(p2) })
+  })
 })
 
 describe('an archived parent, read by the list read', () => {
