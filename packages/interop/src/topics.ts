@@ -409,11 +409,17 @@ export interface TopicsRead {
   /** The topics where a message inside the horizon names the viewer: a mention lights at any level, and when they are not in (§11.8). */
   mentionedIn: ReadonlySet<string>
   /**
-   * The conversations the viewer is in, by root id: the second they first
-   * wrote in one or were named in it, over all history — so a reply of theirs
-   * from before the reply floor still makes a later reply light at Important.
+   * The conversations the viewer is in, by {@link conversationKey} (topic and
+   * root id): the second they first wrote in one or were named in it, over all
+   * history — so a reply of theirs from before the reply floor still makes a
+   * later reply light at Important.
    */
   inConversations: ReadonlyMap<string, number>
+}
+
+/** A conversation's key in {@link TopicsRead.inConversations}: the topic it is anchored to and its root's id. */
+export function conversationKey(topic: string, root: string): string {
+  return `${topic} ${root}`
 }
 
 /** The filters for a person's part in some files over all history: the changes naming them, what they wrote, what names them. */
@@ -531,8 +537,11 @@ export async function readTopics(
   const inConversations = new Map<string, number>()
   for (const e of part) {
     if (e.kind !== KIND_COMMENT || (e.pubkey !== me && !mentions(e, me))) continue
-    const root = rootOf(e)
-    inConversations.set(root, Math.min(inConversations.get(root) ?? Infinity, e.created_at))
+    // Keyed by the topic the comment is anchored to as well: an `E` naming another topic's thread puts nobody in that thread.
+    for (const file of candidateFilesOf(e)) {
+      const key = conversationKey(file, rootOf(e))
+      inConversations.set(key, Math.min(inConversations.get(key) ?? Infinity, e.created_at))
+    }
   }
   const topics = objects.flatMap((object): ReadTopic[] => {
     const root = object.address ? roots.get(object.address) : undefined
@@ -636,7 +645,7 @@ export async function topicConversations(
           .sort((a, b) => a.at - b.at)
           .map((m) => ({ id: m.id, pubkey: m.by, kind: KIND_COMMENT, created_at: m.at, tags: [], content: read.membership.mentioned.has(m.id) ? named : '', root: m.root }))
         // When the viewer came into this conversation (wrote in it or was named in it), before the reply floor too.
-        const inSince = read.inConversations.get(thread[0]!.root)
+        const inSince = read.inConversations.get(conversationKey(topic.address, thread[0]!.root))
         if (asEvents.some((m) => isUnreadOnPlace(m, m.root === m.id ? undefined : m.root, state.merged, judge, inSince))) fresh++
       }
     }

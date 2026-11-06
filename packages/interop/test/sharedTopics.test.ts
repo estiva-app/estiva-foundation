@@ -137,7 +137,9 @@ describe('readTopics — every topic the viewer can read, once', () => {
     const left = await readTopics(relay([...world, level(bravo, 'all', NOW - 5 * DAY), leave(bravo, NOW - 2 * DAY)]).query, ME, { nowSeconds: NOW })
     assert.equal(left.topics.find((t) => t.address === bravo.address)!.yours, false)
     const back = await readTopics(relay([...world, leave(bravo, NOW - 2 * DAY), level(bravo, 'important', NOW - DAY)]).query, ME, { nowSeconds: NOW })
-    assert.deepEqual([back.topics.find((t) => t.address === bravo.address)!.yours, back.topics.find((t) => t.address === bravo.address)!.following.since], [true, NOW - DAY])
+    const again = back.topics.find((t) => t.address === bravo.address)!
+    assert.equal(again.yours, true)
+    assert.equal(again.following?.since, NOW - DAY)
   })
 
   it('marks a topic a space only where a team’s list gives its entry the role, by address or by id', async () => {
@@ -197,6 +199,15 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     assert.equal((await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, true)
     const threadRead = { ...merged, [`thread:${first.id}`]: NOW }
     assert.equal((await topicConversations(read, query, { merged: threadRead, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, false)
+  })
+
+  it('does not put the viewer in a thread of one topic by a comment on another that names that thread as its root', async () => {
+    const mine = comment(ME, delta, NOW - 400)
+    // Filed on Delta, its `E` naming Alpha's `first`: it says nothing about Alpha's thread.
+    const stray = signed({ ...mine, tags: [...mine.tags.filter((t) => t[0] !== 'E' && t[0] !== 'e'), ['E', first.id]] })
+    const { query } = relay([...world, ...talk, stray, reply(THEM, first, NOW - 100)])
+    const read = await readTopics(query, ME, { nowSeconds: NOW })
+    assert.equal((await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, false)
   })
 
   it('at Important lights no reply in a conversation the viewer is not in; at All, one since they chose it', async () => {
