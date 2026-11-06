@@ -347,9 +347,13 @@ export interface Listed {
  * they choose a level, and a member's private opt-out is not seen: the list
  * undercounts. All first, then Important, each by since.
  *
+ * `viewer`, with their own private teams list, is listed as they are in it:
+ * gone once they turned the default off, there when a team they follow
+ * reaches them. Everyone else sees them by public events alone.
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-place-lists-who-chose-a-level-and-its-teams-members.md
  */
-export function placeListing(place: Place, facts: Omit<PlaceFacts, 'teams'>): Listed[] {
+export function placeListing(place: Place, facts: Omit<PlaceFacts, 'teams'>, viewer?: { pubkey: string; teams?: TeamsList }): Listed[] {
   const people = new Set<string>()
   const versions = place.address.startsWith(`${KIND_TEAM}:`) ? [] : facts.events.filter((e) => addressOf(e) === place.address)
   for (const v of versions) people.add(v.pubkey)
@@ -361,12 +365,14 @@ export function placeListing(place: Place, facts: Omit<PlaceFacts, 'teams'>): Li
     else if (field?.startsWith(FOLLOW_FIELD_PREFIX)) people.add(field.slice(FOLLOW_FIELD_PREFIX.length))
   }
   if (placeKindOf(place, facts.listing) !== 'topic') for (const m of teamMembersOf(place.team, facts.roster ?? [])) people.add(m.pubkey)
+  if (viewer) people.add(viewer.pubkey)
 
   const listed: Listed[] = []
   for (const pubkey of people) {
     if (!PUBKEY.test(pubkey)) continue
     // Nobody else's private teams list is readable: their following through a team they follow never shows.
-    const f = followingOf(place, pubkey, { ...facts, teams: undefined })
+    const own = pubkey === viewer?.pubkey ? viewer.teams : undefined
+    const f = followingOf(place, pubkey, { ...facts, teams: own })
     if (!f.in || !f.level) continue
     listed.push({ pubkey, level: f.level, ways: f.ways, ...(f.since !== undefined ? { since: f.since } : {}), ...(f.addedBy ? { addedBy: f.addedBy } : {}) })
   }
@@ -381,17 +387,24 @@ export function placeListing(place: Place, facts: Omit<PlaceFacts, 'teams'>): Li
  * leave, when it is the field's current change. Undefined when they never
  * left, or were put back in since — an Add needs none then.
  */
-export function addPrevOf(place: Place, person: string, events: readonly Event[]): string | undefined {
+function currentLeaveOf(place: Place, person: string, events: readonly Event[]): Event | undefined {
   const last = actsOf(place, person, events)
     .filter((a) => a.act === 'join' || a.act === 'leave')
     .at(-1)
-  return last?.act === 'leave' ? last.event.id : undefined
+  return last?.act === 'leave' ? last.event : undefined
+}
+
+/** The ms a change sorts at (§6.3): its `ts` where it agrees with `created_at`, else `created_at`. */
+function sortMsOf(event: Event): number {
+  const ts = Number(tag(event, 'ts'))
+  return Number.isSafeInteger(ts) && Math.floor(ts / 1000) === event.created_at ? ts : event.created_at * 1000
 }
 
 /**
  * Add a person to a topic, a space or a team's chat (§11.8): a `member:<P>` =
- * `true` by anyone, naming the person's leave with `prev` when they left, so
- * the Add puts them back in whatever the two clocks say. `folder` is the
+ * `true` by anyone, naming the person's leave with `prev` when they left. The
+ * relay refuses a change that does not sort after its `prev` (§6.2), so an
+ * adder whose clock is behind the leave stamps the Add 1 ms after it. `folder` is the
  * place's own team: its root's `h`, or the team itself for its chat. `events`
  * are the place's events, as {@link placeFilters} read them.
  *
@@ -402,8 +415,10 @@ export function buildPlaceAdd(
   createdAtMs: number,
   args: { place: Place; folder: string; person: string; events: readonly Event[]; note?: string },
 ): UnsignedEvent {
-  const prev = addPrevOf(args.place, args.person, args.events)
-  return buildMembershipChange(pubkey, createdAtMs, {
+  const leave = currentLeaveOf(args.place, args.person, args.events)
+  const prev = leave?.id
+  const at = leave ? Math.max(createdAtMs, sortMsOf(leave) + 1) : createdAtMs
+  return buildMembershipChange(pubkey, at, {
     file: args.place.address,
     folder: args.folder,
     person: args.person,
@@ -422,7 +437,7 @@ export interface SwitchState {
   shown: Level | 'not-following'
   /** Whether a team's default would reach them here, were it not turned off. */
   defaultReaches: boolean
-  /** They chose against that default: All, or turned it off. "Back to the default" is offered then. */
+  /** A default reaches them and they chose a level, or turned it off. "Back to the default" is offered then. */
   againstDefault: boolean
 }
 
@@ -439,7 +454,7 @@ export function switchStateOf(place: Place, person: string, facts: PlaceFacts, o
   const withDefault = off ? followingOf(place, person, { ...facts, teams: { ...facts.teams!, off: facts.teams!.off.filter((o) => o !== id) } }) : following
   const defaultReaches = withDefault.ways.includes('team')
   const shown = opts.muted || !following.in || !following.level ? 'not-following' : following.level
-  return { shown, defaultReaches, againstDefault: defaultReaches && (off || (following.ways.includes('level') && following.level === 'all')) }
+  return { shown, defaultReaches, againstDefault: defaultReaches && (off || following.ways.includes('level')) }
 }
 
 /** The writes one choice on the switch takes. */
@@ -478,9 +493,16 @@ export function switchWrites(
     const changes = following.ways.includes('level') ? [buildLevelChange(pubkey, createdAtMs, { place: place.address, folder, level: '' })] : []
     return { changes, ...(isOff ? { off: { id, off: false } } : {}), clearsMute: true }
   }
-  const own = following.ways.some((w) => w === 'level' || w === 'added' || w === 'author')
-  const changes = own ? [buildMembershipChange(pubkey, createdAtMs, { file: place.address, folder, person: pubkey, member: false })] : []
-  return { changes, ...(following.ways.includes('team') ? { off: { id, off: true } } : {}), clearsMute: false }
+  const byDefault = following.ways.includes('team')
+  const joined = following.ways.some((w) => w === 'added' || w === 'author')
+  // Where a default reaches P and only a chosen level holds besides, clearing the level reads as
+  // "back to the default" to everyone else: nobody sees that P switched the place off.
+  const changes = joined || (following.ways.includes('level') && !byDefault)
+    ? [buildMembershipChange(pubkey, createdAtMs, { file: place.address, folder, person: pubkey, member: false })]
+    : following.ways.includes('level')
+      ? [buildLevelChange(pubkey, createdAtMs, { place: place.address, folder, level: '' })]
+      : []
+  return { changes, ...(byDefault ? { off: { id, off: true } } : {}), clearsMute: false }
 }
 
 /** The teams list with a place's default turned off, or back on: what to serialize, encrypt and write whole. */
