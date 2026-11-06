@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.87.0 — 2026-11-06
+
+**Manifest: nothing new. Wire: reads only, nothing written; the reads are the ones 0.86.0 made** (SPEC §11.8 *Places and following*, *What is unread on a place*).
+
+- `readTopics`: whose a topic is now comes from conversation's shared fold,
+  `followingOf`, over the topic's root and the changes naming the viewer:
+  made it, chose a level, joined or was added since their last leave. Writing
+  in a topic is no longer one (record writing-in-a-place-never-follows-it), so
+  a topic someone only commented in moves from their "Your topics" to the
+  others. Each `ReadTopic` carries that `following` (level, since, ways,
+  `addedBy`); `yours` is `following.in`. A space's team default is not read
+  here: Ship's Topics draws no space.
+- `TopicsRead` gains `mentionedIn` (the topics where a message inside the
+  horizon names the viewer) and `inConversations` (each conversation the viewer
+  wrote in or was named in, by root id, with the second they first did).
+- `topicConversations`: the dot and `fresh` are §11.8's place rule
+  (`isUnreadOnPlace`) at the viewer's level: at Important a new conversation,
+  or a reply in one they are in; at All every message since they chose All; a
+  mention at any level and on a topic they are not in. Replies are read for
+  the open topics they are in or are named in, from the reply floor or the
+  thread rule's cut-over.
+- Needs `@estiva-app/conversation` 0.34.0.
+
 ## 0.86.0 — 2026-11-06
 
 **Manifest: nothing new; an owner's `emits.alsoRead` is read as before. Wire: reads and a live REQ, nothing written** (SPEC §11.8, §6.4, §6.6).

@@ -24,20 +24,20 @@
  * archive chain and a Folder move all ignore it. It carries no `p`, so it adds
  * nobody to the file (§11.8).
  */
-import { type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import { encodeNpub, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { RELAY_PAGE_CEILING } from '@estiva-app/protocol'
 import {
   byOrder,
   candidateFilesOf,
   fileContext,
   foldMemberships,
+  followingOf,
   HORIZON_SECONDS,
-  membersOf,
-  membershipJudges,
+  isUnreadOnPlace,
+  mentions,
   REPLY_FLOOR_CONTEXT,
-  streamHasUnread,
-  streamTermsOf,
   THREAD_RULE_FROM,
+  type Following,
   type MembershipRead,
 } from '@estiva-app/conversation'
 import {
@@ -46,6 +46,7 @@ import {
   isArchived,
   KIND_FOLDER_STATE,
   resolveForeignRoots,
+  rootOf,
   type ForeignObject,
   type ProjectionCache,
   type QueryFn,
@@ -348,11 +349,15 @@ export interface ReadTopic {
   /** Its list, as {@link topicLists} reads it. */
   listed: ListedFile[]
   /**
-   * The viewer is a member (§11.8): by the horizon's membership read, or,
-   * where that read has no word on them, over all history — a topic joined
-   * before the horizon with nothing since is still theirs, as Peek's Topics
-   * says.
+   * How the viewer is in it (§11.8 *Places and following*), by the shared
+   * fold every app uses: a level they chose, an Add or a join, or having made
+   * it, over all history. Writing in it is not one. A space's team default is
+   * not read here (no roster, no private teams list): Ship's Topics draws no
+   * space.
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/writing-in-a-place-never-follows-it.md
    */
+  following: Following
+  /** The viewer is in it: `following.in`. */
   yours: boolean
   /**
    * A team marks it one of its spaces (§3.3): its entry on a team's
@@ -399,7 +404,16 @@ function spacesOf(states: readonly SignedEvent[], addresses: readonly string[]):
 export interface TopicsRead {
   me: string
   topics: ReadTopic[]
+  /** Folded from the viewer's part inside the horizon: `mentioned` says which messages name them. */
   membership: MembershipRead
+  /** The topics where a message inside the horizon names the viewer: a mention lights at any level, and when they are not in (§11.8). */
+  mentionedIn: ReadonlySet<string>
+  /**
+   * The conversations the viewer is in, by root id: the second they first
+   * wrote in one or were named in it, over all history — so a reply of theirs
+   * from before the reply floor still makes a later reply light at Important.
+   */
+  inConversations: ReadonlyMap<string, number>
 }
 
 /** The filters for a person's part in some files over all history: the changes naming them, what they wrote, what names them. */
@@ -448,14 +462,6 @@ async function readAll(query: QueryFn, filters: readonly Record<string, unknown>
   return [...out.values()]
 }
 
-/** Whether the person is a member of the file over all history, folded as its own page folds it. */
-function memberOverAllHistory(person: string, file: string, events: readonly SignedEvent[]): boolean {
-  const [kind, pubkey, ...d] = file.split(':')
-  // The root, dated before everything: its author is a member unless a leave of theirs says otherwise.
-  const root = { id: '0'.repeat(64), pubkey: pubkey ?? '', kind: Number(kind), created_at: 0, tags: [['d', d.join(':')]], content: '', sig: '' }
-  return membersOf(file, [root, ...events]).has(person)
-}
-
 /**
  * Every topic the viewer can read, once (SHIPS-2): each with its list, its
  * archive (its own, or with its project), its Folder, whether it is the
@@ -475,8 +481,8 @@ function memberOverAllHistory(person: string, file: string, events: readonly Sig
  * production, QA-2's horizon read over every file was 500 KB; over the topics
  * it is a few.
  *
- * "Yours" is today's membership fold (§11.8); following replaces it in this
- * same function (Teams and following, milestone 5).
+ * How the viewer is in each topic is {@link followingOf} over its root and
+ * the changes naming them (TEA-6), the fold Peek's switch reads too.
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-keeps-its-own-list-of-files.md
  */
 export async function readTopics(
@@ -495,7 +501,7 @@ export async function readTopics(
     if (!held || root.created_at > held.created_at || (root.created_at === held.created_at && root.id < held.id)) roots.set(address, root)
   }
   const addresses = [...roots.keys()]
-  if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds) }
+  if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds), mentionedIn: new Set(), inConversations: new Map() }
   const [objects, lists, part, states] = await Promise.all([
     resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
     listsOf(query, addresses, Promise.resolve(roots), options),
@@ -511,18 +517,27 @@ export async function readTopics(
   const membership = foldMemberships(me, part.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
   // Each topic's own events, so each is folded over its own and not over all of them.
   const byTopic = new Map<string, SignedEvent[]>()
-  for (const event of part) for (const file of candidateFilesOf(event)) byTopic.set(file, [...(byTopic.get(file) ?? []), event])
-  const none = new Set<string>()
+  // A change by its `a`, a level included: `candidateFilesOf` leaves levels out, since they say nothing of file membership.
+  const filesOf = (event: SignedEvent) => (event.kind === KIND_CHANGE ? event.tags.filter((t) => t[0] === 'a').map((t) => t[1]) : candidateFilesOf(event))
+  for (const event of part) for (const file of filesOf(event)) byTopic.set(file, [...(byTopic.get(file) ?? []), event])
+  const mentionedIn = new Set<string>()
+  for (const [file, events] of byTopic) if (events.some((e) => e.kind === KIND_COMMENT && membership.mentioned.has(e.id))) mentionedIn.add(file)
+  const inConversations = new Map<string, number>()
+  for (const e of part) {
+    if (e.kind !== KIND_COMMENT || (e.pubkey !== me && !mentions(e, me))) continue
+    const root = rootOf(e)
+    inConversations.set(root, Math.min(inConversations.get(root) ?? Infinity, e.created_at))
+  }
   const topics = objects.flatMap((object): ReadTopic[] => {
     const root = object.address ? roots.get(object.address) : undefined
     const folder = root ? folderOf(root) : null
     if (!root || !folder || object.unreachable) return []
     const address = object.address!
-    const yours =
-      streamTermsOf(address, membership, me, none).member || (!membershipJudges(address, membership, me) && memberOverAllHistory(me, address, byTopic.get(address) ?? []))
-    return [{ address, object, folder, listed: lists.get(address) ?? [], yours, space: spaces.has(address) }]
+    // The team is the topic's own Folder; a team's default reaches no topic, so its roster is not needed (§11.8).
+    const following = followingOf({ address, team: folder }, me, { events: [root, ...(byTopic.get(address) ?? [])], listing: states })
+    return [{ address, object, folder, listed: lists.get(address) ?? [], following, yours: following.in, space: spaces.has(address) }]
   })
-  return { me, topics, membership }
+  return { me, topics, membership, mentionedIn, inConversations }
 }
 
 // An untitled topic sorts where the apps' "Untitled topic" would.
@@ -554,17 +569,23 @@ export interface TopicConversation {
 /**
  * Each topic's conversations and dot, as Peek's Topics shows them (SHIPS-2):
  * the count is the thread roots addressed to the topic (`conversationsOf`),
- * the dot is {@link streamHasUnread} on the topic's own marker, gated by
- * membership (§11.8), on the viewer's open topics only. `fresh` is the same
- * judge over each thread alone (a root and its replies), so Ship's Topics can
- * say how many of them are new where Peek shows the dot (SHIPS-3).
+ * the dot is §11.8's *What is unread on a place* ({@link isUnreadOnPlace}) at
+ * the viewer's level on it ({@link ReadTopic.following}): at Important a new
+ * conversation, or a reply in one they wrote in or were named in; at All every
+ * message since they chose it; a mention at any level, and when they are not
+ * in. An archived topic lights nothing. `fresh` is the same judge over each
+ * thread alone (a root and its replies), so Ship's Topics can say how many of
+ * them are new where Peek shows the dot (SHIPS-3).
  *
  * The read state and the muted list are encrypted, so the app hands in what
  * it holds: `merged` (the merged markers, once the first merge has landed)
- * and `muted`. Replies are read only for the topics a dot is judged on, and
- * only from the latest second before which none can be unread: the thread
- * rule's cut-over, the reply floor, and when the viewer joined (§11.3: a
- * reply is read by its thread's marker or the floor, never the topic's).
+ * and `muted`. Replies are read only for the topics a dot is judged on — the
+ * open ones the viewer is in or is named in — and only from the latest second
+ * before which none can be unread: the thread rule's cut-over and the reply
+ * floor (§11.3: a reply is read by its thread's marker or the floor, never the
+ * topic's). Not from when the viewer came in: a reply of theirs from before
+ * then still puts them in its conversation.
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/writing-in-a-place-never-follows-it.md
  */
 export async function topicConversations(
   read: TopicsRead,
@@ -573,15 +594,20 @@ export async function topicConversations(
   options: { cache?: ProjectionCache } = {},
 ): Promise<Map<string, TopicConversation>> {
   const nowSeconds = state.nowSeconds ?? Math.floor(Date.now() / 1000)
-  const terms = (address: string) => streamTermsOf(address, read.membership, read.me, state.muted)
-  const judged = new Set(read.topics.filter((topic) => topic.yours && !isArchived(topic.object)).map((topic) => topic.address))
+  const judged = new Set(
+    read.topics
+      .filter((topic) => (topic.following.in || read.mentionedIn.has(topic.address)) && !isArchived(topic.object))
+      .map((topic) => topic.address),
+  )
   const repliesSince = (address: string) => {
     if (!judged.has(address)) return null
-    const floor = state.merged[REPLY_FLOOR_CONTEXT]
-    return Math.max(THREAD_RULE_FROM, floor ?? 0, terms(address).since ?? 0)
+    // Not from when they came in: a reply of theirs from before then still says they are in that conversation.
+    return Math.max(THREAD_RULE_FROM, state.merged[REPLY_FLOOR_CONTEXT] ?? 0)
   }
   const files = read.topics.map((topic) => ({ ...topic.object, ref: topic.address }))
   const held = await conversationsOf(files, query, options.cache, { replies: true, repliesSince })
+  // The messages carry no body: one the membership read found naming the viewer is judged as the body it would have had.
+  const named = `nostr:${encodeNpub(read.me)}`
   const out = new Map<string, TopicConversation>()
   for (const topic of read.topics) {
     const messages = held[topic.address]
@@ -597,11 +623,17 @@ export async function topicConversations(
         if (thread) thread.push(m)
         else threads.set(m.root, [m])
       }
-      const topicTerms = terms(topic.address)
-      const frontier = { merged: state.merged, me: read.me, nowSeconds, horizonSeconds: HORIZON_SECONDS }
+      const judge = { stream: context, me: read.me, following: topic.following, muted: state.muted.has(topic.address), floor: nowSeconds - HORIZON_SECONDS }
       // Every thread here is one of the topic's: `conversationsOf` keeps a reply only under a root of this file.
       for (const thread of threads.values()) {
-        if (streamHasUnread(thread, context, topicTerms, frontier, (id) => read.membership.mentioned.has(id))) fresh++
+        const asEvents = thread
+          .sort((a, b) => a.at - b.at)
+          .map((m) => ({ id: m.id, pubkey: m.by, kind: KIND_COMMENT, created_at: m.at, tags: [], content: read.membership.mentioned.has(m.id) ? named : '', root: m.root }))
+        // When the viewer came into this conversation: wrote in it, or was named in it, before the reply floor too.
+        const here = asEvents.find((m) => m.pubkey === read.me || m.content === named)?.created_at
+        const before = read.inConversations.get(thread[0]!.root)
+        const inSince = here === undefined ? before : before === undefined ? here : Math.min(here, before)
+        if (asEvents.some((m) => isUnreadOnPlace(m, m.root === m.id ? undefined : m.root, state.merged, judge, inSince))) fresh++
       }
     }
     out.set(topic.address, { conversations: messages.filter((m) => m.root === m.id).length, unread: fresh > 0, fresh })

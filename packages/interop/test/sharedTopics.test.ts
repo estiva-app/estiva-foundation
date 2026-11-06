@@ -6,8 +6,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { addableTopics, planListInTopic, readTopics, topicConversations } from '../dist/index.js'
-import { buildComment, buildReply, memberField, THREAD_RULE_FROM } from '@estiva-app/conversation'
-import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { buildComment, buildLevelChange, buildMembershipChange, buildReply, memberField, THREAD_RULE_FROM } from '@estiva-app/conversation'
+import { encodeNpub, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 
 const ME = 'a'.repeat(64)
 const THEM = 'b'.repeat(64)
@@ -41,6 +41,15 @@ const comment = (by: string, topic: { address: string }, at: number) =>
   signed(buildComment(by, at * 1000, { about: topic.address, folder: FOLDER, body: 'hello' }))
 const reply = (by: string, root: SignedEvent, at: number) =>
   signed(buildReply(by, at * 1000, { comment: { anchor: root.tags.find((t) => t[0] === 'A')![1], id: root.id, author: root.pubkey }, folder: FOLDER, body: 'yes' }))
+const level = (topic: { address: string }, value: 'all' | 'important' | '', at: number) =>
+  signed(buildLevelChange(ME, at * 1000, { place: topic.address, folder: FOLDER, level: value }))
+const added = (topic: { address: string }, by: string, at: number) =>
+  signed(buildMembershipChange(by, at * 1000, { file: topic.address, folder: FOLDER, person: ME, member: true }))
+/** A comment naming the viewer, as a composer writes it: the npub in the body and a `p` tag. */
+const naming = (by: string, topic: { address: string }, at: number) => {
+  const event = buildComment(by, at * 1000, { about: topic.address, folder: FOLDER, body: `look, nostr:${encodeNpub(ME)}` })
+  return signed({ ...event, tags: [...event.tags, ['p', ME]] })
+}
 const leave = (topic: { address: string }, at: number) =>
   signed({
     pubkey: ME,
@@ -112,10 +121,21 @@ describe('readTopics — every topic the viewer can read, once', () => {
     assert.equal(by.get(hotel.address)!.object.archived?.with, golf.address)
   })
 
-  it('says whose a topic is: created, or joined before the horizon with nothing since, and not after a leave', async () => {
+  it('says whose a topic is by the shared fold: made it, chose a level or was added, and never by writing in it', async () => {
     const read = await readTopics(relay(world).query, ME, { nowSeconds: NOW })
     const yours = read.topics.filter((t) => t.yours).map((t) => t.object.slots.title?.value).sort()
-    assert.deepEqual(yours, ['Alpha', 'Bravo', 'Echo', 'Foxtrot', 'Hotel'])
+    // Bravo and Charlie: only written in, long ago (record writing-in-a-place-never-follows-it).
+    assert.deepEqual(yours, ['Alpha', 'Echo', 'Foxtrot', 'Hotel'])
+    const chose = await readTopics(relay([...world, level(bravo, 'all', NOW - 400 * DAY), added(delta, THEM, NOW - 3 * DAY)]).query, ME, { nowSeconds: NOW })
+    const by = new Map(chose.topics.map((t) => [t.address, t]))
+    // A level chosen before the horizon still holds; someone else's Add puts the viewer in at Important.
+    assert.deepEqual([by.get(bravo.address)!.following.level, by.get(bravo.address)!.yours], ['all', true])
+    assert.deepEqual([by.get(delta.address)!.following.level, by.get(delta.address)!.following.addedBy], ['important', THEM])
+  })
+
+  it('takes a topic off the viewer’s once they leave it, whatever level they had chosen', async () => {
+    const read = await readTopics(relay([...world, level(bravo, 'all', NOW - 5 * DAY), leave(bravo, NOW - 2 * DAY)]).query, ME, { nowSeconds: NOW })
+    assert.equal(read.topics.find((t) => t.address === bravo.address)!.yours, false)
   })
 
   it('marks a topic a space only where a team’s list gives its entry the role, by address or by id', async () => {
@@ -141,8 +161,8 @@ describe('addableTopics — what Add to topic offers', () => {
   it('offers the open topics in the viewer’s Folders, theirs first, each A–Z, and no archived one', async () => {
     const read = await readTopics(relay(world).query, ME, { nowSeconds: NOW })
     const { yours, others } = addableTopics(read, new Set([FOLDER]))
-    assert.deepEqual(yours.map((t) => t.object.slots.title?.value), ['Alpha', 'Bravo'])
-    assert.deepEqual(others.map((t) => t.object.slots.title?.value), ['Charlie', 'Delta'])
+    assert.deepEqual(yours.map((t) => t.object.slots.title?.value), ['Alpha'])
+    assert.deepEqual(others.map((t) => t.object.slots.title?.value), ['Bravo', 'Charlie', 'Delta'])
   })
 })
 
@@ -162,19 +182,60 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
 
   it('says how many of a topic’s conversations are new: each thread judged alone, a read one not counted', async () => {
     const third = comment(THEM, alpha, NOW - 150)
-    const { query } = relay([...world, ...talk, third, reply(THEM, first, NOW - 100), reply(THEM, first, NOW - 90)])
+    const { query } = relay([...world, ...talk, third, reply(ME, first, NOW - 120), reply(THEM, first, NOW - 100), reply(THEM, first, NOW - 90)])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
     // `first` has two new replies and `third` is new itself: two conversations, not three messages.
     assert.deepEqual(await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW }).then((out) => out.get(alpha.address)), { conversations: 3, unread: true, fresh: 2 })
     const firstRead = { ...merged, [`thread:${first.id}`]: NOW }
     assert.deepEqual(await topicConversations(read, query, { merged: firstRead, muted: new Set(), nowSeconds: NOW }).then((out) => out.get(alpha.address)), { conversations: 3, unread: true, fresh: 1 })
   })
-  it('lights a topic of the viewer’s for a new reply until its thread is read', async () => {
-    const { query } = relay([...world, ...talk, reply(THEM, first, NOW - 100)])
+  it('lights a topic of the viewer’s for a new reply in a conversation they wrote in, until its thread is read', async () => {
+    const { query } = relay([...world, ...talk, reply(ME, first, NOW - 400), reply(THEM, first, NOW - 100)])
     const read = await readTopics(query, ME, { nowSeconds: NOW })
     assert.equal((await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, true)
     const threadRead = { ...merged, [`thread:${first.id}`]: NOW }
     assert.equal((await topicConversations(read, query, { merged: threadRead, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, false)
+  })
+
+  it('at Important lights no reply in a conversation the viewer is not in; at All, one since they chose it', async () => {
+    const before = reply(THEM, first, NOW - 150)
+    const after = reply(THEM, first, NOW - 100)
+    const important = relay([...world, ...talk, before, after])
+    const read = await readTopics(important.query, ME, { nowSeconds: NOW })
+    assert.equal((await topicConversations(read, important.query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, false)
+    const all = relay([...world, ...talk, before, after, level(alpha, 'all', NOW - 120)])
+    const atAll = await readTopics(all.query, ME, { nowSeconds: NOW })
+    assert.deepEqual((await topicConversations(atAll, all.query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address), { conversations: 2, unread: true, fresh: 1 })
+    // Only the reply before All: nothing lights.
+    const early = relay([...world, ...talk, before, level(alpha, 'all', NOW - 120)])
+    const earlyRead = await readTopics(early.query, ME, { nowSeconds: NOW })
+    assert.equal((await topicConversations(earlyRead, early.query, { merged, muted: new Set(), nowSeconds: NOW })).get(alpha.address)?.unread, false)
+  })
+
+  it('lights no new conversation once the viewer left a topic they had set to All', async () => {
+    const { query } = relay([...world, level(delta, 'all', NOW - 2 * DAY), leave(delta, NOW - DAY), comment(THEM, delta, NOW - 100)])
+    const read = await readTopics(query, ME, { nowSeconds: NOW })
+    assert.equal((await topicConversations(read, query, { merged: {}, muted: new Set(), nowSeconds: NOW })).get(delta.address)?.unread, false)
+    const stayed = relay([...world, level(delta, 'all', NOW - 2 * DAY), comment(THEM, delta, NOW - 100)])
+    const stayedRead = await readTopics(stayed.query, ME, { nowSeconds: NOW })
+    assert.equal((await topicConversations(stayedRead, stayed.query, { merged: {}, muted: new Set(), nowSeconds: NOW })).get(delta.address)?.unread, true)
+  })
+
+  it('lights a mention of the viewer on a topic they are not in, a reply naming them too, until read', async () => {
+    const root = comment(THEM, delta, NOW - 1000)
+    const replyNaming = signed({ ...reply(THEM, root, NOW - 100), content: `you, nostr:${encodeNpub(ME)}`, tags: [...reply(THEM, root, NOW - 100).tags, ['p', ME]] })
+    const { query, asked } = relay([...world, root, replyNaming])
+    const read = await readTopics(query, ME, { nowSeconds: NOW })
+    asked.length = 0
+    const out = await topicConversations(read, query, { merged: {}, muted: new Set(), nowSeconds: NOW })
+    assert.deepEqual(out.get(delta.address), { conversations: 1, unread: true, fresh: 1 })
+    assert.ok(asked.some((f) => '#A' in f && (f['#A'] as string[]).includes(delta.address)))
+    const named = relay([...world, naming(THEM, charlie, NOW - 100)])
+    const namedRead = await readTopics(named.query, ME, { nowSeconds: NOW })
+    const lit = await topicConversations(namedRead, named.query, { merged: {}, muted: new Set(), nowSeconds: NOW })
+    assert.equal(lit.get(charlie.address)?.unread, true)
+    const seen = await topicConversations(namedRead, named.query, { merged: { [charlie.address]: NOW }, muted: new Set(), nowSeconds: NOW })
+    assert.equal(seen.get(charlie.address)?.unread, false)
   })
 
   it('lights nothing on a topic that is not the viewer’s, or that they muted, however new its talk', async () => {
@@ -198,13 +259,13 @@ describe('topicConversations — each topic’s conversations and Peek’s dot',
     asked.length = 0
     await topicConversations(read, query, { merged, muted: new Set(), nowSeconds: NOW })
     const replies = asked.filter((f) => '#A' in f && !('authors' in f))
-    assert.deepEqual(replies.map((f) => (f['#A'] as string[])[0]).sort(), [alpha.address, bravo.address, echo.address].sort())
+    assert.deepEqual(replies.map((f) => (f['#A'] as string[])[0]).sort(), [alpha.address, echo.address].sort())
     assert.ok(replies.every((f) => f.since === NOW - 300))
     const noFloor = relay([...world, ...talk])
     const again = await readTopics(noFloor.query, ME, { nowSeconds: NOW })
     noFloor.asked.length = 0
     await topicConversations(again, noFloor.query, { merged: {}, muted: new Set(), nowSeconds: NOW })
-    const since = noFloor.asked.find((f) => '#A' in f && (f['#A'] as string[])[0] === bravo.address)?.since
+    const since = noFloor.asked.find((f) => '#A' in f && (f['#A'] as string[])[0] === alpha.address)?.since
     assert.equal(since, THREAD_RULE_FROM)
   })
 })
