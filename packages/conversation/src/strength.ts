@@ -29,6 +29,7 @@
  */
 import { decodeNaddr, decodeNpub, findNaddrs, findNostrUris, FILE_KINDS, fileIdFormOf, fileIdOf, pointerToAddress, type NostrTag, type SignedEvent } from '@estiva-app/protocol'
 import { KIND_COMMENT } from './kinds.js'
+import { parentOf } from './threads.js'
 
 type Tagged = Pick<SignedEvent, 'kind' | 'tags'>
 type Readable = Pick<SignedEvent, 'kind' | 'tags' | 'content'>
@@ -53,19 +54,17 @@ export function namedInBody(body: string): Set<string> {
 }
 
 /**
- * Whether the event answers another: a `kind:9` with any `e`, or a
- * `kind:1111` with a lowercase `e` that differs from its `E`.
+ * Whether the event answers another: {@link parentOf} names a parent. A
+ * `kind:9` with any `e`, or a `kind:1111` with a lowercase `e` that differs
+ * from its `E` and no `a` equal to its `A`.
  *
  * A top-level comment on an *event* root carries `E` and `e` naming the same
- * event and is not a reply. On an address root it carries no `e` at all.
+ * event and is not a reply. On an address root it carries no `e`, or, in
+ * NIP-22's own shape, an `a` equal to its `A` and an `e` with the file's
+ * version id.
  */
 export function isReply(event: Pick<SignedEvent, 'kind' | 'tags'>): boolean {
-  // A NIP-10 `mention`-marked `e` quotes an event; it answers nothing.
-  const es = event.tags.filter((t) => t[0] === 'e' && typeof t[1] === 'string' && t[1] !== '' && t[3] !== 'mention').map((t) => t[1])
-  if (es.length === 0) return false
-  if (event.kind !== KIND_COMMENT) return true
-  const root = values(event, 'E')[0]
-  return es.some((e) => e !== root)
+  return parentOf(event) !== null
 }
 
 /**

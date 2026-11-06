@@ -20,6 +20,10 @@ describe('refusalReason', () => {
     assert.equal(refusalReason('invalid: deletion target not found or not deletable by you'), 'this message was deleted, or you can no longer write here')
   })
 
+  it('says a reply under a comment deleted meanwhile, or in another team, was deleted or out of reach (§6.4)', () => {
+    assert.equal(refusalReason('invalid: reply parent not found in this team'), 'this message was deleted, or you can no longer write here')
+  })
+
   it('says a lost membership, a guest, a ban or a channel token as no longer able to write', () => {
     for (const reason of [
       'restricted: not a channel member',
