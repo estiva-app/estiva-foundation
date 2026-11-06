@@ -339,7 +339,7 @@ export interface ConversationMessage {
  * carries one, else the `['e', <root>, '', 'reply']` shape §6.4's table gives
  * for a reply, else the message itself.
  */
-function rootOf(event: SignedEvent): string {
+export function rootOf(event: SignedEvent): string {
   const upper = event.tags.find((t) => t[0] === 'E' && t[1])?.[1]
   if (upper) return upper
   const lower = event.tags.find((t) => t[0] === 'e' && t[1])?.[1]
