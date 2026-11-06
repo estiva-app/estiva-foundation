@@ -6,6 +6,31 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.34.0 — 2026-11-06
+
+**SPEC: §11.8 *Places and following*, as TEA-2 wrote it — nothing new on the
+wire; every app now writes the switch and lists a place's people the same way**
+(TEA-6).
+
+- `placeListing` (new): who a topic, space or team chat lists, from public
+  events alone (§11.8 *Who a place lists*): everyone who chose a level, everyone
+  added or joined, its author, and on a chat or space the team's members at
+  Important. Someone in it only through a team they follow is not named until
+  they choose a level. All first, then Important, each by since; each with its
+  ways in and who added them.
+- `followingOf` now says `addedBy`: who signed the Add that put the person in,
+  when it was not them.
+- `buildPlaceAdd` / `addPrevOf` (new): an Add on a place names the person's own
+  leave with `prev` when that is the field's current change (§6.2, §11.8), so
+  it puts them back in whatever the adder's clock says. `buildMembershipChange`
+  takes an optional `prev`, written after `ts`.
+- `switchWrites` / `switchStateOf` / `withPlaceOff` / `placeOffId` (new): the
+  switch. A level is a `follow:<P>`; Not following is a leave only when a level,
+  a join, an Add or authorship holds, plus a private `off` entry when a team's
+  default reaches the person, and nothing public when only the default does;
+  back to the default is an empty `follow:<P>` and the `off` entry removed. A
+  kept mute shows as Not following and is cleared by a level or the default.
+
 ## 0.33.0 — 2026-11-04
 
 **SPEC: none — nothing read or written changes; this is the words a person

@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.33.0'
+export const CONVERSATION_VERSION = '0.34.0'
 
 export {
   KIND_MESSAGE,
@@ -167,6 +167,16 @@ export {
   serializeTeamsBlob,
   buildTeamsEvent,
   teamsFilter,
+  placeListing,
+  buildPlaceAdd,
+  placeOffId,
+  switchStateOf,
+  switchWrites,
+  withPlaceOff,
+  type Listed,
+  type SwitchChoice,
+  type SwitchState,
+  type SwitchWrites,
   type Level,
   type PlaceKind,
   type Place,
