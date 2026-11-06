@@ -12,9 +12,11 @@ the second merge asked again, and the editor opened on their text alone, so
 words I typed in another paragraph were gone. It now puts their block back
 where theirs has it (under the same parent, after the nearest block before it
 that mine holds), so the editor opens on their text with my other changes in
-and the deleted block asking. Their text alone, with `sinceOpened`, stays for a
-block it cannot place: its parent deleted in mine too, or mine holding a block
-from inside it elsewhere.
+and the deleted block asking. When I deleted the block around it too (a quote,
+a list item), that outer block comes back whole and asks instead (`blocks`
+names it), so Use mine deletes all of it and leaves nothing empty. Their text
+alone, with `sinceOpened`, stays only when mine holds a block from inside it
+elsewhere.
 
 ## 0.55.0 — 2026-11-04
 

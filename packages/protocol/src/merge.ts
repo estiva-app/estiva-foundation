@@ -405,10 +405,11 @@ export interface TextAsks {
  * Mine is merged again with each asked block taken as theirs (theirs deleted
  * it: left out), which §13.3 then merges quietly. A block I deleted that they
  * changed is put back where theirs has it, after the nearest block before it
- * there that mine holds. When it cannot be placed (its parent is gone from
- * mine, or mine holds a block inside it elsewhere) or that merge asks again,
- * the editor holds their text alone, and none of their words are lost. So
- * does a text that is not a block document.
+ * there that mine holds; when I deleted the block around it too, that whole
+ * block comes back and asks instead. When it cannot be placed (mine holds a
+ * block from inside it elsewhere) or that merge asks again, the editor holds
+ * their text alone, and none of their words are lost. So does a text that is
+ * not a block document.
  */
 export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, asks: readonly MergeAsk[]): TextAsks {
   const blocks = asks.flatMap((ask) => (ask.block === null ? [] : [ask.block]))
@@ -428,11 +429,13 @@ export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, 
         return [children ? { ...block, content: settle(children) } : block]
       })
     const doc = parseBlockDocument(mine.value)
-    const content = putBack(settle(doc.content), indexOf(parseBlockDocument(theirs.value)), asked)
-    if (!content) return plain
-    const settled = { value: serializeBlockDocument({ ...doc, content }), format: BLOCKS_FORMAT }
+    const back = putBack(settle(doc.content), indexOf(parseBlockDocument(theirs.value)), asked)
+    if (!back) return plain
+    const settled = { value: serializeBlockDocument({ ...doc, content: back.content }), format: BLOCKS_FORMAT }
     const merged = mergeTexts(base, theirs, settled)
-    return merged.merged ? { ...plain, value: merged.merged.value, sinceOpened: undefined } : plain
+    if (!merged.merged) return plain
+    const asking = [...new Set(blocks.map((id) => back.asking.get(id) ?? id))]
+    return { ...plain, value: merged.merged.value, blocks: asking, sinceOpened: undefined }
   } catch {
     return plain
   }
@@ -450,41 +453,62 @@ function idsIn(blocks: Block[], into = new Set<string>()): Set<string> {
 
 /**
  * Put each asked block of theirs that `content` (mine, settled) lacks back
- * where theirs has it: under the same parent, after the nearest block before
- * it there that `content` holds, or first. `undefined` when one cannot be
- * placed. Returns new arrays; the blocks passed in are not changed.
+ * where theirs has it. When mine deleted the block around it too (a quote, a
+ * list item), the outermost block mine deleted comes back whole, as theirs has
+ * it, and asks in its place (`asking`: asked id → the block that asks), so Use
+ * mine deletes all of it and leaves nothing empty behind. Each goes under the
+ * same parent, after the nearest block before it there that `content` holds,
+ * or first. `undefined` when one cannot be placed: mine holds a block from
+ * inside it elsewhere. Returns new arrays; the blocks passed in are not changed.
  */
-function putBack(content: Block[], T: Indexed, asked: Map<string, Block | undefined>): Block[] | undefined {
+function putBack(content: Block[], T: Indexed, asked: Map<string, Block | undefined>): { content: Block[]; asking: Map<string, string> } | undefined {
+  const held = idsIn(content)
+  const asking = new Map<string, string>()
   for (const id of T.order) {
-    const back = asked.get(id)
-    if (!back) continue
-    const held = idsIn(content)
-    if (held.has(id)) continue
-    if ([...idsIn([back])].some((inner) => held.has(inner))) return undefined
-    const parent = T.byId.get(id)!.parent
-    if (parent !== null && !held.has(parent)) return undefined
+    if (!asked.get(id) || held.has(id)) continue
+    let top = id
+    let parent = T.byId.get(id)!.parent
+    while (parent !== null && !held.has(parent)) {
+      top = parent
+      parent = T.byId.get(parent)!.parent
+    }
+    const back = T.byId.get(top)!.block
+    const inside = idsIn([back])
+    if ([...inside].some((inner) => held.has(inner))) return undefined
     const siblings = T.children.get(parent)!
-    const before = siblings.slice(0, siblings.indexOf(id)).reverse()
-    const place = (under: Block[]): Block[] => {
+    const before = siblings.slice(0, siblings.indexOf(top)).reverse()
+    const put = (under: Block[]): Block[] => {
       const at = before.map((s) => under.findIndex((b) => b.id === s)).find((i) => i !== -1)
       const next = [...under]
       next.splice(at === undefined ? 0 : at + 1, 0, back)
       return next
     }
-    let placed = parent === null
-    const under = (blocks: Block[]): Block[] =>
-      blocks.map((block) => {
-        if (block.id === parent) {
-          const holdsBlocks = Array.isArray(block.content) && (block.content.length === 0 || !!childBlocksOf(block))
-          if (!holdsBlocks) return block
-          placed = true
-          return { ...block, content: place((block.content as Block[] | undefined) ?? []) }
-        }
-        const kids = childBlocksOf(block)
-        return kids ? { ...block, content: under(kids) } : block
-      })
-    content = parent === null ? place(content) : under(content)
-    if (!placed) return undefined
+    const next = parent === null ? put(content) : placeUnder(content, parent, put)
+    if (!next) return undefined
+    content = next
+    for (const inner of inside) {
+      held.add(inner)
+      if (asked.has(inner)) asking.set(inner, top)
+    }
   }
-  return content
+  return { content, asking }
+}
+
+/** `blocks` with `put` applied to the blocks under `parent`; `undefined` when no block there can hold blocks. */
+function placeUnder(blocks: Block[], parent: string, put: (under: Block[]) => Block[]): Block[] | undefined {
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    const kids = childBlocksOf(block)
+    let content: Block[] | undefined
+    if (block.id === parent) {
+      if (!Array.isArray(block.content) || (block.content.length > 0 && !kids)) return undefined
+      content = put(kids ?? [])
+    } else if (kids) content = placeUnder(kids, parent, put)
+    if (content) {
+      const next = [...blocks]
+      next[i] = { ...block, content }
+      return next
+    }
+  }
+  return undefined
 }
