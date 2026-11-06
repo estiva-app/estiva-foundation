@@ -133,7 +133,8 @@ describe('C11 — two strengths', () => {
 
   it("NIP-22's top-level shape, an a equal to its A plus an e with the file's version id, is a comment, not a reply", () => {
     const version = 'd'.repeat(64)
-    const nip22 = event({ kind: 1111, tags: [['A', ISSUE], ['E', version], ['K', '30851'], ['a', ISSUE], ['e', version], ['k', '30851'], ['h', FOLDER]] })
+    // NIP-22's own example for an addressable root: no `E`, so the `e` differs from it.
+    const nip22 = event({ kind: 1111, tags: [['A', ISSUE], ['K', '30851'], ['a', ISSUE], ['e', version], ['k', '30851'], ['h', FOLDER]] })
     assert.equal(parentOf(nip22), null)
     assert.equal(isReply(nip22), false)
     assert.equal(isCommentOn(nip22, ISSUE), true)
