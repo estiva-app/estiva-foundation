@@ -17,6 +17,7 @@ import {
   foldEmbeds,
   foldReactions,
   isCommentOn,
+  isReply,
   offersEditAndDelete,
   parentOf,
   reactionHorizon,
@@ -117,20 +118,33 @@ describe('C11 — two strengths', () => {
     assert.equal(isCommentOn(malformed, OTHER), true)
   })
 
-  it("a reply carrying the object's a lists as neither", () => {
+  it("a kind:9 reply carrying the object's a lists as neither", () => {
     const root = comment(ISSUE)
-    const reply1111 = event({ kind: 1111, tags: [['A', ISSUE], ['e', root.id], ['k', '1111'], ['a', ISSUE], ['h', FOLDER]] })
     const reply9 = event({ kind: 9, tags: [['h', FOLDER], ['e', root.id, '', 'reply'], ['a', ISSUE]] })
-    for (const reply of [reply1111, reply9]) {
-      assert.equal(isCommentOn(reply, ISSUE), false)
-      assert.equal(strengthOn(reply, ISSUE), null)
-    }
+    assert.equal(isCommentOn(reply9, ISSUE), false)
+    assert.equal(strengthOn(reply9, ISSUE), null)
   })
 
   it('a top-level comment on an event root, E and e naming one event, is a comment', () => {
     const target = 'c'.repeat(64)
     const onEvent = event({ kind: 1111, tags: [['E', target], ['K', '9'], ['a', ISSUE], ['e', target], ['k', '9'], ['h', FOLDER]] })
     assert.equal(parentOf(onEvent), null)
+  })
+
+  it("NIP-22's top-level shape, an a equal to its A plus an e with the file's version id, is a comment, not a reply", () => {
+    const version = 'd'.repeat(64)
+    const nip22 = event({ kind: 1111, tags: [['A', ISSUE], ['E', version], ['K', '30851'], ['a', ISSUE], ['e', version], ['k', '30851'], ['h', FOLDER]] })
+    assert.equal(parentOf(nip22), null)
+    assert.equal(isReply(nip22), false)
+    assert.equal(isCommentOn(nip22, ISSUE), true)
+    assert.deepEqual(groupThreads([nip22]).roots.map((e) => e.id), [nip22.id])
+  })
+
+  it('an e differing from E with an a naming another file is still a reply', () => {
+    const root = comment(ISSUE)
+    const reply = event({ kind: 1111, tags: [['A', ISSUE], ['e', root.id], ['k', '1111'], ['a', OTHER], ['h', FOLDER]] })
+    assert.equal(parentOf(reply), root.id)
+    assert.equal(isCommentOn(reply, ISSUE), false)
   })
 })
 

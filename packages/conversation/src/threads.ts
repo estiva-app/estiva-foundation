@@ -28,7 +28,9 @@ const es = (event: Pick<SignedEvent, 'tags'>) =>
  *
  * - `kind:1111`: the lowercase `e` that is not its `E` — the parent comment.
  *   A top-level comment on an event root carries `E` and `e` naming the same
- *   event, and is a root.
+ *   event, and is a root. One with an `a` equal to its `A` names its file as
+ *   its parent and is a root whatever its `e` says: NIP-22's own shape adds an
+ *   `e` with the file's version id.
  * - `kind:9` (and any other kind): the thread — the `root`-marked `e`, else
  *   the `reply`-marked one, else the first unmarked `e` when there is only one,
  *   else the first of several (NIP-10's positional form).
@@ -37,6 +39,8 @@ export function parentOf(event: Tagged): string | null {
   const tags = es(event)
   if (tags.length === 0) return null
   if (event.kind === KIND_COMMENT) {
+    const address = event.tags.find((t) => t[0] === 'A')?.[1]
+    if (address && event.tags.some((t) => t[0] === 'a' && t[1] === address)) return null
     const root = event.tags.find((t) => t[0] === 'E')?.[1]
     return tags.find((t) => t[1] !== root)?.[1] ?? null
   }

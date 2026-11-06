@@ -21,6 +21,12 @@ team only when every returned reply names the same `h`** (747a2ab3; SPEC
 - `refusalReason`: the relay's new `invalid: reply parent not found in this
   team` (a reply sent under a comment deleted meanwhile) reads "this message
   was deleted, or you can no longer write here", not "something went wrong".
+- `parentOf` / `isReply` (SPEC §6.4 *Replies*; Miky, 6 Nov): a `kind:1111`
+  with an `a` equal to its `A` is a top-level comment whatever its `e` says,
+  so NIP-22's own shape (adding `e` with the file's version id) lists as a
+  comment, not a reply. `isReply` is now `parentOf(event) !== null`, the one
+  test the relay uses too. On production no comment changes (2026-11-06: 0 of
+  713 replies carry the file's `a`).
 
 ## 0.34.0 — 2026-11-06
 
