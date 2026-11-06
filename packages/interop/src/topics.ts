@@ -270,6 +270,8 @@ export interface ListedFile {
   file: string
   /** Its address when exactly one file the reader can read holds the id, else `null`: not drawn, not counted. */
   address: string | null
+  /** The resolved file's Folder, from its root (§6.2), when it names one; `null` when unresolved or it names none. */
+  folder: string | null
   entry: ListEntry
 }
 
@@ -329,7 +331,10 @@ async function listsOf(
     .sort((a, b) => byOrder(a.event, b.event))
   if (entries.length === 0) return out
   const resolved = await resolveIds(query, [...new Set(entries.map((entry) => entry.file))], options.fileKinds)
-  for (const entry of entries) out.get(entry.list)!.push({ file: entry.file, address: resolved.get(entry.file) ?? null, entry })
+  for (const entry of entries) {
+    const held = resolved.get(entry.file)
+    out.get(entry.list)!.push({ file: entry.file, address: held?.address ?? null, folder: held?.folder ?? null, entry })
+  }
   return out
 }
 
@@ -605,7 +610,11 @@ export async function topicConversations(
 }
 
 /** Each id's address when exactly one file of `fileKinds` the reader can read holds it; an id held by none or by two is left out. */
-async function resolveIds(query: QueryFn, ids: readonly string[], fileKinds?: readonly number[]): Promise<Map<string, string>> {
+async function resolveIds(
+  query: QueryFn,
+  ids: readonly string[],
+  fileKinds?: readonly number[],
+): Promise<Map<string, { address: string; folder: string | null }>> {
   // Never a Folder's `39000`, which shares its uuid (§11.1): an id only a Folder holds resolves to nothing.
   const kinds = (fileKinds ?? LISTED_FILE_KINDS).filter((kind) => kind !== KIND_FOLDER)
   // Room for a second holder of every id, so two holders are seen as two; in
@@ -617,15 +626,22 @@ async function resolveIds(query: QueryFn, ids: readonly string[], fileKinds?: re
   // first), and one holder would then pass for the only one: every id of that
   // batch stays unresolved rather than drawn as somebody else's file.
   const unsure = new Set(batches.flatMap((batch, i) => (answers[i].length >= batch.length * 2 ? batch : [])))
-  const holders = new Map<string, Set<string>>()
+  // Each holder's newest root: a replaceable file the relay still holds two versions of names its Folder by the newer.
+  const holders = new Map<string, Map<string, SignedEvent>>()
   for (const event of answers.flat()) {
     const d = tagOf(event, 'd')
     if (!d || !kinds.includes(event.kind)) continue
-    const set = holders.get(d) ?? new Set<string>()
-    set.add(`${event.kind}:${event.pubkey}`)
-    holders.set(d, set)
+    const roots = holders.get(d) ?? new Map<string, SignedEvent>()
+    const holder = `${event.kind}:${event.pubkey}`
+    const kept = roots.get(holder)
+    if (!kept || event.created_at > kept.created_at) roots.set(holder, event)
+    holders.set(d, roots)
   }
-  const out = new Map<string, string>()
-  for (const [d, set] of holders) if (set.size === 1 && !unsure.has(d)) out.set(d, `${[...set][0]}:${d}`)
+  const out = new Map<string, { address: string; folder: string | null }>()
+  for (const [d, roots] of holders) {
+    if (roots.size !== 1 || unsure.has(d)) continue
+    const [[holder, root]] = roots
+    out.set(d, { address: `${holder}:${d}`, folder: folderOf(root) })
+  }
   return out
 }

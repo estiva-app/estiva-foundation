@@ -183,6 +183,21 @@ export {
 } from './topics.js'
 
 /**
+ * A topic's All: the conversations of every file on its list, read in one go
+ * and kept live, each file's events ready for the shared fold (SPEC §11.8).
+ */
+export {
+  listedConversations,
+  listedConversationsOf,
+  watchListedConversations,
+  LISTED_WATCH_REBUILD_MS,
+  MAX_FILTERS_PER_REQ,
+  type ListedConversation,
+  type ListedConversations,
+  type ListedWatch,
+} from './listedConversations.js'
+
+/**
  * A file as its fields, each kept in order by the relay (SPEC §6.2, §6.13):
  * the list and open reads, and the change writer that answers `conflict:`.
  */
