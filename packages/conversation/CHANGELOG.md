@@ -18,6 +18,9 @@ team only when every returned reply names the same `h`** (747a2ab3; SPEC
   team, and with it who may resolve the thread or whether it reads as deleted.
   Such a thread stays `missing` ("This comment can't be shown."), never
   `deleted`. On production every reply already agrees (2026-11-06: 713 of 713).
+- `refusalReason`: the relay's new `invalid: reply parent not found in this
+  team` (a reply sent under a comment deleted meanwhile) reads "this message
+  was deleted, or you can no longer write here", not "something went wrong".
 
 ## 0.34.0 — 2026-11-06
 

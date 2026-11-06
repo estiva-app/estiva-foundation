@@ -88,7 +88,7 @@ const RULES: readonly [RegExp, RefusalCause][] = [
   [/timestamp too far|clock/i, 'clock'],
   [/auth-required|insufficient scope|does not match authenticated|signed out|sign in|\b401\b|token_rejected|session_expired/i, 'signed-out'],
   [/archived/i, 'archived'],
-  [/target (event )?not found|not (editable|deletable) by you|was deleted|no longer on this page/i, 'gone'],
+  [/(target|parent) (event )?not found|not (editable|deletable) by you|was deleted|no longer on this page/i, 'gone'],
   [/^(restricted|blocked):|not a (channel |relay )?member|only members|no longer (post|write)|banned|timed out until|writes are fenced|\b403\b/i, 'no-access'],
 ]
 
