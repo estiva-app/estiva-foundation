@@ -133,9 +133,11 @@ describe('readTopics — every topic the viewer can read, once', () => {
     assert.deepEqual([by.get(delta.address)!.following.level, by.get(delta.address)!.following.addedBy], ['important', THEM])
   })
 
-  it('takes a topic off the viewer’s once they leave it, whatever level they had chosen', async () => {
-    const read = await readTopics(relay([...world, level(bravo, 'all', NOW - 5 * DAY), leave(bravo, NOW - 2 * DAY)]).query, ME, { nowSeconds: NOW })
-    assert.equal(read.topics.find((t) => t.address === bravo.address)!.yours, false)
+  it('takes a topic off the viewer’s when they leave it, and gives it back when they choose a level after', async () => {
+    const left = await readTopics(relay([...world, level(bravo, 'all', NOW - 5 * DAY), leave(bravo, NOW - 2 * DAY)]).query, ME, { nowSeconds: NOW })
+    assert.equal(left.topics.find((t) => t.address === bravo.address)!.yours, false)
+    const back = await readTopics(relay([...world, leave(bravo, NOW - 2 * DAY), level(bravo, 'important', NOW - DAY)]).query, ME, { nowSeconds: NOW })
+    assert.deepEqual([back.topics.find((t) => t.address === bravo.address)!.yours, back.topics.find((t) => t.address === bravo.address)!.following.since], [true, NOW - DAY])
   })
 
   it('marks a topic a space only where a team’s list gives its entry the role, by address or by id', async () => {

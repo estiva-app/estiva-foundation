@@ -519,7 +519,13 @@ export async function readTopics(
   const byTopic = new Map<string, SignedEvent[]>()
   // A change by its `a`, a level included: `candidateFilesOf` leaves levels out, since they say nothing of file membership.
   const filesOf = (event: SignedEvent) => (event.kind === KIND_CHANGE ? event.tags.filter((t) => t[0] === 'a').map((t) => t[1]) : candidateFilesOf(event))
-  for (const event of part) for (const file of filesOf(event)) byTopic.set(file, [...(byTopic.get(file) ?? []), event])
+  for (const event of part) {
+    for (const file of filesOf(event)) {
+      const held = byTopic.get(file)
+      if (held) held.push(event)
+      else byTopic.set(file, [event])
+    }
+  }
   const mentionedIn = new Set<string>()
   for (const [file, events] of byTopic) if (events.some((e) => e.kind === KIND_COMMENT && membership.mentioned.has(e.id))) mentionedIn.add(file)
   const inConversations = new Map<string, number>()
@@ -629,10 +635,8 @@ export async function topicConversations(
         const asEvents = thread
           .sort((a, b) => a.at - b.at)
           .map((m) => ({ id: m.id, pubkey: m.by, kind: KIND_COMMENT, created_at: m.at, tags: [], content: read.membership.mentioned.has(m.id) ? named : '', root: m.root }))
-        // When the viewer came into this conversation: wrote in it, or was named in it, before the reply floor too.
-        const here = asEvents.find((m) => m.pubkey === read.me || m.content === named)?.created_at
-        const before = read.inConversations.get(thread[0]!.root)
-        const inSince = here === undefined ? before : before === undefined ? here : Math.min(here, before)
+        // When the viewer came into this conversation (wrote in it or was named in it), before the reply floor too.
+        const inSince = read.inConversations.get(thread[0]!.root)
         if (asEvents.some((m) => isUnreadOnPlace(m, m.root === m.id ? undefined : m.root, state.merged, judge, inSince))) fresh++
       }
     }
