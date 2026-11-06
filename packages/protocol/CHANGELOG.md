@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.55.1 — 2026-11-06
+
+**Wire: nothing** (ALO-16; SPEC §13.3). `textAsksOf` kept none of my changes
+when I had deleted a block they changed: that block was not in mine to settle,
+the second merge asked again, and the editor opened on their text alone, so
+words I typed in another paragraph were gone. It now puts their block back
+where theirs has it (under the same parent, after the nearest block before it
+that mine holds), so the editor opens on their text with my other changes in
+and the deleted block asking. When I deleted the block around it too (a quote,
+a list item), that outer block comes back whole and asks instead (`blocks`
+names it), so Use mine deletes all of it and leaves nothing empty. Their text
+alone, with `sinceOpened`, stays only when mine holds a block from inside it
+elsewhere.
+
 ## 0.55.0 — 2026-11-04
 
 **Wire: nothing** (ALO-6; SPEC §13.3). `textAsksOf(base, theirs, mine, asks)`

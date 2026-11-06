@@ -177,15 +177,77 @@ describe('textAsksOf — what the editor holds while a save asks (ALO-1\'s story
     assert.equal(held.sinceOpened, undefined, 'no "changed since you opened it": my changes are in')
   })
 
-  it('a block I deleted that they changed holds their text alone and says the page changed, losing none of their words', () => {
+  it('a block I deleted that they changed asks with their words in place, and my words in another block are kept (ALO-16, round N7b)', () => {
+    const base = blocks(doc(p('b1', 'one'), p('b2', 'two'), p('b3', 'three')))
+    const theirs = blocks(doc(p('b1', 'one'), p('b2', 'two'), p('b3', 'three, theirs')))
+    const mine = blocks(doc(p('b1', 'one, mine'), p('b2', 'two')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.deepEqual(words(JSON.parse(held.value)), ['one, mine', 'two', 'three, theirs'])
+    assert.deepEqual(held.blocks, ['b3'])
+    assert.equal(held.mine, mine.value, 'mine as I saved it: Use mine deletes the block')
+    assert.equal(held.sinceOpened, undefined, 'no "changed since you opened it": my changes are in')
+  })
+
+  it('a block I deleted that they changed goes back first when nothing before it is left in mine', () => {
     const base = blocks(doc(p('b1', 'one'), p('b2', 'two')))
-    const theirs = blocks(doc(p('b1', 'one'), p('b2', 'two, theirs')))
+    const theirs = blocks(doc(p('b1', 'one, theirs'), p('b2', 'two')))
+    const mine = blocks(doc(p('b2', 'two, mine')))
+    const held = textAsksOf(base, theirs, mine, mergeTexts(base, theirs, mine).asks!)
+    assert.deepEqual(words(JSON.parse(held.value)), ['one, theirs', 'two, mine'])
+    assert.equal(held.sinceOpened, undefined)
+  })
+
+  it('a paragraph I deleted inside a quote that they changed goes back into the quote, beside my edit of the other one', () => {
+    const quote = (...inner: Block[]): Block => ({ type: 'blockquote', id: 'q', content: inner })
+    const base = blocks(doc(quote(p('q1', 'first'), p('q2', 'second'), p('q3', 'third'))))
+    const theirs = blocks(doc(quote(p('q1', 'first'), p('q2', 'second, theirs'), p('q3', 'third'))))
+    const mine = blocks(doc(quote(p('q1', 'first'), p('q3', 'third, mine'))))
+    const { asks } = mergeTexts(base, theirs, mine)
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.deepEqual(held.blocks, ['q2'])
+    assert.deepEqual(words(JSON.parse(held.value).content[0]), ['first', 'second, theirs', 'third, mine'])
+    assert.equal(held.sinceOpened, undefined)
+  })
+
+  it('a list I deleted that they changed, with one of its items kept elsewhere in mine, holds their text alone and says the page changed', () => {
+    const list = (start: number, ...items: Block[]): Block => ({ type: 'orderedList', id: 'l', attrs: { start }, content: items })
+    const item = (id: string, text: string): Block => ({ type: 'listItem', id, content: [p(`${id}p`, text)] })
+    const base = blocks(doc(p('b0', 'zero'), list(1, item('i1', 'first'), item('i2', 'second'))))
+    const theirs = blocks(doc(p('b0', 'zero'), list(2, item('i1', 'first'), item('i2', 'second'))))
+    const mine = blocks(doc(item('i2', 'second'), p('b0', 'zero, mine')))
+    const { asks } = mergeTexts(base, theirs, mine)
+    assert.ok(asks?.some((a) => a.block === 'l'))
+    const held = textAsksOf(base, theirs, mine, asks!)
+    assert.equal(held.value, theirs.value, 'no second copy of the item I kept')
+    assert.equal(held.sinceOpened, true)
+  })
+
+  it('a quote I deleted, around a paragraph they changed, comes back whole and asks, and my words elsewhere are kept', () => {
+    const quote = (...inner: Block[]): Block => ({ type: 'blockquote', id: 'q', content: inner })
+    const base = blocks(doc(p('b1', 'one'), quote(p('q1', 'quoted'), p('q2', 'also quoted'))))
+    const theirs = blocks(doc(p('b1', 'one'), quote(p('q1', 'quoted, theirs'), p('q2', 'also quoted, theirs'))))
     const mine = blocks(doc(p('b1', 'one, mine')))
     const { asks } = mergeTexts(base, theirs, mine)
     const held = textAsksOf(base, theirs, mine, asks!)
-    assert.equal(held.value, theirs.value)
-    assert.deepEqual(held.blocks, ['b2'])
-    assert.equal(held.sinceOpened, true)
+    const opened = JSON.parse(held.value)
+    assert.equal(words(opened)![0], 'one, mine', 'my words kept')
+    assert.deepEqual(words(opened.content[1]), ['quoted, theirs', 'also quoted, theirs'], 'the quote back as theirs has it')
+    assert.deepEqual(held.blocks, ['q'], 'the whole quote asks, so Use mine deletes all of it')
+    assert.equal(held.sinceOpened, undefined)
+  })
+
+  it('a list item I deleted, whose words they changed, comes back whole and asks, beside my edit of another item', () => {
+    const list = (...items: Block[]): Block => ({ type: 'bulletList', id: 'l', content: items })
+    const item = (id: string, text: string): Block => ({ type: 'listItem', id, content: [p(`${id}p`, text)] })
+    const base = blocks(doc(list(item('i1', 'first'), item('i2', 'second'), item('i3', 'third'))))
+    const theirs = blocks(doc(list(item('i1', 'first'), item('i2', 'second, theirs'), item('i3', 'third'))))
+    const mine = blocks(doc(list(item('i1', 'first'), item('i3', 'third, mine'))))
+    const held = textAsksOf(base, theirs, mine, mergeTexts(base, theirs, mine).asks!)
+    const items = JSON.parse(held.value).content[0].content.map((i: Block) => words({ type: 'doc', content: i.content as Block[] })![0])
+    assert.deepEqual(items, ['first', 'second, theirs', 'third, mine'])
+    assert.deepEqual(held.blocks, ['i2'])
+    assert.equal(held.sinceOpened, undefined)
   })
 
   it('a list whose numbering both changed asks for the list alone, and my words in its items are kept', () => {
