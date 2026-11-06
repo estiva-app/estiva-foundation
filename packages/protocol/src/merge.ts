@@ -404,9 +404,11 @@ export interface TextAsks {
  *
  * Mine is merged again with each asked block taken as theirs (theirs deleted
  * it: left out), which §13.3 then merges quietly. A block I deleted that they
- * changed cannot be put back where it was from mine, so that merge may ask
- * again: then the editor holds their text alone, and none of their words are
- * lost. So does a text that is not a block document.
+ * changed is put back where theirs has it, after the nearest block before it
+ * there that mine holds. When it cannot be placed (its parent is gone from
+ * mine, or mine holds a block inside it elsewhere) or that merge asks again,
+ * the editor holds their text alone, and none of their words are lost. So
+ * does a text that is not a block document.
  */
 export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, asks: readonly MergeAsk[]): TextAsks {
   const blocks = asks.flatMap((ask) => (ask.block === null ? [] : [ask.block]))
@@ -426,10 +428,63 @@ export function textAsksOf(base: MergeText, theirs: MergeText, mine: MergeText, 
         return [children ? { ...block, content: settle(children) } : block]
       })
     const doc = parseBlockDocument(mine.value)
-    const settled = { value: serializeBlockDocument({ ...doc, content: settle(doc.content) }), format: BLOCKS_FORMAT }
+    const content = putBack(settle(doc.content), indexOf(parseBlockDocument(theirs.value)), asked)
+    if (!content) return plain
+    const settled = { value: serializeBlockDocument({ ...doc, content }), format: BLOCKS_FORMAT }
     const merged = mergeTexts(base, theirs, settled)
     return merged.merged ? { ...plain, value: merged.merged.value, sinceOpened: undefined } : plain
   } catch {
     return plain
   }
+}
+
+/** Every block id in a run of blocks, nested ones included. */
+function idsIn(blocks: Block[], into = new Set<string>()): Set<string> {
+  for (const block of blocks) {
+    into.add(block.id)
+    const kids = childBlocksOf(block)
+    if (kids) idsIn(kids, into)
+  }
+  return into
+}
+
+/**
+ * Put each asked block of theirs that `content` (mine, settled) lacks back
+ * where theirs has it: under the same parent, after the nearest block before
+ * it there that `content` holds, or first. `undefined` when one cannot be
+ * placed. Returns new arrays; the blocks passed in are not changed.
+ */
+function putBack(content: Block[], T: Indexed, asked: Map<string, Block | undefined>): Block[] | undefined {
+  for (const id of T.order) {
+    const back = asked.get(id)
+    if (!back) continue
+    const held = idsIn(content)
+    if (held.has(id)) continue
+    if ([...idsIn([back])].some((inner) => held.has(inner))) return undefined
+    const parent = T.byId.get(id)!.parent
+    if (parent !== null && !held.has(parent)) return undefined
+    const siblings = T.children.get(parent)!
+    const before = siblings.slice(0, siblings.indexOf(id)).reverse()
+    const place = (under: Block[]): Block[] => {
+      const at = before.map((s) => under.findIndex((b) => b.id === s)).find((i) => i !== -1)
+      const next = [...under]
+      next.splice(at === undefined ? 0 : at + 1, 0, back)
+      return next
+    }
+    let placed = parent === null
+    const under = (blocks: Block[]): Block[] =>
+      blocks.map((block) => {
+        if (block.id === parent) {
+          const holdsBlocks = Array.isArray(block.content) && (block.content.length === 0 || !!childBlocksOf(block))
+          if (!holdsBlocks) return block
+          placed = true
+          return { ...block, content: place((block.content as Block[] | undefined) ?? []) }
+        }
+        const kids = childBlocksOf(block)
+        return kids ? { ...block, content: under(kids) } : block
+      })
+    content = parent === null ? place(content) : under(content)
+    if (!placed) return undefined
+  }
+  return content
 }
