@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.88.0 — 2026-11-06
+
+**Manifest: nothing new. Wire: reads only, nothing written; the list read (SPEC §6.13) now also answers parents and archived parents** (ALO-15).
+
+- `resolveParents` takes `{ listRead: true }`: a file of the relay's file
+  kinds is read as its first record and its fields' current changes, its move
+  among them, never every change by `#a`. One the list read leaves out
+  (deleted, or not this reader's) is read as before.
+- Archived with a parent (`archivedWith`): `ArchiveReadOptions` gains
+  `listRead`. Each ancestor of any file kind with it (and with
+  `resolveForeignRoots`' and `resolveFolderContents`' `listRead`), or of a kind
+  in `openRead`, is read by the list read too, with the same fallback. Pass it
+  as soon as NIP-11 advertises `file_list.newest` (record
+  a-relay-advertises-the-list-read-apart-from-the-switch). A deleted archived
+  parent still archives its child.
+- Without either option every read is as before.
+- Peek and Leaf pass these where they already open projects by their fields,
+  so a page stops reading every change of the projects it draws as parents.
+
 ## 0.87.0 — 2026-11-06
 
 **Manifest: nothing new. Wire: reads only, nothing written; the reads are the ones 0.86.0 made** (SPEC §11.8 *Places and following*, *What is unread on a place*).
