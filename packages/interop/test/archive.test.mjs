@@ -596,6 +596,23 @@ describe('a Folder is archived the way any file is', () => {
     )
   })
 
+  test('with the list read, a file under an archived file in another Folder is hidden, and that parent’s changes are not read by `#a` (ALO-15)', async () => {
+    const top = event({ kind: KIND_BARE_FILE, tags: [['d', 'season'], ['title', 'Season'], ['h', ORCHARD]] })
+    const child = event({ kind: KIND_BARE_FILE, tags: [['d', 'frames'], ['title', 'Frames'], ['a', addressOf(top)], ['h', APIARY]] })
+    const edits = Array.from({ length: 20 }, (_, n) =>
+      event({ kind: 1851, tags: [['a', addressOf(top)], ['field', 'description'], ['value', `Draft ${n}`], ['h', ORCHARD]] }),
+    )
+    const base = [apiary, orchard, top, child, ...edits, stateOf(APIARY, 'Apiary', [addressOf(child)])]
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, spying(base).query, noPeople, undefined, { listRead: true })), ['Frames'])
+    const hidden = spying([...base, archive(addressOf(top), { folder: ORCHARD })])
+    assert.deepEqual(titles(await resolveFolderContents(APIARY, hidden.query, noPeople, undefined, { listRead: true })), [])
+    assert.deepEqual(
+      hidden.byA().filter((value) => [addressOf(top), addressOf(child)].includes(value)),
+      [],
+      'no file’s changes are asked for',
+    )
+  })
+
   test('with the list read, files read by address are folded from their current changes, none read by `#a` (ALO-5)', async () => {
     const renamed = event({ kind: 1851, tags: [['a', addressOf(drones)], ['field', 'title'], ['value', 'Drone frames'], ['h', APIARY]] })
     const read = spying([hiveLog, apiary, hive, topic, drones, renamed, archive(addressOf(topic))])
