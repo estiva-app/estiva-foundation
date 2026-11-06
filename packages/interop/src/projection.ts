@@ -3614,7 +3614,7 @@ export async function resolveForeignObject(
   const assembled = assembleObject(plan, answered, childChanges, childOwners, options.archivedChildren)
   if (assembled.object.unreachable) return assembled.object
   if (options.archivedWith) {
-    await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query, cache, options.openRead)
+    await markArchivedParents([{ object: assembled.object, manifest: resolved.manifest }], query, cache, parentListKinds(options))
   }
   return withFiles(
     withBorrowed(
@@ -3763,7 +3763,7 @@ export async function resolveForeignObjects(
       assembled.map(({ plan, built }) => ({ object: built.object, manifest: plan.resolved.manifest })),
       query,
       cache,
-      options.openRead,
+      parentListKinds(options),
     )
   }
   const wanted = [...new Set(assembled.flatMap(({ built }) => peopleOf(built)))]
@@ -4087,7 +4087,7 @@ export async function resolveParents(
   )
 
   const drawn = asked.filter(({ pointer }) => manifests.get(manifestKeyOf(pointer))?.projections?.[String(pointer.kind)])
-  const byList = options.listRead ? drawn.filter(({ pointer }) => FILE_KINDS.includes(pointer.kind)) : []
+  const byList = new Set(options.listRead ? drawn.filter(({ pointer }) => FILE_KINDS.includes(pointer.kind)) : [])
   const plainRead = (some: typeof asked) => {
     const filters = parentFilters(
       some.map(({ pointer }) => pointer),
@@ -4096,13 +4096,13 @@ export async function resolveParents(
     return filters.length ? queryChunked(filters, query) : Promise.resolve<SignedEvent[]>([])
   }
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
-  const listFilters = listReadFilters(byList.map(({ pointer }) => pointer))
+  const listFilters = listReadFilters([...byList].map(({ pointer }) => pointer))
   const [listed, plain] = await Promise.all([
-    listFilters.length ? queryChunked(listFilters, query) : Promise.resolve([]),
-    plainRead(drawn.filter((entry) => !byList.includes(entry))),
+    listFilters.length ? queryChunked(listFilters, query) : Promise.resolve<SignedEvent[]>([]),
+    plainRead(drawn.filter((entry) => !byList.has(entry))),
   ])
   // Deleted, or not this reader's: read as before, so a deleted file still has its parent.
-  const unanswered = byList.filter(({ pointer }) => !listedIn(listed, pointer))
+  const unanswered = [...byList].filter(({ pointer }) => !listedIn(listed, pointer))
   const events = [...listed, ...plain, ...(unanswered.length ? await plainRead(unanswered) : [])]
 
   for (const { reference, pointer } of drawn) {
@@ -4212,6 +4212,22 @@ export interface ArchiveReadOptions {
    * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
    */
   openRead?: readonly number[]
+  /**
+   * With `archivedWith`: read each parent of the relay's file kinds by the list
+   * read (SPEC §6.13), its first record and each field's current change, never
+   * every change by `#a`. Pass it as soon as NIP-11 advertises
+   * `file_list.newest`, switched or not. The kinds in `openRead` are read so
+   * too. A parent the list read leaves out (deleted, not this reader's) is read
+   * as before.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-relay-advertises-the-list-read-apart-from-the-switch.md
+   */
+  listRead?: boolean
+}
+
+/** The parent kinds an archived-with read reads by the list read: every file kind with `listRead`, else the opened ones. */
+function parentListKinds(options: Pick<ArchiveReadOptions, 'listRead' | 'openRead'>): readonly number[] {
+  return options.listRead ? FILE_KINDS : (options.openRead ?? [])
 }
 
 /**
@@ -4365,17 +4381,22 @@ async function walkArchivedAbove(
     const ancestors = resolved.filter((a): a is typeof a & { manifest: Manifest } => !!a.manifest)
     const rules = ancestors.map(({ manifest }) => archiveRuleOf(manifest))
     const addresses = [...new Set(ancestors.map(({ address }) => address))]
-    const byList = addresses.filter((address) => listKinds.includes(addressPointerOf(address)!.kind))
+    const byList = new Set(
+      addresses.filter((address) => {
+        const { kind } = addressPointerOf(address)!
+        return listKinds.includes(kind) && FILE_KINDS.includes(kind)
+      }),
+    )
     const plainRead = (some: readonly string[]) =>
       some.length ? queryChunked(ancestorFilters(some, rules), query) : Promise.resolve<SignedEvent[]>([])
     // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
-    const listFilters = listReadFilters(byList.map((address) => addressPointerOf(address)!))
+    const listFilters = listReadFilters([...byList].map((address) => addressPointerOf(address)!))
     const [listed, plain] = await Promise.all([
       listFilters.length ? queryChunked(listFilters, query) : Promise.resolve<SignedEvent[]>([]),
-      plainRead(addresses.filter((address) => !byList.includes(address))),
+      plainRead(addresses.filter((address) => !byList.has(address))),
     ])
     // Deleted, or not this reader's: read as before, so the walk ends where it always did.
-    const unanswered = byList.filter((address) => !listedIn(listed, addressPointerOf(address)!))
+    const unanswered = [...byList].filter((address) => !listedIn(listed, addressPointerOf(address)!))
     const events = [...listed, ...plain, ...(await plainRead(unanswered))]
     const read = new Map<string, { archive?: Archive; parent?: string; manifest?: Manifest }>()
     for (const [index, { key, address, pointer, manifest }] of ancestors.entries()) {
@@ -4583,9 +4604,7 @@ async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn): Promi
     }
   }
   const answered = await queryChunked(filters, query)
-  const unanswered = [...opened.values()].filter(
-    ({ pointer }) => !answered.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier),
-  )
+  const unanswered = [...opened.values()].filter(({ pointer }) => !listedIn(answered, pointer))
   const history = unanswered.length ? await queryChunked(unanswered.flatMap((plan) => plan.history), query) : []
   return [...answered, ...history]
 }

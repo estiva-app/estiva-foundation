@@ -144,6 +144,14 @@ describe('an archived parent, read by the list read', () => {
     assert.deepEqual(projects, [], `read by #a: ${projects}`)
   })
 
+  test('with listRead and no switched kinds, an issue is archived with its project, and no project’s changes are read', async () => {
+    const { shelved, under, events } = setup()
+    const r = relay(events)
+    const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true, listRead: true })
+    assert.equal(opened.archived?.with, addressOf(shelved))
+    assert.deepEqual(r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`)), [])
+  })
+
   test('issues listed by the list read are archived with their project, and no changes are read one by one', async () => {
     const { shelved, under, fine, events } = setup()
     const r = relay(events)

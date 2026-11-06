@@ -14,11 +14,13 @@ manifests already published still mean what they meant.
   kinds is read as its first record and its fields' current changes, its move
   among them, never every change by `#a`. One the list read leaves out
   (deleted, or not this reader's) is read as before.
-- Archived with a parent (`archivedWith`): each ancestor of a kind the caller
-  opens by the open read (`openRead`), or of any file kind with
-  `resolveForeignRoots`' and `resolveFolderContents`' `listRead`, is read by
-  the list read too, with the same fallback. A deleted archived parent still
-  archives its child.
+- Archived with a parent (`archivedWith`): `ArchiveReadOptions` gains
+  `listRead`. Each ancestor of any file kind with it (and with
+  `resolveForeignRoots`' and `resolveFolderContents`' `listRead`), or of a kind
+  in `openRead`, is read by the list read too, with the same fallback. Pass it
+  as soon as NIP-11 advertises `file_list.newest` (record
+  a-relay-advertises-the-list-read-apart-from-the-switch). A deleted archived
+  parent still archives its child.
 - Without either option every read is as before.
 - Peek and Leaf pass these where they already open projects by their fields,
   so a page stops reading every change of the projects it draws as parents.
