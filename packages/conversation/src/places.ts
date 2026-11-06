@@ -26,7 +26,7 @@
  */
 import { fileIdOf, KIND, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE } from './kinds.js'
-import { APPDATA_TAG, FOLLOW_FIELD_PREFIX, memberOfField } from './membership.js'
+import { APPDATA_TAG, FOLLOW_FIELD_PREFIX, buildMembershipChange, memberOfField } from './membership.js'
 import { byOrder } from './order.js'
 import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, streamMarkerOf, threadContext } from './readState.js'
 import { peopleNamedInBody } from './strength.js'
@@ -106,6 +106,8 @@ export interface Following {
   allSince?: number
   /** Every way in that holds now. */
   ways: WayIn[]
+  /** Who put them in, when the way `added` holds and somebody else signed the Add; undefined for their own join. */
+  addedBy?: string
 }
 
 type Act = { event: Event; act: 'creation' | 'level' | 'clear' | 'join' | 'leave'; level?: Level }
@@ -294,6 +296,7 @@ export function followingOf(place: Place, person: string, facts: PlaceFacts): Fo
   if (joined) {
     out.ways.push('added')
     starts.push(joined.event.created_at)
+    if (joined.event.pubkey !== person) out.addedBy = joined.event.pubkey
   }
   // 3. Made it: the first record orders before everything, so any leave ends it.
   const made = after.find((a) => a.act === 'creation')
@@ -320,6 +323,172 @@ export function followingOf(place: Place, person: string, facts: PlaceFacts): Fo
 
   if (out.ways.length === 0) return out
   return { ...out, in: true, level: chosen?.level ?? 'important', since: Math.min(...starts), ...(chosen?.allSince !== undefined ? { allSince: chosen.allSince } : {}) }
+}
+
+// ── Who a place lists ───────────────────────────────────────────────────────
+
+/** One person a place lists, and how they are in it. */
+export interface Listed {
+  pubkey: string
+  level: Level
+  /** Every way in that holds, of the ones anyone can see: `team` only for the team's members. */
+  ways: WayIn[]
+  since?: number
+  /** Who added them, when somebody else did. */
+  addedBy?: string
+}
+
+/**
+ * Who a place lists (§11.8 *Who a place lists*), worked out from public
+ * events alone so every reader gets the same list: everyone who chose a level
+ * (at that level), everyone added or joined (at their level, or Important),
+ * its author, and, on a team's chat and spaces, the team's members at the
+ * default. Someone in it only through a team they follow is not named until
+ * they choose a level, and a member's private opt-out is not seen: the list
+ * undercounts. All first, then Important, each by since.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-place-lists-who-chose-a-level-and-its-teams-members.md
+ */
+export function placeListing(place: Place, facts: Omit<PlaceFacts, 'teams'>): Listed[] {
+  const people = new Set<string>()
+  const versions = place.address.startsWith(`${KIND_TEAM}:`) ? [] : facts.events.filter((e) => addressOf(e) === place.address)
+  for (const v of versions) people.add(v.pubkey)
+  for (const change of facts.events) {
+    if (change.kind !== KIND_CHANGE || tag(change, 'a') !== place.address) continue
+    const field = tag(change, 'field')
+    const member = memberOfField(field)
+    if (member !== undefined) people.add(member)
+    else if (field?.startsWith(FOLLOW_FIELD_PREFIX)) people.add(field.slice(FOLLOW_FIELD_PREFIX.length))
+  }
+  if (placeKindOf(place, facts.listing) !== 'topic') for (const m of teamMembersOf(place.team, facts.roster ?? [])) people.add(m.pubkey)
+
+  const listed: Listed[] = []
+  for (const pubkey of people) {
+    if (!PUBKEY.test(pubkey)) continue
+    // Nobody else's private teams list is readable: their following through a team they follow never shows.
+    const f = followingOf(place, pubkey, { ...facts, teams: undefined })
+    if (!f.in || !f.level) continue
+    listed.push({ pubkey, level: f.level, ways: f.ways, ...(f.since !== undefined ? { since: f.since } : {}), ...(f.addedBy ? { addedBy: f.addedBy } : {}) })
+  }
+  const rank = (l: Listed) => (l.level === 'all' ? 0 : 1)
+  return listed.sort((a, b) => rank(a) - rank(b) || (a.since ?? 0) - (b.since ?? 0) || a.pubkey.localeCompare(b.pubkey))
+}
+
+// ── Add, and the switch: Not following, Important, All, back to the default ──
+
+/**
+ * The `prev` an Add of `person` to the place names (§11.8): the person's own
+ * leave, when it is the field's current change. Undefined when they never
+ * left, or were put back in since — an Add needs none then.
+ */
+export function addPrevOf(place: Place, person: string, events: readonly Event[]): string | undefined {
+  const last = actsOf(place, person, events)
+    .filter((a) => a.act === 'join' || a.act === 'leave')
+    .at(-1)
+  return last?.act === 'leave' ? last.event.id : undefined
+}
+
+/**
+ * Add a person to a topic, a space or a team's chat (§11.8): a `member:<P>` =
+ * `true` by anyone, naming the person's leave with `prev` when they left, so
+ * the Add puts them back in whatever the two clocks say. `folder` is the
+ * place's own team: its root's `h`, or the team itself for its chat. `events`
+ * are the place's events, as {@link placeFilters} read them.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/anyone-may-add-a-person-to-a-file.md
+ */
+export function buildPlaceAdd(
+  pubkey: string,
+  createdAtMs: number,
+  args: { place: Place; folder: string; person: string; events: readonly Event[]; note?: string },
+): UnsignedEvent {
+  const prev = addPrevOf(args.place, args.person, args.events)
+  return buildMembershipChange(pubkey, createdAtMs, {
+    file: args.place.address,
+    folder: args.folder,
+    person: args.person,
+    member: true,
+    ...(args.note !== undefined ? { note: args.note } : {}),
+    ...(prev !== undefined ? { prev } : {}),
+  })
+}
+
+/** What the switch on a place can be set to: a level, Not following, or back to the team's default. */
+export type SwitchChoice = Level | 'not-following' | 'default'
+
+/** What the switch shows for a person on a place. */
+export interface SwitchState {
+  /** The level that lights for them, or Not following. A mute already kept shows as Not following (§11.8 *Muting*). */
+  shown: Level | 'not-following'
+  /** Whether a team's default would reach them here, were it not turned off. */
+  defaultReaches: boolean
+  /** They chose against that default: All, or turned it off. "Back to the default" is offered then. */
+  againstDefault: boolean
+}
+
+/** The id the private `off` list names a place by: a topic's or space's `d`, a team's chat by the team's uuid. */
+export function placeOffId(place: Place): string {
+  return dOf(place.address)
+}
+
+/** What the switch shows for `person` on the place, from what {@link placeFilters} read. */
+export function switchStateOf(place: Place, person: string, facts: PlaceFacts, opts: { muted?: boolean } = {}): SwitchState {
+  const following = followingOf(place, person, facts)
+  const id = placeOffId(place)
+  const off = facts.teams?.off.includes(id) ?? false
+  const withDefault = off ? followingOf(place, person, { ...facts, teams: { ...facts.teams!, off: facts.teams!.off.filter((o) => o !== id) } }) : following
+  const defaultReaches = withDefault.ways.includes('team')
+  const shown = opts.muted || !following.in || !following.level ? 'not-following' : following.level
+  return { shown, defaultReaches, againstDefault: defaultReaches && (off || (following.ways.includes('level') && following.level === 'all')) }
+}
+
+/** The writes one choice on the switch takes. */
+export interface SwitchWrites {
+  /** The public changes to sign as the person, in order: a level, or a leave. */
+  changes: UnsignedEvent[]
+  /** The private `off` list's change, when the choice turns a team's default off or back on ({@link withPlaceOff}). */
+  off?: { id: string; off: boolean }
+  /** Whether a mute already kept for the place is taken out (§11.8 *Muting*): choosing a level or the default does. */
+  clearsMute: boolean
+}
+
+/**
+ * The writes for one choice on a place's switch (§11.8). A level is a
+ * `follow:<P>`. Not following is never public: a leave only when `P` chose
+ * a level, joined, was added or made the place, and an `off` entry when a
+ * team's default reaches `P` — a place `P` is in only by a default gets the
+ * entry alone. Back to the default is an empty `follow:<P>` when a level was
+ * chosen, and takes the place out of `off`. `folder` is the place's own team:
+ * its root's `h`, or the team itself for its chat.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-persons-level-on-a-place-is-theirs-alone.md
+ */
+export function switchWrites(
+  pubkey: string,
+  createdAtMs: number,
+  args: { place: Place; folder: string; choice: SwitchChoice; following: Following; teams?: TeamsList },
+): SwitchWrites {
+  const { place, folder, choice, following } = args
+  const id = placeOffId(place)
+  const isOff = args.teams?.off.includes(id) ?? false
+  if (choice === 'all' || choice === 'important') {
+    return { changes: [buildLevelChange(pubkey, createdAtMs, { place: place.address, folder, level: choice })], clearsMute: true }
+  }
+  if (choice === 'default') {
+    const changes = following.ways.includes('level') ? [buildLevelChange(pubkey, createdAtMs, { place: place.address, folder, level: '' })] : []
+    return { changes, ...(isOff ? { off: { id, off: false } } : {}), clearsMute: true }
+  }
+  const own = following.ways.some((w) => w === 'level' || w === 'added' || w === 'author')
+  const changes = own ? [buildMembershipChange(pubkey, createdAtMs, { file: place.address, folder, person: pubkey, member: false })] : []
+  return { changes, ...(following.ways.includes('team') ? { off: { id, off: true } } : {}), clearsMute: false }
+}
+
+/** The teams list with a place's default turned off, or back on: what to serialize, encrypt and write whole. */
+export function withPlaceOff(list: Pick<TeamsList, 'teams' | 'off'> | undefined, change: { id: string; off: boolean }): Pick<TeamsList, 'teams' | 'off'> {
+  const off = new Set(list?.off ?? [])
+  if (change.off) off.add(change.id)
+  else off.delete(change.id)
+  return { teams: { ...(list?.teams ?? {}) }, off: [...off].sort() }
 }
 
 /**

@@ -265,16 +265,21 @@ export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): str
  * `content` is the note an activity feed shows, as for every change: a change
  * with none renders as a blank line in Ship's feed. "Join", "Leave" or "Add"
  * by default.
+ *
+ * `prev` is the field's current change, for an Add after the person's leave
+ * (§6.2, §11.8): it pins the Add after the leave whatever the two clocks say.
+ * Use `buildPlaceAdd` for a topic, a space or a team's chat, which finds it.
  */
 export function buildMembershipChange(
   pubkey: string,
   createdAtMs: number,
-  args: { file: string; folder: string; person: string; member: boolean; note?: string },
+  args: { file: string; folder: string; person: string; member: boolean; note?: string; prev?: string },
 ): UnsignedEvent {
   const note = args.note ?? (!args.member ? 'Leave' : args.person === pubkey ? 'Join' : 'Add')
   if (!ADDRESS.test(args.file)) throw new Error(`not a file address: ${JSON.stringify(args.file)}`)
   if (!FOLDER_ID.test(args.folder)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(args.folder)}`)
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
+  if (args.prev !== undefined && !/^[0-9a-f]{64}$/.test(args.prev)) throw new Error(`not an event id: ${JSON.stringify(args.prev)}`)
   return {
     pubkey,
     created_at: Math.floor(createdAtMs / 1000),
@@ -287,6 +292,7 @@ export function buildMembershipChange(
       ['value', args.member ? 'true' : 'false'],
       ['h', args.folder],
       ['ts', String(createdAtMs)],
+      ...(args.prev !== undefined ? [['prev', args.prev]] : []),
       ['p', args.person],
     ],
     content: note,

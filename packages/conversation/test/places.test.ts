@@ -9,7 +9,12 @@ import { encodeNpub, type SignedEvent } from '@estiva-app/protocol'
 import {
   buildLevelChange,
   buildMembershipChange,
+  buildPlaceAdd,
   followingOf,
+  placeListing,
+  switchStateOf,
+  switchWrites,
+  withPlaceOff,
   foldMemberships,
   membershipJudges,
   membershipOf,
@@ -264,6 +269,117 @@ describe('the level change, the teams list and the reads', () => {
     assert.deepEqual(filters[0], { kinds: [1851], '#a': [TOPIC] })
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [1852], '#a': [TOPIC] })))
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [30078], authors: [BOB], '#d': ['estiva:teams:v1'], limit: 1 })))
+  })
+})
+
+describe('§11.8 who a place lists (TEA-6)', () => {
+  const DAVE = 'd'.repeat(64)
+  const EVE = 'f'.repeat(64)
+  const spaceListing = [markSpace(T0 + 100), teamList(T0 + 100)]
+  const rosterOf = (...people: string[]) => [roster(T0 + 60, ...people), createTeam(ALICE, T0)]
+
+  it('a space lists who chose a level, who was added, its author and the team members at Important, All first', () => {
+    const events = [root(), level(BOB, T0 + 200, 'all'), member(ALICE, T0 + 210, EVE, true)]
+    const listed = placeListing(topicPlace, { events, roster: rosterOf(ALICE, CAROL), listing: spaceListing })
+    assert.deepEqual(
+      listed.map((l) => [l.pubkey, l.level, l.addedBy]),
+      [
+        [BOB, 'all', undefined],
+        [ALICE, 'important', undefined],
+        [CAROL, 'important', undefined],
+        [EVE, 'important', ALICE],
+      ],
+    )
+  })
+
+  it('someone in a space only through a team they follow is not listed until they choose a level, and a forged level for them lists nobody', () => {
+    const events = [root(), forgedLevel(ALICE, DAVE, T0 + 200, 'all')]
+    assert.ok(!placeListing(topicPlace, { events, roster: rosterOf(ALICE), listing: spaceListing }).some((l) => l.pubkey === DAVE))
+    const chose = placeListing(topicPlace, { events: [...events, level(DAVE, T0 + 300, 'important')], roster: rosterOf(ALICE), listing: spaceListing })
+    assert.deepEqual(chose.find((l) => l.pubkey === DAVE)?.level, 'important')
+  })
+
+  it('a topic the team leads lists no team member by default, nor anyone who left it', () => {
+    const events = [root(), member(ALICE, T0 + 5, BOB, true), member(BOB, T0 + 20, BOB, false)]
+    assert.deepEqual(
+      placeListing(topicPlace, { events, roster: rosterOf(ALICE, CAROL) }).map((l) => l.pubkey),
+      [ALICE],
+    )
+  })
+
+  it("a team's chat lists its members, and an archived team's places list nobody", () => {
+    const chat = { address: CHAT, team: TEAM }
+    assert.deepEqual(placeListing(chat, { events: [], roster: rosterOf(ALICE, CAROL) }).map((l) => l.pubkey), [ALICE, CAROL].sort())
+    assert.deepEqual(placeListing(chat, { events: [], roster: rosterOf(ALICE, CAROL), archived: true }), [])
+  })
+})
+
+describe('§11.8 Add and the switch (TEA-6)', () => {
+  const spaceListing = [markSpace(T0 + 100), teamList(T0 + 100)]
+  const memberRoster = [roster(T0 + 60, BOB), joinTeam(BOB, T0 + 50)]
+  const signed = (u: { pubkey: string; created_at: number; kind: number; tags: string[][]; content: string }) => event({ ...u })
+
+  it('an Add after the person left names the leave with prev, and puts them back in though the adder clock is behind', () => {
+    const leave = member(BOB, T0 + 20, BOB, false)
+    const events = [root(), member(ALICE, T0 + 5, BOB, true), leave]
+    const add = buildPlaceAdd(CAROL, (T0 + 10) * 1000, { place: topicPlace, folder: TEAM, person: BOB, events })
+    assert.equal(add.pubkey, CAROL)
+    assert.deepEqual(add.tags, [['a', TOPIC], ['O', D], ['field', `member:${BOB}`], ['value', 'true'], ['h', TEAM], ['ts', String((T0 + 10) * 1000)], ['prev', leave.id], ['p', BOB]])
+    assert.equal(following(BOB, { events: [...events, signed(add)] }).in, true)
+  })
+
+  it('an Add of someone who never left carries no prev', () => {
+    const add = buildPlaceAdd(ALICE, (T0 + 10) * 1000, { place: topicPlace, folder: TEAM, person: BOB, events: [root()] })
+    assert.ok(!add.tags.some((t) => t[0] === 'prev'))
+    assert.deepEqual(add.tags.at(-1), ['p', BOB])
+  })
+
+  it('Not following in a space reached only by the team default writes nothing public, only the private off entry', () => {
+    const facts = { events: [root()], roster: memberRoster, listing: spaceListing }
+    const w = switchWrites(BOB, (T0 + 300) * 1000, { place: topicPlace, folder: TEAM, choice: 'not-following', following: following(BOB, facts) })
+    assert.deepEqual(w.changes, [])
+    assert.deepEqual(w.off, { id: D, off: true })
+    const list = withPlaceOff(undefined, w.off!)
+    assert.equal(following(BOB, { ...facts, teams: { v: 1, updatedAt: 0, ...list } }).in, false)
+  })
+
+  it('Not following after an Add and a level writes P own leave, which takes P out; with a default it also turns it off', () => {
+    const topicFacts = { events: [root(), member(ALICE, T0 + 5, BOB, true), level(BOB, T0 + 10, 'all')] }
+    const w = switchWrites(BOB, (T0 + 300) * 1000, { place: topicPlace, folder: TEAM, choice: 'not-following', following: following(BOB, topicFacts) })
+    assert.equal(w.changes.length, 1)
+    assert.equal(w.changes[0].pubkey, BOB)
+    assert.deepEqual(w.changes[0].tags.filter((t) => t[0] === 'field' || t[0] === 'value'), [['field', `member:${BOB}`], ['value', 'false']])
+    assert.equal(w.off, undefined)
+    assert.equal(following(BOB, { events: [...topicFacts.events, signed(w.changes[0])] }).in, false)
+
+    const spaceFacts = { ...topicFacts, roster: memberRoster, listing: spaceListing }
+    const both = switchWrites(BOB, (T0 + 300) * 1000, { place: topicPlace, folder: TEAM, choice: 'not-following', following: following(BOB, spaceFacts) })
+    assert.equal(both.changes.length, 1)
+    assert.deepEqual(both.off, { id: D, off: true })
+  })
+
+  it('choosing a level writes follow:<P> and clears a mute; going back to the default empties it and turns the default back on', () => {
+    const facts = { events: [root()], roster: memberRoster, listing: spaceListing, teams: teams({}, [D]) }
+    const pick = switchWrites(BOB, (T0 + 300) * 1000, { place: topicPlace, folder: TEAM, choice: 'all', following: following(BOB, facts), teams: facts.teams })
+    assert.deepEqual(pick.changes[0].tags.filter((t) => t[0] === 'field' || t[0] === 'value'), [['field', `follow:${BOB}`], ['value', 'all']])
+    assert.equal(pick.clearsMute, true)
+    const after = { ...facts, events: [...facts.events, signed(pick.changes[0])] }
+    assert.equal(following(BOB, after).level, 'all')
+
+    const back = switchWrites(BOB, (T0 + 400) * 1000, { place: topicPlace, folder: TEAM, choice: 'default', following: following(BOB, after), teams: facts.teams })
+    assert.deepEqual(back.changes[0].tags.find((t) => t[0] === 'value'), ['value', ''])
+    assert.deepEqual(back.off, { id: D, off: false })
+    const restored = { ...after, events: [...after.events, signed(back.changes[0])], teams: { v: 1 as const, updatedAt: 0, ...withPlaceOff(facts.teams, back.off!) } }
+    assert.deepEqual(brief(following(BOB, restored)), { in: true, level: 'important', since: T0 + 100 })
+  })
+
+  it('the switch shows a kept mute and a turned-off default as Not following, and offers the default back when All or off was chosen against it', () => {
+    const facts = { events: [root()], roster: memberRoster, listing: spaceListing }
+    assert.deepEqual(switchStateOf(topicPlace, BOB, facts), { shown: 'important', defaultReaches: true, againstDefault: false })
+    assert.deepEqual(switchStateOf(topicPlace, BOB, facts, { muted: true }).shown, 'not-following')
+    assert.deepEqual(switchStateOf(topicPlace, BOB, { ...facts, teams: teams({}, [D]) }), { shown: 'not-following', defaultReaches: true, againstDefault: true })
+    assert.deepEqual(switchStateOf(topicPlace, BOB, { ...facts, events: [root(), level(BOB, T0 + 200, 'all')] }).againstDefault, true)
+    assert.deepEqual(switchStateOf(topicPlace, CAROL, { events: [root(), level(CAROL, T0 + 200, 'all')] }), { shown: 'all', defaultReaches: false, againstDefault: false })
   })
 })
 
