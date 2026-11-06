@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.35.0 — 2026-11-06
+
+**SPEC §6.5 and C51: a comment the read did not return is in its replies'
+team only when every returned reply names the same `h`** (747a2ab3; SPEC
+§6.4 *Replies*: the relay now files a reply only in its comment's team).
+
+- `foldThreads`: a not-returned comment's team was the one most of its replies
+  were filed in (none on a tie). It is now the team every reply names, and none
+  when one disagrees, so replies filed from another team can never pick the
+  team, and with it who may resolve the thread or whether it reads as deleted.
+  Such a thread stays `missing` ("This comment can't be shown."), never
+  `deleted`. On production every reply already agrees (2026-11-06: 713 of 713).
+
 ## 0.34.0 — 2026-11-06
 
 **SPEC: §11.8 *Places and following*, as TEA-2 wrote it — nothing new on the
