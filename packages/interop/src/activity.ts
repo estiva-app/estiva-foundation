@@ -337,7 +337,7 @@ export async function readTopicActivity(
     await newestOf(then)
   }
   await Promise.all([deep(), newestOf(first)])
-  for (const list of comments.values()) list.sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  for (const list of comments.values()) list.sort(oldestFirst)
   return { at, files, folders, comments }
 
   /** Per probe, the newest event that counts for one of its topics. Read in rounds; each round asks only what is still open. */
@@ -381,6 +381,11 @@ export async function readTopicActivity(
 export interface ActivityWatch {
   /** Idempotent. Closes its subscriptions. */
   stop(): void
+}
+
+/** Oldest first, ties by id: the order {@link TopicActivity.comments} keeps. */
+function oldestFirst(a: SignedEvent, b: SignedEvent): number {
+  return a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
 function chunked<T>(list: readonly T[], size: number): T[][] {
@@ -549,7 +554,9 @@ export function watchTopicActivity(
     for (const file of listedOn) {
       const kept = activity.comments.get(file)
       if (!kept || kept.some((held) => held.id === event.id)) continue
-      kept.push(event)
+      // Kept oldest first, as the read hands them: one heard late lands in its place.
+      const later = kept.findIndex((held) => oldestFirst(held, event) > 0)
+      kept.splice(later < 0 ? kept.length : later, 0, event)
       options.onComment?.(file, event)
     }
     for (const topic of topics) if (countsAsActivity(event, topic)) raise(topic, event.created_at)
