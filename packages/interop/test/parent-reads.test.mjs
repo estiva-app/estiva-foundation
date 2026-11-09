@@ -200,10 +200,10 @@ describe('readTopics: a topic’s archived project, read by the list read', () =
     return { shelved, under, fine, events }
   }
 
-  test('with listRead, a topic under an archived project is archived with it, and no project’s changes are read', async () => {
+  test('with parentsListRead, a topic under an archived project is archived with it, and no project’s changes are read', async () => {
     const { shelved, under, fine, events } = setup()
     const r = relay(events)
-    const read = await readTopics(r.query, OTHER, { listRead: true })
+    const read = await readTopics(r.query, OTHER, { parentsListRead: true })
     const archivedWith = Object.fromEntries(read.topics.map((t) => [t.address, t.object.archived?.with]))
     assert.deepEqual(archivedWith, { [addressOf(under)]: addressOf(shelved), [addressOf(fine)]: undefined })
     const projects = r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`))
@@ -212,7 +212,7 @@ describe('readTopics: a topic’s archived project, read by the list read', () =
     assert.ok(r.changesByA().includes(addressOf(under)))
   })
 
-  test('without listRead, the archived project’s changes are read as before', async () => {
+  test('without parentsListRead, the archived project’s changes are read as before', async () => {
     const { shelved, under, events } = setup()
     const r = relay(events)
     const read = await readTopics(r.query, OTHER)
