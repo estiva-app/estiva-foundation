@@ -196,20 +196,21 @@ describe('readTopics: a topic’s archived project, read by the list read', () =
     const topic = (d, parent) => event({ kind: TOPIC, tags: [['d', d], ['title', d], ['a', addressOf(parent)], ['h', TEAM]] })
     const under = topic('under-t', shelved)
     const fine = topic('fine-t', open)
-    const events = [ship, shelved, open, under, fine, ...edits(shelved), ...edits(open), change(shelved, 'archived', 'true'), change(under, 'description', 'The plan')]
-    return { shelved, under, fine, events }
+    const text = change(under, 'description', 'The plan')
+    const events = [ship, shelved, open, under, fine, ...edits(shelved), ...edits(open), change(shelved, 'archived', 'true'), text]
+    return { shelved, under, fine, text, events }
   }
 
   test('with parentsListRead, a topic under an archived project is archived with it, and no project’s changes are read', async () => {
-    const { shelved, under, fine, events } = setup()
+    const { shelved, under, fine, text, events } = setup()
     const r = relay(events)
     const read = await readTopics(r.query, OTHER, { parentsListRead: true })
     const archivedWith = Object.fromEntries(read.topics.map((t) => [t.address, t.object.archived?.with]))
     assert.deepEqual(archivedWith, { [addressOf(under)]: addressOf(shelved), [addressOf(fine)]: undefined })
     const projects = r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`))
     assert.deepEqual(projects, [], `read by #a: ${projects}`)
-    // The topics themselves are still read in full, their text with them.
-    assert.ok(r.changesByA().includes(addressOf(under)))
+    // The topics themselves are still read in full, their text with them: its newest change is known, so it can be edited.
+    assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.prevs?.description, text.id)
   })
 
   test('without parentsListRead, the archived project’s changes are read as before', async () => {
