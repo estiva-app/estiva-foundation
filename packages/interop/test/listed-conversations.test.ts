@@ -20,6 +20,7 @@ import {
 import {
   listedConversations,
   listedConversationsOf,
+  namesTeamsOn,
   planListInTopic,
   watchListedConversations,
   type ListedConversations,
@@ -293,19 +294,26 @@ describe("a topic's All, live", () => {
     assert.deepEqual(heard, [[PAGE_D, 'New, live']])
   })
 
-  it('asks by file, and names the teams of the files and of their comments until the relay delivers by file', async () => {
+  it('asks by file alone, naming no team, by default', async () => {
     const relay = liveRelay()
     watchListedConversations(relay, await cold(), () => {}, manualTimers())
     const [filters] = relay.reqs
     assert.ok(filters.some((f) => (f['#A'] as string[] | undefined)?.includes(PAGE)))
     assert.ok(filters.some((f) => (f['#O'] as string[] | undefined)?.includes(PAGE_D)))
-    for (const f of filters) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
+    for (const f of filters) assert.equal(f['#h'], undefined)
   })
 
-  it('names no team once told the relay delivers by file', async () => {
+  it('names the teams of the files and of their comments when told the relay needs them', async () => {
     const relay = liveRelay()
-    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams: false })
-    for (const f of relay.reqs[0]) assert.equal(f['#h'], undefined)
+    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams: true })
+    for (const f of relay.reqs[0]) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
+  })
+
+  it('names teams only on a relay that does not list buzz-live-as-stored', () => {
+    assert.equal(namesTeamsOn({ supported_extensions: ['nip-er', 'buzz-live-as-stored'] }), false)
+    assert.equal(namesTeamsOn({ supported_extensions: ['nip-er', 'buzz-unlisted-channels'] }), true)
+    assert.equal(namesTeamsOn({ name: 'upstream' }), true)
+    assert.equal(namesTeamsOn(null), true)
   })
 
   it('hears a reaction on a comment that itself arrived live, once the watch has asked again', async () => {

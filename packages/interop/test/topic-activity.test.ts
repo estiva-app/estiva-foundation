@@ -237,7 +237,7 @@ function manualTimers() {
 }
 
 describe('topics reorder live', () => {
-  const start = async () => {
+  const start = async (options: { namesTeams?: boolean } = {}) => {
     const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
     const relay = liveRelay()
@@ -248,6 +248,7 @@ describe('topics reorder live', () => {
       now: () => (NOW + 100) * 1000,
       setTimer: timers.setTimer,
       clearTimer: timers.clearTimer,
+      ...options,
     })
     return { activity, relay, timers, heard, watch }
   }
@@ -291,9 +292,15 @@ describe('topics reorder live', () => {
     watch.stop()
   })
 
-  it('asks for every topic and file with their teams named, in REQs our relay takes', async () => {
+  it('asks for every topic and file naming no team, in REQs our relay takes', async () => {
     const { relay, watch } = await start()
     for (const req of relay.reqs) assert.ok(req.length <= 10)
+    for (const f of relay.reqs.flat()) assert.equal(f['#h'], undefined)
+    watch.stop()
+  })
+
+  it('names every topic and file team when told the relay needs them', async () => {
+    const { relay, watch } = await start({ namesTeams: true })
     const teams = new Set(relay.reqs.flat().flatMap((f) => (f['#h'] as string[] | undefined) ?? []))
     assert.deepEqual([...teams].sort(), [LEAF_TEAM, SHIP_TEAM, TEAM].sort())
     watch.stop()

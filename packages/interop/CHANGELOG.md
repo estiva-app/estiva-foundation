@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.91.0 — 2026-11-09
+
+**Manifest: nothing new. Wire: the live watches' REQs name no team by default; nothing written** (TOPI-12, SPEC §5).
+
+- `watchListedConversations` and `watchTopicActivity` ask by file alone:
+  `namesTeams` is now off by default. Our relay sends a request kept open
+  every new event that asking again would return, from inside teams too,
+  and says so in its NIP-11 (`buzz-live-as-stored`, since 9 Nov). The
+  filters are otherwise unchanged, and fewer: one set, not one per 128 teams.
+- `namesTeamsOn(info)` and `LIVE_AS_STORED_EXTENSION`: whether a relay needs
+  the teams named, from its NIP-11 document (`Relay.info()`). An app that
+  may run against a relay without the rule passes
+  `namesTeams: namesTeamsOn(await relay.info())`.
+- Upgrading: on our relay, nothing to do. A caller that passed
+  `namesTeams: false` can drop it.
+
 ## 0.90.0 — 2026-11-09
 
 **Manifest: nothing new. Wire: reads only, nothing written; existing events read the existing way** (TOPI-10).

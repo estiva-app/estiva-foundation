@@ -303,15 +303,16 @@ export const LISTED_WATCH_REBUILD_MS = 250
  * written a second ago is heard. Each event is handed over once; the cold
  * read's are never handed over.
  *
- * ## Naming the files' teams (`namesTeams`, on by default)
+ * ## Asking by file alone (`namesTeams`, off by default)
  *
- * The decided shape asks by file alone (Miky, 2026-11-06). Our relay does not
- * yet deliver a team's event live to a subscription that names no team
- * (buzz `fan_out_scoped`; measured 6 Nov: by `#A` or `#e` alone, nothing), so
- * until it does every filter also carries the `#h` of each listed file's team
- * and of every team a comment on them was filed in. Turn it off once the
- * relay delivers by file — the Ship issue on the relay in "Topics: Main and
- * All" — and the filters are the decided ones unchanged.
+ * The decided shape asks by file alone (Miky, 2026-11-06), and our relay
+ * delivers a team's event live to a request that names no team, as a stored
+ * read returns it (it lists `buzz-live-as-stored`). On a relay that does not
+ * (`namesTeamsOn(await relay.info())` says so), pass `namesTeams: true` and
+ * every filter also carries the `#h` of each listed file's team and of every
+ * team a comment on them was filed in.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-request-kept-open-hears-what-asking-again-would-return.md
  */
 export function watchListedConversations(
   relay: Pick<LiveRelay, 'subscribe'>,
@@ -342,7 +343,7 @@ export function watchListedConversations(
   // `created_at` is the author's to write (the relay takes 15 min ahead): `since` never passes the reader's own clock.
   const newest = Math.max(0, ...read.files.flatMap((f) => f.events.map((e) => e.created_at)))
   let since = options.since ?? (newest > 0 ? Math.min(newest, nowSeconds()) : nowSeconds())
-  const namesTeams = options.namesTeams ?? true
+  const namesTeams = options.namesTeams ?? false
 
   let subs: { close(): void }[] = []
   let timer: unknown = null

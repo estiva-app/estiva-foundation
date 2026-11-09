@@ -379,11 +379,13 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
  * is raised in place; an event that is not news, or older than what is held,
  * says nothing.
  *
- * As {@link watchListedConversations} does, every filter also names the teams
- * of the topics and their files (`namesTeams`, on by default), since our
- * relay does not yet deliver a team's event live to a subscription that names
- * no team. A file whose team is unknown is still asked for; it is heard once
- * the relay delivers by file.
+ * As {@link watchListedConversations} does, it asks by file alone, since our
+ * relay delivers a team's event live to a request that names no team. On a
+ * relay that does not (`namesTeamsOn(await relay.info())`), pass
+ * `namesTeams: true` and every filter also names the teams of the topics and
+ * their files; a file whose team is unknown is then not heard from its team.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-request-kept-open-hears-what-asking-again-would-return.md
  */
 export function watchTopicActivity(
   relay: Pick<LiveRelay, 'subscribe'>,
@@ -403,7 +405,7 @@ export function watchTopicActivity(
   const setTimer = options.setTimer ?? ((run: () => void, ms: number) => timers.setTimeout(run, ms))
   const clearTimer = options.clearTimer ?? ((timer: unknown) => timers.clearTimeout(timer))
   const nowSeconds = () => Math.floor((options.now ?? Date.now)() / 1000)
-  const namesTeams = options.namesTeams ?? true
+  const namesTeams = options.namesTeams ?? false
   let since = Math.min(options.since ?? nowSeconds(), nowSeconds())
 
   // Which topics each file is news for; each file's team; the files by id, for a comment's `O`.
