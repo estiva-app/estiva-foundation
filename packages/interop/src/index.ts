@@ -229,6 +229,8 @@ export {
   openFile,
   textOf,
   conflictOf,
+  isSwitchRefusal,
+  prevsAfterSwitch,
   combineChanges,
   writeChange,
   writeChanges,
