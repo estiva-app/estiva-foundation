@@ -285,7 +285,7 @@ describe('topics reorder live', () => {
     relay.publish(event({ kind: 30851, pubkey: QA2, created_at: NOW + 6, tags: [['d', 'stray-d'], ['h', TEAM], ['a', `30850:${QA2}:other-d`], ['a', PROJECT]] }))
     // A chat message rooted on a listed file, also naming a topic: on neither, as the read has it.
     relay.publish(event({ kind: 9, created_at: NOW + 6, tags: [['A', PAGE], ['A', ONBOARDING], ['h', TEAM]] }))
-    assert.deepEqual(heard, [])
+    assert.equal(heard.length, 0, `heard ${JSON.stringify(heard)}`)
     relay.publish(change(PAGE, 'summary', 'x', NOW + 7, LEAF_TEAM))
     assert.deepEqual(heard.map(([topic]) => topic).sort(), [TESTING, WIDGETS].sort())
     watch.stop()
