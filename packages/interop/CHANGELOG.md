@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.93.0 — 2026-11-09
+
+**Manifest: nothing new. Wire: nothing new; no request added, nothing written** (TOPI-3).
+
+- `TopicActivity.comments: Map<string, SignedEvent[]>`: for each file a topic
+  lists directly (not a file under one), the comments about it that
+  `readTopicActivity` already fetched to time its topics, oldest first, on it
+  as the fold reads it (its root `A`, or its `O` with no root; never a
+  crossed tag). Every listed file has an entry, empty when none was read.
+  The read asks the relay exactly what it asked before (same requests, each
+  comment filter still one page), so a file holds its newest comment or few.
+- `watchTopicActivity(…, { onComment?(file, event) })`: a new comment about a
+  listed file is appended to `activity.comments` in place and said, whether
+  or not it raises a topic's time; one heard twice is kept and said once. The
+  watch opens the same filters as before. Peek lights a topic's dot for a
+  new comment on a file it lists, at All, with no read of its own.
+- Upgrading: a `TopicActivity` an app builds itself (not from
+  `readTopicActivity`) needs `comments: new Map()`.
+
 ## 0.92.0 — 2026-11-09
 
 **Manifest: nothing new. Wire: a change refused for naming no `prev` is written again with one; nothing else changes** (ALO-8).

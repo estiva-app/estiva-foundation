@@ -90,6 +90,15 @@ export interface TopicActivity {
   files: Map<string, ActivityFile[]>
   /** Each topic's team, as asked. */
   folders: Map<string, string | null>
+  /**
+   * Each file a topic lists directly (not a file under one), by address: the
+   * comments about it (`kind:1111`, on it as the fold reads it, never by a
+   * crossed tag) that the read already fetched to time its topics, oldest
+   * first. The read asks nothing more for them, so a file holds its newest
+   * comment or few, and none when it has none. {@link watchTopicActivity}
+   * appends each new one in place (TOPI-3).
+   */
+  comments: Map<string, SignedEvent[]>
 }
 
 /** {@link ActivityTopic}s from {@link readTopics}' answer: each topic with its resolved list. */
@@ -229,6 +238,8 @@ interface Probe {
   filter: Record<string, unknown>
   target: ActivityFile
   topics: string[]
+  /** A listed file's comment probe: the comments it answers are kept in {@link TopicActivity.comments}. */
+  keepsComments?: boolean
 }
 
 /**
@@ -260,12 +271,14 @@ export async function readTopicActivity(
   const at = new Map<string, number>()
   const files = new Map<string, ActivityFile[]>()
   const folders = new Map<string, string | null>()
+  const comments = new Map<string, SignedEvent[]>()
   for (const topic of topics) {
     at.set(topic.address, topic.createdAt ? capped(topic.createdAt) : 0)
     files.set(topic.address, [...topic.files])
     folders.set(topic.address, topic.folder ?? null)
+    for (const file of topic.files) if (!comments.has(file.address)) comments.set(file.address, [])
   }
-  if (topics.length === 0) return { at, files, folders }
+  if (topics.length === 0) return { at, files, folders, comments }
   const bump = (topic: string, when: number) => {
     if (capped(when) > (at.get(topic) ?? 0)) at.set(topic, capped(when))
   }
@@ -284,14 +297,14 @@ export async function readTopicActivity(
   const folderOfFile = new Map<string, string | null>()
   for (const topic of topics) for (const file of topic.files) if (!folderOfFile.get(file.address)) folderOfFile.set(file.address, file.folder)
 
-  const fileProbes = (target: ActivityFile, list: string[]): Probe[] => {
+  const fileProbes = (target: ActivityFile, list: string[], keepsComments = false): Probe[] => {
     const file = target.address
     const id = fileIdOf(file)
     // Every change carries the file's `a`; its `O` only since 30 Oct 2026. A comment carries `A`, or `O` in its newer form (§6.4).
     return [
       { filter: { kinds: [KIND_CHANGE], '#a': [file] }, target, topics: list },
-      { filter: { kinds: [KIND_COMMENT], '#A': [file] }, target, topics: list },
-      ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, target, topics: list }] : []),
+      { filter: { kinds: [KIND_COMMENT], '#A': [file] }, target, topics: list, keepsComments },
+      ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, target, topics: list, keepsComments }] : []),
     ]
   }
   const first: Probe[] = []
@@ -300,7 +313,7 @@ export async function readTopicActivity(
     first.push({ filter: { kinds: [KIND_COMMENT, KIND_MESSAGE], '#A': [topic.address] }, target, topics: [topic.address] })
     first.push({ filter: { kinds: [KIND_CHANGE], '#a': [topic.address] }, target, topics: [topic.address] })
   }
-  for (const [file, on] of listed) first.push(...fileProbes({ address: file, folder: folderOfFile.get(file) ?? null }, [...on]))
+  for (const [file, on] of listed) first.push(...fileProbes({ address: file, folder: folderOfFile.get(file) ?? null }, [...on], true))
 
   // The topics and their listed files are read while the files under them are found, and those as soon as they are.
   const deep = async () => {
@@ -324,7 +337,8 @@ export async function readTopicActivity(
     await newestOf(then)
   }
   await Promise.all([deep(), newestOf(first)])
-  return { at, files, folders }
+  for (const list of comments.values()) list.sort(oldestFirst)
+  return { at, files, folders, comments }
 
   /** Per probe, the newest event that counts for one of its topics. Read in rounds; each round asks only what is still open. */
   async function newestOf(probes: readonly Probe[]): Promise<void> {
@@ -334,6 +348,13 @@ export async function readTopicActivity(
       const still: typeof open = []
       for (const o of open) {
         const page = events.filter((event) => answers(event, o.filter)).sort((a, b) => b.created_at - a.created_at)
+        if (o.probe.keepsComments) {
+          const kept = comments.get(o.probe.target.address)
+          for (const event of page) {
+            if (!kept || event.kind !== KIND_COMMENT || !isOn(event, o.probe.target.address, o.probe.target.folder)) continue
+            if (!kept.some((held) => held.id === event.id)) kept.push(event)
+          }
+        }
         const left = new Set(o.probe.topics)
         for (const event of page) {
           if (!isOn(event, o.probe.target.address, o.probe.target.folder)) continue
@@ -362,6 +383,11 @@ export interface ActivityWatch {
   stop(): void
 }
 
+/** Oldest first, ties by id: the order {@link TopicActivity.comments} keeps. */
+function oldestFirst(a: SignedEvent, b: SignedEvent): number {
+  return a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+}
+
 function chunked<T>(list: readonly T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
@@ -378,6 +404,13 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
  * `onActivity` is called with the topic and its new time, after `activity.at`
  * is raised in place; an event that is not news, or older than what is held,
  * says nothing.
+ *
+ * A new comment about a file a topic lists directly (one of
+ * `activity.comments`' keys, by the same rule the read uses) is appended to
+ * that file's list in place, and `onComment` is called with the file and the
+ * comment, whether or not it raised a topic's time: an older-dated one, or
+ * one on a topic already newer, still reaches it. One heard twice is kept
+ * and said once. It adds no filter: the watch already asks for them (TOPI-3).
  *
  * As {@link watchListedConversations} does, it asks by file alone when given
  * `namesTeams: relayNamesTeams(relay)` on a relay that lists
@@ -396,6 +429,8 @@ export function watchTopicActivity(
     since?: number
     /** Whether to name teams; a promise ({@link relayNamesTeams}) holds the REQ until it settles. Defaults to true. */
     namesTeams?: boolean | Promise<boolean>
+    /** A new comment about a listed file, after it is appended to `activity.comments`. */
+    onComment?: (file: string, event: SignedEvent) => void
     onClosed?: (reason: string) => void
     now?: () => number
     setTimer?: (run: () => void, ms: number) => unknown
@@ -507,9 +542,22 @@ export function watchTopicActivity(
       if (root && topicSet.has(root)) names.add(root)
     }
     const topics = new Set<string>()
+    const listedOn: string[] = []
     for (const name of names) {
       if (topicSet.has(name) && isOn(event, name, activity.folders.get(name) ?? null)) topics.add(name)
-      if (byAddress.has(name) && isOn(event, name, folderOfFile.get(name) ?? null)) for (const topic of byAddress.get(name)!) topics.add(topic)
+      if (byAddress.has(name) && isOn(event, name, folderOfFile.get(name) ?? null)) {
+        for (const topic of byAddress.get(name)!) topics.add(topic)
+        if (event.kind === KIND_COMMENT) listedOn.push(name)
+      }
+    }
+    // A comment on a listed file is kept, and said, whether or not it moves a topic.
+    for (const file of listedOn) {
+      const kept = activity.comments.get(file)
+      if (!kept || kept.some((held) => held.id === event.id)) continue
+      // Kept oldest first, as the read hands them: one heard late lands in its place.
+      const later = kept.findIndex((held) => oldestFirst(held, event) > 0)
+      kept.splice(later < 0 ? kept.length : later, 0, event)
+      options.onComment?.(file, event)
     }
     for (const topic of topics) if (countsAsActivity(event, topic)) raise(topic, event.created_at)
   }

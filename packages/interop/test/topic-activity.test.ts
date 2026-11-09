@@ -198,6 +198,24 @@ describe('topics come newest activity first', () => {
     assert.ok(!issues.some((file) => file.address.endsWith(':bulk-0')), 'the oldest are left out')
   })
 
+  it('hands back the comments it read about each listed file, in either form, none about a file under one or tagging one, with no request added', async () => {
+    // Both forms at once: the `#A` and `#O` probes each return it, and it is kept once.
+    const onPage = event({ kind: 1111, created_at: T0 + 80, tags: [['A', PAGE], ['O', PAGE_ID], ['K', '30842'], ['h', LEAF_TEAM]], content: 'on the page' })
+    const onProject = event({ kind: 1111, created_at: T0 + 85, tags: [['O', PROJECT_ID], ['K', '30850'], ['h', SHIP_TEAM]], content: 'on the project' })
+    const onSubpage = event({ kind: 1111, created_at: T0 + 90, tags: [['A', SUBPAGE], ['h', LEAF_TEAM]], content: 'under the page' })
+    // Rooted on another author's file with the page's id: the `#O` probe fetches it, the fold does not read it on the page.
+    const crossed = event({ kind: 1111, created_at: T0 + 95, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', LEAF_TEAM]] })
+    const { query, calls } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), onPage, onProject, onSubpage, crossed])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    // The same requests the read made before it kept comments (0.92.0 makes these with this relay), each comment filter one page.
+    assert.equal(calls.length, 5)
+    for (const f of calls.flat()) if ((f.kinds as number[]).includes(1111)) assert.ok(typeof f.limit === 'number' && f.limit <= 2, JSON.stringify(f))
+    assert.equal(activity.at.get(WIDGETS), T0 + 90)
+    assert.deepEqual(activity.comments?.get(PAGE)?.map((e) => e.content), ['on the page'])
+    assert.deepEqual(activity.comments?.get(PROJECT)?.map((e) => e.content), ['on the project'])
+    assert.equal(activity.comments?.has(SUBPAGE), false)
+  })
+
   it('an event dated ahead of the reader is taken at the reader\'s clock, so it cannot pin a topic first', async () => {
     const { query } = relayOver([...fileRoots, message(TESTING, NOW + 900), message(ONBOARDING, NOW - 1)])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
@@ -243,15 +261,56 @@ describe('topics reorder live', () => {
     const relay = liveRelay()
     const timers = manualTimers()
     const heard: [string, number][] = []
+    const said: [string, string][] = []
     const watch = watchTopicActivity(relay, activity, (topic, at) => heard.push([topic, at]), {
       since: NOW - 10,
       now: () => (NOW + 100) * 1000,
       setTimer: timers.setTimer,
       clearTimer: timers.clearTimer,
+      onComment: (file: string, e: SignedEvent) => said.push([file, e.content]),
       ...options,
     })
-    return { activity, relay, timers, heard, watch }
+    return { activity, relay, timers, heard, said, watch }
   }
+
+  it('a new comment on a listed file is kept and said even when no topic moves; one under it, or tagging it, is not', async () => {
+    const { activity, relay, heard, said, watch } = await start()
+    const reqsBefore = relay.reqs.flat().length
+    // The same filters 0.92.0's watch opens with.
+    assert.equal(reqsBefore, 5)
+    relay.publish(message(WIDGETS, NOW + 50))
+    relay.publish(message(TESTING, NOW + 50))
+    heard.length = 0
+    // Older than both topics' times: moves neither, still reaches the sidebar.
+    const onPage = event({ kind: 1111, created_at: NOW + 5, tags: [['A', PAGE], ['K', '30842'], ['h', LEAF_TEAM]], content: 'on the page' })
+    relay.publish(onPage)
+    relay.publish(onPage)
+    relay.publish(event({ kind: 1111, created_at: NOW + 6, tags: [['O', PROJECT_ID], ['K', '30850'], ['h', SHIP_TEAM]], content: 'on the project' }))
+    relay.publish(event({ kind: 1111, created_at: NOW + 7, tags: [['A', ISSUE], ['h', SHIP_TEAM]], content: 'on an issue under it' }))
+    relay.publish(event({ kind: 1111, created_at: NOW + 8, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', LEAF_TEAM]], content: 'crossed' }))
+    // A rename of the page is not a comment on it.
+    relay.publish(change(PAGE, 'title', 'Renamed', NOW + 9, LEAF_TEAM))
+    // Heard after a newer one, it is kept before it.
+    relay.publish(event({ kind: 1111, created_at: NOW + 3, tags: [['A', PAGE], ['K', '30842'], ['h', LEAF_TEAM]], content: 'earlier' }))
+    assert.deepEqual(heard, [])
+    assert.deepEqual(said, [[PAGE, 'on the page'], [PROJECT, 'on the project'], [PAGE, 'earlier']])
+    assert.deepEqual(activity.comments?.get(PAGE)?.slice(-2).map((e) => e.content), ['earlier', 'on the page'])
+    assert.ok(activity.comments?.get(PAGE)?.every((e) => e.kind === 1111))
+    assert.equal(activity.comments?.get(PAGE)?.filter((e) => e.id === onPage.id).length, 1)
+    assert.deepEqual(activity.comments?.get(PROJECT)?.map((e) => e.content), ['on the project'])
+    assert.equal(activity.comments?.has(ISSUE), false)
+    // Nothing more asked: no REQ opened since.
+    assert.equal(relay.reqs.flat().length, reqsBefore)
+    watch.stop()
+  })
+
+  it('a new comment on a listed file that moves its topics is said as well', async () => {
+    const { relay, heard, said, watch } = await start()
+    relay.publish(event({ kind: 1111, created_at: NOW + 5, tags: [['A', PAGE], ['K', '30842'], ['h', LEAF_TEAM]], content: 'on the page' }))
+    assert.deepEqual(heard.map(([topic]) => topic).sort(), [TESTING, WIDGETS].sort())
+    assert.deepEqual(said, [[PAGE, 'on the page']])
+    watch.stop()
+  })
 
   it('someone writing in a topic moves it to the top; a rename of it does not', async () => {
     const { activity, relay, heard, watch } = await start()
