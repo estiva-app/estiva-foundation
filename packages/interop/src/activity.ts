@@ -32,8 +32,8 @@
 import { MAX_FILTERS_PER_QUERY, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
-import type { ReadTopic } from './topics.js'
-import { MAX_FILTERS_PER_REQ } from './listedConversations.js'
+import { answers, readAll, type ReadTopic } from './topics.js'
+import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ } from './listedConversations.js'
 
 const KIND_CHANGE = 1851
 const KIND_READ_STATE = 30078
@@ -88,6 +88,7 @@ export interface TopicActivity {
 export function activityTopics(topics: readonly ReadTopic[]): ActivityTopic[] {
   return topics.map((topic) => ({
     address: topic.address,
+    createdAt: topic.createdAt,
     folder: topic.folder,
     files: topic.listed.flatMap((listed) => (listed.address ? [{ address: listed.address, folder: listed.folder }] : [])),
   }))
@@ -138,17 +139,6 @@ function tagValues(event: SignedEvent, name: string): string[] {
   return event.tags.filter((tag) => tag[0] === name && tag[1]).map((tag) => tag[1]!)
 }
 
-/** Whether an event answers a filter, as NIP-01 reads it: kinds, `#x` tags, `since` and `until`. */
-function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
-  const { kinds, since, until } = filter as { kinds?: number[]; since?: number; until?: number }
-  if (kinds && !kinds.includes(event.kind)) return false
-  if (since !== undefined && event.created_at < since) return false
-  if (until !== undefined && event.created_at > until) return false
-  return Object.entries(filter).every(
-    ([key, values]) => !key.startsWith('#') || event.tags.some((t) => t[0] === key.slice(1) && (values as string[]).includes(t[1]!)),
-  )
-}
-
 async function queryChunked(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
   const runs: Promise<SignedEvent[]>[] = []
   for (let i = 0; i < filters.length; i += MAX_FILTERS_PER_QUERY) runs.push(query(filters.slice(i, i + MAX_FILTERS_PER_QUERY)))
@@ -165,13 +155,17 @@ async function filesUnder(
   parents: readonly string[],
 ): Promise<{ parent: string; file: ActivityFile; at: number }[]> {
   const out: { parent: string; file: ActivityFile; at: number }[] = []
-  const seen = new Set(parents)
+  // Each file under one is answered once per parent, even when it is listed itself (on another topic, say);
+  // each parent is walked once.
+  const found = new Set<string>()
   let level = parents.filter((address) => CHILD_KINDS[kindOf(address) ?? -1])
+  const walked = new Set(level)
   for (let depth = 0; depth < MAX_DEPTH && level.length > 0; depth++) {
     const kinds = [...new Set(level.flatMap((address) => CHILD_KINDS[kindOf(address)!]!))]
     const filters: Record<string, unknown>[] = []
     for (let i = 0; i < level.length; i += VALUES_PER_FILTER) filters.push({ kinds, '#a': level.slice(i, i + VALUES_PER_FILTER) })
-    const roots = await queryChunked(query, filters)
+    // Every one, however many: paged past the relay's cap rather than cut at it.
+    const roots = await readAll(query, filters)
     const asked = new Set(level)
     const next: string[] = []
     // A replaceable root the relay still holds twice is one file: its newest names its team.
@@ -185,10 +179,13 @@ async function filesUnder(
       if (!held || root.created_at > held.root.created_at) newest.set(address, { root, parent })
     }
     for (const [address, { root, parent }] of newest) {
-      if (seen.has(address)) continue
-      seen.add(address)
+      if (found.has(`${parent} ${address}`)) continue
+      found.add(`${parent} ${address}`)
       out.push({ parent, file: { address, folder: folderOf(root) }, at: root.created_at })
-      if (CHILD_KINDS[root.kind]) next.push(address)
+      if (CHILD_KINDS[root.kind] && !walked.has(address)) {
+        walked.add(address)
+        next.push(address)
+      }
     }
     level = next
   }
@@ -416,7 +413,7 @@ export function watchTopicActivity(
     timer = setTimer(() => {
       timer = null
       if (!stopped) open()
-    }, 250)
+    }, LISTED_WATCH_REBUILD_MS)
   }
 
   function raise(topic: string, created: number) {
@@ -431,9 +428,9 @@ export function watchTopicActivity(
     since = Math.max(since, Math.min(event.created_at, nowSeconds()))
     // A new file under a listed one: news, and listened to from now on.
     const d = tagValues(event, 'd')[0]
-    if (CHILD_KINDS[kindOf(tagValues(event, 'a')[0] ?? '') ?? -1]?.includes(event.kind) && d) {
-      const parent = tagValues(event, 'a').find((a) => byAddress.has(a))
-      if (!parent) return
+    // Its parent is a held file whose kind holds this kind (a project its issue, a page its page).
+    const parent = d ? tagValues(event, 'a').find((a) => byAddress.has(a) && CHILD_KINDS[kindOf(a) ?? -1]?.includes(event.kind)) : undefined
+    if (parent && d) {
       const file = { address: `${event.kind}:${event.pubkey}:${d}`, folder: folderOf(event) }
       const fresh = !byAddress.has(file.address)
       for (const topic of byAddress.get(parent)!) {

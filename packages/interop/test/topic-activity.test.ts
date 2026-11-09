@@ -137,6 +137,17 @@ describe('topics come newest activity first', () => {
     assert.equal(activity.at.get(ONBOARDING), T0 + 50)
   })
 
+  it('an issue listed on one topic still counts for the topic that lists its project', async () => {
+    const both: ActivityTopic[] = [
+      { address: WIDGETS, createdAt: T0, folder: TEAM, files: [{ address: PROJECT, folder: SHIP_TEAM }] },
+      { address: ONBOARDING, createdAt: T0 + 1, folder: TEAM, files: [{ address: ISSUE, folder: SHIP_TEAM }] },
+    ]
+    const { query } = relayOver([...fileRoots, change(ISSUE, 'status', 'done', T0 + 70, SHIP_TEAM)])
+    const activity = await readTopicActivity(query, both, { nowSeconds: NOW })
+    assert.equal(activity.at.get(ONBOARDING), T0 + 70)
+    assert.equal(activity.at.get(WIDGETS), T0 + 70)
+  })
+
   it('a comment in its newer form, by the file id alone, counts', async () => {
     const comment = event({ kind: 1111, created_at: T0 + 85, tags: [['O', 'project-d'], ['K', '30850'], ['h', SHIP_TEAM]] })
     const { query } = relayOver([...fileRoots, comment])

@@ -346,6 +346,8 @@ export interface ReadTopic {
   object: ForeignObject
   /** Its Folder, from its root (§6.2): where an entry on its list is filed. */
   folder: string
+  /** Its first record's time, Unix seconds: its time in the order of topics when nothing has happened in it since. */
+  createdAt: number
   /** Its list, as {@link topicLists} reads it. */
   listed: ListedFile[]
   /**
@@ -434,7 +436,7 @@ function personInFilesFilters(person: string, files: readonly string[]): Record<
 }
 
 /** Whether an event answers a filter, as NIP-01 reads it: kinds, authors, `#x` tags, `since` and `until`. */
-function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
+export function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
   const { kinds, authors, since, until } = filter as { kinds?: number[]; authors?: string[]; since?: number; until?: number }
   if (kinds && !kinds.includes(event.kind)) return false
   if (authors && !authors.includes(event.pubkey)) return false
@@ -452,7 +454,7 @@ function answers(event: SignedEvent, filter: Record<string, unknown>): boolean {
  * nothing fills a page, as at Miky's scale; never a silent cut at the relay's
  * cap. A second holding a page's worth on its own ends the walk there.
  */
-async function readAll(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
+export async function readAll(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
   const out = new Map<string, SignedEvent>()
   let open = filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
   while (open.length) {
@@ -555,7 +557,7 @@ export async function readTopics(
     const address = object.address!
     // The team is the topic's own Folder; a team's default reaches no topic, so its roster is not needed (§11.8).
     const following = followingOf({ address, team: folder }, me, { events: [root, ...(byTopic.get(address) ?? [])], listing: states })
-    return [{ address, object, folder, listed: lists.get(address) ?? [], following, yours: following.in, space: spaces.has(address) }]
+    return [{ address, object, folder, createdAt: root.created_at, listed: lists.get(address) ?? [], following, yours: following.in, space: spaces.has(address) }]
   })
   return { me, topics, membership, mentionedIn, inConversations }
 }
