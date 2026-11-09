@@ -77,7 +77,7 @@ export {
 
 export { foldThreads, type Message, type Thread, type RootState } from './shape.js'
 
-export { placeLines, withoutOwnFileLines, writtenUrlOf, urlNames, ROW_BLOCK, type RowLine, type PlacedLines, type LineContext } from './lines.js'
+export { placeLines, ownFileOf, withoutOwnFileLines, writtenUrlOf, urlNames, ROW_BLOCK, type RowLine, type PlacedLines, type LineContext } from './lines.js'
 
 export { buildComment, buildReply, offersEditAndDelete, placeOf, type CommentRef } from './builders.js'
 

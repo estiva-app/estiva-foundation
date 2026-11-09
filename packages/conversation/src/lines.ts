@@ -77,6 +77,16 @@ export interface LineContext {
 }
 
 /**
+ * The values naming the file a comment is on, for `LineContext.ownFile`: its
+ * NIP-22 `A` address and its `O` id (SPEC §6.4). None for chat (`kind:9`),
+ * whose `a` names what it mentions, not where it is.
+ */
+export function ownFileOf(event: { kind: number; tags: readonly (readonly string[])[] }): string[] {
+  if (event.kind !== 1111) return []
+  return event.tags.filter((t) => (t[0] === 'A' || t[0] === 'O') && !!t[1]).map((t) => t[1])
+}
+
+/**
  * A comment's words for its edit box, less each line that is only a `nostr:`
  * reference to the file it is on: the line Ship appended to every issue
  * comment until ONE-11, which no reader draws, so an edit made in any app

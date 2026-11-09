@@ -19,6 +19,7 @@ nothing** (ONE-11; Miky, 2026-11-09).
   and hid it on its own page, while Peek and Leaf drew it as a row; every
   comment already on the relay now reads the same in each app. A link to the
   file inside a sentence keeps its place.
+- `ownFileOf(event)`: a comment's `A` and `O` values, none for a `kind:9`.
 - `withoutOwnFileLines(body, ownFile)`: the words an edit box opens with, less
   each line that is only a `nostr:` reference to the comment's own file, so an
   edit made in any app drops Ship's old line, as an edit made in Ship did.
