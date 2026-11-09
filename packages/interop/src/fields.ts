@@ -190,6 +190,44 @@ export function textOf(event: SignedEvent): MergeText | undefined {
   return { value, ...(format ? { format } : {}) }
 }
 
+/**
+ * The relay's refusal of a change that names no change it follows, on a type
+ * it keeps in order (§6.13): it has made the switch since this tab read its
+ * NIP-11. Read it again, switch, and write the change again in order
+ * ({@link prevsAfterSwitch}): the person sees nothing (Miky, 9 Nov, ALO-8).
+ *
+ * Decided on the relay's words after `invalid:`, never on what follows them,
+ * so a relay that adds what to do keeps being recognised.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+ */
+export function isSwitchRefusal(reason: string | undefined): boolean {
+  return !!reason && /^invalid: an? \w+ change names the change it follows in prev\b/.test(reason)
+}
+
+/**
+ * Each field's `prev` for a change written again after the switch: the
+ * field's current change, or the first record's id when it never changed —
+ * one open of the file, with its text when the text is among them. A tab from
+ * before the switch wrote with no `prev`, which meant "mine is the newest";
+ * following the current change keeps that for a field set again. The text
+ * also passes the text the tab read as `base` to {@link writeChange}, so
+ * words saved since are merged, never written over. A `member:<P>` field
+ * names no change it follows (§6.13) and gets no `prev`. Undefined when the
+ * file cannot be read.
+ *
+ * Write again once: a second refusal of the same kind is shown as any refusal.
+ */
+export async function prevsAfterSwitch(
+  query: QueryFn,
+  file: { kind: number; pubkey: string; d: string },
+  fields: readonly string[],
+): Promise<Record<string, string> | undefined> {
+  const opened = await openFile(query, file, { text: fields.includes(TEXT_FIELD) })
+  if (!opened) return undefined
+  return Object.fromEntries(fields.filter((f) => !f.startsWith('member:')).map((f) => [f, opened.fields[f]?.id ?? opened.root.id]))
+}
+
 /** What a `conflict:` refusal says (§6.2), as the relay words it. */
 export type Conflict =
   | { kind: 'stale'; field: string; current?: string }
@@ -222,6 +260,14 @@ export interface WriteChangeArgs {
    * last read.
    */
   prev: string
+  /**
+   * For the text: the text the writer read, when it cannot name the change
+   * it came from — a tab that read the file before the switch, writing again
+   * after {@link prevsAfterSwitch}. Where `prev`'s text differs from it,
+   * mine is merged onto `prev`'s by §13.3 before anything is sent, so
+   * someone's newer words are kept.
+   */
+  base?: MergeText
   /**
    * The unsigned change for this value, `prev` and time — `buildActionEvent`
    * bound to the field's action, so the manifest decides its shape and every
@@ -300,6 +346,22 @@ export async function writeChange(args: WriteChangeArgs): Promise<WriteChangeRes
   let base: MergeText | undefined
   let mergedOnto: SignedEvent | undefined
   let last = ''
+
+  if (isText && args.base) {
+    const followed = await byId(args.query, prev)
+    const theirs = followed && textOf(followed)
+    if (!followed || !theirs) return { ok: false, refused: `the text it follows, ${prev}, could not be read to merge onto` }
+    if (theirs.value !== args.base.value || (theirs.format ?? '') !== (args.base.format ?? '')) {
+      const merge = mergeTexts(args.base, theirs, mine)
+      if (merge.asks) return { ok: false, asks: merge.asks, theirs: followed }
+      if (merge.merged.value === theirs.value && (merge.merged.format ?? '') === (theirs.format ?? '')) {
+        return { ok: true, unchanged: true, id: followed.id, mergedOnto: followed }
+      }
+      mergedOnto = followed
+      mine = merge.merged
+    }
+    base = theirs
+  }
 
   for (let attempt = 0; attempt < tries; attempt++) {
     const built = args.build({ value: mine.value, format: mine.format, prev, createdAtMs: Math.max(now(), after) })

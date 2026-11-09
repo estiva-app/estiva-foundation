@@ -6,6 +6,28 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.92.0 — 2026-11-09
+
+**Manifest: nothing new. Wire: a change refused for naming no `prev` is written again with one; nothing else changes** (ALO-8).
+
+- `isSwitchRefusal(reason)`: the relay refused a change that names no change
+  it follows, on a type it keeps in order (§6.13, `invalid: a project change
+  names the change it follows in prev`): it made the switch after this tab
+  read its NIP-11. Matched on the words after `invalid:`, so a relay that adds
+  what to do after them still matches.
+- `prevsAfterSwitch(query, file, fields)`: each field's `prev` for writing the
+  change again: its current change, or the first record's id for a field
+  never changed, in one open of the file (with its text when the text is
+  among them). A `member:<P>` field gets none: the relay asks none of it. An
+  app reads NIP-11 again, switches, and writes the change again with these
+  through `writeChange` / `writeChanges`, once, so a tab left open across the
+  switch saves with nothing shown to the person (Miky, 9 Nov).
+- `writeChange({ base })`: for the text, the text the writer read when it
+  cannot name the change it came from. Where `prev`'s text differs, mine is
+  merged onto it by §13.3 before anything is sent (or it asks, with nothing
+  saved), so an old tab's text never writes over words saved since it read
+  the file. Every text written again after the switch passes it.
+
 ## 0.91.0 — 2026-11-09
 
 **Manifest: nothing new. Wire: the live watches' REQs name no team on a relay that says it delivers by file; nothing written** (TOPI-12, SPEC §5).
