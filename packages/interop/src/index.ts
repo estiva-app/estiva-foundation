@@ -183,6 +183,22 @@ export {
 } from './topics.js'
 
 /**
+ * Your topics, newest activity first: the one rule every app orders topics by
+ * (TOPI-10), read once for any set of topics and kept current live.
+ */
+export {
+  readTopicActivity,
+  watchTopicActivity,
+  countsAsActivity,
+  byActivity,
+  activityTopics,
+  type ActivityFile,
+  type ActivityTopic,
+  type TopicActivity,
+  type ActivityWatch,
+} from './activity.js'
+
+/**
  * A topic's All: the conversations of every file on its list, read in one go
  * and kept live, each file's events ready for the shared fold (SPEC §11.8).
  */

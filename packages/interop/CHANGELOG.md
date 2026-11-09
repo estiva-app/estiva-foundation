@@ -6,6 +6,34 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.90.0 — 2026-11-09
+
+**Manifest: nothing new. Wire: reads only, nothing written; existing events read the existing way** (TOPI-10).
+
+- `readTopicActivity(query, topics)`: each topic's newest activity, the one
+  rule Peek, Ship and Leaf order topics by (Miky, 6 Nov: "where anything
+  moved"). A message in the topic's conversation; a change to the topic
+  except tidying it (`order:`, `look:`, a file taken off); a change
+  to, comment on or new file under any file it lists, any depth (a project's
+  issues, a document's pages; the newest 500 under each parent). Never a
+  rename (`title`, on any file; Miky, 9 Nov), `member:`/`follow:` or read
+  state. An event counts only on the file the fold reads it on, never by a
+  tag alone: a change by its first `a`, its `O`, and its file's own team in
+  `h`; a comment by its root, never a crossed one; a new file by its one
+  `a` (security review: anybody may tag any file). Each
+  time capped at the reader's clock. Takes any set of topics, so an Explore
+  page orders every topic the reader can open the same way
+  (`activityTopics(read.topics)` from `readTopics`).
+- `watchTopicActivity(relay, activity, onActivity)`: keeps it current live,
+  in one REQ, naming the teams as `watchListedConversations` does; a new
+  issue in a listed project is heard and listened to from then on.
+- `countsAsActivity(event, topic)` and `byActivity(at)`: the rule event by
+  event, and the order.
+- Cost, measured 9 Nov on production as the agent: 2.0 MB in 7 requests,
+  about 2 s, for Miky's 22 topics and for all 47 alike. Most of it is a
+  file's newest text save (whole text) and the roots of issues under listed
+  projects.
+
 ## 0.89.0 — 2026-11-09
 
 **Manifest: nothing new. Wire: reads only, nothing written; `readTopics` can walk archived parents by the list read** (SPEC §6.13, ALO-15).
