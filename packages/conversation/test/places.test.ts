@@ -209,6 +209,13 @@ describe('§11.8 what is unread on a place', () => {
     assert.deepEqual(ids(unreadOnPlace([top, r], {}, judge(inAt('all')))), [top.id, r.id])
   })
 
+  it('a message by an agent P owns is P’s own: it lights nothing for P, and still lights for anyone else (PEE-79)', () => {
+    const top = comment(CAROL, T0 + 10, 'an update from Bob’s agent')
+    const forBob = { ...judge(inAt('all')), mine: new Set([CAROL]) }
+    assert.deepEqual(ids(unreadOnPlace([top], {}, forBob)), [])
+    assert.deepEqual(ids(unreadOnPlace([top], {}, { stream: TOPIC, me: ALICE, following: inAt('all') })), [top.id])
+  })
+
   it('at Important a reply lights once P wrote in that conversation or was mentioned there, not before', () => {
     const top = comment(ALICE, T0 + 10, 'new')
     const early = reply(CAROL, top, T0 + 11)

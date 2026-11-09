@@ -552,6 +552,8 @@ export interface PlaceJudge {
   stream: string
   /** The person reading. */
   me: string
+  /** Keys whose messages count as `me`'s own: the agents `me` owns (`ownAgentsOf`, PEE-79). */
+  mine?: ReadonlySet<string>
   /** {@link followingOf} for `me` on the place. */
   following: Following
   /** Whether `me` muted the place (`estiva:muted:v1`): a mute already kept still lights only mentions. */
@@ -601,7 +603,8 @@ export function isUnreadOnPlace(
   judge: PlaceJudge,
   inConversationSince: number | undefined,
 ): boolean {
-  if (message.pubkey === judge.me) return false
+  // why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-agents-profile-says-whose-it-is.md
+  if (message.pubkey === judge.me || judge.mine?.has(message.pubkey)) return false
   const { following } = judge
   const mentioned = peopleNamedInBody(message.content).has(judge.me)
   const started = following.in && (following.since === undefined || message.created_at >= following.since)

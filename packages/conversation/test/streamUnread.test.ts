@@ -36,6 +36,13 @@ describe('streamHasUnread — SPEC §11.8 over a list’s message projection', (
     assert.equal(streamHasUnread([said('m', NOW - 10)], FILE, terms, frontier({ [FILE]: NOW }), never), false)
   })
 
+  it('a message by the viewer’s own agent lights no dot for them, and does for another member (PEE-79)', () => {
+    const terms = { member: true, muted: false }
+    const agentSaid = [said('m', NOW - 10, THEM)]
+    assert.equal(streamHasUnread(agentSaid, FILE, terms, { ...frontier(), mine: new Set([THEM]) }, never), false)
+    assert.equal(streamHasUnread(agentSaid, FILE, terms, frontier(), never), true)
+  })
+
   it('reading the file’s marker puts the dot out', () => {
     const terms = { member: true, muted: false }
     const messages = [said('m', NOW - 10)]

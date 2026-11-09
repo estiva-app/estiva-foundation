@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.56.0 — 2026-11-09
+
+**Wire: nothing written; a tag is now read** (PEE-79; SPEC §6.5). `parseProfile`
+reports `owner` on a bot's profile whose NIP-OA `auth` tag (no conditions)
+verifies against the agent's key, when handed the event's `pubkey` and `tags`.
+`ownerOf(event)` is the check on its own. Estiva ID puts the tag there; apps
+count a message by an agent you own as your own. Record:
+`an-agents-profile-says-whose-it-is`.
+
 ## 0.55.1 — 2026-11-06
 
 **Wire: nothing** (ALO-16; SPEC §13.3). `textAsksOf` kept none of my changes

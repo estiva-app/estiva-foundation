@@ -143,6 +143,8 @@ export {
   secretKeySigner,
 } from './sign.js'
 
+export { ownerOf } from './owner.js'
+
 export {
   type PublishResult,
   type QueryResult,

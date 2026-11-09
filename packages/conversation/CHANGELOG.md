@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.36.0 — 2026-11-09
+
+**SPEC §11.8: a message by an agent you own is your own** (PEE-79). `StreamJudge`,
+`PlaceJudge` and `StreamFrontier` take `mine`, the keys whose messages count
+as the viewer's, and `isUnread`, `isUnreadOnPlace` and `streamHasUnread` light
+nothing for them. `ownAgentsOf(profiles, me)` builds it from `NamedProfile.owner`,
+which `namedProfilesOf` now reads (protocol 0.56.0) when the events carry tags.
+An app that passes no `mine` behaves as before. Record:
+`an-agents-profile-says-whose-it-is`.
+
 ## 0.35.0 — 2026-11-06
 
 **SPEC §6.5 and C51: a comment the read did not return is in its replies'
