@@ -3910,8 +3910,10 @@ export async function resolveForeignRoots(
    * `listRead`, where the relay offers the list read (NIP-11 `file_list`), reads each file of the relay's file kinds
    * as its first record and its fields' current changes (§6.13), not every change ever made to it: no text, and a
    * deleted file is absent. Other kinds are read as before.
+   * `parentsListRead`, with `archivedWith`, reads only the parents walked for an archive by the list read (with
+   * `listRead`'s fallback for one it leaves out); the files asked for are still read in full, their text included.
    */
-  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean } = {},
+  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean } = {},
 ): Promise<ForeignObject[]> {
   const pointers = new Map<string, AddressPointer>()
   for (const reference of references) {
@@ -3952,7 +3954,7 @@ export async function resolveForeignRoots(
       objects.map((object) => ({ object, manifest: manifestOf(object) })),
       query,
       cache,
-      options.listRead ? FILE_KINDS : [],
+      options.listRead || options.parentsListRead ? FILE_KINDS : [],
     )
   }
   return objects

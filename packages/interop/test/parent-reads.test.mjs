@@ -15,7 +15,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, resolveForeignRoots, resolveParents, filesOf } from '../dist/index.js'
+import { resolveForeignObject, resolveForeignRoots, resolveParents, filesOf, readTopics } from '../dist/index.js'
 
 const OWNER = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -184,6 +184,39 @@ describe('an archived parent, read by the list read', () => {
     const r = relay(events)
     const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true })
     assert.equal(opened.archived?.with, addressOf(shelved))
+    assert.ok(r.changesByA().includes(addressOf(shelved)))
+  })
+})
+
+describe('readTopics: a topic’s archived project, read by the list read', () => {
+  const TOPIC = 30840
+  const setup = () => {
+    const shelved = project('shelved-t')
+    const open = project('open-t')
+    const topic = (d, parent) => event({ kind: TOPIC, tags: [['d', d], ['title', d], ['a', addressOf(parent)], ['h', TEAM]] })
+    const under = topic('under-t', shelved)
+    const fine = topic('fine-t', open)
+    const events = [ship, shelved, open, under, fine, ...edits(shelved), ...edits(open), change(shelved, 'archived', 'true'), change(under, 'description', 'The plan')]
+    return { shelved, under, fine, events }
+  }
+
+  test('with listRead, a topic under an archived project is archived with it, and no project’s changes are read', async () => {
+    const { shelved, under, fine, events } = setup()
+    const r = relay(events)
+    const read = await readTopics(r.query, OTHER, { listRead: true })
+    const archivedWith = Object.fromEntries(read.topics.map((t) => [t.address, t.object.archived?.with]))
+    assert.deepEqual(archivedWith, { [addressOf(under)]: addressOf(shelved), [addressOf(fine)]: undefined })
+    const projects = r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`))
+    assert.deepEqual(projects, [], `read by #a: ${projects}`)
+    // The topics themselves are still read in full, their text with them.
+    assert.ok(r.changesByA().includes(addressOf(under)))
+  })
+
+  test('without listRead, the archived project’s changes are read as before', async () => {
+    const { shelved, under, events } = setup()
+    const r = relay(events)
+    const read = await readTopics(r.query, OTHER)
+    assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.archived?.with, addressOf(shelved))
     assert.ok(r.changesByA().includes(addressOf(shelved)))
   })
 })
