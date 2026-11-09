@@ -110,7 +110,8 @@ export function withoutOwnFileLines(body: string, ownFile: readonly string[]): s
     return inCode || !isOwn(line)
   })
   if (kept.length === lines.length) return body
-  const words = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  // Only the blank lines the dropped line leaves at the end go: every other space is the writer's.
+  const words = kept.join('\n').replace(/\s+$/, '')
   // Nothing else written: the link is the message, and a reader draws it, so the edit keeps it too.
   return words || body
 }
