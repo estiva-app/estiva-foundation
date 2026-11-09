@@ -22,6 +22,7 @@ import {
   listedConversationsOf,
   namesTeamsOn,
   planListInTopic,
+  relayNamesTeams,
   watchListedConversations,
   type ListedConversations,
   type ListedFile,
@@ -294,25 +295,42 @@ describe("a topic's All, live", () => {
     assert.deepEqual(heard, [[PAGE_D, 'New, live']])
   })
 
-  it('asks by file alone, naming no team, by default', async () => {
+  it('asks by file, and names the teams of the files and of their comments unless told the relay delivers by file', async () => {
     const relay = liveRelay()
     watchListedConversations(relay, await cold(), () => {}, manualTimers())
     const [filters] = relay.reqs
     assert.ok(filters.some((f) => (f['#A'] as string[] | undefined)?.includes(PAGE)))
     assert.ok(filters.some((f) => (f['#O'] as string[] | undefined)?.includes(PAGE_D)))
-    for (const f of filters) assert.equal(f['#h'], undefined)
+    for (const f of filters) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
   })
 
-  it('names the teams of the files and of their comments when told the relay needs them', async () => {
+  it('names no team once told the relay delivers by file', async () => {
     const relay = liveRelay()
-    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams: true })
-    for (const f of relay.reqs[0]) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
+    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams: false })
+    for (const f of relay.reqs[0]) assert.equal(f['#h'], undefined)
   })
 
-  it('names teams only on a relay that does not list buzz-live-as-stored', () => {
-    assert.equal(namesTeamsOn({ supported_extensions: ['nip-er', 'buzz-live-as-stored'] }), false)
-    assert.equal(namesTeamsOn({ supported_extensions: ['nip-er', 'buzz-unlisted-channels'] }), true)
-    assert.equal(namesTeamsOn({ name: 'upstream' }), true)
+  it('asks by file alone on a relay whose NIP-11 lists buzz-live-as-stored, once it has answered', async () => {
+    const relay = liveRelay()
+    const info = { info: async () => ({ supported_extensions: ['nip-er', 'buzz-live-as-stored'] }) }
+    const namesTeams = relayNamesTeams(info)
+    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams })
+    assert.equal(relay.reqs.length, 0)
+    await namesTeams
+    await Promise.resolve()
+    assert.equal(relay.reqs.length, 1)
+    for (const f of relay.reqs[0]) assert.equal(f['#h'], undefined)
+  })
+
+  it('keeps naming teams on a relay whose NIP-11 lacks the rule or does not answer', async () => {
+    for (const info of [{ info: async () => ({ supported_extensions: ['buzz-unlisted-channels'] }) }, { info: async () => Promise.reject(new Error('502')) }]) {
+      const relay = liveRelay()
+      const namesTeams = relayNamesTeams(info)
+      watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams })
+      await namesTeams
+      await Promise.resolve()
+      for (const f of relay.reqs[0]) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
+    }
     assert.equal(namesTeamsOn(null), true)
   })
 

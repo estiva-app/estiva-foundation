@@ -214,7 +214,7 @@ export {
 } from './listedConversations.js'
 
 /** Whether a live watch must name teams on a relay: its NIP-11 `buzz-live-as-stored` (SPEC §5). */
-export { namesTeamsOn, LIVE_AS_STORED_EXTENSION } from './liveAsStored.js'
+export { namesTeamsOn, relayNamesTeams, LIVE_AS_STORED_EXTENSION } from './liveAsStored.js'
 
 /**
  * A file as its fields, each kept in order by the relay (SPEC §6.2, §6.13):

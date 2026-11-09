@@ -303,14 +303,16 @@ export const LISTED_WATCH_REBUILD_MS = 250
  * written a second ago is heard. Each event is handed over once; the cold
  * read's are never handed over.
  *
- * ## Asking by file alone (`namesTeams`, off by default)
+ * ## Asking by file alone (`namesTeams: relayNamesTeams(relay)`)
  *
- * The decided shape asks by file alone (Miky, 2026-11-06), and our relay
- * delivers a team's event live to a request that names no team, as a stored
- * read returns it (it lists `buzz-live-as-stored`). On a relay that does not
- * (`namesTeamsOn(await relay.info())` says so), pass `namesTeams: true` and
- * every filter also carries the `#h` of each listed file's team and of every
- * team a comment on them was filed in.
+ * The decided shape asks by file alone (Miky, 2026-11-06), and a relay that
+ * lists `buzz-live-as-stored` (ours) delivers a team's event live to a
+ * request that names no team, as a stored read returns it. Pass
+ * `namesTeams: relayNamesTeams(relay)` and the watch asks by file alone on
+ * such a relay; it opens once that answer is in. Otherwise (`namesTeams`
+ * true, the default, or a relay that does not say so) every filter also
+ * carries the `#h` of each listed file's team and of every team a comment on
+ * them was filed in.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-request-kept-open-hears-what-asking-again-would-return.md
  */
@@ -321,7 +323,8 @@ export function watchListedConversations(
   options: {
     /** Unix seconds to hear from. Defaults to the newest event the read holds, else now. */
     since?: number
-    namesTeams?: boolean
+    /** Whether to name teams; a promise ({@link relayNamesTeams}) holds the REQ until it settles. Defaults to true. */
+    namesTeams?: boolean | Promise<boolean>
     onClosed?: (reason: string) => void
     now?: () => number
     setTimer?: (run: () => void, ms: number) => unknown
@@ -343,7 +346,7 @@ export function watchListedConversations(
   // `created_at` is the author's to write (the relay takes 15 min ahead): `since` never passes the reader's own clock.
   const newest = Math.max(0, ...read.files.flatMap((f) => f.events.map((e) => e.created_at)))
   let since = options.since ?? (newest > 0 ? Math.min(newest, nowSeconds()) : nowSeconds())
-  const namesTeams = options.namesTeams ?? false
+  let namesTeams = typeof options.namesTeams === 'boolean' ? options.namesTeams : true
 
   let subs: { close(): void }[] = []
   let timer: unknown = null
@@ -408,7 +411,7 @@ export function watchListedConversations(
     if (learnt) reopenSoon()
   }
 
-  open()
+  openWhenKnown(options.namesTeams, (names) => (namesTeams = names), () => !stopped && open())
   return {
     stop() {
       if (stopped) return
@@ -418,6 +421,22 @@ export function watchListedConversations(
       subs = []
     },
   }
+}
+
+/**
+ * Open a watch now, or once `namesTeams` (a promise, `relayNamesTeams`)
+ * settles, naming teams if it rejects. `since` covers the wait.
+ */
+export function openWhenKnown(
+  namesTeams: boolean | Promise<boolean> | undefined,
+  set: (names: boolean) => void,
+  open: () => void,
+): void {
+  if (namesTeams === undefined || typeof namesTeams === 'boolean') {
+    open()
+    return
+  }
+  namesTeams.then(set, () => set(true)).then(open)
 }
 
 function addTeam(teams: Set<string>, event: SignedEvent): void {

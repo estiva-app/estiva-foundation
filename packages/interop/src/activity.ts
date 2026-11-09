@@ -39,7 +39,7 @@ import { fileIdOf, MAX_FILTERS_PER_QUERY, type LiveRelay, type SignedEvent } fro
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
 import { answers, readAll, type ReadTopic } from './topics.js'
-import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ } from './listedConversations.js'
+import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './listedConversations.js'
 
 const KIND_CHANGE = 1851
 const KIND_READ_STATE = 30078
@@ -379,11 +379,11 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
  * is raised in place; an event that is not news, or older than what is held,
  * says nothing.
  *
- * As {@link watchListedConversations} does, it asks by file alone, since our
- * relay delivers a team's event live to a request that names no team. On a
- * relay that does not (`namesTeamsOn(await relay.info())`), pass
- * `namesTeams: true` and every filter also names the teams of the topics and
- * their files; a file whose team is unknown is then not heard from its team.
+ * As {@link watchListedConversations} does, it asks by file alone when given
+ * `namesTeams: relayNamesTeams(relay)` on a relay that lists
+ * `buzz-live-as-stored` (ours), opening once that answer is in. Otherwise
+ * (the default) every filter also names the teams of the topics and their
+ * files, and a file whose team is unknown is not heard from its team.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-request-kept-open-hears-what-asking-again-would-return.md
  */
@@ -394,7 +394,8 @@ export function watchTopicActivity(
   options: {
     /** Unix seconds to hear from. Defaults to now. */
     since?: number
-    namesTeams?: boolean
+    /** Whether to name teams; a promise ({@link relayNamesTeams}) holds the REQ until it settles. Defaults to true. */
+    namesTeams?: boolean | Promise<boolean>
     onClosed?: (reason: string) => void
     now?: () => number
     setTimer?: (run: () => void, ms: number) => unknown
@@ -405,7 +406,7 @@ export function watchTopicActivity(
   const setTimer = options.setTimer ?? ((run: () => void, ms: number) => timers.setTimeout(run, ms))
   const clearTimer = options.clearTimer ?? ((timer: unknown) => timers.clearTimeout(timer))
   const nowSeconds = () => Math.floor((options.now ?? Date.now)() / 1000)
-  const namesTeams = options.namesTeams ?? false
+  let namesTeams = typeof options.namesTeams === 'boolean' ? options.namesTeams : true
   let since = Math.min(options.since ?? nowSeconds(), nowSeconds())
 
   // Which topics each file is news for; each file's team; the files by id, for a comment's `O`.
@@ -513,7 +514,7 @@ export function watchTopicActivity(
     for (const topic of topics) if (countsAsActivity(event, topic)) raise(topic, event.created_at)
   }
 
-  open()
+  openWhenKnown(options.namesTeams, (names) => (namesTeams = names), () => !stopped && open())
   return {
     stop() {
       if (stopped) return
