@@ -10,7 +10,7 @@
 */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { byActivity, readTopicActivity, watchTopicActivity, type ActivityTopic, type TopicActivity } from '../dist/index.js'
+import { byActivity, readTopicActivity, relayNamesTeams, watchTopicActivity, type ActivityTopic, type TopicActivity } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
 
 const MIKY = 'a'.repeat(64)
@@ -237,7 +237,7 @@ function manualTimers() {
 }
 
 describe('topics reorder live', () => {
-  const start = async () => {
+  const start = async (options: { namesTeams?: boolean | Promise<boolean> } = {}) => {
     const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
     const relay = liveRelay()
@@ -248,6 +248,7 @@ describe('topics reorder live', () => {
       now: () => (NOW + 100) * 1000,
       setTimer: timers.setTimer,
       clearTimer: timers.clearTimer,
+      ...options,
     })
     return { activity, relay, timers, heard, watch }
   }
@@ -296,6 +297,16 @@ describe('topics reorder live', () => {
     for (const req of relay.reqs) assert.ok(req.length <= 10)
     const teams = new Set(relay.reqs.flat().flatMap((f) => (f['#h'] as string[] | undefined) ?? []))
     assert.deepEqual([...teams].sort(), [LEAF_TEAM, SHIP_TEAM, TEAM].sort())
+    watch.stop()
+  })
+
+  it('names no team on a relay whose NIP-11 lists buzz-live-as-stored, once it has answered', async () => {
+    const namesTeams = relayNamesTeams({ info: async () => ({ supported_extensions: ['buzz-live-as-stored'] }) })
+    const { relay, watch } = await start({ namesTeams })
+    await namesTeams
+    await Promise.resolve()
+    assert.ok(relay.reqs.length > 0)
+    for (const f of relay.reqs.flat()) assert.equal(f['#h'], undefined)
     watch.stop()
   })
 })

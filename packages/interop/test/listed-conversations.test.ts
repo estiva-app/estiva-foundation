@@ -20,7 +20,9 @@ import {
 import {
   listedConversations,
   listedConversationsOf,
+  namesTeamsOn,
   planListInTopic,
+  relayNamesTeams,
   watchListedConversations,
   type ListedConversations,
   type ListedFile,
@@ -293,7 +295,7 @@ describe("a topic's All, live", () => {
     assert.deepEqual(heard, [[PAGE_D, 'New, live']])
   })
 
-  it('asks by file, and names the teams of the files and of their comments until the relay delivers by file', async () => {
+  it('asks by file, and names the teams of the files and of their comments unless told the relay delivers by file', async () => {
     const relay = liveRelay()
     watchListedConversations(relay, await cold(), () => {}, manualTimers())
     const [filters] = relay.reqs
@@ -306,6 +308,30 @@ describe("a topic's All, live", () => {
     const relay = liveRelay()
     watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams: false })
     for (const f of relay.reqs[0]) assert.equal(f['#h'], undefined)
+  })
+
+  it('asks by file alone on a relay whose NIP-11 lists buzz-live-as-stored, once it has answered', async () => {
+    const relay = liveRelay()
+    const info = { info: async () => ({ supported_extensions: ['nip-er', 'buzz-live-as-stored'] }) }
+    const namesTeams = relayNamesTeams(info)
+    watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams })
+    assert.equal(relay.reqs.length, 0)
+    await namesTeams
+    await Promise.resolve()
+    assert.equal(relay.reqs.length, 1)
+    for (const f of relay.reqs[0]) assert.equal(f['#h'], undefined)
+  })
+
+  it('keeps naming teams on a relay whose NIP-11 lacks the rule or does not answer', async () => {
+    for (const info of [{ info: async () => ({ supported_extensions: ['buzz-unlisted-channels'] }) }, { info: async () => Promise.reject(new Error('502')) }]) {
+      const relay = liveRelay()
+      const namesTeams = relayNamesTeams(info)
+      watchListedConversations(relay, await cold(), () => {}, { ...manualTimers(), namesTeams })
+      await namesTeams
+      await Promise.resolve()
+      for (const f of relay.reqs[0]) assert.deepEqual(new Set(f['#h'] as string[]), new Set([LEAF_TEAM, SHIP_TEAM, TOPIC_TEAM]))
+    }
+    assert.equal(namesTeamsOn(null), true)
   })
 
   it('hears a reaction on a comment that itself arrived live, once the watch has asked again', async () => {
