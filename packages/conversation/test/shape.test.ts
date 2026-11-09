@@ -337,6 +337,45 @@ describe('the one line rule (§13.2, §13.6.2, C21)', () => {
     assert.equal(placed.blocks.some((b) => placed.rowOf(b)), false)
   })
 
+  // ONE-11 (Miky, 2026-11-09): Ship ended each issue comment with `\n\nnostr:naddr…` of the issue, and Peek and Leaf drew it as a row.
+  const words = (placed: ReturnType<typeof placeLines>) => placed.blocks.map((b) => (placed.rowOf(b) ? 'row' : b.inline?.map((r) => r.text).join('')))
+
+  it('a line that is only a link to the file the comment is on draws nothing, written as nostr: or as a URL', () => {
+    const own = { resolveLink, ownFile: [ISSUE], stayChip: (value: string) => value === ISSUE }
+    assert.deepEqual(words(placeLines(tree(`Looks right.\n\n${naddr}`), own)), ['Looks right.'])
+    assert.deepEqual(words(placeLines(tree(`Looks right.\n${URL}`), own)), ['Looks right.'])
+  })
+
+  it('the file the comment is on is matched by its id as well as by its address', () => {
+    const placed = placeLines(tree(`Looks right.\n\n${naddr}`), { resolveLink, ownFile: ['d68a8c78-5ec7-4652-b236-89ab57ac5b1e'] })
+    assert.deepEqual(words(placed), ['Looks right.'])
+  })
+
+  it('a link to the file the comment is on, inside a sentence, keeps its place', () => {
+    const placed = placeLines(tree(`Same as ${naddr} then.`), { resolveLink, ownFile: [ISSUE] })
+    assert.equal(placed.blocks.length, 1)
+    assert.ok(placed.blocks[0].inline?.some((r) => r.reference === naddr))
+  })
+
+  it('with another file’s card under it, the line linking its own file still draws nothing', () => {
+    const OTHER = `30851:${ALICE}:another-issue`
+    const other = `nostr:${encodeNaddr({ kind: 30851, pubkey: ALICE, identifier: 'another-issue', relays: [] })}`
+    const placed = placeLines(tree(`${naddr}\n${other}`), { resolveLink, ownFile: [ISSUE], cards: [{ value: OTHER, layout: 'detailed' }] })
+    assert.equal(placed.blocks.length, 0)
+  })
+
+  it('a line that is only a link to another file is still its row', () => {
+    const placed = placeLines(tree(`Looks right.\n\n${naddr}`), { resolveLink, ownFile: [`30851:${ALICE}:another-issue`] })
+    assert.deepEqual(placed.blocks.map((b) => placed.rowOf(b)).filter(Boolean), [{ reference: naddr, value: ISSUE }])
+  })
+
+  it('a message that is only a link to the file it is on still draws it, as its chip, in every app', () => {
+    const placed = placeLines(tree(naddr), { resolveLink, ownFile: [ISSUE] })
+    assert.equal(placed.blocks.some((b) => placed.rowOf(b)), false)
+    assert.equal(placed.blocks.length, 1)
+    assert.ok(placed.blocks[0].inline?.some((r) => r.reference === naddr))
+  })
+
   it('a link in a sentence stays in the sentence', () => {
     const placed = placeLines(tree(`see ${URL} now`), { resolveLink })
     assert.equal(placed.blocks.some((b) => placed.rowOf(b)), false)

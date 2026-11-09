@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.35.0'
+export const CONVERSATION_VERSION = '0.36.0'
 
 export {
   KIND_MESSAGE,
@@ -77,7 +77,7 @@ export {
 
 export { foldThreads, type Message, type Thread, type RootState } from './shape.js'
 
-export { placeLines, writtenUrlOf, urlNames, ROW_BLOCK, type RowLine, type PlacedLines, type LineContext } from './lines.js'
+export { placeLines, ownFileOf, withoutOwnFileLines, writtenUrlOf, urlNames, ROW_BLOCK, type RowLine, type PlacedLines, type LineContext } from './lines.js'
 
 export { buildComment, buildReply, offersEditAndDelete, placeOf, type CommentRef } from './builders.js'
 
