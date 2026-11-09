@@ -11,6 +11,7 @@
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-link-on-words-counts-toward-the-card.md
  */
+import { KIND_COMMENT } from './kinds.js'
 import {
   lineDrawOf,
   linesOf,
@@ -82,7 +83,7 @@ export interface LineContext {
  * whose `a` names what it mentions, not where it is.
  */
 export function ownFileOf(event: { kind: number; tags: readonly (readonly string[])[] }): string[] {
-  if (event.kind !== 1111) return []
+  if (event.kind !== KIND_COMMENT) return []
   return event.tags.filter((t) => (t[0] === 'A' || t[0] === 'O') && !!t[1]).map((t) => t[1])
 }
 
@@ -102,16 +103,16 @@ export function withoutOwnFileLines(body: string, ownFile: readonly string[]): s
     return !!value && ownFile.some((own) => sameFile(value, own))
   }
   const lines = body.split('\n')
-  if (!lines.some(isOwn)) return body
-  return lines.filter((line) => !isOwn(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim()
-}
-
-/** Whether a line is only a link to the file the comment is on (`LineContext.ownFile`). */
-function isOwnFileLine(line: readonly RenderInline[], block: Pick<RenderBlock, 'type'>, context: LineContext): boolean {
-  if (!context.ownFile?.length) return false
-  const drawn = lineDrawOf(line, block, context)
-  if (drawn.draw !== 'row' && drawn.draw !== 'nothing') return false
-  return context.ownFile.some((own) => sameFile(drawn.value, own))
+  // A line inside a fenced code block is code, drawn as written, never a link.
+  let inCode = false
+  const kept = lines.filter((line) => {
+    if (/^\s*```/.test(line)) inCode = !inCode
+    return inCode || !isOwn(line)
+  })
+  if (kept.length === lines.length) return body
+  const words = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  // Nothing else written: the link is the message, and a reader draws it, so the edit keeps it too.
+  return words || body
 }
 
 /**
@@ -141,8 +142,9 @@ export function urlNames(url: string, address: string): boolean {
 const BREAK: RenderInline = { text: '\n', marks: [] }
 
 function rowLineOf(line: readonly RenderInline[], block: Pick<RenderBlock, 'type'>, context: LineContext): RowLine | 'nothing' | undefined {
-  if (isOwnFileLine(line, block, context)) return 'nothing'
   const drawn = lineDrawOf(line, block, context)
+  // A link alone on its line to the file the comment is on: nothing (`LineContext.ownFile`).
+  if ((drawn.draw === 'row' || drawn.draw === 'nothing') && context.ownFile?.some((own) => sameFile(drawn.value, own))) return 'nothing'
   if ((drawn.draw === 'row' || drawn.draw === 'nothing') && context.stayChip?.(drawn.value)) return undefined
   if (drawn.draw === 'nothing') return 'nothing'
   if (drawn.draw === 'unreadable') return { reference: drawn.reference, unreadable: true }
@@ -213,7 +215,12 @@ export function placeLines(blocks: readonly RenderBlock[], context: LineContext 
     }
     out.push(block)
   }
-  // Nothing left but a link to its own file: the message keeps it, as the chip or row it would be without the rule.
-  if (!out.length && blocks.length && context.ownFile?.length) return placeLines(blocks, { ...context, ownFile: undefined })
+  // Nothing left, not even a card or a part under it: the message keeps its link, as the chip or row it would be without the rule.
+  const underIt = (context.cards ?? []).some((card) => card.layout !== 'none') || !!context.parts?.length
+  if (!out.length && blocks.length && context.ownFile?.length && !underIt) {
+    const own = context.ownFile
+    // Its chip, in every app, whether or not the app keeps the page it is on as a chip (WID-3's `stayChip`).
+    return placeLines(blocks, { ...context, ownFile: undefined, stayChip: (value) => own.some((o) => sameFile(value, o)) || !!context.stayChip?.(value) })
+  }
   return { blocks: out, rowOf: (block) => rows.get(block), rowRuns }
 }

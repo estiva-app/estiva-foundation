@@ -13,7 +13,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { encodeNaddr, linksAsReferences, toRenderTree, type SignedEvent } from '@estiva-app/protocol'
-import { foldThreads, ownFileOf, placeLines, withoutOwnFileLines, resolutionOf, resolutionsByTarget, urlNames, writtenUrlOf, type Thread } from '../dist/index.js'
+import { foldThreads, placeLines, resolutionOf, resolutionsByTarget, urlNames, writtenUrlOf, type Thread } from '../dist/index.js'
 
 const production = JSON.parse(readFileSync(new URL('./production-threads.json', import.meta.url), 'utf8')) as Record<string, { note: string; events: SignedEvent[] }>
 const QA1 = 'c562b90f36802f52e11bc6a3f2e7d9e59e86c76de212fe457dbc89bc273a9a25'
@@ -346,11 +346,6 @@ describe('the one line rule (§13.2, §13.6.2, C21)', () => {
     assert.deepEqual(words(placeLines(tree(`Looks right.\n${URL}`), own)), ['Looks right.'])
   })
 
-  it('a comment is on its A and its O; a chat message is on nothing, whatever its a names', () => {
-    assert.deepEqual(ownFileOf({ kind: 1111, tags: [['A', ISSUE], ['O', 'd68a8c78-5ec7-4652-b236-89ab57ac5b1e'], ['a', ISSUE]] }), [ISSUE, 'd68a8c78-5ec7-4652-b236-89ab57ac5b1e'])
-    assert.deepEqual(ownFileOf({ kind: 9, tags: [['a', ISSUE]] }), [])
-  })
-
   it('the file the comment is on is matched by its id as well as by its address', () => {
     const placed = placeLines(tree(`Looks right.\n\n${naddr}`), { resolveLink, ownFile: ['d68a8c78-5ec7-4652-b236-89ab57ac5b1e'] })
     assert.deepEqual(words(placed), ['Looks right.'])
@@ -362,20 +357,21 @@ describe('the one line rule (§13.2, §13.6.2, C21)', () => {
     assert.ok(placed.blocks[0].inline?.some((r) => r.reference === naddr))
   })
 
+  it('with another file’s card under it, the line linking its own file still draws nothing', () => {
+    const OTHER = `30851:${ALICE}:another-issue`
+    const other = `nostr:${encodeNaddr({ kind: 30851, pubkey: ALICE, identifier: 'another-issue', relays: [] })}`
+    const placed = placeLines(tree(`${naddr}\n${other}`), { resolveLink, ownFile: [ISSUE], cards: [{ value: OTHER, layout: 'detailed' }] })
+    assert.equal(placed.blocks.length, 0)
+  })
+
   it('a line that is only a link to another file is still its row', () => {
     const placed = placeLines(tree(`Looks right.\n\n${naddr}`), { resolveLink, ownFile: [`30851:${ALICE}:another-issue`] })
     assert.deepEqual(placed.blocks.map((b) => placed.rowOf(b)).filter(Boolean), [{ reference: naddr, value: ISSUE }])
   })
 
-  it('an edit of an old Ship comment opens without the line linking its own file, and keeps every other', () => {
-    assert.equal(withoutOwnFileLines(`Looks right.\n\n${naddr}`, [ISSUE]), 'Looks right.')
-    assert.equal(withoutOwnFileLines(`Looks right.\n\n${URL}`, [ISSUE]), `Looks right.\n\n${URL}`)
-    assert.equal(withoutOwnFileLines(`Same as ${naddr} then.`, [ISSUE]), `Same as ${naddr} then.`)
-    assert.equal(withoutOwnFileLines(`Looks right.\n\n${naddr}`, [`30851:${ALICE}:another-issue`]), `Looks right.\n\n${naddr}`)
-  })
-
-  it('a message that is only a link to the file it is on still draws it, as its chip', () => {
-    const placed = placeLines(tree(naddr), { resolveLink, ownFile: [ISSUE], stayChip: (value) => value === ISSUE })
+  it('a message that is only a link to the file it is on still draws it, as its chip, in every app', () => {
+    const placed = placeLines(tree(naddr), { resolveLink, ownFile: [ISSUE] })
+    assert.equal(placed.blocks.some((b) => placed.rowOf(b)), false)
     assert.equal(placed.blocks.length, 1)
     assert.ok(placed.blocks[0].inline?.some((r) => r.reference === naddr))
   })
