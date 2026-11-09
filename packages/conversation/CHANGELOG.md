@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.36.0 — 2026-11-09
+
+**SPEC §13.6.2: a line that is only a link to the file a comment is on draws
+nothing** (ONE-11; Miky, 2026-11-09).
+
+- `placeLines` takes `ownFile`, the values naming the file the comment is on
+  (its NIP-22 `A` address, its `O` id). A line that is only a link to it, a
+  `nostr:` reference or an app URL, draws nothing, as a file whose card is
+  under the message already does. A message left with no words draws them as
+  before. Ship ended every issue comment with such a line (`\n\nnostr:naddr…`)
+  and hid it on its own page, while Peek and Leaf drew it as a row; every
+  comment already on the relay now reads the same in each app. A link to the
+  file inside a sentence keeps its place.
+- `withoutOwnFileLines(body, ownFile)`: the words an edit box opens with, less
+  each line that is only a `nostr:` reference to the comment's own file, so an
+  edit made in any app drops Ship's old line, as an edit made in Ship did.
+
 ## 0.35.0 — 2026-11-06
 
 **SPEC §6.5 and C51: a comment the read did not return is in its replies'

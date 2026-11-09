@@ -15,6 +15,8 @@ import {
   lineDrawOf,
   linesOf,
   referenceOfLink,
+  sameFile,
+  valueOfReference,
   type Embed,
   type LinkResolver,
   type PartPointer,
@@ -62,6 +64,44 @@ export interface LineContext {
    * is shown on draws no row of itself there (Miky, WID-3).
    */
   stayChip?: (value: string) => boolean
+  /**
+   * The file a comment is on, by each value it names it with (its NIP-22 `A`
+   * address, its `O` id): a line that is only a link to it, a `nostr:`
+   * reference or an app URL, draws nothing, as a file whose card is under the
+   * message does. The comment already says which file it is on. A message
+   * that would then draw no words at all draws them as before. Ship ended
+   * every issue comment with such a line until ONE-11 (Miky, 2026-11-09).
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-comment-draws-no-line-for-the-file-it-is-on.md
+   */
+  ownFile?: readonly string[]
+}
+
+/**
+ * A comment's words for its edit box, less each line that is only a `nostr:`
+ * reference to the file it is on: the line Ship appended to every issue
+ * comment until ONE-11, which no reader draws, so an edit made in any app
+ * drops it, as an edit made in Ship always has. A URL or a sentence naming
+ * the file stays, being words somebody typed.
+ */
+export function withoutOwnFileLines(body: string, ownFile: readonly string[]): string {
+  if (!ownFile.length) return body
+  const isOwn = (line: string) => {
+    const text = line.trim()
+    if (!/^nostr:[a-z0-9]+$/i.test(text)) return false
+    const value = valueOfReference(text)
+    return !!value && ownFile.some((own) => sameFile(value, own))
+  }
+  const lines = body.split('\n')
+  if (!lines.some(isOwn)) return body
+  return lines.filter((line) => !isOwn(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** Whether a line is only a link to the file the comment is on (`LineContext.ownFile`). */
+function isOwnFileLine(line: readonly RenderInline[], block: Pick<RenderBlock, 'type'>, context: LineContext): boolean {
+  if (!context.ownFile?.length) return false
+  const drawn = lineDrawOf(line, block, context)
+  if (drawn.draw !== 'row' && drawn.draw !== 'nothing') return false
+  return context.ownFile.some((own) => sameFile(drawn.value, own))
 }
 
 /**
@@ -91,6 +131,7 @@ export function urlNames(url: string, address: string): boolean {
 const BREAK: RenderInline = { text: '\n', marks: [] }
 
 function rowLineOf(line: readonly RenderInline[], block: Pick<RenderBlock, 'type'>, context: LineContext): RowLine | 'nothing' | undefined {
+  if (isOwnFileLine(line, block, context)) return 'nothing'
   const drawn = lineDrawOf(line, block, context)
   if ((drawn.draw === 'row' || drawn.draw === 'nothing') && context.stayChip?.(drawn.value)) return undefined
   if (drawn.draw === 'nothing') return 'nothing'
@@ -162,5 +203,7 @@ export function placeLines(blocks: readonly RenderBlock[], context: LineContext 
     }
     out.push(block)
   }
+  // Nothing left but a link to its own file: the message keeps it, as the chip or row it would be without the rule.
+  if (!out.length && blocks.length && context.ownFile?.length) return placeLines(blocks, { ...context, ownFile: undefined })
   return { blocks: out, rowOf: (block) => rows.get(block), rowRuns }
 }
