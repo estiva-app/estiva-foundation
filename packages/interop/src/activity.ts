@@ -6,15 +6,21 @@
  *
  * - a message or reply in its own conversation (`kind:1111`/`9` with its `A`);
  * - a change to the topic itself, except tidying it: its `order:<d>` and
- *   `look:<d>` (arranging, a row/card switch), its `title` (a rename), a file
- *   taken off its list (`lists:<d>` = `false`) — a file put on it counts;
+ *   `look:<d>` (arranging, a row/card switch), a file taken off its list
+ *   (`lists:<d>` = `false`) — a file put on it counts;
  * - a change to, or a comment on, any file its list holds, and on every file
- *   under one: a listed project's issues, a listed document's pages, any depth;
+ *   under one: a listed project's issues, a listed document's pages, any depth
+ *   (the newest {@link MAX_CHILDREN} under each);
  * - a new file under one (an issue filed in a listed project).
  *
- * Never, anywhere: who is on a file or at what level (`member:<P>`,
- * `follow:<P>`, §11.8) — joining would move a topic up for everyone — and
- * read state (`kind:30078`). The agent's own writes count like anyone's.
+ * Never, anywhere: a rename (`title`, on the topic or any file; Miky,
+ * 2026-11-09), who is on a file or at what level (`member:<P>`, `follow:<P>`,
+ * §11.8) — joining would move a topic up for everyone — and read state
+ * (`kind:30078`). The agent's own writes count like anyone's.
+ *
+ * An event counts only on the file it is on as the fold reads it, never by a
+ * tag alone: a change by its first `a`, in its file's own team (`h`); a
+ * comment by its root, never a crossed one; a new file by its one `a`.
  * With nothing else, a topic's time is its first record's.
  *
  * Every `created_at` is the author's to write, and the relay takes one up to
@@ -29,8 +35,8 @@
  * app keeps it current with {@link watchTopicActivity}.
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/each-file-on-a-topic-keeps-its-own-place-and-look.md
  */
-import { MAX_FILTERS_PER_QUERY, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
-import { KIND_COMMENT } from '@estiva-app/conversation'
+import { fileIdOf, MAX_FILTERS_PER_QUERY, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
+import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
 import { answers, readAll, type ReadTopic } from './topics.js'
 import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ } from './listedConversations.js'
@@ -47,6 +53,8 @@ const CHILD_KINDS: Readonly<Record<number, readonly number[]>> = {
 }
 /** How deep the pages under a listed document are walked. */
 const MAX_DEPTH = 8
+/** The newest files under one parent that are read and listened to: a team member filing thousands cannot multiply the reads. */
+const MAX_CHILDREN = 500
 /** Newest events asked per target in the first round; a target whose page holds only what does not count is asked again, older. */
 const FIRST_PAGE = 1
 const MAX_ROUNDS = 6
@@ -68,7 +76,7 @@ export interface ActivityTopic {
   address: string
   /** Its first record's time (Unix seconds): its time, when nothing has happened in it since. */
   createdAt?: number
-  /** Its team, for a live watch. */
+  /** Its team, from its root: a change to it counts only in it, and a live watch names it. */
   folder?: string | null
   /** The files its list holds. A file under one of them is found by the read. */
   files: readonly ActivityFile[]
@@ -113,11 +121,13 @@ function fieldsOf(event: SignedEvent): { field: string; value: string | undefine
 export function countsAsActivity(event: SignedEvent, topic: string): boolean {
   if (event.kind === KIND_READ_STATE) return false
   if (event.kind !== KIND_CHANGE) return true
-  const own = event.tags.some((tag) => tag[0] === 'a' && tag[1] === topic)
+  // A change's file is its first `a` (§6.10); any later one is no target.
+  const own = tagValues(event, 'a')[0] === topic
   return fieldsOf(event).some(({ field, value }) => {
-    if (field.startsWith('member:') || field.startsWith('follow:')) return false
+    // A rename moves nothing, on the topic or on any file (Miky, 2026-11-09).
+    if (field.startsWith('member:') || field.startsWith('follow:') || field === 'title') return false
     if (!own) return true
-    if (field.startsWith('order:') || field.startsWith('look:') || field === 'title') return false
+    if (field.startsWith('order:') || field.startsWith('look:')) return false
     if (field.startsWith('lists:')) return value === 'true'
     return true
   })
@@ -137,6 +147,23 @@ function kindOf(address: string): number | undefined {
 }
 function tagValues(event: SignedEvent, name: string): string[] {
   return event.tags.filter((tag) => tag[0] === name && tag[1]).map((tag) => tag[1]!)
+}
+
+/**
+ * Whether an event is on the file at `address` (whose root names `folder`),
+ * as the fold reads it, rather than merely tagging it: a change by its first
+ * `a`, its `O` when it carries one, and its file's own team in `h` (§6.10); a
+ * comment by its root (`isAbout`: its one `A`, or its `O` when it has no root,
+ * never a crossed one, §6.4); a message by its first `A`. Anybody may tag any
+ * file, so a tag alone would let a write in one team move a topic in another.
+ */
+function isOn(event: SignedEvent, address: string, folder: string | null): boolean {
+  if (event.kind === KIND_CHANGE) {
+    const id = tagValues(event, 'O')[0]
+    return tagValues(event, 'a')[0] === address && (id === undefined || id === idOf(address)) && tagValues(event, 'h')[0] === (folder ?? undefined)
+  }
+  if (event.kind === KIND_COMMENT) return isAbout(event, address)
+  return tagValues(event, 'A')[0] === address
 }
 
 async function queryChunked(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
@@ -172,13 +199,18 @@ async function filesUnder(
     const newest = new Map<string, { root: SignedEvent; parent: string }>()
     for (const root of roots) {
       const d = tagValues(root, 'd')[0]
-      const parent = tagValues(root, 'a').find((a) => asked.has(a))
-      if (!d || !parent || !(CHILD_KINDS[kindOf(parent)!] ?? []).includes(root.kind)) continue
+      // A root's parent is its one `a` (§6.7): a later one is no parent.
+      const parent = tagValues(root, 'a')[0]
+      if (!d || !parent || !asked.has(parent) || !(CHILD_KINDS[kindOf(parent)!] ?? []).includes(root.kind)) continue
       const address = `${root.kind}:${root.pubkey}:${d}`
       const held = newest.get(address)
       if (!held || root.created_at > held.root.created_at) newest.set(address, { root, parent })
     }
-    for (const [address, { root, parent }] of newest) {
+    const perParent = new Map<string, number>()
+    for (const [address, { root, parent }] of [...newest].sort((a, b) => b[1].root.created_at - a[1].root.created_at)) {
+      const count = perParent.get(parent) ?? 0
+      if (count >= MAX_CHILDREN) continue
+      perParent.set(parent, count + 1)
       if (found.has(`${parent} ${address}`)) continue
       found.add(`${parent} ${address}`)
       out.push({ parent, file: { address, folder: folderOf(root) }, at: root.created_at })
@@ -192,9 +224,10 @@ async function filesUnder(
   return out
 }
 
-/** One thing to find the newest counting event of: a filter, and the topics its answer is news for. */
+/** One thing to find the newest counting event of: a filter, the file it is on, and the topics its answer is news for. */
 interface Probe {
   filter: Record<string, unknown>
+  target: ActivityFile
   topics: string[]
 }
 
@@ -247,21 +280,27 @@ export async function readTopicActivity(
   for (const topic of topics) for (const file of topic.files) onTopic(file.address, topic.address)
   const listed = new Map([...topicsOf].map(([file, on]) => [file, new Set(on)]))
 
-  const fileProbes = (file: string, list: string[]): Probe[] => {
-    const id = idOf(file)
+  // Each listed file's team, from its root, for the changes' `h`.
+  const folderOfFile = new Map<string, string | null>()
+  for (const topic of topics) for (const file of topic.files) if (!folderOfFile.get(file.address)) folderOfFile.set(file.address, file.folder)
+
+  const fileProbes = (target: ActivityFile, list: string[]): Probe[] => {
+    const file = target.address
+    const id = fileIdOf(file)
     // Every change carries the file's `a`; its `O` only since 30 Oct 2026. A comment carries `A`, or `O` in its newer form (§6.4).
     return [
-      { filter: { kinds: [KIND_CHANGE], '#a': [file] }, topics: list },
-      { filter: { kinds: [KIND_COMMENT], '#A': [file] }, topics: list },
-      ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, topics: list }] : []),
+      { filter: { kinds: [KIND_CHANGE], '#a': [file] }, target, topics: list },
+      { filter: { kinds: [KIND_COMMENT], '#A': [file] }, target, topics: list },
+      ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, target, topics: list }] : []),
     ]
   }
   const first: Probe[] = []
   for (const topic of topics) {
-    first.push({ filter: { kinds: [KIND_COMMENT, KIND_MESSAGE], '#A': [topic.address] }, topics: [topic.address] })
-    first.push({ filter: { kinds: [KIND_CHANGE], '#a': [topic.address] }, topics: [topic.address] })
+    const target = { address: topic.address, folder: topic.folder ?? null }
+    first.push({ filter: { kinds: [KIND_COMMENT, KIND_MESSAGE], '#A': [topic.address] }, target, topics: [topic.address] })
+    first.push({ filter: { kinds: [KIND_CHANGE], '#a': [topic.address] }, target, topics: [topic.address] })
   }
-  for (const [file, on] of listed) first.push(...fileProbes(file, [...on]))
+  for (const [file, on] of listed) first.push(...fileProbes({ address: file, folder: folderOfFile.get(file) ?? null }, [...on]))
 
   // The topics and their listed files are read while the files under them are found, and those as soon as they are.
   const deep = async () => {
@@ -276,10 +315,11 @@ export async function readTopicActivity(
       }
     }
     const then: Probe[] = []
-    for (const file of new Set(under.map((found) => found.file.address))) {
+    const asFound = new Map(under.map((found) => [found.file.address, found.file]))
+    for (const [file, target] of asFound) {
       // Only for the topics it was not already read for as a listed file.
       const fresh = [...(topicsOf.get(file) ?? [])].filter((topic) => !listed.get(file)?.has(topic))
-      if (fresh.length > 0) then.push(...fileProbes(file, fresh))
+      if (fresh.length > 0) then.push(...fileProbes(target, fresh))
     }
     await newestOf(then)
   }
@@ -296,6 +336,7 @@ export async function readTopicActivity(
         const page = events.filter((event) => answers(event, o.filter)).sort((a, b) => b.created_at - a.created_at)
         const left = new Set(o.probe.topics)
         for (const event of page) {
+          if (!isOn(event, o.probe.target.address, o.probe.target.folder)) continue
           for (const topic of [...left]) {
             if (!countsAsActivity(event, topic)) continue
             bump(topic, event.created_at)
@@ -365,20 +406,23 @@ export function watchTopicActivity(
   const namesTeams = options.namesTeams ?? true
   let since = Math.min(options.since ?? nowSeconds(), nowSeconds())
 
-  // Which topics each file (by address, and by id for a comment's `O`) is news for.
+  // Which topics each file is news for; each file's team; the files by id, for a comment's `O`.
   const byAddress = new Map<string, Set<string>>()
+  const folderOfFile = new Map<string, string | null>()
   const byId = new Map<string, Set<string>>()
   const teams = new Set<string>()
   const add = (file: ActivityFile, topic: string) => {
-    for (const [map, key] of [[byAddress, file.address], [byId, idOf(file.address)]] as const) {
-      if (!key) continue
-      const set = map.get(key) ?? new Set<string>()
-      set.add(topic)
-      map.set(key, set)
-    }
+    const set = byAddress.get(file.address) ?? new Set<string>()
+    set.add(topic)
+    byAddress.set(file.address, set)
+    if (!folderOfFile.get(file.address)) folderOfFile.set(file.address, file.folder)
+    const id = fileIdOf(file.address)
+    if (id) byId.set(id, (byId.get(id) ?? new Set<string>()).add(file.address))
     if (file.folder) teams.add(file.folder)
   }
   for (const [topic, list] of activity.files) for (const file of list) add(file, topic)
+  // Files heard under each parent since the watch began, beside those read: capped as the read is.
+  const children = new Map<string, number>()
   for (const folder of activity.folders.values()) if (folder) teams.add(folder)
   const topicSet = new Set(activity.at.keys())
 
@@ -428,26 +472,38 @@ export function watchTopicActivity(
     since = Math.max(since, Math.min(event.created_at, nowSeconds()))
     // A new file under a listed one: news, and listened to from now on.
     const d = tagValues(event, 'd')[0]
-    // Its parent is a held file whose kind holds this kind (a project its issue, a page its page).
-    const parent = d ? tagValues(event, 'a').find((a) => byAddress.has(a) && CHILD_KINDS[kindOf(a) ?? -1]?.includes(event.kind)) : undefined
+    // Its parent is its one `a` (§6.7), a held file whose kind holds this kind (a project its issue, a page its page).
+    const first = tagValues(event, 'a')[0]
+    const parent = d && first && byAddress.has(first) && CHILD_KINDS[kindOf(first) ?? -1]?.includes(event.kind) ? first : undefined
     if (parent && d) {
       const file = { address: `${event.kind}:${event.pubkey}:${d}`, folder: folderOf(event) }
       const fresh = !byAddress.has(file.address)
+      const listen = fresh && (children.get(parent) ?? 0) < MAX_CHILDREN
+      if (listen) children.set(parent, (children.get(parent) ?? 0) + 1)
       for (const topic of byAddress.get(parent)!) {
-        if (fresh) activity.files.get(topic)?.push(file)
-        add(file, topic)
+        if (listen) {
+          activity.files.get(topic)?.push(file)
+          add(file, topic)
+        }
         raise(topic, event.created_at)
       }
-      if (fresh) reopenSoon()
+      if (listen) reopenSoon()
       return
     }
-    const topics = new Set<string>()
-    const names = event.kind === KIND_CHANGE ? tagValues(event, 'a') : tagValues(event, 'A')
-    for (const name of names) {
-      if (topicSet.has(name)) topics.add(name)
-      for (const topic of byAddress.get(name) ?? []) topics.add(topic)
+    // The files and topics it may be on, then only those it is on as the read judges it.
+    const names = new Set<string>()
+    if (event.kind === KIND_CHANGE) {
+      if (first) names.add(first)
+    } else {
+      const root = tagValues(event, 'A')[0] ?? (event.kind === KIND_COMMENT ? first : undefined)
+      if (root) names.add(root)
+      if (event.kind === KIND_COMMENT) for (const id of tagValues(event, 'O')) for (const address of byId.get(id) ?? []) names.add(address)
     }
-    if (event.kind === KIND_COMMENT) for (const id of tagValues(event, 'O')) for (const topic of byId.get(id) ?? []) topics.add(topic)
+    const topics = new Set<string>()
+    for (const name of names) {
+      if (topicSet.has(name) && isOn(event, name, activity.folders.get(name) ?? null)) topics.add(name)
+      if (byAddress.has(name) && isOn(event, name, folderOfFile.get(name) ?? null)) for (const topic of byAddress.get(name)!) topics.add(topic)
+    }
     for (const topic of topics) if (countsAsActivity(event, topic)) raise(topic, event.created_at)
   }
 

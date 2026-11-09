@@ -13,9 +13,14 @@ manifests already published still mean what they meant.
 - `readTopicActivity(query, topics)`: each topic's newest activity, the one
   rule Peek, Ship and Leaf order topics by (Miky, 6 Nov: "where anything
   moved"). A message in the topic's conversation; a change to the topic
-  except tidying it (`order:`, `look:`, `title`, a file taken off); a change
+  except tidying it (`order:`, `look:`, a file taken off); a change
   to, comment on or new file under any file it lists, any depth (a project's
-  issues, a document's pages). Never `member:`/`follow:` or read state. Each
+  issues, a document's pages; the newest 500 under each parent). Never a
+  rename (`title`, on any file; Miky, 9 Nov), `member:`/`follow:` or read
+  state. An event counts only on the file the fold reads it on, never by a
+  tag alone: a change by its first `a`, its `O`, and its file's own team in
+  `h`; a comment by its root, never a crossed one; a new file by its one
+  `a` (security review: anybody may tag any file). Each
   time capped at the reader's clock. Takes any set of topics, so an Explore
   page orders every topic the reader can open the same way
   (`activityTopics(read.topics)` from `readTopics`).

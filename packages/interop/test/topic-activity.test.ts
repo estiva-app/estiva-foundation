@@ -25,9 +25,11 @@ const NOW = T0 + 10_000
 const WIDGETS = `30840:${MIKY}:widgets-d`
 const ONBOARDING = `30840:${MIKY}:onboarding-d`
 const TESTING = `30840:${MIKY}:testing-d`
-const PROJECT = `30850:${SHIP}:project-d`
+const PROJECT_ID = '4f1c2b3a-9d8e-4c7b-a6f5-0e1d2c3b4a59'
+const PAGE_ID = '8a7b6c5d-4e3f-4a1b-9c8d-7e6f5a4b3c2d'
+const PROJECT = `30850:${SHIP}:${PROJECT_ID}`
 const ISSUE = `30851:${SHIP}:issue-d`
-const PAGE = `30842:${MIKY}:page-d`
+const PAGE = `30842:${MIKY}:${PAGE_ID}`
 const SUBPAGE = `30842:${MIKY}:subpage-d`
 const SUBSUBPAGE = `30842:${MIKY}:subsubpage-d`
 
@@ -149,7 +151,7 @@ describe('topics come newest activity first', () => {
   })
 
   it('a comment in its newer form, by the file id alone, counts', async () => {
-    const comment = event({ kind: 1111, created_at: T0 + 85, tags: [['O', 'project-d'], ['K', '30850'], ['h', SHIP_TEAM]] })
+    const comment = event({ kind: 1111, created_at: T0 + 85, tags: [['O', PROJECT_ID], ['K', '30850'], ['h', SHIP_TEAM]] })
     const { query } = relayOver([...fileRoots, comment])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
     assert.equal(activity.at.get(WIDGETS), T0 + 85)
@@ -162,6 +164,38 @@ describe('topics come newest activity first', () => {
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
     assert.equal(activity.at.get(WIDGETS), T0 + 40)
     assert.ok(calls.length > 2, 'asked again, older')
+  })
+
+  it('an event that only tags a file, without being on it, moves no topic; nor does renaming a listed file', async () => {
+    const elsewhere = `30851:${QA2}:elsewhere-d`
+    const strays = [
+      // A change to another file that also tags the topic and the issue.
+      event({ kind: 1851, created_at: T0 + 90, tags: [['a', elsewhere], ['a', WIDGETS], ['a', ISSUE], ['field', 'status'], ['value', 'done'], ['h', TEAM]] }),
+      // A change on the issue, signed into a team that is not the issue's.
+      change(ISSUE, 'status', 'done', T0 + 91, TEAM),
+      // A comment whose root is another author's file with the project's id: crossed, on neither.
+      event({ kind: 1111, created_at: T0 + 92, tags: [['A', `30850:${QA2}:${PROJECT_ID}`], ['O', PROJECT_ID], ['h', TEAM]] }),
+      // A comment rooted elsewhere that also names the topic.
+      event({ kind: 1111, created_at: T0 + 93, tags: [['A', elsewhere], ['A', WIDGETS], ['h', TEAM]] }),
+      // An issue whose parent is another project, also tagging the listed one.
+      event({ kind: 30851, pubkey: QA2, created_at: T0 + 94, tags: [['d', 'stray-d'], ['h', TEAM], ['a', `30850:${QA2}:other-d`], ['a', PROJECT]] }),
+      // A rename of a listed file.
+      change(PAGE, 'title', 'Page 2', T0 + 95, LEAF_TEAM),
+    ]
+    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...strays])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    assert.deepEqual(order(activity), [ONBOARDING, TESTING, WIDGETS])
+    assert.equal(activity.at.get(WIDGETS), T0)
+    assert.ok(!activity.files.get(WIDGETS)!.some((file) => file.address.endsWith(':stray-d')))
+  })
+
+  it('reads the newest 500 files under one parent, however many are filed in it', async () => {
+    const many = Array.from({ length: 520 }, (_, i) => root(`30851:${QA2}:bulk-${i}`, T0 - 1000 + i, SHIP_TEAM, PROJECT))
+    const { query } = relayOver([...fileRoots, ...many])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const issues = activity.files.get(WIDGETS)!.filter((file) => file.address.startsWith('30851:'))
+    assert.equal(issues.length, 500)
+    assert.ok(!issues.some((file) => file.address.endsWith(':bulk-0')), 'the oldest are left out')
   })
 
   it('an event dated ahead of the reader is taken at the reader\'s clock, so it cannot pin a topic first', async () => {
@@ -237,6 +271,21 @@ describe('topics reorder live', () => {
     relay.publish(change(fresh, 'status', 'done', NOW + 4, SHIP_TEAM))
     assert.deepEqual(heard.at(-1), [WIDGETS, NOW + 4])
     assert.ok(activity.files.get(WIDGETS)!.some((file) => file.address === fresh))
+    watch.stop()
+  })
+
+  it('hears nothing from an event that only tags a file or topic it is not on', async () => {
+    const { relay, heard, watch } = await start()
+    const elsewhere = `30851:${QA2}:elsewhere-d`
+    relay.publish(event({ kind: 1851, created_at: NOW + 1, tags: [['a', elsewhere], ['a', TESTING], ['a', PAGE], ['field', 'status'], ['value', 'done'], ['h', TEAM]] }))
+    relay.publish(change(PAGE, 'summary', 'x', NOW + 2, TEAM))
+    relay.publish(change(PAGE, 'title', 'Page 2', NOW + 3, LEAF_TEAM))
+    relay.publish(event({ kind: 1111, created_at: NOW + 4, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', TEAM]] }))
+    relay.publish(event({ kind: 1111, created_at: NOW + 5, tags: [['A', elsewhere], ['A', TESTING], ['h', TEAM]] }))
+    relay.publish(event({ kind: 30851, pubkey: QA2, created_at: NOW + 6, tags: [['d', 'stray-d'], ['h', TEAM], ['a', `30850:${QA2}:other-d`], ['a', PROJECT]] }))
+    assert.deepEqual(heard, [])
+    relay.publish(change(PAGE, 'summary', 'x', NOW + 7, LEAF_TEAM))
+    assert.deepEqual(heard.map(([topic]) => topic).sort(), [TESTING, WIDGETS].sort())
     watch.stop()
   })
 
