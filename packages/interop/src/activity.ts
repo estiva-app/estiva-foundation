@@ -494,10 +494,14 @@ export function watchTopicActivity(
     const names = new Set<string>()
     if (event.kind === KIND_CHANGE) {
       if (first) names.add(first)
-    } else {
-      const root = tagValues(event, 'A')[0] ?? (event.kind === KIND_COMMENT ? first : undefined)
+    } else if (event.kind === KIND_COMMENT) {
+      const root = tagValues(event, 'A')[0] ?? first
       if (root) names.add(root)
-      if (event.kind === KIND_COMMENT) for (const id of tagValues(event, 'O')) for (const address of byId.get(id) ?? []) names.add(address)
+      for (const id of tagValues(event, 'O')) for (const address of byId.get(id) ?? []) names.add(address)
+    } else {
+      // A chat message is a topic's only, as the read asks for it: none lists under a file.
+      const root = tagValues(event, 'A')[0]
+      if (root && topicSet.has(root)) names.add(root)
     }
     const topics = new Set<string>()
     for (const name of names) {
