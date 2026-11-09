@@ -489,12 +489,17 @@ async function readAll(query: QueryFn, filters: readonly Record<string, unknown>
  *
  * How the viewer is in each topic is {@link followingOf} over its root and
  * the changes naming them (TEA-6), the fold Peek's switch reads too.
+ * `parentsListRead`, where the relay offers the list read (NIP-11
+ * `file_list`): the parents walked to see whether a topic is archived with one
+ * are read as their current values (§6.13), not every change ever made to them
+ * (ALO-15). The topics themselves are read as before, their text included.
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-keeps-its-own-list-of-files.md
  */
 export async function readTopics(
   query: QueryFn,
   me: string,
-  options: { cache?: ProjectionCache; fileKinds?: readonly number[]; nowSeconds?: number } = {},
+  options: { cache?: ProjectionCache; fileKinds?: readonly number[]; nowSeconds?: number; parentsListRead?: boolean } = {},
 ): Promise<TopicsRead> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
   const rootEvents = await readAll(query, [{ kinds: [KIND_TOPIC] }])
@@ -509,7 +514,7 @@ export async function readTopics(
   const addresses = [...roots.keys()]
   if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds), mentionedIn: new Set(), inConversations: new Map() }
   const [objects, lists, part, states] = await Promise.all([
-    resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
+    resolveForeignRoots(addresses, query, options.cache, { archivedWith: true, parentsListRead: options.parentsListRead }),
     listsOf(query, addresses, Promise.resolve(roots), options),
     // Held once each, though one comment can answer two of the filters: the folds count events.
     readAll(query, personInFilesFilters(me, addresses)),

@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.89.0 — 2026-11-09
+
+**Manifest: nothing new. Wire: reads only, nothing written; `readTopics` can walk archived parents by the list read** (SPEC §6.13, ALO-15).
+
+- `readTopics` takes `{ parentsListRead: true }`: the parents it walks to see whether
+  a topic is archived with one (a topic's project) are read as their first
+  record and their fields' current changes, never every change by `#a`, with
+  0.88.0's fallback for one the list read leaves out. The topics themselves are
+  read as before, their text included (`listRead` stays free for when they
+  switch). Pass it as soon as NIP-11 advertises `file_list.newest`.
+- `resolveForeignRoots` gains `parentsListRead`: with `archivedWith`, only the
+  parents walked for an archive go by the list read.
+- Without either option every read is as before.
+
 ## 0.88.0 — 2026-11-06
 
 **Manifest: nothing new. Wire: reads only, nothing written; the list read (SPEC §6.13) now also answers parents and archived parents** (ALO-15).
