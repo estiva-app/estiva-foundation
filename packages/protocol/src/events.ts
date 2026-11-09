@@ -37,6 +37,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils'
 import { type BlockDocument, serializeBlockDocument } from './blocks.js'
 import { type Embed, embedTagsOf } from './embeds.js'
 import { isFileId } from './fileId.js'
+import { ownerOf } from './owner.js'
 
 /** A Nostr tag: an array of strings whose first element is the tag name. */
 export type NostrTag = string[]
@@ -334,6 +335,12 @@ export interface Profile {
    * because the viewer may be its NIP-OA owner (CON-5).
    */
   bot?: true
+  /**
+   * The agent's owner, when its profile carries a NIP-OA tag that verifies
+   * against its key ({@link ownerOf}, PEE-79). Read only when `parseProfile`
+   * is handed the event's `pubkey` and `tags`.
+   */
+  owner?: string
 }
 
 /**
@@ -348,12 +355,20 @@ export interface Profile {
  * app they appear in — which is the whole reason this is not left to each
  * consumer.
  */
-export function parseProfile(event: { content: string } | undefined): Profile {
+export function parseProfile(
+  event: { content: string; pubkey?: string; tags?: readonly (readonly string[])[] } | undefined,
+): Profile {
   if (!event) return {}
   try {
     const meta = JSON.parse(event.content)
     const str = (value: unknown) => (typeof value === 'string' && value ? value : undefined)
-    return { displayName: str(meta.display_name) ?? str(meta.name), picture: str(meta.picture), ...(meta.bot === true ? { bot: true as const } : {}) }
+    const owner = meta.bot === true ? ownerOf(event) : undefined
+    return {
+      displayName: str(meta.display_name) ?? str(meta.name),
+      picture: str(meta.picture),
+      ...(meta.bot === true ? { bot: true as const } : {}),
+      ...(owner ? { owner } : {}),
+    }
   } catch {
     return {}
   }

@@ -31,6 +31,8 @@ export interface StreamJudge {
   stream: string
   /** The person reading. */
   me: string
+  /** Keys whose messages count as `me`'s own: the agents `me` owns (`ownAgentsOf`, PEE-79). */
+  mine?: ReadonlySet<string>
   /** Whether `me` is a member — {@link membershipOf} for a file, the roster for a channel. */
   member: boolean
   /** Unix seconds `me` became a member; undefined for a channel, where the roster has no join time. */
@@ -73,7 +75,8 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
 
 /** Whether one message is unread: §11.8's four conditions. `root` is its thread's root id when it is a reply. */
 export function isUnread(message: Message, root: string | undefined, merged: Readonly<Record<string, number>>, judge: StreamJudge): boolean {
-  if (message.pubkey === judge.me) return false
+  // why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-agents-profile-says-whose-it-is.md
+  if (message.pubkey === judge.me || judge.mine?.has(message.pubkey)) return false
   const mentioned = peopleNamedInBody(message.content).has(judge.me)
   if (!mentioned && (!judge.member || judge.muted)) return false
   if (judge.since !== undefined && message.created_at < judge.since) return false

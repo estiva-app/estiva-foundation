@@ -32,6 +32,8 @@ export interface StreamFrontier {
   merged: Readonly<Record<string, number>>
   /** The viewer's pubkey; their own messages do not count. */
   me: string | undefined
+  /** The viewer's own agents, whose messages do not count either (`ownAgentsOf`, PEE-79). */
+  mine?: ReadonlySet<string>
   /** Now, unix seconds. */
   nowSeconds: number
   horizonSeconds: number
@@ -73,6 +75,7 @@ export function streamHasUnread(
   const judge = {
     stream: context,
     me,
+    mine: frontier.mine,
     member: terms.member,
     since: terms.since,
     muted: terms.muted,

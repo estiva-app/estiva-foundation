@@ -27,9 +27,25 @@ export interface NamedProfile {
   picture?: string
   /** NIP-24's `bot: true`, an agent's profile. Present only when true. */
   bot?: true
+  /** The agent's owner, verified from its profile's NIP-OA tag (PEE-79). */
+  owner?: string
 }
 
-type ProfileEvent = { kind: number; pubkey: string; created_at: number; content: string; id?: string }
+type ProfileEvent = { kind: number; pubkey: string; created_at: number; content: string; id?: string; tags?: string[][] }
+
+/**
+ * The keys whose messages count as `me`'s own: the agents `me` owns, by the
+ * verified NIP-OA tag on each agent's profile (PEE-79). Feed it to a judge's
+ * `mine`. Empty without a viewer.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/an-agents-profile-says-whose-it-is.md
+ */
+export function ownAgentsOf(profiles: Iterable<{ pubkey: string; owner?: string }>, me: string | null | undefined): Set<string> {
+  const out = new Set<string>()
+  if (!me) return out
+  for (const p of profiles) if (p.owner === me && p.pubkey !== me) out.add(p.pubkey)
+  return out
+}
 type RosterEvent = { kind: number; created_at: number; tags: string[][]; id?: string }
 
 /** Newer first; on the same second, the lowest id (NIP-01), so every app picks the same one whatever order its events came in. */
@@ -52,10 +68,10 @@ export function namedProfilesOf(events: readonly ProfileEvent[]): Map<string, Na
   }
   const out = new Map<string, NamedProfile>()
   for (const [pubkey, event] of newest) {
-    const { displayName, picture, bot } = parseProfile(event)
+    const { displayName, picture, bot, owner } = parseProfile(event)
     const name = displayName?.trim() ? displayName : undefined
     if (!name) continue
-    out.set(pubkey, { pubkey, name, ...(picture ? { picture } : {}), ...(bot ? { bot } : {}) })
+    out.set(pubkey, { pubkey, name, ...(picture ? { picture } : {}), ...(bot ? { bot } : {}), ...(owner ? { owner } : {}) })
   }
   return out
 }
