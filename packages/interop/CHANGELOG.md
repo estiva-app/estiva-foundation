@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.95.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: nothing new is written; a refusal's reason code is read** (TEA-9; record a-refusal-starts-with-a-reason-code-every-app-reads).
+
+- `refusalCode(reason)`: the reason code a refusal carries after its NIP-01
+  prefix (`invalid: not-home: …` → `not-home`), or `undefined` when it carries
+  none, as from a server that predates the codes (SPEC §3.3).
+- `readMoveRefusal` reads the code before the words. Its `why` gains
+  `not-home` (a topic no team lists goes only to its home), `leaves-by-moving`
+  (a topic leaves a team only by a move) and `unexplained` (a code this reader
+  does not know: say only that nothing moved, never "try again"). A refusal
+  with no code is read by its words as before. `MoveRefusalWhy` names the set;
+  a consumer with a map over `why` adds the three.
+
 ## 0.94.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: two new fields on a topic, `order:<d>` and `look:<d>`, written only by the new planners; a topic's list is read by the list read where the relay offers it** (TOPI-5; record each-file-on-a-topic-keeps-its-own-place-and-look).

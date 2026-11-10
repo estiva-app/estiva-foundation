@@ -399,6 +399,38 @@ describe('readMoveRefusal', () => {
     })
   })
 
+  it('reads the reason code before the words, so a reworded sentence keeps its meaning', () => {
+    const cases: [string, string][] = [
+      ['invalid: archived: the list is kept', 'team-archived'],
+      ['restricted: not-member: you may not write here', 'not-a-member'],
+      ['invalid: changed: the lists moved on', 'changed-meanwhile'],
+      ["invalid: not-home: a topic on no team's list goes first to its home", 'not-home'],
+      ['invalid: leaves-by-moving: move it instead', 'leaves-by-moving'],
+    ]
+    for (const [reason, why] of cases) assert.equal(readMoveRefusal(moved.events, 0, reason).why, why, reason)
+  })
+
+  it('a code over a sentence that says otherwise is read by its code', () => {
+    // The sentence holds "archived"; the code says the team changed.
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: changed: a team that is archived lists it now').why, 'changed-meanwhile')
+  })
+
+  it('a code it does not know is unexplained, never guessed from the words or offered as try again', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: author-lists-first: only its author lists it first').why, 'unexplained')
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: some-new-rule: the team is archived').why, 'unexplained')
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: constructor: a code that names an object property').why, 'unexplained')
+  })
+
+  it('a code is read only after restricted: or invalid:, so a failure the server reports otherwise still offers a retry', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'error: timeout: pool exhausted').why, 'refused')
+  })
+
+  it('a refusal with no code is read by its words, as from a server that predates the codes', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: team 3d50db56 is archived; its list does not change').why, 'team-archived')
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: a topic is listed by one team: move it from the other team instead').why, 'changed-meanwhile')
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: kind:9002 must include at least one metadata tag').why, 'refused')
+  })
+
   it('reads an archived team, and anything else as a plain refusal', () => {
     assert.equal(readMoveRefusal(moved.events, 0, 'a move into or out of an archived team is refused').why, 'team-archived')
     assert.equal(readMoveRefusal(moved.events, 0, 'blocked: rate limit').why, 'refused')
