@@ -3959,23 +3959,26 @@ export async function resolveForeignRoots(
     filters.push(root, { kinds: [...changeKinds], '#a': [address], limit: 500 })
   }
   const listed = listReadFilters(listedPointers)
-  // The children ride in the same two requests: their first records by the list read, the moves naming a parent
-  // as plain reads (TOPI-8).
+  // The children's first records ride in the list read (TOPI-8). The moves naming a parent are asked on their own:
+  // every move that ever named it comes back, stale ones too, so they only say which children to read and are never
+  // folded — a child's place is its list read's current change, in the relay's order (§6.13).
   const lists = options.children ? childListsOf(listedPointers, manifests) : []
+  const moves: Record<string, unknown>[] = []
   for (const { childFilter } of lists) {
     listed.push({ ...childFilter.filter, fields: 'newest' })
-    if (childFilter.movedIn) filters.push(childFilter.movedIn)
+    if (childFilter.movedIn) moves.push(childFilter.movedIn)
   }
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
-  const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
+  const [plain, answered, named] = await Promise.all([queryChunked(filters, query), queryChunked(listed, query), queryChunked(moves, query)])
+  const events = [...plain, ...answered]
   // A child moved in is named only by its move, so its own first record is read once those are back.
-  const held = new Set(events.flatMap((e) => childAddressOf(e) ?? []))
+  const held = new Set(answered.flatMap((e) => childAddressOf(e) ?? []))
   const movedIn = lists.flatMap(({ childFilter, resolved }) =>
-    movedInAddressesOf(events, childFilter, resolved.manifest.records).filter((address) => !held.has(address)),
+    movedInAddressesOf(named, childFilter, resolved.manifest.records).filter((address) => !held.has(address)),
   )
   const moved = movedIn.flatMap((address) => addressPointerOf(address) ?? [])
-  if (moved.length) events.push(...(await queryChunked(listReadFilters(moved), query)))
+  const childEvents = [...answered, ...(moved.length ? await queryChunked(listReadFilters(moved), query) : [])]
   const all = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
   // The children's own first records came back too; only the files asked for are answers.
   const projected = lists.length ? all.filter((object) => !!object.address && pointers.has(object.address)) : all
@@ -3983,12 +3986,13 @@ export async function resolveForeignRoots(
     const parent = projected.find((object) => object.address === address)
     if (!parent) continue
     const children = childrenFrom({
-      events,
+      // The moves only find who moved in; each child folds from its list read alone.
+      events: [...answered, ...named],
       childFilter,
       manifest: resolved.manifest,
       webTemplate: resolved.webTemplate,
       viaRecommendation: resolved.viaRecommendation,
-      childChanges: events,
+      childChanges: childEvents,
     })
     if (children) parent.children = textUnread(children)
   }

@@ -256,6 +256,23 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
     assert.ok(byParent.every((f) => f.fields === 'newest'), JSON.stringify(byParent))
   })
 
+  test('a child moved in and moved away again, with the earlier move stamped later, is not drawn under the old parent', async () => {
+    const p1 = project('p1')
+    const p2 = project('p2')
+    const back = issue('back', p2)
+    // Alice's clock runs fast: her move to p1 says it is newer than Bob's move back, which the relay keeps current (§6.13).
+    const stale = move(back, p1)
+    const current = move(back, p2, OTHER)
+    stale.created_at = current.created_at + 600
+    const r = relay([ship, p1, p2, back, stale, current])
+    const listRead = async (filters) => {
+      const answer = await r.query(filters)
+      return filters.every((f) => f.fields) ? [...answer.filter((e) => e.id !== stale.id), ...(answer.some((e) => e.id === stale.id) ? [current] : [])] : answer
+    }
+    const [root] = await resolveForeignRoots([addressOf(p1)], listRead, undefined, { listRead: true, children: true })
+    assert.deepEqual(root.children ?? [], [])
+  })
+
   test('without children, nothing under the file is read', async () => {
     const p1 = project('p1')
     const r = relay([ship, p1, issue('stays', p1)])
