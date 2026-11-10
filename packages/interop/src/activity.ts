@@ -33,12 +33,14 @@
  * The rule takes any set of topics, so an Explore page orders every topic the
  * reader can open with the same read ({@link readTopicActivity}), and a live
  * app keeps it current with {@link watchTopicActivity}.
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/each-file-on-a-topic-keeps-its-own-place-and-look.md
+ *
+ * No decision record states this order of topics: the rule lives here, and
+ * writing it up as SPEC §6.14 text is on the project's Later list.
  */
-import { fileIdOf, MAX_FILTERS_PER_QUERY, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
+import { fileIdOf, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
-import { answers, readAll, type ReadTopic } from './topics.js'
+import { answeredByEach, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
 import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './listedConversations.js'
 
 const KIND_CHANGE = 1851
@@ -175,62 +177,76 @@ function isOn(event: SignedEvent, address: string, folder: string | null): boole
   return tagValues(event, 'A')[0] === address
 }
 
-async function queryChunked(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
-  const runs: Promise<SignedEvent[]>[] = []
-  for (let i = 0; i < filters.length; i += MAX_FILTERS_PER_QUERY) runs.push(query(filters.slice(i, i + MAX_FILTERS_PER_QUERY)))
-  return (await Promise.all(runs)).flat()
+/**
+ * The files under the given ones, a level at a time: a project's issues, a
+ * document's pages, each by its root's `a` (§6.7), to {@link MAX_DEPTH}
+ * levels. The caller sends {@link FilesUnder.asking} in its request (every
+ * one, however many: paged past the relay's cap rather than cut at it) and
+ * hands the answer to {@link FilesUnder.heard}, which says the files a level
+ * held once its last page is in, each with its root's team and time.
+ */
+interface FilesUnder {
+  asking: (Record<string, unknown> & { limit: number })[]
+  heard(events: readonly SignedEvent[]): { parent: string; file: ActivityFile; at: number }[]
 }
 
-/**
- * Every file under the given ones, any depth: a project's issues, a
- * document's pages, each by its root's `a` (§6.7). One request per level.
- * Each found file with its root's team and its root's time.
- */
-async function filesUnder(
-  query: QueryFn,
-  parents: readonly string[],
-): Promise<{ parent: string; file: ActivityFile; at: number }[]> {
-  const out: { parent: string; file: ActivityFile; at: number }[] = []
+function filesUnder(parents: readonly string[]): FilesUnder {
   // Each file under one is answered once per parent, even when it is listed itself (on another topic, say);
   // each parent is walked once.
   const found = new Set<string>()
   let level = parents.filter((address) => CHILD_KINDS[kindOf(address) ?? -1])
   const walked = new Set(level)
-  for (let depth = 0; depth < MAX_DEPTH && level.length > 0; depth++) {
+  let depth = 0
+  let roots = new Map<string, SignedEvent>()
+  const ask = (): (Record<string, unknown> & { limit: number })[] => {
+    if (depth >= MAX_DEPTH || level.length === 0) return []
     const kinds = [...new Set(level.flatMap((address) => CHILD_KINDS[kindOf(address)!]!))]
     const filters: Record<string, unknown>[] = []
     for (let i = 0; i < level.length; i += VALUES_PER_FILTER) filters.push({ kinds, '#a': level.slice(i, i + VALUES_PER_FILTER) })
-    // Every one, however many: paged past the relay's cap rather than cut at it.
-    const roots = await readAll(query, filters)
-    const asked = new Set(level)
-    const next: string[] = []
-    // A replaceable root the relay still holds twice is one file: its newest names its team.
-    const newest = new Map<string, { root: SignedEvent; parent: string }>()
-    for (const root of roots) {
-      const d = tagValues(root, 'd')[0]
-      // A root's parent is its one `a` (§6.7): a later one is no parent.
-      const parent = tagValues(root, 'a')[0]
-      if (!d || !parent || !asked.has(parent) || !(CHILD_KINDS[kindOf(parent)!] ?? []).includes(root.kind)) continue
-      const address = `${root.kind}:${root.pubkey}:${d}`
-      const held = newest.get(address)
-      if (!held || root.created_at > held.root.created_at) newest.set(address, { root, parent })
-    }
-    const perParent = new Map<string, number>()
-    for (const [address, { root, parent }] of [...newest].sort((a, b) => b[1].root.created_at - a[1].root.created_at)) {
-      const count = perParent.get(parent) ?? 0
-      if (count >= MAX_CHILDREN) continue
-      perParent.set(parent, count + 1)
-      if (found.has(`${parent} ${address}`)) continue
-      found.add(`${parent} ${address}`)
-      out.push({ parent, file: { address, folder: folderOf(root) }, at: root.created_at })
-      if (CHILD_KINDS[root.kind] && !walked.has(address)) {
-        walked.add(address)
-        next.push(address)
-      }
-    }
-    level = next
+    return firstPages(filters)
   }
-  return out
+  const walk: FilesUnder = {
+    asking: ask(),
+    heard(events) {
+      if (walk.asking.length === 0) return []
+      for (const event of events) if (walk.asking.some((filter) => answers(event, filter))) roots.set(event.id, event)
+      walk.asking = nextPages(walk.asking, events)
+      if (walk.asking.length > 0) return []
+      const out: { parent: string; file: ActivityFile; at: number }[] = []
+      const asked = new Set(level)
+      const next: string[] = []
+      // A replaceable root the relay still holds twice is one file: its newest names its team.
+      const newest = new Map<string, { root: SignedEvent; parent: string }>()
+      for (const root of roots.values()) {
+        const d = tagValues(root, 'd')[0]
+        // A root's parent is its one `a` (§6.7): a later one is no parent.
+        const parent = tagValues(root, 'a')[0]
+        if (!d || !parent || !asked.has(parent) || !(CHILD_KINDS[kindOf(parent)!] ?? []).includes(root.kind)) continue
+        const address = `${root.kind}:${root.pubkey}:${d}`
+        const held = newest.get(address)
+        if (!held || root.created_at > held.root.created_at) newest.set(address, { root, parent })
+      }
+      const perParent = new Map<string, number>()
+      for (const [address, { root, parent }] of [...newest].sort((a, b) => b[1].root.created_at - a[1].root.created_at)) {
+        const count = perParent.get(parent) ?? 0
+        if (count >= MAX_CHILDREN) continue
+        perParent.set(parent, count + 1)
+        if (found.has(`${parent} ${address}`)) continue
+        found.add(`${parent} ${address}`)
+        out.push({ parent, file: { address, folder: folderOf(root) }, at: root.created_at })
+        if (CHILD_KINDS[root.kind] && !walked.has(address)) {
+          walked.add(address)
+          next.push(address)
+        }
+      }
+      level = next
+      depth++
+      roots = new Map()
+      walk.asking = ask()
+      return out
+    },
+  }
+  return walk
 }
 
 /** One thing to find the newest counting event of: a filter, the file it is on, and the topics its answer is news for. */
@@ -246,12 +262,16 @@ interface Probe {
  * Each topic's newest activity (the rule above), for any set of topics the
  * reader holds — theirs, or every one they can open.
  *
- * Reads, whatever the number of topics: one request per level of files under
- * the listed ones (a project's issues, then each further level of pages),
- * then the newest few events of each topic's conversation and own changes and
- * of each file's changes and comments, every target one filter in the same
- * request (another per {@link MAX_FILTERS_PER_QUERY}). A target whose newest
- * events are all tidying is asked again from older ones, up to a few rounds.
+ * Reads, whatever the number of topics, one request a tick: the newest few
+ * events of each topic's conversation and own changes and of each listed
+ * file's changes and comments, every target one filter, beside the first
+ * level of files under the listed ones (a project's issues, a document's
+ * pages); then each tick the next level, the first page of each file the
+ * level before found, and every target still open, from older events. A
+ * target whose newest events are all tidying is asked again from older ones,
+ * up to a few pages. No filter names a team (`#h`), the only values a relay
+ * caps per request, so however many filters a tick holds it is one request:
+ * a topic list with one level of files under it is about four.
  *
  * Measured 9 Nov 2026 on production over the 47 topics the agent can read
  * (Miky is in 24 of them): about 1.9 MB in 7 requests, 1 s. Most of it is the
@@ -315,65 +335,84 @@ export async function readTopicActivity(
   }
   for (const [file, on] of listed) first.push(...fileProbes({ address: file, folder: folderOfFile.get(file) ?? null }, [...on], true))
 
-  // The topics and their listed files are read while the files under them are found, and those as soon as they are.
-  const deep = async () => {
-    const under = await filesUnder(query, [...listed.keys()])
-    // Parents come before their children in `under`, so a page two levels down inherits its topics.
-    for (const { parent, file, at: created } of under) {
+  // One request a tick: the next level of files under the listed ones, the
+  // first page of each file found by the level before, and every probe still
+  // open, a page further back. No filter here names a team (`#h`), the only
+  // values a relay caps per request, so none is split across requests.
+  const under = filesUnder([...listed.keys()])
+  // Each file found under a listed one, as last found, and the topics it has been read for.
+  const asFound = new Map<string, ActivityFile>()
+  const readFor = new Map<string, Set<string>>()
+  type Open = { probe: Probe; filter: Record<string, unknown>; round: number }
+  const opened = (probes: readonly Probe[]): Open[] => probes.map((probe) => ({ probe, filter: { ...probe.filter, limit: FIRST_PAGE }, round: 0 }))
+  let open = opened(first)
+  while (under.asking.length > 0 || open.length > 0) {
+    const asked = [...under.asking, ...open.map((o) => o.filter)]
+    const events = await query(asked)
+    const found = under.heard(events)
+    // Parents come before their children in a level, so a page two levels down inherits its topics.
+    for (const { parent, file, at: created } of found) {
       for (const topic of topicsOf.get(parent) ?? []) {
         if (!topicsOf.get(file.address)?.has(topic)) files.get(topic)!.push(file)
         onTopic(file.address, topic)
         // A new issue filed in a listed project is news.
         bump(topic, created)
       }
+      asFound.set(file.address, file)
     }
+    open = stillOpen(open, events)
     const then: Probe[] = []
-    const asFound = new Map(under.map((found) => [found.file.address, found.file]))
     for (const [file, target] of asFound) {
-      // Only for the topics it was not already read for as a listed file.
-      const fresh = [...(topicsOf.get(file) ?? [])].filter((topic) => !listed.get(file)?.has(topic))
-      if (fresh.length > 0) then.push(...fileProbes(target, fresh))
+      // Only for the topics it was not already read for, as a listed file or found before.
+      const done = readFor.get(file) ?? new Set(listed.get(file))
+      const fresh = [...(topicsOf.get(file) ?? [])].filter((topic) => !done.has(topic))
+      if (fresh.length === 0) continue
+      for (const topic of fresh) done.add(topic)
+      readFor.set(file, done)
+      then.push(...fileProbes(target, fresh))
     }
-    await newestOf(then)
+    open.push(...opened(then))
   }
-  await Promise.all([deep(), newestOf(first)])
   for (const list of comments.values()) list.sort(oldestFirst)
   return { at, files, folders, comments }
 
-  /** Per probe, the newest event that counts for one of its topics. Read in rounds; each round asks only what is still open. */
-  async function newestOf(probes: readonly Probe[]): Promise<void> {
-    let open = probes.map((probe) => ({ probe, filter: { ...probe.filter, limit: FIRST_PAGE } as Record<string, unknown> }))
-    for (let round = 0; round < MAX_ROUNDS && open.length > 0; round++) {
-      const events = await queryChunked(query, open.map((o) => o.filter))
-      const still: typeof open = []
-      for (const o of open) {
-        const page = events.filter((event) => answers(event, o.filter)).sort((a, b) => b.created_at - a.created_at)
-        if (o.probe.keepsComments) {
-          const kept = comments.get(o.probe.target.address)
-          for (const event of page) {
-            if (!kept || event.kind !== KIND_COMMENT || !isOn(event, o.probe.target.address, o.probe.target.folder)) continue
-            if (!kept.some((held) => held.id === event.id)) kept.push(event)
-          }
-        }
-        const left = new Set(o.probe.topics)
+  /**
+   * Per probe, the newest event that counts for one of its topics, from the
+   * page this tick answered it: the probes still open, each a page further
+   * back, up to {@link MAX_ROUNDS} pages each.
+   */
+  function stillOpen(open: readonly Open[], events: readonly SignedEvent[]): Open[] {
+    const still: Open[] = []
+    // The answer indexed once a tick, not filtered and sorted once per probe: a listed project's issues make thousands.
+    const pageOf = answeredByEach(events)
+    for (const o of open) {
+      // Only what this filter alone would have been answered: the request holds every other probe's answer too.
+      const page = pageOf(o.filter)
+      if (o.probe.keepsComments) {
+        const kept = comments.get(o.probe.target.address)
         for (const event of page) {
-          if (!isOn(event, o.probe.target.address, o.probe.target.folder)) continue
-          for (const topic of [...left]) {
-            if (!countsAsActivity(event, topic)) continue
-            bump(topic, event.created_at)
-            left.delete(topic)
-          }
-          if (left.size === 0) break
+          if (!kept || event.kind !== KIND_COMMENT || !isOn(event, o.probe.target.address, o.probe.target.folder)) continue
+          if (!kept.some((held) => held.id === event.id)) kept.push(event)
         }
-        const limit = o.filter.limit as number
-        if (left.size === 0 || page.length < limit) continue
-        const until = page[page.length - 1]!.created_at
-        // A second holding a whole page on its own: ask a bigger page of it rather than step past it.
-        const same = until === (o.filter.until as number | undefined)
-        still.push({ probe: { ...o.probe, topics: [...left] }, filter: { ...o.probe.filter, until, limit: same ? limit * 4 : limit * 2 } })
       }
-      open = still
+      const left = new Set(o.probe.topics)
+      for (const event of page) {
+        if (!isOn(event, o.probe.target.address, o.probe.target.folder)) continue
+        for (const topic of [...left]) {
+          if (!countsAsActivity(event, topic)) continue
+          bump(topic, event.created_at)
+          left.delete(topic)
+        }
+        if (left.size === 0) break
+      }
+      const limit = o.filter.limit as number
+      if (left.size === 0 || page.length < limit || o.round + 1 >= MAX_ROUNDS) continue
+      const until = page[page.length - 1]!.created_at
+      // A second holding a whole page on its own: ask a bigger page of it rather than step past it.
+      const same = until === (o.filter.until as number | undefined)
+      still.push({ probe: { ...o.probe, topics: [...left] }, filter: { ...o.probe.filter, until, limit: same ? limit * 4 : limit * 2 }, round: o.round + 1 })
     }
+    return still
   }
 }
 

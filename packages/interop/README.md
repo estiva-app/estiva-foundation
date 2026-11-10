@@ -772,6 +772,7 @@ const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry 
 const lists = await topicLists(query, myTopics)      // Map<topicAddress, files>: a whole column of topics in three reads
 const read = await readTopics(query, me)             // every topic: list, Folder, archive, yours — Add to topic is addableTopics(read, folders)
 const talk = await topicConversations(read, query, { merged, muted }) // Map<topicAddress, { conversations, unread }>, Peek's badge
+const mine = await readYourTopics(query, me, { decrypt, listRead }) // a sidebar's: { topics, at, muted }, yours alone, newest activity first
 ```
 
 `topicsOfFile` asks `{kinds:[1851], "#o":[id]}`; a file's own changes, by `#O`

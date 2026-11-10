@@ -225,6 +225,13 @@ export {
 } from './activity.js'
 
 /**
+ * Your topics alone, lean: the topics the viewer is in, not archived, muted or
+ * a space, newest activity first — what a sidebar draws, in about ten
+ * requests where {@link readTopics} and {@link readTopicActivity} take twenty.
+ */
+export { readYourTopics, type YourTopicsRead } from './yourTopics.js'
+
+/**
  * A topic's All: the conversations of every file on its list, read in one go
  * and kept live, each file's events ready for the shared fold (SPEC §11.8).
  */

@@ -337,20 +337,52 @@ async function listsOf(
   rootsRead: Promise<ReadonlyMap<string, SignedEvent>>,
   options: ListReadOptions,
 ): Promise<Map<string, ListedFile[]>> {
-  const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
   // Paged without the list read: every move adds a change to a topic's `#O`, and an unpaged read would lose its oldest entries.
   const [roots, events] = await Promise.all([rootsRead, options.listRead ? newestChanges(query, asked) : readAll(query, asked.map(topicListFilter))])
-  const folderOfList = (list: string) => {
-    const root = out.has(list) ? roots.get(list) : undefined
+  const folderOfList = listFolderCheck(asked, roots)
+  if (options.listRead) events.push(...(await readAll(query, skippedFilters(events, folderOfList))))
+  const ids = listedIds(events, folderOfList)
+  const resolved = ids.length ? await resolveIds(query, ids, options.fileKinds) : new Map()
+  return listsFrom(asked, roots, events, resolved)
+}
+
+/** §6.2's Folder check for the lists asked for: each list's own Folder, from its root; none for a list not asked for or unread. */
+function listFolderCheck(asked: readonly string[], roots: ReadonlyMap<string, SignedEvent>): (list: string) => string | null {
+  const lists = new Set(asked)
+  return (list) => {
+    const root = lists.has(list) ? roots.get(list) : undefined
     return root ? folderOf(root) : null
   }
-  if (options.listRead) events.push(...(await skippedAgain(query, events, folderOfList)))
-  const entries = listEntries(events, folderOfList)
+}
+
+/** The files the lists asked for hold, as the events fold: each newest entry that lists one, oldest first, each id once. */
+function listedIds(events: readonly SignedEvent[], folderOfList: (list: string) => string | null): string[] {
+  return [...new Set(listedEntries(events, folderOfList).map((entry) => entry.file))]
+}
+
+function listedEntries(events: readonly SignedEvent[], folderOfList: (list: string) => string | null): ListEntry[] {
+  return listEntries(events, folderOfList)
     .filter((entry) => entry.listed)
     .sort((a, b) => byOrder(a.event, b.event))
+}
+
+/**
+ * Each list asked for, from the changes already read and its listed ids
+ * already resolved ({@link resolveIds}): its entries in the topic's order,
+ * each with its arrangement (§6.14). A list asked for that holds nothing maps
+ * to `[]`.
+ */
+function listsFrom(
+  asked: readonly string[],
+  roots: ReadonlyMap<string, SignedEvent>,
+  events: readonly SignedEvent[],
+  resolved: ReadonlyMap<string, { address: string; folder: string | null }>,
+): Map<string, ListedFile[]> {
+  const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
+  const folderOfList = listFolderCheck(asked, roots)
+  const entries = listedEntries(events, folderOfList)
   if (entries.length === 0) return out
   const heads = arrangementHeads(events, folderOfList)
-  const resolved = await resolveIds(query, [...new Set(entries.map((entry) => entry.file))], options.fileKinds)
   for (const entry of entries) {
     const held = resolved.get(entry.file)
     const arranged = arrangementOf(heads.get(entry.list), entry.file, entry.event, roots.get(entry.list)!)
@@ -380,13 +412,13 @@ const SKIPPED_READ_CAP = 100
  * The list read answers each field's newest change, a malformed one too (a
  * wrong `o` the relay takes), so the good change before it is not in the
  * answer. For each file where that happened, read its changes on that topic
- * again (`#O` and `#o`), so it folds as a whole `#O` read would.
+ * again (`#O` and `#o`), so it folds as a whole `#O` read would: the filters
+ * for that read, none when nothing was skipped.
  */
-async function skippedAgain(
-  query: QueryFn,
+function skippedFilters(
   events: readonly SignedEvent[],
   folderOfList: (list: string) => string | null | undefined,
-): Promise<SignedEvent[]> {
+): { kinds: number[]; '#O': string[]; '#o': string[] }[] {
   const skipped = new Map<string, Set<string>>()
   for (const event of events) {
     if (event.kind !== KIND_CHANGE) continue
@@ -406,8 +438,7 @@ async function skippedAgain(
       skipped.set(holder[3], files)
     }
   }
-  if (skipped.size === 0) return []
-  return readAll(query, [...skipped].map(([topic, files]) => ({ kinds: [KIND_CHANGE], '#O': [topic], '#o': [...files] })))
+  return [...skipped].map(([topic, files]) => ({ kinds: [KIND_CHANGE], '#O': [topic], '#o': [...files] }))
 }
 
 /** A topic as {@link readTopics} reads it. */
@@ -527,18 +558,79 @@ export function answers(event: SignedEvent, filter: Record<string, unknown>): bo
  */
 export async function readAll(query: QueryFn, filters: readonly Record<string, unknown>[]): Promise<SignedEvent[]> {
   const out = new Map<string, SignedEvent>()
-  let open = filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
+  let open = firstPages(filters)
   while (open.length) {
     const events = await query(open)
     for (const event of events) out.set(event.id, event)
-    open = open.flatMap((filter) => {
-      const page = events.filter((event) => answers(event, filter))
-      if (page.length < filter.limit) return []
-      const until = Math.min(...page.map((event) => event.created_at))
-      return until === (filter as { until?: number }).until ? [] : [{ ...filter, until }]
-    })
+    open = nextPages(open, events)
   }
   return [...out.values()]
+}
+
+/** {@link readAll}'s first request: each filter asked with a page's `limit`. */
+export function firstPages(filters: readonly Record<string, unknown>[]): (Record<string, unknown> & { limit: number })[] {
+  return filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
+}
+
+/**
+ * {@link readAll}'s next request after `events` came back for `open`: each
+ * filter whose page filled, from its oldest second down. A filter's page is
+ * what it alone was answered ({@link answeredBy}): an older event another
+ * filter in the request brought back is not one it read, so it never moves
+ * this one's `until` past events it has not seen.
+ */
+export function nextPages(
+  open: readonly (Record<string, unknown> & { limit: number })[],
+  events: readonly SignedEvent[],
+): (Record<string, unknown> & { limit: number })[] {
+  return open.flatMap((filter) => {
+    const page = answeredBy(events, filter)
+    if (page.length < filter.limit) return []
+    const until = Math.min(...page.map((event) => event.created_at))
+    return until === (filter as { until?: number }).until ? [] : [{ ...filter, until }]
+  })
+}
+
+/**
+ * What `filter` alone would have been answered, from the answer to a request
+ * it shared with others: the events it matches, newest first (equal seconds
+ * by the lower id), cut at its `limit`. Another filter's answer in the same
+ * request never lands on this one's page. Not for a list read (`fields`),
+ * whose answer holds changes the filter does not match.
+ */
+export function answeredBy(events: readonly SignedEvent[], filter: Record<string, unknown>): SignedEvent[] {
+  const page = events.filter((event) => answers(event, filter)).sort(newestFirst)
+  return typeof filter.limit === 'number' ? page.slice(0, filter.limit) : page
+}
+
+/**
+ * {@link answeredBy} for many filters over one answer, the answer sorted and
+ * indexed by tag value once: each filter that names one tag value (`#a`,
+ * `#A`, `#O`… with one value) is matched against the events carrying it, any
+ * other against them all. The same pages, newest first and cut at `limit`.
+ */
+export function answeredByEach(events: readonly SignedEvent[]): (filter: Record<string, unknown>) => SignedEvent[] {
+  const sorted = [...events].sort(newestFirst)
+  const byTag = new Map<string, SignedEvent[]>()
+  for (const event of sorted) {
+    const keys = new Set(event.tags.filter((t) => t[0] && t[1] !== undefined).map((t) => `${t[0]}\u0000${t[1]}`))
+    for (const key of keys) {
+      const held = byTag.get(key)
+      if (held) held.push(event)
+      else byTag.set(key, [event])
+    }
+  }
+  return (filter) => {
+    const one = Object.entries(filter).find(([key, values]) => key.startsWith('#') && Array.isArray(values) && values.length === 1)
+    const pool = one ? (byTag.get(`${one[0].slice(1)}\u0000${(one[1] as string[])[0]}`) ?? []) : sorted
+    const page = pool.filter((event) => answers(event, filter))
+    return typeof filter.limit === 'number' ? page.slice(0, filter.limit) : page
+  }
+}
+
+/** Newest first, equal seconds by the lower id: the order a relay answers a page in. */
+function newestFirst(a: SignedEvent, b: SignedEvent): number {
+  return b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
 /**
@@ -575,15 +667,7 @@ export async function readTopics(
   options: ListReadOptions & { cache?: ProjectionCache; nowSeconds?: number; parentsListRead?: boolean } = {},
 ): Promise<TopicsRead> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
-  const rootEvents = await readAll(query, [{ kinds: [KIND_TOPIC] }])
-  const roots = new Map<string, SignedEvent>()
-  for (const root of rootEvents) {
-    if (root.kind !== KIND_TOPIC) continue
-    const address = `${root.kind}:${root.pubkey}:${tagOf(root, 'd') ?? ''}`
-    const held = roots.get(address)
-    // Two versions of one record: NIP-01's later created_at, then the lower id (§6.3).
-    if (!held || root.created_at > held.created_at || (root.created_at === held.created_at && root.id < held.id)) roots.set(address, root)
-  }
+  const roots = topicRoots(await readAll(query, [{ kinds: [KIND_TOPIC] }]))
   const addresses = [...roots.keys()]
   if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds), mentionedIn: new Set(), inConversations: new Map() }
   const [objects, lists, part, states] = await Promise.all([
@@ -593,24 +677,11 @@ export async function readTopics(
     // Held once each, though one comment can answer two of the filters: the folds count events.
     readAll(query, personInFilesFilters(me, addresses)),
     // The team lists naming a topic, for which of them are spaces.
-    readAll(query, [
-      { kinds: [KIND_FOLDER_STATE], '#a': addresses },
-      { kinds: [KIND_FOLDER_STATE], '#o': [...roots.values()].map((root) => tagOf(root, 'd') ?? '') },
-    ]),
+    readAll(query, teamListFilters(roots)),
   ])
   const spaces = spacesOf(states, addresses)
   const membership = foldMemberships(me, part.filter((e) => e.created_at >= nowSeconds - HORIZON_SECONDS), nowSeconds)
-  // Each topic's own events, so each is folded over its own and not over all of them.
-  const byTopic = new Map<string, SignedEvent[]>()
-  // A change by its `a`, a level included: `candidateFilesOf` leaves levels out, since they say nothing of file membership.
-  const filesOf = (event: SignedEvent) => (event.kind === KIND_CHANGE ? event.tags.filter((t) => t[0] === 'a').map((t) => t[1]) : candidateFilesOf(event))
-  for (const event of part) {
-    for (const file of filesOf(event)) {
-      const held = byTopic.get(file)
-      if (held) held.push(event)
-      else byTopic.set(file, [event])
-    }
-  }
+  const byTopic = eventsByTopic(part)
   const mentionedIn = new Set<string>()
   for (const [file, events] of byTopic) if (events.some((e) => e.kind === KIND_COMMENT && membership.mentioned.has(e.id))) mentionedIn.add(file)
   const inConversations = new Map<string, number>()
@@ -622,17 +693,97 @@ export async function readTopics(
       inConversations.set(key, Math.min(inConversations.get(key) ?? Infinity, e.created_at))
     }
   }
-  const topics = objects.flatMap((object): ReadTopic[] => {
-    const root = object.address ? roots.get(object.address) : undefined
-    const folder = root ? folderOf(root) : null
-    if (!root || !folder || object.unreachable) return []
-    const address = object.address!
-    // The team is the topic's own Folder; a team's default reaches no topic, so its roster is not needed (§11.8).
-    const following = followingOf({ address, team: folder }, me, { events: [root, ...(byTopic.get(address) ?? [])], listing: states })
-    return [{ address, object, folder, createdAt: root.created_at, listed: lists.get(address) ?? [], following, yours: following.in, space: spaces.has(address) }]
+  const topics = objects.flatMap((object) => {
+    const topic = readTopicOf(object, me, { roots, byTopic, states, spaces })
+    return topic ? [{ ...topic, listed: lists.get(topic.address) ?? [] }] : []
   })
   return { me, topics, membership, mentionedIn, inConversations }
 }
+
+/** Every topic's root by address, from a read of `kind:30840`: two versions of one record by NIP-01's later `created_at`, then the lower id (§6.3). */
+export function topicRoots(events: readonly SignedEvent[]): Map<string, SignedEvent> {
+  const roots = new Map<string, SignedEvent>()
+  for (const root of events) {
+    if (root.kind !== KIND_TOPIC) continue
+    const address = `${root.kind}:${root.pubkey}:${tagOf(root, 'd') ?? ''}`
+    const held = roots.get(address)
+    if (!held || root.created_at > held.created_at || (root.created_at === held.created_at && root.id < held.id)) roots.set(address, root)
+  }
+  return roots
+}
+
+/** The team lists naming the topics, by address and by id: which of them are spaces ({@link spacesOf}). */
+export function teamListFilters(roots: ReadonlyMap<string, SignedEvent>): Record<string, unknown>[] {
+  return [
+    { kinds: [KIND_FOLDER_STATE], '#a': [...roots.keys()] },
+    { kinds: [KIND_FOLDER_STATE], '#o': [...roots.values()].map((root) => tagOf(root, 'd') ?? '') },
+  ]
+}
+
+/** The changes naming the viewer on the topics: how they are in each ({@link followingOf}). */
+export function changesNamingFilter(me: string, addresses: readonly string[]): Record<string, unknown> {
+  return personInFilesFilters(me, addresses)[0]!
+}
+
+/** Each topic's own events, so each is folded over its own and not over all of them. */
+export function eventsByTopic(part: readonly SignedEvent[]): Map<string, SignedEvent[]> {
+  const byTopic = new Map<string, SignedEvent[]>()
+  // A change by its `a`, a level included: `candidateFilesOf` leaves levels out, since they say nothing of file membership.
+  const filesOf = (event: SignedEvent) => (event.kind === KIND_CHANGE ? event.tags.filter((t) => t[0] === 'a').map((t) => t[1]) : candidateFilesOf(event))
+  for (const event of part) {
+    for (const file of filesOf(event)) {
+      const held = byTopic.get(file)
+      if (held) held.push(event)
+      else byTopic.set(file, [event])
+    }
+  }
+  return byTopic
+}
+
+/**
+ * A topic as {@link readTopics} reads it, its list aside: none for an object
+ * whose root the reader does not hold, or names no Folder, or is unreachable.
+ */
+export function readTopicOf(
+  object: ForeignObject,
+  me: string,
+  facts: {
+    roots: ReadonlyMap<string, SignedEvent>
+    byTopic: ReadonlyMap<string, readonly SignedEvent[]>
+    states: readonly SignedEvent[]
+    spaces: ReadonlySet<string>
+  },
+): Omit<ReadTopic, 'listed'> | undefined {
+  const root = object.address ? facts.roots.get(object.address) : undefined
+  const folder = root ? folderOf(root) : null
+  if (!root || !folder || object.unreachable) return undefined
+  const address = object.address!
+  // The team is the topic's own Folder; a team's default reaches no topic, so its roster is not needed (§11.8).
+  const following = followingOf({ address, team: folder }, me, { events: [root, ...(facts.byTopic.get(address) ?? [])], listing: facts.states })
+  return { address, object, folder, createdAt: root.created_at, following, yours: following.in, space: facts.spaces.has(address) }
+}
+
+/**
+ * The second half of a topic list read for the lists asked for, from the
+ * changes already read ({@link topicListFilter} or the list read), for a
+ * reader that gathers its requests: the filters asking again about what the
+ * list read skipped (none without it), and every id to resolve whatever
+ * that answer says — the ids listed now and the ones asked about again.
+ */
+export function listReadPlan(
+  asked: readonly string[],
+  roots: ReadonlyMap<string, SignedEvent>,
+  events: readonly SignedEvent[],
+  listRead: boolean,
+): { again: Record<string, unknown>[]; ids: string[] } {
+  const folderOfList = listFolderCheck(asked, roots)
+  const again = listRead ? skippedFilters(events, folderOfList) : []
+  const ids = new Set(listedIds(events, folderOfList))
+  for (const filter of again) for (const id of filter['#o']) ids.add(id)
+  return { again, ids: [...ids] }
+}
+
+export { listsFrom, newestChanges, resolveIds, spacesOf }
 
 // An untitled topic sorts where the apps' "Untitled topic" would.
 const titleOf = (topic: ReadTopic) => topic.object.slots.title?.value || 'Untitled topic'
