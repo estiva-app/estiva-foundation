@@ -6,6 +6,36 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.94.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: two new fields on a topic, `order:<d>` and `look:<d>`, written only by the new planners; a topic's list is read by the list read where the relay offers it** (TOPI-5; record each-file-on-a-topic-keeps-its-own-place-and-look).
+
+- `ListedFile` now carries the file's arrangement (SPEC §6.14): `order`
+  (its place, a key; absent when it has none that counts), `look` (`row` or
+  `card`; absent: draw the manifest's widget), and `prev` / `prevAt`, what
+  its next `order:` or `look:` change follows. `topicList`, `topicLists` and
+  `readTopics` return each topic's files **in the topic's order**: placed by
+  key, byte-wise, equal keys by the lower id, then the rest oldest listed
+  first. A place older than the file's newest listing is ignored.
+- `keyBetween`, `isPlaceKey`, `sortArranged`: the key a place is kept in,
+  `0-9A-Za-z`, never ending in `0`.
+- `planMoveInTopic` (to just after a file, or first), `planLookInTopic` and
+  `planPutBackInTopic` (Undo of Remove: back on the list, then back in its
+  place, its look kept). A drop among files nobody placed places those above
+  it too, in one change of several fields, taken whole or refused whole.
+  Every `order:` change names its `prev`: the field's newest change on the
+  relay, one a reader skips included.
+- `writeArrangement`: sends one, and on `conflict:` reads the topic again
+  and plans again; it never re-sends a place it added for someone else's file.
+- `ListReadOptions.listRead` (and `readTopics` when `parentsListRead` is
+  set): read a topic's list by `{"fields":"newest","kinds":[30840],"#d":[…]}`,
+  at most three changes per file however often its files move, with one more
+  read for a file whose newest change a reader skips. Without it, the `#O`
+  read as before, which grows with each move.
+- `topicsOfFile` pages its `#o` read: it also returns each move of the file.
+- Upgrading: a `ListedFile` an app builds itself needs `prev` and `prevAt`.
+  An app that sorted a topic's files itself should keep the order it is given.
+
 ## 0.93.0 — 2026-11-09
 
 **Manifest: nothing new. Wire: nothing new; no request added, nothing written** (TOPI-3).
