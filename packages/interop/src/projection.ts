@@ -2521,7 +2521,8 @@ export function isArchived(file: { archived?: Archive } | null | undefined): boo
  *
  * **A Folder is the exception** (SPEC §3.2): on a `kind:39000` address only a
  * change in the Folder's own `h` by one of `folderAdmins` — the owners and
- * admins on its relay-signed `kind:39001` — counts. A caller that has not read
+ * admins on its relay-signed `kind:39001`, and on a team with no owner the
+ * workspace's owners and admins — counts. A caller that has not read
  * the admin list passes none, and then no change counts: a Folder shown live
  * when it is archived is recoverable, one any member could hide is not.
  */
@@ -6771,7 +6772,9 @@ function workspaceAdminsOf(events: readonly SignedEvent[], relay: string): strin
  * Who may rename and archive a team: the owners and admins its relay-signed
  * `kind:39001` lists, and, when that list names no `owner`, the workspace's
  * owners and admins on the relay-signed roster as well. A team with no 39001 at
- * all is not taken as one with no owner: nothing says who is on it.
+ * all is not taken as one with no owner: nothing says who is on it. Only a
+ * team (`isTeam`: it holds a `kind:30890`) is looked after this way; a DM or
+ * another conversation space, whose list names no owner either, never is.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-team-with-no-owner-is-looked-after-by-the-workspaces-admins.md
  */
@@ -6779,9 +6782,11 @@ function teamStewardsOf(
   admins: SignedEvent | undefined,
   channel: SignedEvent | undefined,
   events: readonly SignedEvent[],
+  isTeam: boolean,
 ): string[] {
   const own = folderAdminsOf(admins, channel)
-  if (!admins || !channel || admins.pubkey !== channel.pubkey) return own
+  if (!isTeam || !admins || !channel || admins.pubkey !== channel.pubkey) return own
+  if (channel.tags.some((tag) => tag[0] === 't' && tag[1] === 'dm')) return own
   const hasOwner = admins.tags.some((tag) => tag[0] === 'p' && tag[1] && tag.slice(2).includes('owner'))
   return hasOwner ? own : [...new Set([...own, ...workspaceAdminsOf(events, channel.pubkey)])]
 }
@@ -7092,7 +7097,7 @@ async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[
     if (name !== undefined) folder.name = name
     if (channel.tags.some((tag) => tag[0] === 'private')) folder.private = true
     if (channel.tags.some((tag) => tag[0] === 'company')) folder.company = true
-    const admins = teamStewardsOf(adminsOf.get(id), channel, events)
+    const admins = teamStewardsOf(adminsOf.get(id), channel, events, folder.hasState)
     if (admins.length) folder.admins = admins
     folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: id, relays: [] })
   }
@@ -7538,6 +7543,7 @@ export async function resolveFolderContents(
     identity.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === folder),
     channel,
     roster,
+    state !== undefined,
   )
   const channelAddress = channel
     ? pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: folder, relays: [] })
@@ -7698,6 +7704,8 @@ export async function resolveFolderContents(
               events.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === pointer.identifier),
               root,
               roster,
+              // A team listed in this one; a DM listed here is still never looked after.
+              true,
             ),
           )
         : undefined

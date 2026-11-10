@@ -522,6 +522,27 @@ describe('a Folder is archived the way any file is', () => {
       assert.equal((await opened([apiaryAdmins, roster, byWorkspaceAdmin])).archived, undefined)
     })
 
+    test('a DM, or a group with no team listing, is not looked after by the workspace’s admins', async () => {
+      const byWorkspaceAdmin = archive(addressOf(apiary), { by: WORKSPACE_ADMIN })
+      // No `kind:30890`: a conversation space, not a team (SPEC §3.1).
+      const bare = [apiary, ownerless, roster, byWorkspaceAdmin]
+      const unlisted = (await listFolders(relay(bare))).find((f) => f.id === APIARY)
+      assert.equal(unlisted?.archived, undefined)
+      assert.ok(!unlisted?.admins?.includes(WORKSPACE_ADMIN), 'listed without a listing')
+      assert.ok(!(await resolveFolderContents(APIARY, relay(bare), noPeople)).admins?.includes(WORKSPACE_ADMIN), 'opened')
+      // A DM nested in a team: the relay's 39000 for it says dm, and its list names no owner.
+      const peekLike = event({
+        kind: 31990,
+        pubkey: RELAY,
+        tags: [['d', 'folders'], ['k', '39000']],
+        content: JSON.stringify({ name: 'Folders', projections: { 39000: { widget: 'card', slots: { title: { tag: 'name' } } } } }),
+      })
+      const dm = event({ kind: 39000, pubkey: RELAY, tags: [...apiary.tags.filter((t) => t[0] !== 't'), ['t', 'dm']] })
+      const events = [peekLike, dm, orchard, ownerless, roster, stateOf(ORCHARD, 'Orchard', [addressOf(dm)])]
+      const stays = await resolveFolderContents(ORCHARD, relay([...events, archive(addressOf(dm), { by: WORKSPACE_ADMIN })]), noPeople)
+      assert.deepEqual(titles(stays), ['Apiary'], 'a workspace admin’s archive of a DM means nothing')
+    })
+
     test('a roster somebody other than the relay signed is ignored', async () => {
       const forged = rosterBy(KEEPER, [KEEPER, 'owner'], [WORKSPACE_ADMIN, 'admin'])
       const folder = await listed([ownerless, forged, archive(addressOf(apiary), { by: KEEPER })])
