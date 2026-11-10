@@ -4019,8 +4019,9 @@ export async function seedManifests(pointers: Iterable<AddressPointer>, query: Q
   const kinds = [...new Set([...wanted.values()].map((pointer) => String(pointer.kind)))]
   const authors = [...new Set([...wanted.values()].map((pointer) => pointer.pubkey))]
   const claims = kinds.map((kind) => ({ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }))
-  const recommendations = { kinds: [KIND_HANDLER_RECOMMENDATION], authors, '#d': kinds, limit: authors.length * kinds.length }
-  const events = await query([...claims, recommendations])
+  // One filter each, as `resolveManifestUncached` asks: an author's older versions never crowd out another author's recommendation.
+  const recommendations = authors.flatMap((author) => kinds.map((kind) => ({ kinds: [KIND_HANDLER_RECOMMENDATION], authors: [author], '#d': [kind], limit: 1 })))
+  const events = await query([...claims, ...recommendations])
   const addressOf = (event: SignedEvent) => `${event.kind}:${event.pubkey}:${tagValue(event, 'd') ?? ''}`
   const newestFirst = (a: SignedEvent, b: SignedEvent) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   for (const [key, pointer] of wanted) {
