@@ -207,13 +207,33 @@ describe('topics come newest activity first', () => {
     const crossed = event({ kind: 1111, created_at: T0 + 95, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', LEAF_TEAM]] })
     const { query, calls } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), onPage, onProject, onSubpage, crossed])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
-    // The same requests the read made before it kept comments (0.92.0 makes these with this relay), each comment filter one page.
-    assert.equal(calls.length, 5)
+    // The same requests the read makes without keeping comments (one a level: 0.96.0 makes three with this relay), each comment filter one page.
+    assert.equal(calls.length, 3)
     for (const f of calls.flat()) if ((f.kinds as number[]).includes(1111)) assert.ok(typeof f.limit === 'number' && f.limit <= 2, JSON.stringify(f))
     assert.equal(activity.at.get(WIDGETS), T0 + 90)
     assert.deepEqual(activity.comments?.get(PAGE)?.map((e) => e.content), ['on the page'])
     assert.deepEqual(activity.comments?.get(PROJECT)?.map((e) => e.content), ['on the project'])
     assert.equal(activity.comments?.has(SUBPAGE), false)
+  })
+
+  it('asks one request a level of files under the listed ones, each holding every target still open, however many targets', async () => {
+    // 70 more topics, each with a message: with the three above, 152 targets in the first request.
+    const more: ActivityTopic[] = Array.from({ length: 70 }, (_, i) => ({ address: `30840:${MIKY}:more-${i}-d`, createdAt: T0, folder: TEAM, files: [] }))
+    const messages = more.map((topic, i) => message(topic.address, T0 + 100 + i))
+    // Widgets' newest changes are tidying: its last real one is three pages back, asked beside the levels below.
+    const tidy = [0, 1, 2].map((i) => change(WIDGETS, `order:f${i}`, `a${i}`, T0 + 300 + i))
+    const real = change(WIDGETS, 'summary', 'What Widgets is about', T0 + 250)
+    // Two levels under the listed page: read only once the level above is.
+    const deep = event({ kind: 1111, created_at: T0 + 30, tags: [['A', SUBSUBPAGE], ['h', LEAF_TEAM]] })
+    const { query, calls } = relayOver([...fileRoots, ...messages, ...tidy, real, deep])
+    const activity = await readTopicActivity(query, [...topics, ...more], { nowSeconds: NOW })
+    // Level 0 and every first page; level 1, the found issue's and subpage's first pages and Widgets' second;
+    // level 2, the found sub-subpage's first page and Widgets' third. Before 0.96.0: eight.
+    assert.equal(calls.length, 3)
+    assert.ok(calls[0]!.length > 128, `${calls[0]!.length} filters in the first request`)
+    assert.equal(activity.at.get(WIDGETS), T0 + 250)
+    assert.equal(activity.at.get(TESTING), T0 + 30)
+    for (const [i, topic] of more.entries()) assert.equal(activity.at.get(topic.address), T0 + 100 + i)
   })
 
   it('an event dated ahead of the reader is taken at the reader\'s clock, so it cannot pin a topic first', async () => {

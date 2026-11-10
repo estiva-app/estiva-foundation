@@ -6,6 +6,33 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.96.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: nothing new is written; fewer requests read the same** (ALO-17).
+
+- `readYourTopics(query, me, { decrypt, listRead?, spaces?, fileKinds?, cache?, nowSeconds? })`:
+  the viewer's topics alone, newest activity first — `{ me, topics, at, muted }`,
+  the same topics, lists, archives and order as `readTopics`, the filter every
+  app applies (in it, not archived its own or with a parent, not muted, not a
+  space unless `spaces`) and `readTopicActivity` over what is left. Each topic's
+  title, archive and parent come from the list read of every topic; only the
+  changes naming the viewer are read, not their whole part; only their topics'
+  listed ids, and their parents by the list read with the parents' manifests
+  asked in one request. No `openUrl` (no opener sweep), and with the list read
+  no text. Without `listRead` the topics are read plain, as `readTopics` reads
+  them. On a workspace of 53 topics, 12 the viewer's: 7 requests.
+- `readTopicActivity` asks one request a tick: the next level of files under
+  the listed ones, the first page of each file the level before found, and
+  every target still open — where the files under them were walked level by
+  level before any of theirs was read, beside the rest. Its filters name no
+  team, so they are no longer split at 128 a request. Each target's page is
+  what its filter alone is answered, so an event one filter matches never
+  lands on another's page and pushes it past events it had not read. The
+  answer is otherwise the same: three requests where the test topics took
+  five, and three where 152 targets took eight.
+- `readTopics` reads as before, its second round now in helpers it shares
+  with `readYourTopics`.
+
 ## 0.95.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: nothing new is written; a refusal's reason code is read** (TEA-9; record a-refusal-starts-with-a-reason-code-every-app-reads).

@@ -3961,6 +3961,103 @@ export async function resolveForeignRoots(
 }
 
 /**
+ * Topics as their roots and changes draw them, through the bare file's
+ * built-in manifest (§6.7) — what {@link resolveForeignRoots} draws a topic
+ * as, title, summary, parent and own archive, without asking which app opens
+ * one (no `openUrl`, no app name): for a reader that draws neither. `listRead`
+ * when the changes came from the list read, which carries no text.
+ * @internal readYourTopics'.
+ */
+export function projectTopics(events: readonly SignedEvent[], listRead: boolean): ForeignObject[] {
+  const projected = projectEvents(events, (pointer) => (pointer.kind === KIND_BARE_FILE ? bareFileManifest() : undefined))
+  return listRead ? textUnread(projected) : projected
+}
+
+/**
+ * {@link resolveForeignRoots}' `archivedWith` for topics drawn by
+ * {@link projectTopics}: each one archived with its closest archived parent,
+ * marked in place. Each parent's manifest is read through `cache`, which
+ * {@link seedManifests} may have filled. `listKinds` as
+ * {@link markArchivedParents}'.
+ * @internal readYourTopics'.
+ */
+export async function markTopicsArchivedWith(
+  objects: readonly ForeignObject[],
+  query: QueryFn,
+  cache: ProjectionCache | undefined,
+  listKinds: readonly number[],
+): Promise<void> {
+  await markArchivedParents(
+    objects.map((object) => ({ object, manifest: BARE_FILE_MANIFEST })),
+    query,
+    cache,
+    listKinds,
+  )
+}
+
+/**
+ * {@link resolveManifest}'s answer for many files' apps at once, remembered
+ * in `cache`: one request, the `kind:31990` claims per kind and every
+ * author's `kind:31989` recommendation in one filter, where a resolve each
+ * asks two requests per `kind:pubkey`. Each answer is the one
+ * {@link resolveManifestUncached} gives from the same events; a
+ * recommendation naming a manifest that no claim of its kind carries is left
+ * to `resolveManifest`, which reads it by its address. A key `cache` already
+ * holds is not asked, and the built-in kinds never are. The query is sent
+ * before the first `await`, so a caller gathering requests holds it at once.
+ * @internal readYourTopics'.
+ */
+export async function seedManifests(pointers: Iterable<AddressPointer>, query: QueryFn, cache: ProjectionCache): Promise<void> {
+  const now = Date.now()
+  const wanted = new Map<string, AddressPointer>()
+  for (const pointer of pointers) {
+    if ([KIND_BARE_FILE, KIND_COMMENT, KIND_MESSAGE, KIND_CHANNEL_METADATA].includes(pointer.kind)) continue
+    const key = `${pointer.kind}:${pointer.pubkey}`
+    if (!wanted.has(key) && !cache.lookup(key, now)) wanted.set(key, pointer)
+  }
+  if (wanted.size === 0) return
+  const kinds = [...new Set([...wanted.values()].map((pointer) => String(pointer.kind)))]
+  const authors = [...new Set([...wanted.values()].map((pointer) => pointer.pubkey))]
+  const claims = kinds.map((kind) => ({ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }))
+  const recommendations = { kinds: [KIND_HANDLER_RECOMMENDATION], authors, '#d': kinds, limit: authors.length * kinds.length }
+  const events = await query([...claims, recommendations])
+  const addressOf = (event: SignedEvent) => `${event.kind}:${event.pubkey}:${tagValue(event, 'd') ?? ''}`
+  const newestFirst = (a: SignedEvent, b: SignedEvent) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  for (const [key, pointer] of wanted) {
+    const kind = String(pointer.kind)
+    // As the claim's own request answers: its newest 20.
+    const claimed = events
+      .filter((e) => e.kind === KIND_HANDLER_INFORMATION && e.tags.some((t) => t[0] === 'k' && t[1] === kind))
+      .sort(newestFirst)
+      .slice(0, 20)
+    const recommended = events
+      .filter((e) => e.kind === KIND_HANDLER_RECOMMENDATION && e.pubkey === pointer.pubkey && tagValue(e, 'd') === kind)
+      .sort(newestFirst)[0]
+    const manifestAddr = recommended?.tags.find((t) => t[0] === 'a')?.[1]
+    let answer: ResolvedManifest | null | undefined
+    if (manifestAddr) {
+      const [akind, apubkey, ...rest] = manifestAddr.split(':')
+      const copy = claimed.find((event) => addressOf(event) === `${Number(akind)}:${apubkey}:${rest.join(':')}`)
+      // Not among the claims: `resolveManifest` reads it by its address.
+      if (!copy) continue
+      const manifest = parseManifest(copy)
+      if (manifest) answer = { manifest, address: manifestAddr, viaRecommendation: true, webTemplate: webTemplate(copy, 'naddr') }
+    }
+    if (answer === undefined) {
+      answer = null
+      for (const candidate of claimed) {
+        const manifest = parseManifest(candidate)
+        if (manifest?.projections?.[kind]) {
+          answer = { manifest, address: addressOf(candidate), viaRecommendation: false, webTemplate: webTemplate(candidate, 'naddr') }
+          break
+        }
+      }
+    }
+    cache.remember(key, answer, now)
+  }
+}
+
+/**
  * SPEC §6.13's list read of these files: each one's first record and each
  * field's current change, without the text and without any older change. One
  * filter per author and kind, since `limit` counts first records there, not the
