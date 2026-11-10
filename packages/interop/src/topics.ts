@@ -51,6 +51,8 @@ import {
   type ProjectionCache,
   type QueryFn,
 } from './projection.js'
+import { fieldsSetBy } from './fields.js'
+import { arrangementHeads, arrangementOf, readsAs, sortArranged, type FileArrangement } from './topicArrangement.js'
 
 const KIND_CHANGE = 1851
 /** The topic (bare file) kind: the only lists this stage reads (Miky, 2026-10-30). */
@@ -252,7 +254,8 @@ export interface FileTopic {
  */
 export async function topicsOfFile(query: QueryFn, file: string): Promise<FileTopic[]> {
   const isTopic = (entry: ListEntry) => entry.file === file && entry.list.startsWith(`${KIND_TOPIC}:`)
-  const events = await query([topicsOfFileFilter(file)])
+  // Paged: `#o` also returns every `order:` and `look:` change on the file (§6.14), one per move.
+  const events = await readAll(query, [topicsOfFileFilter(file)])
   const lists = [...new Set(listEntries(events).filter(isTopic).map((entry) => entry.list))]
   if (lists.length === 0) return []
   const roots = await rootsOf(query, lists)
@@ -265,8 +268,8 @@ export async function topicsOfFile(query: QueryFn, file: string): Promise<FileTo
     .map((entry) => ({ address: entry.list, root: roots.get(entry.list)!, entry }))
 }
 
-/** A file on a topic's list. */
-export interface ListedFile {
+/** A file on a topic's list, with its place and look there (§6.14). */
+export interface ListedFile extends FileArrangement {
   /** The listed file's id. */
   file: string
   /** Its address when exactly one file the reader can read holds the id, else `null`: not drawn, not counted. */
@@ -276,11 +279,25 @@ export interface ListedFile {
   entry: ListEntry
 }
 
+/** How a topic's list is read. */
+export interface ListReadOptions {
+  /** The file kinds a listed id resolves over (§6.14 "A listed id resolves"). */
+  fileKinds?: readonly number[]
+  /**
+   * The relay offers the list read (NIP-11 `file_list.newest`): read each
+   * topic's fields as their current changes, at most three per file however
+   * often its files were moved, not every change ever made (§6.13). Without
+   * it, every change by `#O`, which grows with each move.
+   */
+  listRead?: boolean
+}
+
 /**
  * A topic's list, by the topic's address: its entries whose newest value
  * lists the file, filed in the Folder the topic's root names (§6.2; read here,
- * never taken from the caller), in no promised order (sort as the design
- * says; `entry.event` carries the time), each id resolved over `fileKinds` by
+ * never taken from the caller), in the topic's order (§6.14: placed files by
+ * key, then the rest oldest listed first), each with its look and the `prev`
+ * its next arrangement follows, each id resolved over `fileKinds` by
  * `#d`. A topic the reader cannot read, or whose root names no Folder, lists
  * nothing. An id held by none the reader can read, or by two, resolves to
  * `null`: a consumer draws and counts only the resolved ones (§3.2, the count
@@ -289,7 +306,7 @@ export interface ListedFile {
 export async function topicList(
   query: QueryFn,
   topic: string,
-  options: { fileKinds?: readonly number[] } = {},
+  options: ListReadOptions = {},
 ): Promise<ListedFile[]> {
   return (await topicLists(query, [topic], options)).get(topic) ?? []
 }
@@ -306,7 +323,7 @@ export async function topicList(
 export async function topicLists(
   query: QueryFn,
   topics: readonly string[],
-  options: { fileKinds?: readonly number[] } = {},
+  options: ListReadOptions = {},
 ): Promise<Map<string, ListedFile[]>> {
   const asked = [...new Set(topics)]
   if (asked.length === 0) return new Map()
@@ -318,25 +335,74 @@ async function listsOf(
   query: QueryFn,
   asked: readonly string[],
   rootsRead: Promise<ReadonlyMap<string, SignedEvent>>,
-  options: { fileKinds?: readonly number[] },
+  options: ListReadOptions,
 ): Promise<Map<string, ListedFile[]>> {
   const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
-  // One filter per topic in one request, so a relay's cap on an answer cuts no more than it would for that topic alone.
-  const [roots, events] = await Promise.all([rootsRead, query(asked.map(topicListFilter))])
+  const [roots, events] = await Promise.all([rootsRead, options.listRead ? newestChanges(query, asked) : query(asked.map(topicListFilter))])
   const folderOfList = (list: string) => {
     const root = out.has(list) ? roots.get(list) : undefined
     return root ? folderOf(root) : null
   }
+  if (options.listRead) events.push(...(await skippedAgain(query, events, folderOfList)))
   const entries = listEntries(events, folderOfList)
     .filter((entry) => entry.listed)
     .sort((a, b) => byOrder(a.event, b.event))
   if (entries.length === 0) return out
+  const heads = arrangementHeads(events, folderOfList)
   const resolved = await resolveIds(query, [...new Set(entries.map((entry) => entry.file))], options.fileKinds)
   for (const entry of entries) {
     const held = resolved.get(entry.file)
-    out.get(entry.list)!.push({ file: entry.file, address: held?.address ?? null, folder: held?.folder ?? null, entry })
+    const arranged = arrangementOf(heads.get(entry.list), entry.file, entry.event, roots.get(entry.list)!)
+    out.get(entry.list)!.push({ file: entry.file, address: held?.address ?? null, folder: held?.folder ?? null, entry, ...arranged })
   }
+  for (const [list, files] of out) out.set(list, sortArranged(files))
   return out
+}
+
+/**
+ * Each topic's fields as their current changes, by the list read (§6.13):
+ * one filter per kind of topic asked, with their ids. Without it, one `#O`
+ * filter per topic in one request, so a relay's cap on an answer cuts no more
+ * than it would for that topic alone.
+ */
+async function newestChanges(query: QueryFn, topics: readonly string[]): Promise<SignedEvent[]> {
+  const byKind = new Map<string, string[]>()
+  for (const topic of topics) {
+    const [, kind, , d] = ADDRESS.exec(topic) ?? []
+    if (d) byKind.set(kind, [...(byKind.get(kind) ?? []), d])
+  }
+  if (byKind.size === 0) return []
+  return query([...byKind].map(([kind, ds]) => ({ fields: 'newest', kinds: [Number(kind)], '#d': ds })))
+}
+
+/**
+ * The list read answers each field's newest change, a malformed one too (a
+ * wrong `o` the relay takes), so the good change before it is not in the
+ * answer. For each file where that happened, read its changes on that topic
+ * again (`#O` and `#o`), so it folds as a whole `#O` read would.
+ */
+async function skippedAgain(
+  query: QueryFn,
+  events: readonly SignedEvent[],
+  folderOfList: (list: string) => string | null | undefined,
+): Promise<SignedEvent[]> {
+  const skipped = new Map<string, Set<string>>()
+  for (const event of events) {
+    if (event.kind !== KIND_CHANGE) continue
+    const list = tagOf(event, 'a')
+    // Only a list asked for and readable: a change on another author's same-id topic folds nowhere anyway.
+    if (!list || !folderOfList(list)) continue
+    for (const { field } of fieldsSetBy(event)) {
+      if (!/^(lists|order|look):./.test(field) || readsAs(event, field, list, folderOfList(list))) continue
+      const holder = ADDRESS.exec(list)
+      if (!holder) continue
+      const files = skipped.get(holder[3]) ?? new Set()
+      files.add(field.slice(field.indexOf(':') + 1))
+      skipped.set(holder[3], files)
+    }
+  }
+  if (skipped.size === 0) return []
+  return readAll(query, [...skipped].map(([topic, files]) => ({ kinds: [KIND_CHANGE], '#O': [topic], '#o': [...files] })))
 }
 
 /** A topic as {@link readTopics} reads it. */
@@ -501,7 +567,7 @@ export async function readAll(query: QueryFn, filters: readonly Record<string, u
 export async function readTopics(
   query: QueryFn,
   me: string,
-  options: { cache?: ProjectionCache; fileKinds?: readonly number[]; nowSeconds?: number; parentsListRead?: boolean } = {},
+  options: ListReadOptions & { cache?: ProjectionCache; nowSeconds?: number; parentsListRead?: boolean } = {},
 ): Promise<TopicsRead> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
   const rootEvents = await readAll(query, [{ kinds: [KIND_TOPIC] }])
@@ -517,7 +583,8 @@ export async function readTopics(
   if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds), mentionedIn: new Set(), inConversations: new Map() }
   const [objects, lists, part, states] = await Promise.all([
     resolveForeignRoots(addresses, query, options.cache, { archivedWith: true, parentsListRead: options.parentsListRead }),
-    listsOf(query, addresses, Promise.resolve(roots), options),
+    // The relay that offers the list read for the parents offers it for the topics' own lists.
+    listsOf(query, addresses, Promise.resolve(roots), { ...options, listRead: options.listRead ?? options.parentsListRead }),
     // Held once each, though one comment can answer two of the filters: the folds count events.
     readAll(query, personInFilesFilters(me, addresses)),
     // The team lists naming a topic, for which of them are spaces.

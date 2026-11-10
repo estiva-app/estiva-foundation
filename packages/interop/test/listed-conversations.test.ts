@@ -191,7 +191,7 @@ describe("a topic's All, read cold", () => {
       const d = `00000000-0000-4000-8000-00000000000${i}`
       const address = `30840:${QA1}:${d}`
       const c = comment(address, LEAF_TEAM, `page ${i}`)
-      return { listed: { file: d, address, folder: LEAF_TEAM, entry: undefined as never } satisfies ListedFile, events: [c, reaction(c)] }
+      return { listed: { file: d, address, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 } satisfies ListedFile, events: [c, reaction(c)] }
     })
     const { query, calls } = relayOver(pages.flatMap((p) => p.events))
     const read = await listedConversationsOf(query, pages.map((p) => p.listed))
@@ -209,8 +209,8 @@ describe("a topic's All, read cold", () => {
     const quietReaction = reaction(quietComment)
     const { query } = relayOver([...busyComments, quietComment, quietReaction])
     const read = await listedConversationsOf(query, [
-      { file: busyD, address: busy, folder: LEAF_TEAM, entry: undefined as never },
-      { file: quietD, address: quiet, folder: LEAF_TEAM, entry: undefined as never },
+      { file: busyD, address: busy, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 },
+      { file: quietD, address: quiet, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 },
     ])
     assert.equal(fileOf(read, busyD)!.reactionTargetsOmitted, 1)
     assert.equal(fileOf(read, quietD)!.reactionTargetsOmitted, 0)
@@ -276,8 +276,8 @@ describe("a topic's All, a full page of comments", () => {
       ...Array.from({ length: RELAY_PAGE_CEILING - 1 }, (_, i) => comment(short, LEAF_TEAM, `short ${i}`)),
     ]
     const read = await listedConversationsOf(relayOver(stored).query, [
-      { file: fullD, address: full, folder: LEAF_TEAM, entry: undefined as never },
-      { file: shortD, address: short, folder: LEAF_TEAM, entry: undefined as never },
+      { file: fullD, address: full, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 },
+      { file: shortD, address: short, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 },
     ])
     assert.equal(fileOf(read, fullD)?.commentsCut, true)
     assert.equal(fileOf(read, shortD)?.commentsCut, false)
@@ -381,7 +381,7 @@ describe("a topic's All, live", () => {
     const busyD = '00000000-0000-4000-8000-0000000000cc'
     const busy = `30840:${QA1}:${busyD}`
     const comments = Array.from({ length: 999 }, (_, i) => comment(busy, LEAF_TEAM, `busy ${i}`))
-    const read = await listedConversationsOf(relayOver(comments).query, [{ file: busyD, address: busy, folder: LEAF_TEAM, entry: undefined as never }])
+    const read = await listedConversationsOf(relayOver(comments).query, [{ file: busyD, address: busy, folder: LEAF_TEAM, entry: undefined as never, prev: { order: "", look: "" }, prevAt: 0 }])
     const relay = liveRelay(comments)
     const heard: string[] = []
     watchListedConversations(relay, read, (_file, e) => heard.push(e.id), manualTimers())

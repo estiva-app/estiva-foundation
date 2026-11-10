@@ -180,7 +180,31 @@ export {
   type ListEntry,
   type FileTopic,
   type ListedFile,
+  type ListReadOptions,
 } from './topics.js'
+
+/**
+ * SPEC §6.14: a topic's files in the order and look someone gave them. Each
+ * file's place (`order:<d>`) and look (`look:<d>`) are fields of their own on
+ * the topic, so two people arranging at once both keep their change; plan a
+ * move, a look or an Undo of Remove, and send it with `writeArrangement`.
+ */
+export {
+  keyBetween,
+  isPlaceKey,
+  orderField,
+  lookField,
+  sortArranged,
+  planMoveInTopic,
+  planLookInTopic,
+  planPutBackInTopic,
+  writeArrangement,
+  type FileLook,
+  type FileArrangement,
+  type ArrangedFile,
+  type ArrangeHolder,
+  type WriteArrangementArgs,
+} from './topicArrangement.js'
 
 /**
  * Your topics, newest activity first: the one rule every app orders topics by
