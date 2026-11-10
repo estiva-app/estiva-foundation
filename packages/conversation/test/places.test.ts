@@ -24,6 +24,7 @@ import {
   teamMembersOf,
   unreadOnPlace,
   unreadOnListedFile,
+  unreadReasons,
   threadContext,
   type Following,
   type PlaceFacts,
@@ -508,5 +509,50 @@ describe('teamMembersOf', () => {
   it('lists only this team’s people when another team’s newer roster was read with it (TEA-5)', () => {
     const otherTeam = event({ kind: 39002, pubkey: RELAY, created_at: T0 + 500, tags: [['d', '0e5d8c1f-2b7a-4c3e-9f6d-1a2b3c4d5e6f'], ['p', CAROL]] })
     assert.deepEqual(teamMembersOf(TEAM, [roster(T0 + 400, ALICE), createTeam(ALICE, T0), otherTeam]), [{ pubkey: ALICE, since: T0 }])
+  })
+})
+
+describe('§11.8 why a message is unread (ACT-3)', () => {
+  const reasons = (list: SignedEvent[]) => [...unreadReasons(list, BOB).entries()].map(([id, why]) => [list.findIndex((e) => e.id === id), why])
+
+  it('a message that meets several reasons takes the first: a mention, then a new conversation, then a reply in yours', () => {
+    const startsAndNames = comment(ALICE, T0 + 10, `${mention(BOB)} have a look`)
+    const mine = comment(BOB, T0 + 11, 'my question')
+    const answersAndNames = reply(ALICE, mine, T0 + 12, `${mention(BOB)} here`)
+    const answers = reply(CAROL, mine, T0 + 13, 'an answer')
+    assert.deepEqual(reasons([startsAndNames, mine, answersAndNames, answers]), [
+      [0, 'mention'],
+      [1, 'new-conversation'],
+      [2, 'mention'],
+      [3, 'reply-in-yours'],
+    ])
+  })
+
+  it('a new conversation naming nobody is a new conversation, never a plain message, whatever level lit it', () => {
+    assert.deepEqual(reasons([comment(ALICE, T0 + 10, 'news')]), [[0, 'new-conversation']])
+  })
+
+  it('a reply in a conversation P is not in is a message, and becomes a reply in yours only after P wrote there', () => {
+    const theirs = comment(ALICE, T0 + 10, 'their note')
+    const before = reply(CAROL, theirs, T0 + 11, 'agreed')
+    const mine = reply(BOB, theirs, T0 + 12, 'me too')
+    const after = reply(CAROL, theirs, T0 + 13, 'thanks')
+    const got = new Map(reasons([theirs, before, mine, after]) as [number, string][])
+    assert.equal(got.get(1), 'message')
+    assert.equal(got.get(3), 'reply-in-yours')
+  })
+
+  it('a reply answering P by its lowercase p is a reply in yours even when P’s own message is not held', () => {
+    const mine = comment(BOB, T0 + 10, 'my question')
+    assert.deepEqual(reasons([reply(ALICE, mine, T0 + 11, 'an answer')]), [[0, 'reply-in-yours']])
+  })
+
+  it('in a DM a message starts no conversation: it is a mention or a message, a reply included', () => {
+    const first = comment(ALICE, T0 + 10, 'are you around?')
+    const naming = comment(ALICE, T0 + 11, `${mention(BOB)} look`)
+    const mine = comment(BOB, T0 + 12, 'yes')
+    const answer = reply(ALICE, mine, T0 + 13, 'great')
+    const got = [...unreadReasons([first, naming, mine, answer], BOB, { dm: true }).values()]
+    assert.deepEqual(got, ['message', 'mention', 'message', 'message'])
   })
 })
