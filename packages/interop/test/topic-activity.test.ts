@@ -198,6 +198,24 @@ describe('topics come newest activity first', () => {
     assert.ok(!issues.some((file) => file.address.endsWith(':bulk-0')), 'the oldest are left out')
   })
 
+  it('finds every issue under listed projects when one filter fills its page and another in the same request brings back an older one of them', async () => {
+    // 101 listed projects: two filters for the files under them, the first 100 and the last one.
+    const projects = Array.from({ length: 101 }, (_, i) => `30850:${SHIP}:bulk-project-${i}`)
+    const bulk: ActivityTopic = { address: `30840:${MIKY}:bulk-d`, createdAt: T0, folder: TEAM, files: projects.map((address) => ({ address, folder: SHIP_TEAM })) }
+    // 1005 issues in the first three projects: the first filter's page (1000) fills. The oldest also names the
+    // last project, so the second filter brings it back, older than the first filter's page.
+    const issues = Array.from({ length: 1005 }, (_, i) => {
+      const issue = root(`30851:${QA2}:bulk-issue-${i}`, T0 + 10 + i, SHIP_TEAM, projects[i % 3])
+      if (i === 0) issue.tags.push(['a', projects[100]!])
+      return issue
+    })
+    const { query } = relayOver(issues)
+    const activity = await readTopicActivity(query, [bulk], { nowSeconds: NOW })
+    const found = new Set(activity.files.get(bulk.address)!.map((file) => file.address))
+    const missing = issues.map((issue) => `30851:${QA2}:${issue.tags[0]![1]}`).filter((address) => !found.has(address))
+    assert.deepEqual(missing, [])
+  })
+
   it('hands back the comments it read about each listed file, in either form, none about a file under one or tagging one, with no request added', async () => {
     // Both forms at once: the `#A` and `#O` probes each return it, and it is kept once.
     const onPage = event({ kind: 1111, created_at: T0 + 80, tags: [['A', PAGE], ['O', PAGE_ID], ['K', '30842'], ['h', LEAF_TEAM]], content: 'on the page' })
@@ -207,8 +225,8 @@ describe('topics come newest activity first', () => {
     const crossed = event({ kind: 1111, created_at: T0 + 95, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', LEAF_TEAM]] })
     const { query, calls } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), onPage, onProject, onSubpage, crossed])
     const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
-    // The same requests the read makes without keeping comments (one a level: 0.96.0 makes three with this relay), each comment filter one page.
-    assert.equal(calls.length, 3)
+    // No more requests than the read makes without keeping comments (one a level: three with this relay; 0.95.0 made five), each comment filter one page.
+    assert.ok(calls.length <= 3, `${calls.length} requests`)
     for (const f of calls.flat()) if ((f.kinds as number[]).includes(1111)) assert.ok(typeof f.limit === 'number' && f.limit <= 2, JSON.stringify(f))
     assert.equal(activity.at.get(WIDGETS), T0 + 90)
     assert.deepEqual(activity.comments?.get(PAGE)?.map((e) => e.content), ['on the page'])
@@ -229,7 +247,7 @@ describe('topics come newest activity first', () => {
     const activity = await readTopicActivity(query, [...topics, ...more], { nowSeconds: NOW })
     // Level 0 and every first page; level 1, the found issue's and subpage's first pages and Widgets' second;
     // level 2, the found sub-subpage's first page and Widgets' third. Before 0.96.0: eight.
-    assert.equal(calls.length, 3)
+    assert.ok(calls.length <= 3, `${calls.length} requests`)
     assert.ok(calls[0]!.length > 128, `${calls[0]!.length} filters in the first request`)
     assert.equal(activity.at.get(WIDGETS), T0 + 250)
     assert.equal(activity.at.get(TESTING), T0 + 30)

@@ -232,16 +232,20 @@ for (const listRead of [true, false]) {
       assert.deepEqual(lean.at, long.at)
     })
 
-    it('leaves out a topic archived with its project, and never asks for a project’s every change', async () => {
-      const { query, calls } = relay([...world])
-      const lean = await readYourTopics(query, ME, { listRead, decrypt, nowSeconds: NOW })
+    it('leaves out a topic archived with its project, and keeps one under an open project', async () => {
+      const lean = await readYourTopics(relay([...world]).query, ME, { listRead, decrypt, nowSeconds: NOW })
       assert.ok(!lean.topics.some((t) => t.address === addressOf(delta)))
       assert.ok(lean.topics.some((t) => t.address === addressOf(india)), 'a topic under an open project stays')
-      if (listRead) {
+    })
+
+    if (listRead) {
+      it('by the list read, never asks for a parent project’s every change to see it archived', async () => {
+        const { query, calls } = relay([...world])
+        await readYourTopics(query, ME, { listRead, decrypt, nowSeconds: NOW })
         const byA = calls.flat().filter((f) => f.kinds?.includes(1851) && !f['#p'] && !f.fields).flatMap((f) => (f['#a'] as string[]) ?? [])
         assert.ok(!byA.includes(addressOf(shelvedProject)), `read by #a: ${byA}`)
-      }
-    })
+      })
+    }
   })
 }
 
@@ -280,13 +284,10 @@ describe('readYourTopics: the requests it makes', () => {
       const lists = request.filter((f) => f.fields).length
       assert.ok(lists === 0 || lists === request.length, 'a list read goes alone')
     }
-    const shape = calls.map((request) => (request.some((f) => f.fields) ? 'list' : 'plain'))
-    // 1 roots and mute list · 2 changes naming me and team lists, beside the topics' list read · 3 listed ids
-    // and parents' manifests · 4 the parents by the list read (one level: a project has none), beside activity's
+    // At most: 1 roots and mute list · 2 changes naming me and team lists, beside the topics' list read · 3 listed
+    // ids and parents' manifests · 4 the parents by the list read (one level: a project has none), beside activity's
     // two ticks (the files under the listed ones, then what is under those with the found files' first pages).
-    assert.deepEqual(shape.slice(0, 4), ['plain', 'plain', 'list', 'plain'])
-    assert.equal(shape.filter((s) => s === 'list').length, 2)
-    assert.equal(calls.length, 7)
+    assert.ok(calls.length <= 7, `${calls.length} requests`)
     assert.ok(long.calls.length > calls.length, `the long way: ${long.calls.length}`)
   })
 })

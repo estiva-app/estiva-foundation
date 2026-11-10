@@ -25,6 +25,7 @@
 import { mutedFilter, parseMutedBlob, MUTED_D_TAG } from '@estiva-app/conversation'
 import { FILE_KINDS, type SignedEvent } from '@estiva-app/protocol'
 import {
+  addressPointerOf,
   createProjectionCache,
   isArchived,
   markTopicsArchivedWith,
@@ -58,7 +59,6 @@ const KIND_CHANGE = 1851
 const KIND_APP_DATA = 30078
 /** As {@link resolveForeignRoots} reads a file's changes when it reads them plain. */
 const PLAIN_CHANGES_LIMIT = 500
-const ADDRESS = /^(\d+):([0-9a-f]{64}):(.+)$/
 
 /** {@link readYourTopics}' answer. */
 export interface YourTopicsRead {
@@ -135,7 +135,7 @@ export async function readYourTopics(
     return topic && topic.yours && (options.spaces || !topic.space) && !muted?.has(topic.address) ? topic : undefined
   }
   // A topic the list read did not answer (deleted) is read plain below, as a parent is.
-  const answered = new Set(listed.filter((event) => event.kind === KIND_TOPIC).map(rootAddress))
+  const answered = new Set(topicRoots(listed).keys())
   const byList = listRead ? addresses.filter((address) => answered.has(address)) : addresses
   const objects = projectTopics([...byList.map((address) => roots.get(address)!), ...(listRead ? listed : objectChanges)], listRead)
   if (listRead) {
@@ -156,8 +156,8 @@ export async function readYourTopics(
   const listEvents = listRead ? listed : listChanges
   const plan = listReadPlan(asked, roots, listEvents, listRead)
   const parents = candidates.flatMap((topic) => {
-    const parent = topic.object.parentRef ? ADDRESS.exec(topic.object.parentRef) : null
-    return parent ? [{ kind: Number(parent[1]), pubkey: parent[2]!, identifier: parent[3]!, relays: [] }] : []
+    const parent = topic.object.parentRef ? addressPointerOf(topic.object.parentRef) : null
+    return parent ? [parent] : []
   })
   const third = gathered(query)
   const resolvedRead = plan.ids.length ? resolveIds(third.query, plan.ids, options.fileKinds) : Promise.resolve(new Map())
@@ -183,8 +183,6 @@ export async function readYourTopics(
   open.sort((a, b) => newest(a.address, b.address))
   return { me, topics: open, at: new Map(open.map((topic) => [topic.address, activity.at.get(topic.address) ?? 0])), muted }
 }
-
-const rootAddress = (root: SignedEvent) => `${root.kind}:${root.pubkey}:${root.tags.find((t) => t[0] === 'd')?.[1] ?? ''}`
 
 /** A topic's changes as {@link resolveForeignRoots} reads them plain: the newest 500 naming it by `a`. */
 function plainChangesFilter(address: string): Record<string, unknown> {

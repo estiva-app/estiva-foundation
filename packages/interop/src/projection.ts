@@ -4588,8 +4588,11 @@ async function queryChunked(filters: Record<string, unknown>[], query: QueryFn):
   return (await Promise.all(chunks.map((chunk) => query(chunk)))).flat()
 }
 
-/** An `naddr` or a `<kind>:<pubkey>:<d>`, or null for anything else. */
-function addressPointerOf(reference: string): AddressPointer | null {
+/**
+ * An `naddr` or a `<kind>:<pubkey>:<d>`, or null for anything else.
+ * @internal readYourTopics' too.
+ */
+export function addressPointerOf(reference: string): AddressPointer | null {
   try {
     // Either form: a body carries `naddr1…`, an `a` tag carries the plain
     // address, and both name the same object (FEE-2).

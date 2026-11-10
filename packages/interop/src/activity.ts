@@ -40,7 +40,7 @@
 import { fileIdOf, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
-import { answeredBy, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
+import { answeredByEach, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
 import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './listedConversations.js'
 
 const KIND_CHANGE = 1851
@@ -383,9 +383,11 @@ export async function readTopicActivity(
    */
   function stillOpen(open: readonly Open[], events: readonly SignedEvent[]): Open[] {
     const still: Open[] = []
+    // The answer indexed once a tick, not filtered and sorted once per probe: a listed project's issues make thousands.
+    const pageOf = answeredByEach(events)
     for (const o of open) {
       // Only what this filter alone would have been answered: the request holds every other probe's answer too.
-      const page = answeredBy(events, o.filter)
+      const page = pageOf(o.filter)
       if (o.probe.keepsComments) {
         const kept = comments.get(o.probe.target.address)
         for (const event of page) {

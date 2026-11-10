@@ -572,13 +572,19 @@ export function firstPages(filters: readonly Record<string, unknown>[]): (Record
   return filters.map((filter) => ({ ...filter, limit: RELAY_PAGE_CEILING }))
 }
 
-/** {@link readAll}'s next request after `events` came back for `open`: each filter whose page filled, from its oldest second down. */
+/**
+ * {@link readAll}'s next request after `events` came back for `open`: each
+ * filter whose page filled, from its oldest second down. A filter's page is
+ * what it alone was answered ({@link answeredBy}): an older event another
+ * filter in the request brought back is not one it read, so it never moves
+ * this one's `until` past events it has not seen.
+ */
 export function nextPages(
   open: readonly (Record<string, unknown> & { limit: number })[],
   events: readonly SignedEvent[],
 ): (Record<string, unknown> & { limit: number })[] {
   return open.flatMap((filter) => {
-    const page = events.filter((event) => answers(event, filter))
+    const page = answeredBy(events, filter)
     if (page.length < filter.limit) return []
     const until = Math.min(...page.map((event) => event.created_at))
     return until === (filter as { until?: number }).until ? [] : [{ ...filter, until }]
@@ -593,10 +599,38 @@ export function nextPages(
  * whose answer holds changes the filter does not match.
  */
 export function answeredBy(events: readonly SignedEvent[], filter: Record<string, unknown>): SignedEvent[] {
-  const page = events
-    .filter((event) => answers(event, filter))
-    .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  const page = events.filter((event) => answers(event, filter)).sort(newestFirst)
   return typeof filter.limit === 'number' ? page.slice(0, filter.limit) : page
+}
+
+/**
+ * {@link answeredBy} for many filters over one answer, the answer sorted and
+ * indexed by tag value once: each filter that names one tag value (`#a`,
+ * `#A`, `#O`… with one value) is matched against the events carrying it, any
+ * other against them all. The same pages, newest first and cut at `limit`.
+ */
+export function answeredByEach(events: readonly SignedEvent[]): (filter: Record<string, unknown>) => SignedEvent[] {
+  const sorted = [...events].sort(newestFirst)
+  const byTag = new Map<string, SignedEvent[]>()
+  for (const event of sorted) {
+    const keys = new Set(event.tags.filter((t) => t[0] && t[1] !== undefined).map((t) => `${t[0]}\u0000${t[1]}`))
+    for (const key of keys) {
+      const held = byTag.get(key)
+      if (held) held.push(event)
+      else byTag.set(key, [event])
+    }
+  }
+  return (filter) => {
+    const one = Object.entries(filter).find(([key, values]) => key.startsWith('#') && Array.isArray(values) && values.length === 1)
+    const pool = one ? (byTag.get(`${one[0].slice(1)}\u0000${(one[1] as string[])[0]}`) ?? []) : sorted
+    const page = pool.filter((event) => answers(event, filter))
+    return typeof filter.limit === 'number' ? page.slice(0, filter.limit) : page
+  }
+}
+
+/** Newest first, equal seconds by the lower id: the order a relay answers a page in. */
+function newestFirst(a: SignedEvent, b: SignedEvent): number {
+  return b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
 /**
