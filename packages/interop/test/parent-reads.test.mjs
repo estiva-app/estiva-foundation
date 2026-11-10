@@ -83,6 +83,8 @@ function relay(events) {
   }
   return {
     query,
+    /** Every filter asked of the relay. */
+    asked: () => asked.flat(),
     /** Every address whose changes were read one by one, by `#a` with the change kind. */
     changesByA: () => asked.flat().filter((f) => f.kinds?.includes(CHANGE)).flatMap((f) => f['#a'] ?? []),
   }
@@ -248,6 +250,10 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
     // Who changed a child last, from its current changes alone.
     assert.equal(children.find((c) => c.address === addressOf(stays)).changedBy, OTHER)
     assert.deepEqual(r.changesByA(), [])
+    // The children are asked by the list read, which never carries text: no plain read of them by `#a`.
+    const byParent = r.asked().filter((f) => f.kinds?.includes(ISSUE) && f['#a']?.includes(addressOf(p1)))
+    assert.ok(byParent.length > 0)
+    assert.ok(byParent.every((f) => f.fields === 'newest'), JSON.stringify(byParent))
   })
 
   test('without children, nothing under the file is read', async () => {
@@ -255,5 +261,6 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
     const r = relay([ship, p1, issue('stays', p1)])
     const [root] = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { listRead: true })
     assert.equal(root.children, undefined)
+    assert.deepEqual(r.asked().filter((f) => f['#a']?.includes(addressOf(p1)) || f['#A']?.includes(addressOf(p1))), [])
   })
 })

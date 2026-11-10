@@ -3926,9 +3926,11 @@ export async function resolveForeignRoots(
    * deleted file is absent. Other kinds are read as before.
    * `parentsListRead`, with `archivedWith`, reads only the parents walked for an archive by the list read (with
    * `listRead`'s fallback for one it leaves out); the files asked for are still read in full, their text included.
-   * `children`, with `listRead`, also gives each listed file whose app declares a list the files under it, one level
-   * down, as {@link resolveForeignObjects} does: by the same list read, so a child's text is never read, and a child
-   * moved in (§7.2) found by its move. Archived children are dropped. Without `listRead` it asks nothing more.
+   * `children`, with `listRead`, also gives each listed file whose app declares a list of files the files under it,
+   * one level down, folded as {@link resolveForeignObjects}' are: by the same list read, so a child's text is never
+   * read, and a child moved in (§7.2) found by its move. Archived children are dropped, and a child carries no
+   * actions. A list of other kinds (a topic's messages) is not read, and its `children` stay absent. Without
+   * `listRead` it asks nothing more.
    */
   options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean; children?: boolean } = {},
 ): Promise<ForeignObject[]> {
@@ -3968,8 +3970,9 @@ export async function resolveForeignRoots(
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
   const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
   // A child moved in is named only by its move, so its own first record is read once those are back.
+  const held = new Set(events.flatMap((e) => childAddressOf(e) ?? []))
   const movedIn = lists.flatMap(({ childFilter, resolved }) =>
-    movedInAddressesOf(events, childFilter, resolved.manifest.records).filter((address) => !events.some((e) => childAddressOf(e) === address)),
+    movedInAddressesOf(events, childFilter, resolved.manifest.records).filter((address) => !held.has(address)),
   )
   const moved = movedIn.flatMap((address) => addressPointerOf(address) ?? [])
   if (moved.length) events.push(...(await queryChunked(listReadFilters(moved), query)))
