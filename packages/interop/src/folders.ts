@@ -565,15 +565,43 @@ export function planMoveFromFolders(
 }
 
 /**
+ * The reason code a refusal carries (SPEC §3.3): `<NIP-01 prefix>: <code>:
+ * <sentence>`, as `invalid: not-home: a topic on no team's list…`. `undefined`
+ * when it carries none — a server that predates the codes, whose sentence is
+ * all there is to read. A server never sends an uncoded sentence whose first
+ * word is followed by `: `, so a code is never mistaken for a word.
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-refusal-starts-with-a-reason-code-every-app-reads.md
+ */
+export function refusalCode(reason: string | undefined): string | undefined {
+  return /^[a-z][a-z-]*: ([a-z][a-z0-9-]*): /.exec(reason ?? '')?.[1]
+}
+
+/** Why a move was refused, as {@link readMoveRefusal} reads it. */
+export type MoveRefusalWhy = 'team-archived' | 'not-a-member' | 'changed-meanwhile' | 'not-home' | 'leaves-by-moving' | 'unexplained' | 'refused'
+
+const MOVE_CODES: Readonly<Record<string, MoveRefusalWhy>> = {
+  archived: 'team-archived',
+  'not-member': 'not-a-member',
+  changed: 'changed-meanwhile',
+  'not-home': 'not-home',
+  'leaves-by-moving': 'leaves-by-moving',
+}
+
+/**
  * What a refusal of `events[index]` from {@link planMoveFromFolders} means,
  * so an app says it in its own words and never shows the relay's text.
  *
- * - `why`: `team-archived` (a team it leaves or enters is archived),
- *   `not-a-member` (moving a space needs a member of each team it changes:
- *   the team it leaves refuses with "only the team's members…", the team it
- *   enters with "not a channel member"),
+ * - `why`, from the refusal's reason code (SPEC §3.3):
+ *   `team-archived` (a team it leaves or enters is archived),
+ *   `not-a-member` (moving needs a member of each team it changes),
  *   `changed-meanwhile` (a list changed since it was read: the team no longer
- *   lists it, or another team now does), or `refused`.
+ *   lists it, or another team now does),
+ *   `not-home` (a topic no team lists goes only to its home),
+ *   `leaves-by-moving` (a topic leaves a team only by a move),
+ *   `unexplained` (a code this reader does not know: say only that nothing
+ *   moved, never guess why or suggest trying again).
+ *   A refusal with no code — a server that predates them — is read by its
+ *   words as before, and `refused` when none matches.
  * - `nothingMoved`: the first command was refused, so nothing changed.
  * - `notMovedFrom`: otherwise, the Folders that still list it besides the
  *   target — the refused command's `from` and every later one's.
@@ -582,15 +610,19 @@ export function readMoveRefusal(
   events: readonly UnsignedEvent[],
   index: number,
   reason: string | undefined,
-): { why: 'team-archived' | 'not-a-member' | 'changed-meanwhile' | 'refused'; nothingMoved: boolean; notMovedFrom: string[] } {
+): { why: MoveRefusalWhy; nothingMoved: boolean; notMovedFrom: string[] } {
   const text = reason ?? ''
-  const why = /archived/i.test(text)
-    ? 'team-archived'
-    : /only the team's members|not a channel member/i.test(text)
-      ? 'not-a-member'
-      : /does not list|lists none of|listed by one team/i.test(text)
-        ? 'changed-meanwhile'
-        : 'refused'
+  const code = refusalCode(text)
+  const why: MoveRefusalWhy =
+    code !== undefined
+      ? (MOVE_CODES[code] ?? 'unexplained')
+      : /archived/i.test(text)
+        ? 'team-archived'
+        : /only the team's members|not a channel member/i.test(text)
+          ? 'not-a-member'
+          : /does not list|lists none of|listed by one team/i.test(text)
+            ? 'changed-meanwhile'
+            : 'refused'
   const nothingMoved = index <= 0
   const notMovedFrom = nothingMoved
     ? []

@@ -145,6 +145,8 @@ export {
   planMoveFile,
   planMoveFromFolders,
   readMoveRefusal,
+  refusalCode,
+  type MoveRefusalWhy,
   planArchiveFolder,
   listedBeneath,
   type FolderRef,
