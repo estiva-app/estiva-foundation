@@ -6,6 +6,22 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.99.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: nothing new is written; one more filter in requests already made** (TEA-10).
+
+- `FolderSummary.admins` (who may rename and archive a team) holds, on a team
+  whose relay-signed `kind:39001` lists no `owner`, the workspace's owners and
+  admins as well: the `member` tags with role `owner` or `admin` on the
+  relay's roster (`kind:13534`), counted only when the key that signed the
+  team's `kind:39000` signed it. A team's archive counts from them too, in
+  `listFolders`, `listFolderRecords`, `resolveFolderContents` and for a nested
+  team in a Folder's contents (SPEC §3.2;
+  record a-team-with-no-owner-is-looked-after-by-the-workspaces-admins).
+  A team with an owner is unchanged.
+- The roster is read in the same request as the teams' own records
+  (`{ kinds: [13534], limit: 1 }`); no round trip is added.
+
 ## 0.98.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: nothing new is written; `children` reads a file's declared list by the list read** (TOPI-8).
