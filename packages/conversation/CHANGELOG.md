@@ -6,6 +6,20 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.38.0 — 2026-11-10
+
+**SPEC §11.8: why a message is unread** (ACT-3). An app that explains a dot
+names the same reason for the same message, at any level and in any app.
+
+- `unreadReason(message, root, inConversationSince, me)` and
+  `unreadReasons(messages, me)`: what an unread message is to `P`, first match
+  wins: `mention` (it names `P`), `new-conversation` (it answers nothing),
+  `reply-in-yours` (a reply in a conversation `P` is in, said after they came
+  in, the lowercase `p` naming `P` included), `message` (anything else). The
+  level decides only whether a message lights, never its reason. The words are
+  each app's.
+- Nothing new is read or written; which messages are unread is unchanged.
+
 ## 0.37.0 — 2026-11-10
 
 **SPEC §11.8: what names you on a file a place lists lights the place, at

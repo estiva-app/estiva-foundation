@@ -671,6 +671,42 @@ export function unreadOnListedFile<E extends Message>(
   })
 }
 
+/**
+ * Why a message is unread for `me` (§11.8 *Why a message is unread*): what the message is to them, never which level
+ * let it light, so one message reads the same at Important and at All and in every app. First match wins:
+ *
+ * - `mention` — it names `me` (§13);
+ * - `new-conversation` — it starts a conversation (a top-level comment, or a chat message that answers nothing);
+ * - `reply-in-yours` — it replies in a conversation `me` is in (wrote its root or a reply, or was mentioned there,
+ *   or the reply's lowercase `p` names `me` as the author it answers), said after they came in;
+ * - `message` — anything else that lit: a reply at All, or a reply in a DM or on a file `me` is a member of.
+ *
+ * Which messages light is {@link unreadOnPlace}'s, {@link unreadOnListedFile}'s or the stream's own rule; this only
+ * names why. The words a reader sees are each app's own. A reaction is not a message and is never one of these.
+ */
+export type UnreadReason = 'mention' | 'new-conversation' | 'reply-in-yours' | 'message'
+
+/** The {@link UnreadReason} of one message: `root` is its conversation's root id when it is a reply, `inConversationSince` as in {@link isUnreadOnPlace}. */
+export function unreadReason(message: Pick<Message, 'content' | 'created_at'>, root: string | undefined, inConversationSince: number | undefined, me: string): UnreadReason {
+  if (peopleNamedInBody(message.content).has(me)) return 'mention'
+  if (root === undefined) return 'new-conversation'
+  if (inConversationSince !== undefined && message.created_at >= inConversationSince) return 'reply-in-yours'
+  return 'message'
+}
+
+/**
+ * The {@link UnreadReason} of every message in `messages`, by id: a place's stream, a listed file's conversation, a
+ * team's chat or a DM, as the reader holds it. Pair it with the rule that says which of them are unread.
+ */
+export function unreadReasons(messages: readonly Message[], me: string): ReadonlyMap<string, UnreadReason> {
+  const out = new Map<string, UnreadReason>()
+  eachMessage(messages, me, (message, root, inSince) => {
+    out.set(message.id, unreadReason(message, root, inSince, me))
+    return false
+  })
+  return out
+}
+
 // ── A level: `follow:<P>`, signed by `P` alone ──────────────────────────────
 
 /** The level field for a person: `follow:<pubkey>`. */
