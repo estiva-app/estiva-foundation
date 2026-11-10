@@ -421,6 +421,10 @@ describe('readMoveRefusal', () => {
     assert.equal(readMoveRefusal(moved.events, 0, 'invalid: constructor: a code that names an object property').why, 'unexplained')
   })
 
+  it('a code is read only after restricted: or invalid:, so a failure the server reports otherwise still offers a retry', () => {
+    assert.equal(readMoveRefusal(moved.events, 0, 'error: timeout: pool exhausted').why, 'refused')
+  })
+
   it('a refusal with no code is read by its words, as from a server that predates the codes', () => {
     assert.equal(readMoveRefusal(moved.events, 0, 'invalid: team 3d50db56 is archived; its list does not change').why, 'team-archived')
     assert.equal(readMoveRefusal(moved.events, 0, 'invalid: a topic is listed by one team: move it from the other team instead').why, 'changed-meanwhile')

@@ -573,7 +573,7 @@ export function planMoveFromFolders(
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-refusal-starts-with-a-reason-code-every-app-reads.md
  */
 export function refusalCode(reason: string | undefined): string | undefined {
-  return /^[a-z][a-z-]*: ([a-z][a-z0-9-]*): /.exec(reason ?? '')?.[1]
+  return /^(?:restricted|invalid): ([a-z][a-z0-9-]*): /.exec(reason ?? '')?.[1]
 }
 
 /** Why a move was refused, as {@link readMoveRefusal} reads it. */
@@ -619,7 +619,7 @@ export function readMoveRefusal(
       ? (MOVE_CODES.get(code) ?? 'unexplained')
       : /archived/i.test(text)
         ? 'team-archived'
-        : /only the team's members|not a channel member/i.test(text)
+        : /only the team's members|not a channel member|only members can post/i.test(text)
           ? 'not-a-member'
           : /does not list|lists none of|listed by one team/i.test(text)
             ? 'changed-meanwhile'
