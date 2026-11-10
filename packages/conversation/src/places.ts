@@ -679,7 +679,8 @@ export function unreadOnListedFile<E extends Message>(
  * - `new-conversation` — it starts a conversation (a top-level comment, or a chat message that answers nothing);
  * - `reply-in-yours` — it replies in a conversation `me` is in (wrote its root or a reply, or was mentioned there,
  *   or the reply's lowercase `p` names `me` as the author it answers), said after they came in;
- * - `message` — anything else that lit: a reply at All, or a reply in a DM or on a file `me` is a member of.
+ * - `message` — anything else that lit: a reply at All, a reply on a file `me` is a member of, or, with
+ *   `{ dm: true }`, any DM message that does not name `me` (a DM is one conversation; nothing in it starts one).
  *
  * Which messages light is {@link unreadOnPlace}'s, {@link unreadOnListedFile}'s or the stream's own rule; this only
  * names why. The words a reader sees are each app's own. A reaction is not a message and is never one of these.
