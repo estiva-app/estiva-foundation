@@ -110,6 +110,22 @@ describe('the place key', () => {
     assert.equal(new Set(keys).size, keys.length)
   })
 
+  it('reads a key longer than 64 as no place, and places every file afresh rather than write one', async () => {
+    const long = 'z'.repeat(10_000)
+    assert.equal(isPlaceKey(long), false)
+    // f-a placed at a key just under the limit that ends in many z's: the next drop after it would pass the limit.
+    const near = `${'z'.repeat(63)}V`
+    const at = MS + 5_000
+    const placed = signed({
+      pubkey: QA1, created_at: Math.floor(at / 1000), kind: 1851, content: '',
+      tags: [['a', TOPIC], ['O', TOPIC_D], ['field', 'order:f-a'], ['value', near], ['h', FOLDER], ['ts', String(at)], ['prev', topicRoot.id], ['o', 'f-a']],
+    })
+    const files = await read([...listed(), placed])
+    const change = planMoveInTopic(QA1, MS + 10_000, { topic: holder, files, file: 'f-c', after: 'f-a' })!
+    for (const t of change.tags.filter((x) => x[0] === 'set')) assert.ok(isPlaceKey(t[2]), t[2])
+    assert.equal(order(await read([...listed(), placed, signed(change)])), 'f-a f-c f-b f-d')
+  })
+
   it('places between keys a person could not have made ("5" and "5V"), and refuses ones out of order', () => {
     const k = keyBetween('5', '5V')
     assert.ok('5' < k && k < '5V', k)
@@ -208,6 +224,24 @@ describe('the fold: one order and look for everyone', () => {
     }
   })
 
+  it("never lets a move or a look filed in another team than the topic's change it, in either read", async () => {
+    const files = await read(listed())
+    const elsewhere = (e: UnsignedEvent) => signed({ ...e, tags: e.tags.map((t) => (t[0] === 'h' ? ['h', '0e2f4c1a-5b6d-4e7f-8a9b-0c1d2e3f4a5b'] : t)) })
+    const top = elsewhere(planMoveInTopic(QA2, MS + 10_000, { topic: holder, files, file: 'f-d', after: null })!)
+    const row = elsewhere(planLookInTopic(QA2, MS + 10_000, { topic: holder, file: files[0], look: 'row' }))
+    for (const listRead of [false, true]) {
+      const got = await read([...listed(), top, row], listRead)
+      assert.equal(order(got), 'f-a f-b f-c f-d', `listRead ${listRead}`)
+      assert.equal(got[0].look, undefined, `listRead ${listRead}`)
+    }
+  })
+
+  it('keeps a file listed by the list read when a newer change listing it names the wrong `o`', async () => {
+    const good = listed()
+    const bad = signed({ ...good[1], created_at: Math.floor((MS + 30_000) / 1000), tags: good[1].tags.map((t) => (t[0] === 'ts' ? ['ts', String(MS + 30_000)] : t[0] === 'value' ? ['value', 'false'] : t[0] === 'o' ? ['o', 'f-x'] : t)) })
+    assert.equal(order(await read([...good, bad], true)), 'f-a f-b f-c f-d')
+  })
+
   it('reads a look a reader knows, and draws an unknown one as the file\'s own widget', async () => {
     const files = await read(listed())
     const row = signed(planLookInTopic(QA1, MS + 10_000, { topic: holder, file: files[1], look: 'row' }))
@@ -244,9 +278,13 @@ describe('Undo of Remove', () => {
     const gone = before.find((f) => f.file === 'f-d')!
     const off = signed(planRemoveFromTopic(QA1, MS + 11_000, { topic: holder, file: 'f-d' })[0])
     const without = await read([...start, moved, look, off])
-    const back = planPutBackInTopic(QA1, MS + 12_000, { topic: holder, files: without, file: gone, after: 'f-a' }).map((e) => signed(e))
-    assert.equal(tag(back[0], 'field'), 'lists:f-d')
-    const after = await read([...start, moved, look, off, ...back])
+    const undo = planPutBackInTopic(QA1, MS + 12_000, { topic: holder, file: gone, after: 'f-a' })
+    assert.equal(tag(undo.relist, 'field'), 'lists:f-d')
+    const relisted = signed(undo.relist)
+    // Sent as the app sends it: the move planned over the list read after the listing.
+    const back = signed(undo.move(await read([...start, moved, look, off, relisted]), MS + 12_000)!)
+    assert.equal(order(without), 'f-a f-b f-c')
+    const after = await read([...start, moved, look, off, relisted, back])
     assert.equal(order(after), 'f-a f-d f-b f-c')
     assert.equal(after.find((f) => f.file === 'f-d')?.look, 'row')
   })
@@ -288,28 +326,3 @@ describe('a tab that read the topic before someone else moved a file', () => {
   })
 })
 
-describe('which topics list a file, with its moves on it', () => {
-  it('pages the `#o` read, so a file moved more than a page of times is still found on its topic', async () => {
-    const events = [list('f-a', MS)]
-    let prev = topicRoot.id
-    // 1,005 moves of f-a, a second apart: more than the relay's 1,000-event page, its listing the oldest.
-    for (let i = 1; i <= 1005; i++) {
-      const at = MS + i * 1000
-      const move = signed({
-        pubkey: QA1, created_at: Math.floor(at / 1000), kind: 1851, content: '',
-        tags: [['a', TOPIC], ['O', TOPIC_D], ['field', 'order:f-a'], ['value', keyBetween(undefined, undefined)], ['h', FOLDER], ['ts', String(at)], ['prev', prev], ['o', 'f-a']],
-      })
-      prev = move.id
-      events.push(move)
-    }
-    const all = relay([topicRoot, ...fileRoots, ...events])
-    // A relay that honours `limit` and `until`, newest first, as production's does.
-    const capped = async (filters: Record<string, unknown>[]) =>
-      (await Promise.all(filters.map(async (f) => {
-        const hits = (await all([f])).filter((e) => typeof f.until !== 'number' || e.created_at <= f.until).sort((a, b) => b.created_at - a.created_at)
-        return typeof f.limit === 'number' ? hits.slice(0, f.limit) : hits.slice(0, 1000)
-      }))).flat()
-    const topics = await topicsOfFile(capped, 'f-a')
-    assert.deepEqual(topics.map((t) => t.address), [TOPIC])
-  })
-})

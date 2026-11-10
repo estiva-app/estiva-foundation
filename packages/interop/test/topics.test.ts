@@ -263,6 +263,30 @@ describe("a topic's list", () => {
   })
 })
 
+describe('which topics list a file, after it was moved on one many times', () => {
+  it('pages the `#o` read, so a file moved more than a page of times is still found on its topic', async () => {
+    // 1,005 changes of f-a's place on the topic (§6.14 `order:`), a second apart, after its listing:
+    // `#o` returns each, so its listing is no longer on the relay's first 1,000-event page.
+    const events = [list(DOC_D, MS)]
+    for (let i = 1; i <= 1005; i++) {
+      const at = MS + i * 1000
+      events.push(signed({
+        pubkey: QA1, created_at: Math.floor(at / 1000), kind: 1851, content: '',
+        tags: [['a', TOPIC], ['O', TOPIC_D], ['field', `order:${DOC_D}`], ['value', 'V'], ['h', FOLDER], ['ts', String(at)], ['o', DOC_D]],
+      }))
+    }
+    const all = relay([topicRoot, docRoot, ...events])
+    // A relay that honours `limit` and `until`, newest first, and answers at most 1,000 a filter, as production's does.
+    const capped = async (filters: Record<string, unknown>[]) =>
+      (await Promise.all(filters.map(async (f) => {
+        const hits = (await all([f])).filter((e) => typeof f.until !== 'number' || e.created_at <= f.until).sort((a, b) => b.created_at - a.created_at)
+        return hits.slice(0, typeof f.limit === 'number' ? Math.min(f.limit, 1000) : 1000)
+      }))).flat()
+    const topics = await topicsOfFile(capped, DOC_D)
+    assert.deepEqual(topics.map((t) => t.address), [TOPIC])
+  })
+})
+
 describe("many topics' lists at once (Peek's Topics screen)", () => {
   const SECOND_D = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
   const SECOND = `30840:${QA2}:${SECOND_D}`

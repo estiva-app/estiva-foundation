@@ -52,7 +52,7 @@ import {
   type QueryFn,
 } from './projection.js'
 import { fieldsSetBy } from './fields.js'
-import { arrangementHeads, arrangementOf, readsAs, sortArranged, type FileArrangement } from './topicArrangement.js'
+import { arrangementHeads, arrangementOf, fileOfListField, readsAs, sortArranged, type FileArrangement } from './topicArrangement.js'
 
 const KIND_CHANGE = 1851
 /** The topic (bare file) kind: the only lists this stage reads (Miky, 2026-10-30). */
@@ -338,7 +338,8 @@ async function listsOf(
   options: ListReadOptions,
 ): Promise<Map<string, ListedFile[]>> {
   const out = new Map<string, ListedFile[]>(asked.map((topic) => [topic, []]))
-  const [roots, events] = await Promise.all([rootsRead, options.listRead ? newestChanges(query, asked) : query(asked.map(topicListFilter))])
+  // Paged without the list read: every move adds a change to a topic's `#O`, and an unpaged read would lose its oldest entries.
+  const [roots, events] = await Promise.all([rootsRead, options.listRead ? newestChanges(query, asked) : readAll(query, asked.map(topicListFilter))])
   const folderOfList = (list: string) => {
     const root = out.has(list) ? roots.get(list) : undefined
     return root ? folderOf(root) : null
@@ -361,19 +362,19 @@ async function listsOf(
 
 /**
  * Each topic's fields as their current changes, by the list read (§6.13):
- * one filter per kind of topic asked, with their ids. Without it, one `#O`
- * filter per topic in one request, so a relay's cap on an answer cuts no more
- * than it would for that topic alone.
+ * one filter per topic, all in one request, so a relay's cap on an answer
+ * cuts no more than it would for that topic alone, as the `#O` read does.
  */
 async function newestChanges(query: QueryFn, topics: readonly string[]): Promise<SignedEvent[]> {
-  const byKind = new Map<string, string[]>()
-  for (const topic of topics) {
+  const filters = topics.flatMap((topic) => {
     const [, kind, , d] = ADDRESS.exec(topic) ?? []
-    if (d) byKind.set(kind, [...(byKind.get(kind) ?? []), d])
-  }
-  if (byKind.size === 0) return []
-  return query([...byKind].map(([kind, ds]) => ({ fields: 'newest', kinds: [Number(kind)], '#d': ds })))
+    return d ? [{ fields: 'newest', kinds: [Number(kind)], '#d': [d] }] : []
+  })
+  return filters.length ? query(filters) : []
 }
+
+/** The most files per topic the list read asks about again. */
+const SKIPPED_READ_CAP = 100
 
 /**
  * The list read answers each field's newest change, a malformed one too (a
@@ -393,11 +394,15 @@ async function skippedAgain(
     // Only a list asked for and readable: a change on another author's same-id topic folds nowhere anyway.
     if (!list || !folderOfList(list)) continue
     for (const { field } of fieldsSetBy(event)) {
-      if (!/^(lists|order|look):./.test(field) || readsAs(event, field, list, folderOfList(list))) continue
+      const file = fileOfListField(field)
+      // A list entry is read only in the one-field form (§6.14): one set in a `set` is skipped too.
+      const entryInSet = field.startsWith('lists:') && tagOf(event, 'field') === undefined
+      if (!file || (!entryInSet && readsAs(event, field, list, folderOfList(list)))) continue
       const holder = ADDRESS.exec(list)
       if (!holder) continue
       const files = skipped.get(holder[3]) ?? new Set()
-      files.add(field.slice(field.indexOf(':') + 1))
+      // Bounded: a change setting hundreds of junk fields asks again about the first few only.
+      if (files.size < SKIPPED_READ_CAP) files.add(file)
       skipped.set(holder[3], files)
     }
   }

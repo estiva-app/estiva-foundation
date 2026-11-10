@@ -38,9 +38,29 @@ export const lookField = (file: string): string => `${LOOK}${file}`
 /** Digits in byte order: `0`–`9`, `A`–`Z`, `a`–`z`. */
 const DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 const KEY = /^[0-9A-Za-z]*[1-9A-Za-z]$/
+/** The longest key a reader takes (§6.14); a planner whose key would pass it places every file afresh. */
+export const MAX_PLACE_KEY = 64
 
-/** A place §6.14 reads: one or more of `0-9A-Za-z`, not ending in `0`. Anything else is no place. */
-export const isPlaceKey = (key: string | undefined): key is string => typeof key === 'string' && KEY.test(key)
+/** A place §6.14 reads: 1 to 64 of `0-9A-Za-z`, not ending in `0`. Anything else is no place. */
+export const isPlaceKey = (key: string | undefined): key is string =>
+  typeof key === 'string' && key.length <= MAX_PLACE_KEY && KEY.test(key)
+
+/** `n` keys, evenly spread and as short as `n` allows, in order: every file placed afresh. */
+function evenKeys(n: number): string[] {
+  let width = 1
+  while (DIGITS.length ** width < (n + 1) * 2) width++
+  const span = DIGITS.length ** width
+  return Array.from({ length: n }, (_, i) => {
+    let value = Math.floor(((i + 1) * span) / (n + 1))
+    let key = ''
+    for (let w = 0; w < width; w++) {
+      key = DIGITS[value % DIGITS.length] + key
+      value = Math.floor(value / DIGITS.length)
+    }
+    // Never ending in `0`: a trailing `1` still sorts after this key and before the next.
+    return key.endsWith('0') ? `${key}1` : key
+  })
+}
 
 /** Byte-wise, as §6.14 compares keys (never `localeCompare`). */
 const compareKeys = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
@@ -109,7 +129,10 @@ const tagOf = (event: Pick<SignedEvent, 'tags'>, name: string): string | undefin
   event.tags.find((t) => t[0] === name && t[1])?.[1]
 
 const isArrangeField = (field: string) => field.startsWith(ORDER) || field.startsWith(LOOK)
-const fileOfField = (field: string) => field.slice(field.indexOf(':') + 1)
+/** The listed file a per-file field of a list names — `lists:`, `order:` or `look:` — or `null` for any other field. */
+export const fileOfListField = (field: string): string | null =>
+  /^(lists|order|look):./.test(field) ? field.slice(field.indexOf(':') + 1) : null
+const fileOfField = (field: string) => fileOfListField(field) ?? ''
 
 /**
  * Whether a change setting `field` on `list` is one a reader folds (§6.14's
@@ -236,13 +259,15 @@ export function planMoveInTopic(
   createdAtMs: number,
   args: { topic: ArrangeHolder; files: readonly ArrangedFile[]; file: string; after: string | null },
 ): UnsignedEvent | null {
-  const moved = args.files.find((f) => f.file === args.file)
+  // In the topic's own order, whatever order the app draws them in (Ship groups by kind).
+  const files = sortArranged(args.files)
+  const moved = files.find((f) => f.file === args.file)
   if (!moved) throw new Error(`${args.file} is not on the topic's list`)
-  const rest = args.files.filter((f) => f.file !== args.file)
+  const rest = files.filter((f) => f.file !== args.file)
   const to = args.after === null ? 0 : rest.findIndex((f) => f.file === args.after) + 1
   if (args.after !== null && to === 0) throw new Error(`${args.after} is not on the topic's list`)
-  // Already drawn there: nothing to write.
-  if (args.files.indexOf(moved) === to) return null
+  // Already there: nothing to write.
+  if (files.indexOf(moved) === to) return null
   const before = rest.slice(0, to)
   const after = rest.slice(to)
   const writes: { file: ArrangedFile; key: string }[] = []
@@ -267,6 +292,12 @@ export function planMoveInTopic(
   } else {
     place(moved, after[0]?.order)
   }
+  if (writes.some((w) => w.key.length > MAX_PLACE_KEY)) {
+    // Keys grew too long (many moves to one spot): place every placed file, and the moved one, afresh.
+    const placed = [...before, moved, ...after].filter((f) => f === moved || f.order !== undefined || before.includes(f))
+    const keys = evenKeys(placed.length)
+    writes.splice(0, writes.length, ...placed.map((file, i) => ({ file, key: keys[i] })))
+  }
   const at = stamp(createdAtMs, writes.map((w) => w.file))
   const changes = writes.map((w) => fieldChange(pubkey, at, args.topic, orderField(w.file.file), w.key, w.file.prev.order))
   if (changes.length === 1) return changes[0]
@@ -286,15 +317,17 @@ export function planLookInTopic(
 
 /**
  * Undo of Remove: put `file` back on the list, then back in the place it had
- * — after `after` (`null`: first), in `files`, the list as drawn without it.
- * Its look stays: a listing never resets it. The second change is stamped
- * after the first, so its place is not older than its listing.
+ * — just after `after` (`null`: first). Its look stays: a listing never
+ * resets it. Publish `relist`, then send `move` with {@link writeArrangement}
+ * over the list read again, so a refusal plans the move again rather than
+ * leaving the file back but last. The move is stamped after the listing, so
+ * its place is not older than it.
  */
 export function planPutBackInTopic(
   pubkey: string,
   createdAtMs: number,
-  args: { topic: ArrangeHolder; files: readonly ArrangedFile[]; file: ArrangedFile; after: string | null },
-): UnsignedEvent[] {
+  args: { topic: ArrangeHolder; file: ArrangedFile; after: string | null },
+): { relist: UnsignedEvent; move: (files: readonly ArrangedFile[], createdAtMs: number) => UnsignedEvent | null } {
   const listedAt = stamp(createdAtMs, [args.file])
   const holder = ADDRESS.exec(args.topic.address)
   if (!holder) throw new Error(`not a file address: ${JSON.stringify(args.topic.address)}`)
@@ -313,10 +346,14 @@ export function planPutBackInTopic(
     ],
     content: '',
   }
-  // Back on the list it has no place yet: it sits last among the unplaced until the move.
-  const back: ArrangedFile = { ...args.file, order: undefined, prevAt: Math.max(args.file.prevAt, listedAt) }
-  const move = planMoveInTopic(pubkey, listedAt + 1, { topic: args.topic, files: [...args.files, back], file: back.file, after: args.after })
-  return move ? [relist, move] : [relist]
+  const move = (files: readonly ArrangedFile[], ms: number) => {
+    // Back on the list it has no place yet; a list read before the listing landed does not hold it.
+    const held = files.find((f) => f.file === args.file.file)
+    const back: ArrangedFile = { ...(held ?? args.file), order: undefined, prevAt: Math.max((held ?? args.file).prevAt, listedAt) }
+    const rest = files.filter((f) => f.file !== back.file)
+    return planMoveInTopic(pubkey, Math.max(ms, listedAt + 1), { topic: args.topic, files: [...rest, back], file: back.file, after: args.after })
+  }
+  return { relist, move }
 }
 
 /** What {@link writeArrangement} is handed. */
