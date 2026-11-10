@@ -397,4 +397,16 @@ describe('when a child last changed — 5ebf2756', () => {
     const tomato = await resolveForeignObject(plantAddress('tomato'), query)
     assert.equal(tomato.changedAt, late.created_at)
   })
+
+  test('says who made that change: the newest change’s author, or the root’s when nothing changed it (TOPI-8)', async () => {
+    const events = [manifestOf(GARDEN), bed('east'), plant('tomato', 'east'), plant('mint', 'east')]
+    events.push(change(plantAddress('tomato'), 'stage', 'flowering'), change(plantAddress('tomato'), 'stage', 'fruiting', HELPER))
+    const { query } = countingRelay(events)
+    const east = await resolveForeignObject(bedAddress('east'), query)
+    const by = Object.fromEntries(east.children.map((c) => [c.slots.title.value, c.changedBy]))
+    assert.equal(by.tomato, HELPER, 'the helper changed it last')
+    assert.equal(by.mint, GARDENER, 'nothing changed the mint: its root’s author')
+    const tomato = await resolveForeignObject(plantAddress('tomato'), query)
+    assert.equal(tomato.changedBy, HELPER, 'read by address, the same')
+  })
 })

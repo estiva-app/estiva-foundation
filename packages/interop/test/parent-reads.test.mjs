@@ -83,6 +83,8 @@ function relay(events) {
   }
   return {
     query,
+    /** Every filter asked of the relay. */
+    asked: () => asked.flat(),
     /** Every address whose changes were read one by one, by `#a` with the change kind. */
     changesByA: () => asked.flat().filter((f) => f.kinds?.includes(CHANGE)).flatMap((f) => f['#a'] ?? []),
   }
@@ -219,5 +221,63 @@ describe('readTopics: a topic’s archived project, read by the list read', () =
     const read = await readTopics(r.query, OTHER)
     assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.archived?.with, addressOf(shelved))
     assert.ok(r.changesByA().includes(addressOf(shelved)))
+  })
+})
+
+describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
+  const move = (file, to, by = OWNER) =>
+    event({ kind: CHANGE, pubkey: by, tags: [['a', addressOf(file)], ['field', 'project'], ['value', addressOf(to)], ['A', addressOf(to)], ['h', TEAM]] })
+
+  test('a file comes back with the files under it now: created here, moved in, not moved away or archived; and no text or change history is read', async () => {
+    const p1 = project('p1')
+    const p2 = project('p2')
+    const stays = issue('stays', p1)
+    const away = issue('away', p1)
+    const shelved = issue('shelved', p1)
+    const arrived = issue('arrived', p2)
+    const events = [
+      ship, p1, p2, stays, away, shelved, arrived,
+      move(away, p2, OTHER), move(arrived, p1, OTHER),
+      change(stays, 'title', 'Stays, renamed', OTHER),
+      change(shelved, 'archived', 'true'),
+      ...edits(stays), ...edits(p1),
+    ]
+    const r = relay(events)
+    const roots = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { listRead: true, children: true })
+    assert.deepEqual(roots.map((o) => o.address), [addressOf(p1)])
+    const children = roots[0].children ?? []
+    assert.deepEqual(new Set(children.map((c) => c.slots.title?.value)), new Set(['Stays, renamed', 'arrived']))
+    // Who changed a child last, from its current changes alone.
+    assert.equal(children.find((c) => c.address === addressOf(stays)).changedBy, OTHER)
+    assert.deepEqual(r.changesByA(), [])
+    // The children are asked by the list read, which never carries text: no plain read of them by `#a`.
+    const byParent = r.asked().filter((f) => f.kinds?.includes(ISSUE) && f['#a']?.includes(addressOf(p1)))
+    assert.ok(byParent.length > 0)
+    assert.ok(byParent.every((f) => f.fields === 'newest'), JSON.stringify(byParent))
+  })
+
+  test('a child moved in and moved away again, with the earlier move stamped later, is not drawn under the old parent', async () => {
+    const p1 = project('p1')
+    const p2 = project('p2')
+    const back = issue('back', p2)
+    // Alice's clock runs fast: her move to p1 says it is newer than Bob's move back, which the relay keeps current (§6.13).
+    const stale = move(back, p1)
+    const current = move(back, p2, OTHER)
+    stale.created_at = current.created_at + 600
+    const r = relay([ship, p1, p2, back, stale, current])
+    const listRead = async (filters) => {
+      const answer = await r.query(filters)
+      return filters.every((f) => f.fields) ? [...answer.filter((e) => e.id !== stale.id), ...(answer.some((e) => e.id === stale.id) ? [current] : [])] : answer
+    }
+    const [root] = await resolveForeignRoots([addressOf(p1)], listRead, undefined, { listRead: true, children: true })
+    assert.deepEqual(root.children ?? [], [])
+  })
+
+  test('without children, nothing under the file is read', async () => {
+    const p1 = project('p1')
+    const r = relay([ship, p1, issue('stays', p1)])
+    const [root] = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { listRead: true })
+    assert.equal(root.children, undefined)
+    assert.deepEqual(r.asked().filter((f) => f['#a']?.includes(addressOf(p1)) || f['#A']?.includes(addressOf(p1))), [])
   })
 })

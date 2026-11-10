@@ -3358,6 +3358,12 @@ export interface ForeignObject {
    */
   changedAt?: number
   /**
+   * Who made the change {@link changedAt} names, as a pubkey: the author of the
+   * newest folded field's winning change, or the root's when no change is newer
+   * than it. For "edited by … , 2h ago" on a row. Absent where `changedAt` is.
+   */
+  changedBy?: string
+  /**
    * Each changed field's current change id: the `prev` a change to that field
    * names (SPEC §6.2). A field never changed is absent, and its first change
    * names the first record — {@link prevOf} answers both. Absent on a regular
@@ -3389,6 +3395,13 @@ export function prevOf(object: Pick<ForeignObject, 'prevs' | 'eventId'>, field: 
 /** The newest of a root's `created_at` and its folded fields' changes. */
 function changedAtOf(root: SignedEvent, folded: Record<string, { at?: number }>): number {
   return Math.max(root.created_at, ...Object.values(folded).map((f) => f.at ?? 0))
+}
+
+/** Who made the newest of a root and its folded fields' changes: the root's author on a tie, as nothing changed it after. */
+function changedByOf(root: SignedEvent, folded: Record<string, { at?: number; by?: string }>): string {
+  let newest = { at: root.created_at, by: root.pubkey }
+  for (const f of Object.values(folded)) if (f.by && (f.at ?? 0) > newest.at) newest = { at: f.at!, by: f.by }
+  return newest.by
 }
 
 
@@ -3442,6 +3455,7 @@ function buildObject(args: {
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
     changedAt: changedAtOf(root, folded),
+    changedBy: changedByOf(root, folded),
     ...(Object.keys(prevs).length ? { prevs } : {}),
     ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
   }
@@ -3912,8 +3926,13 @@ export async function resolveForeignRoots(
    * deleted file is absent. Other kinds are read as before.
    * `parentsListRead`, with `archivedWith`, reads only the parents walked for an archive by the list read (with
    * `listRead`'s fallback for one it leaves out); the files asked for are still read in full, their text included.
+   * `children`, with `listRead`, also gives each listed file whose app declares a list of files the files under it,
+   * one level down, folded as {@link resolveForeignObjects}' are: by the same list read, so a child's text is never
+   * read, and a child moved in (§7.2) found by its move. Archived children are dropped, and a child carries no
+   * actions. A list of other kinds (a topic's messages) is not read, and its `children` stay absent. Without
+   * `listRead` it asks nothing more.
    */
-  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean } = {},
+  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean; children?: boolean } = {},
 ): Promise<ForeignObject[]> {
   const pointers = new Map<string, AddressPointer>()
   for (const reference of references) {
@@ -3940,10 +3959,43 @@ export async function resolveForeignRoots(
     filters.push(root, { kinds: [...changeKinds], '#a': [address], limit: 500 })
   }
   const listed = listReadFilters(listedPointers)
+  // The children's first records ride in the list read (TOPI-8). The moves naming a parent are asked on their own:
+  // every move that ever named it comes back, stale ones too, so they only say which children to read and are never
+  // folded — a child's place is its list read's current change, in the relay's order (§6.13).
+  const lists = options.children ? childListsOf(listedPointers, manifests) : []
+  const moves: Record<string, unknown>[] = []
+  for (const { childFilter } of lists) {
+    listed.push({ ...childFilter.filter, fields: 'newest' })
+    if (childFilter.movedIn) moves.push(childFilter.movedIn)
+  }
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
-  const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
-  const projected = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  const [plain, answered, named] = await Promise.all([queryChunked(filters, query), queryChunked(listed, query), queryChunked(moves, query)])
+  const events = [...plain, ...answered]
+  // A child moved in is named only by its move, so its own first record is read once those are back.
+  const held = new Set(answered.flatMap((e) => childAddressOf(e) ?? []))
+  const movedIn = lists.flatMap(({ childFilter, resolved }) =>
+    movedInAddressesOf(named, childFilter, resolved.manifest.records).filter((address) => !held.has(address)),
+  )
+  const moved = movedIn.flatMap((address) => addressPointerOf(address) ?? [])
+  const childEvents = [...answered, ...(moved.length ? await queryChunked(listReadFilters(moved), query) : [])]
+  const all = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  // The children's own first records came back too; only the files asked for are answers.
+  const projected = lists.length ? all.filter((object) => !!object.address && pointers.has(object.address)) : all
+  for (const { childFilter, resolved, address } of lists) {
+    const parent = projected.find((object) => object.address === address)
+    if (!parent) continue
+    const children = childrenFrom({
+      // The moves only find who moved in; each child folds from its list read alone.
+      events: [...answered, ...named],
+      childFilter,
+      manifest: resolved.manifest,
+      webTemplate: resolved.webTemplate,
+      viaRecommendation: resolved.viaRecommendation,
+      childChanges: childEvents,
+    })
+    if (children) parent.children = textUnread(children)
+  }
   const objects = options.listRead ? textUnread(projected) : projected
   if (options.archivedWith) {
     const manifestOf = (object: ForeignObject) => {
@@ -3958,6 +4010,21 @@ export async function resolveForeignRoots(
     )
   }
   return objects
+}
+
+/** The child list each listed file's app declares, for {@link resolveForeignRoots}' `children`: files of the list read only. */
+function childListsOf(
+  pointers: readonly AddressPointer[],
+  manifests: Map<string, ResolvedManifest>,
+): { address: string; resolved: ResolvedManifest; childFilter: NonNullable<ReturnType<typeof childFilterFor>> }[] {
+  return pointers.flatMap((pointer) => {
+    const resolved = manifests.get(manifestKeyOf(pointer))
+    const projection = resolved?.manifest.projections?.[String(pointer.kind)]
+    if (!resolved || !projection) return []
+    const childFilter = childFilterFor({ projection, manifest: resolved.manifest, pointer, depth: 0 })
+    if (!childFilter || !FILE_KINDS.includes(childFilter.kind)) return []
+    return [{ address: `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}`, resolved, childFilter }]
+  })
 }
 
 /**
@@ -5394,6 +5461,7 @@ function buildChildObject(args: {
     actions: addressable && !nevent && ownsKind ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
     changedAt: changedAtOf(root, folded),
+    changedBy: changedByOf(root, folded),
     ...(archived ? { archived } : {}),
   }
 }
