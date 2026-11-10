@@ -6,6 +6,20 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.97.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: nothing new is read or written** (ACT-2).
+
+- `TopicActivity.parents`: each file the read or the live watch found under a
+  listed one, by address, with the file it sits directly under (its one `a`,
+  §6.7). An app tells a listed project's issue from a page two levels down,
+  for what names you on a file one level under a listed one
+  (record at-important-what-names-you-on-a-listed-file-lights-the-topic).
+- `TopicActivity.comments` also holds the comments on each file one level
+  under a listed one (a listed project's issue, a listed page's page), from
+  the probes the read already made and from the live watch; two levels under
+  holds none. No request is added. `onComment` is called for them too.
+
 ## 0.96.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: nothing new is written; fewer requests read the same** (ALO-17).

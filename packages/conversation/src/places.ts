@@ -574,13 +574,26 @@ export interface PlaceJudge {
  * following.
  */
 export function unreadOnPlace<E extends Message>(messages: readonly E[], merged: Readonly<Record<string, number>>, judge: PlaceJudge): E[] {
+  return eachMessage(messages, judge.me, (message, root, inSince) => isUnreadOnPlace(message, root, merged, judge, inSince))
+}
+
+/**
+ * Each message of each conversation in `messages`, root first then its replies, kept when `keep` says so. `inSince`
+ * is when `me` came into that message's conversation (wrote its root or a reply, or was mentioned there), or, for a
+ * reply whose lowercase `p` names `me` as the author it answers (§6.4), at the latest that reply: `me` wrote what it
+ * answers even when the reader holds nothing older of it. Undefined when `me` is not in it.
+ */
+function eachMessage<E extends Message>(messages: readonly E[], me: string, keep: (message: E, root: string | undefined, inSince: number | undefined) => boolean): E[] {
   const { roots, replies } = groupThreads(messages)
   const out: E[] = []
   const conversation = (root: E | undefined, list: readonly E[], rootId: string) => {
     const all = root ? [root, ...list] : [...list]
-    const inSince = all.find((m) => m.pubkey === judge.me || peopleNamedInBody(m.content).has(judge.me))?.created_at
-    if (root && isUnreadOnPlace(root, undefined, merged, judge, inSince)) out.push(root)
-    for (const reply of list) if (isUnreadOnPlace(reply, rootId, merged, judge, inSince)) out.push(reply)
+    const inSince = all.find((m) => m.pubkey === me || peopleNamedInBody(m.content).has(me))?.created_at
+    if (root && keep(root, undefined, inSince)) out.push(root)
+    for (const reply of list) {
+      const answersMe = reply.tags.some((t) => t[0] === 'p' && t[1] === me)
+      if (keep(reply, rootId, answersMe ? Math.min(inSince ?? reply.created_at, reply.created_at) : inSince)) out.push(reply)
+    }
   }
   for (const root of roots) conversation(root, replies[root.id] ?? [], root.id)
   const held = new Set(roots.map((r) => r.id))
@@ -610,12 +623,52 @@ export function isUnreadOnPlace(
     root === undefined ||
     (inConversationSince !== undefined && message.created_at >= inConversationSince)
   if (!mentioned && (judge.muted || !started || !levelLights)) return false
+  return newerThanItsMarker(message, root, merged, judge, started)
+}
+
+/** Whether a message that lights by its level is still unread: its stream's marker, or its thread's for a reply (§11.3). */
+function newerThanItsMarker(message: Message, root: string | undefined, merged: Readonly<Record<string, number>>, judge: PlaceJudge, started: boolean): boolean {
+  const { following } = judge
   const thread = root === undefined ? undefined : threadContext(root)
   const marker = thread === undefined ? streamMarkerOf(merged, judge.stream) : effectiveReadAt(merged, thread, judge.stream)
   if (marker !== undefined) return message.created_at > marker
   if (thread !== undefined && belowReplyFloor(message.created_at, merged[REPLY_FLOOR_CONTEXT])) return false
   if (started && following.since !== undefined) return true
   return judge.floor === undefined || message.created_at >= judge.floor
+}
+
+/**
+ * The unread messages on a file a place lists, as they light the place (§11.8 *What is unread on a place*):
+ * `messages` is that file's conversation, or what of it the reader holds; `judge.stream` is the file's own context
+ * (`fileContext`), so each message answers to the file's own marker, or its thread's for a reply.
+ *
+ * What names `P` lights at either level: a message that mentions `P`, and a reply in a conversation `P` is in (wrote
+ * its root or a reply, or was mentioned there) from the moment they were. A mute keeps only the mentions. At **All**,
+ * on a file the place lists directly, every message since `P` chose All lights too. `under` is a file one level under
+ * a listed one (a listed project's issue, a listed document's page): only what names `P` lights there, at either level.
+ * A new conversation that does not name `P` never lights at Important. Nothing lights when `P` is not in the place,
+ * and nothing from before `P`'s start on it. A reply to `P`'s agent belongs here and lights nothing until an app can
+ * tell whose agent it is (§6.5).
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/at-important-what-names-you-on-a-listed-file-lights-the-topic.md
+ */
+export function unreadOnListedFile<E extends Message>(
+  messages: readonly E[],
+  merged: Readonly<Record<string, number>>,
+  judge: PlaceJudge & { under?: boolean },
+): E[] {
+  const { following, me } = judge
+  if (!following.in) return []
+  const allFrom = following.level === 'all' && !judge.under && !judge.muted ? (following.allSince ?? following.since ?? 0) : undefined
+  // A root comment's `p` is the file's author, which says nothing of `P`: only a reply's counts (`eachMessage`).
+  return eachMessage(messages, me, (message, root, inSince) => {
+    if (message.pubkey === me) return false
+    if (following.since !== undefined && message.created_at < following.since) return false
+    const mentioned = peopleNamedInBody(message.content).has(me)
+    const inYours = !judge.muted && root !== undefined && inSince !== undefined && message.created_at >= inSince
+    const atAll = allFrom !== undefined && message.created_at >= allFrom
+    return (mentioned || inYours || atAll) && newerThanItsMarker(message, root, merged, judge, true)
+  })
 }
 
 // ── A level: `follow:<P>`, signed by `P` alone ──────────────────────────────

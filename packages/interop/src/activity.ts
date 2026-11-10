@@ -93,7 +93,7 @@ export interface TopicActivity {
   /** Each topic's team, as asked. */
   folders: Map<string, string | null>
   /**
-   * Each file a topic lists directly (not a file under one), by address: the
+   * Each file a topic lists directly, and each file one level under one (ACT-2), by address: the
    * comments about it (`kind:1111`, on it as the fold reads it, never by a
    * crossed tag) that the read already fetched to time its topics, oldest
    * first. The read asks nothing more for them, so a file holds its newest
@@ -101,6 +101,12 @@ export interface TopicActivity {
    * appends each new one in place (TOPI-3).
    */
   comments: Map<string, SignedEvent[]>
+  /**
+   * Each file found under a listed one, by address: the file it sits directly under (its one `a`, §6.7), so a
+   * reader tells a listed project's issue from a page two levels down (ACT-2: what names you counts one level
+   * under a listed file). {@link watchTopicActivity} adds each new one in place.
+   */
+  parents: Map<string, string>
 }
 
 /** {@link ActivityTopic}s from {@link readTopics}' answer: each topic with its resolved list. */
@@ -292,13 +298,14 @@ export async function readTopicActivity(
   const files = new Map<string, ActivityFile[]>()
   const folders = new Map<string, string | null>()
   const comments = new Map<string, SignedEvent[]>()
+  const parents = new Map<string, string>()
   for (const topic of topics) {
     at.set(topic.address, topic.createdAt ? capped(topic.createdAt) : 0)
     files.set(topic.address, [...topic.files])
     folders.set(topic.address, topic.folder ?? null)
     for (const file of topic.files) if (!comments.has(file.address)) comments.set(file.address, [])
   }
-  if (topics.length === 0) return { at, files, folders, comments }
+  if (topics.length === 0) return { at, files, folders, comments, parents }
   const bump = (topic: string, when: number) => {
     if (capped(when) > (at.get(topic) ?? 0)) at.set(topic, capped(when))
   }
@@ -352,6 +359,7 @@ export async function readTopicActivity(
     const found = under.heard(events)
     // Parents come before their children in a level, so a page two levels down inherits its topics.
     for (const { parent, file, at: created } of found) {
+      parents.set(file.address, parent)
       for (const topic of topicsOf.get(parent) ?? []) {
         if (!topicsOf.get(file.address)?.has(topic)) files.get(topic)!.push(file)
         onTopic(file.address, topic)
@@ -369,12 +377,15 @@ export async function readTopicActivity(
       if (fresh.length === 0) continue
       for (const topic of fresh) done.add(topic)
       readFor.set(file, done)
-      then.push(...fileProbes(target, fresh))
+      // One level under a listed file, its comments are kept too: what names the reader there lights the topic (ACT-2).
+      const kept = listed.has(parents.get(file) ?? '') && !listed.has(file)
+      if (kept && !comments.has(file)) comments.set(file, [])
+      then.push(...fileProbes(target, fresh, kept))
     }
     open.push(...opened(then))
   }
   for (const list of comments.values()) list.sort(oldestFirst)
-  return { at, files, folders, comments }
+  return { at, files, folders, comments, parents }
 
   /**
    * Per probe, the newest event that counts for one of its topics, from the
@@ -554,9 +565,14 @@ export function watchTopicActivity(
     const parent = d && first && byAddress.has(first) && CHILD_KINDS[kindOf(first) ?? -1]?.includes(event.kind) ? first : undefined
     if (parent && d) {
       const file = { address: `${event.kind}:${event.pubkey}:${d}`, folder: folderOf(event) }
+      // `??=`: an activity built before `parents` existed (an older read, a stub) is given one rather than thrown on.
+      const parents = (activity.parents ??= new Map())
       const fresh = !byAddress.has(file.address)
       const listen = fresh && (children.get(parent) ?? 0) < MAX_CHILDREN
       if (listen) children.set(parent, (children.get(parent) ?? 0) + 1)
+      if (listen && !parents.has(file.address)) parents.set(file.address, parent)
+      // A new file one level under a listed one: its comments are kept from now on, as the read keeps them.
+      if (listen && activity.comments.has(parent) && !parents.has(parent) && !activity.comments.has(file.address)) activity.comments.set(file.address, [])
       for (const topic of byAddress.get(parent)!) {
         if (listen) {
           activity.files.get(topic)?.push(file)
