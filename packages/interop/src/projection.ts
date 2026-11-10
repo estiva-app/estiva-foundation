@@ -3358,6 +3358,12 @@ export interface ForeignObject {
    */
   changedAt?: number
   /**
+   * Who made the change {@link changedAt} names, as a pubkey: the author of the
+   * newest folded field's winning change, or the root's when no change is newer
+   * than it. For "edited by … , 2h ago" on a row. Absent where `changedAt` is.
+   */
+  changedBy?: string
+  /**
    * Each changed field's current change id: the `prev` a change to that field
    * names (SPEC §6.2). A field never changed is absent, and its first change
    * names the first record — {@link prevOf} answers both. Absent on a regular
@@ -3389,6 +3395,13 @@ export function prevOf(object: Pick<ForeignObject, 'prevs' | 'eventId'>, field: 
 /** The newest of a root's `created_at` and its folded fields' changes. */
 function changedAtOf(root: SignedEvent, folded: Record<string, { at?: number }>): number {
   return Math.max(root.created_at, ...Object.values(folded).map((f) => f.at ?? 0))
+}
+
+/** Who made the newest of a root and its folded fields' changes: the root's author on a tie, as nothing changed it after. */
+function changedByOf(root: SignedEvent, folded: Record<string, { at?: number; by?: string }>): string {
+  let newest = { at: root.created_at, by: root.pubkey }
+  for (const f of Object.values(folded)) if (f.by && (f.at ?? 0) > newest.at) newest = { at: f.at!, by: f.by }
+  return newest.by
 }
 
 
@@ -3442,6 +3455,7 @@ function buildObject(args: {
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
     changedAt: changedAtOf(root, folded),
+    changedBy: changedByOf(root, folded),
     ...(Object.keys(prevs).length ? { prevs } : {}),
     ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
   }
@@ -5394,6 +5408,7 @@ function buildChildObject(args: {
     actions: addressable && !nevent && ownsKind ? actionsOfFile(manifest, projection, root, folded) : [],
     viaRecommendation,
     changedAt: changedAtOf(root, folded),
+    changedBy: changedByOf(root, folded),
     ...(archived ? { archived } : {}),
   }
 }

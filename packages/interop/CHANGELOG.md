@@ -6,6 +6,15 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.98.0 — 2026-11-10
+
+**Manifest: nothing new. Wire: nothing new is read or written** (TOPI-8).
+
+- `ForeignObject.changedBy`: who made the change `changedAt` names — the
+  author of the newest folded field's winning change, or the root's author when
+  nothing changed it after. For a row that says "Katerina, 2h ago" (Ship's
+  topic page draws each document's last edit with it).
+
 ## 0.97.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: nothing new is read or written** (ACT-2).
