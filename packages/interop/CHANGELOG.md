@@ -8,7 +8,15 @@ manifests already published still mean what they meant.
 
 ## 0.98.0 — 2026-11-10
 
-**Manifest: nothing new. Wire: nothing new is read or written** (TOPI-8).
+**Manifest: nothing new. Wire: nothing new is written; `children` reads a file's declared list by the list read** (TOPI-8).
+
+- `resolveForeignRoots(…, { listRead: true, children: true })`: each listed
+  file whose app declares a `list` comes back with the files under it, one
+  level down, as `resolveForeignObjects` gives them — but by the list read
+  (§6.13): the children's first records and current changes in the same
+  request as the files', never their text or change history, and a child moved
+  in found by its move. Archived children are dropped. Ship's topic page reads
+  its documents' pages this way.
 
 - `ForeignObject.changedBy`: who made the change `changedAt` names — the
   author of the newest folded field's winning change, or the root's author when

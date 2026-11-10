@@ -3926,8 +3926,11 @@ export async function resolveForeignRoots(
    * deleted file is absent. Other kinds are read as before.
    * `parentsListRead`, with `archivedWith`, reads only the parents walked for an archive by the list read (with
    * `listRead`'s fallback for one it leaves out); the files asked for are still read in full, their text included.
+   * `children`, with `listRead`, also gives each listed file whose app declares a list the files under it, one level
+   * down, as {@link resolveForeignObjects} does: by the same list read, so a child's text is never read, and a child
+   * moved in (§7.2) found by its move. Archived children are dropped. Without `listRead` it asks nothing more.
    */
-  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean } = {},
+  options: Pick<ArchiveReadOptions, 'archivedWith'> & { listRead?: boolean; parentsListRead?: boolean; children?: boolean } = {},
 ): Promise<ForeignObject[]> {
   const pointers = new Map<string, AddressPointer>()
   for (const reference of references) {
@@ -3954,10 +3957,38 @@ export async function resolveForeignRoots(
     filters.push(root, { kinds: [...changeKinds], '#a': [address], limit: 500 })
   }
   const listed = listReadFilters(listedPointers)
+  // The children ride in the same two requests: their first records by the list read, the moves naming a parent
+  // as plain reads (TOPI-8).
+  const lists = options.children ? childListsOf(listedPointers, manifests) : []
+  for (const { childFilter } of lists) {
+    listed.push({ ...childFilter.filter, fields: 'newest' })
+    if (childFilter.movedIn) filters.push(childFilter.movedIn)
+  }
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
   const events = (await Promise.all([queryChunked(filters, query), queryChunked(listed, query)])).flat()
-  const projected = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  // A child moved in is named only by its move, so its own first record is read once those are back.
+  const movedIn = lists.flatMap(({ childFilter, resolved }) =>
+    movedInAddressesOf(events, childFilter, resolved.manifest.records).filter((address) => !events.some((e) => childAddressOf(e) === address)),
+  )
+  const moved = movedIn.flatMap((address) => addressPointerOf(address) ?? [])
+  if (moved.length) events.push(...(await queryChunked(listReadFilters(moved), query)))
+  const all = projectEvents(events, (pointer) => manifests.get(manifestKeyOf(pointer)))
+  // The children's own first records came back too; only the files asked for are answers.
+  const projected = lists.length ? all.filter((object) => !!object.address && pointers.has(object.address)) : all
+  for (const { childFilter, resolved, address } of lists) {
+    const parent = projected.find((object) => object.address === address)
+    if (!parent) continue
+    const children = childrenFrom({
+      events,
+      childFilter,
+      manifest: resolved.manifest,
+      webTemplate: resolved.webTemplate,
+      viaRecommendation: resolved.viaRecommendation,
+      childChanges: events,
+    })
+    if (children) parent.children = textUnread(children)
+  }
   const objects = options.listRead ? textUnread(projected) : projected
   if (options.archivedWith) {
     const manifestOf = (object: ForeignObject) => {
@@ -3972,6 +4003,21 @@ export async function resolveForeignRoots(
     )
   }
   return objects
+}
+
+/** The child list each listed file's app declares, for {@link resolveForeignRoots}' `children`: files of the list read only. */
+function childListsOf(
+  pointers: readonly AddressPointer[],
+  manifests: Map<string, ResolvedManifest>,
+): { address: string; resolved: ResolvedManifest; childFilter: NonNullable<ReturnType<typeof childFilterFor>> }[] {
+  return pointers.flatMap((pointer) => {
+    const resolved = manifests.get(manifestKeyOf(pointer))
+    const projection = resolved?.manifest.projections?.[String(pointer.kind)]
+    if (!resolved || !projection) return []
+    const childFilter = childFilterFor({ projection, manifest: resolved.manifest, pointer, depth: 0 })
+    if (!childFilter || !FILE_KINDS.includes(childFilter.kind)) return []
+    return [{ address: `${pointer.kind}:${pointer.pubkey}:${pointer.identifier}`, resolved, childFilter }]
+  })
 }
 
 /**
