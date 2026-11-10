@@ -546,4 +546,13 @@ describe('§11.8 why a message is unread (ACT-3)', () => {
     const mine = comment(BOB, T0 + 10, 'my question')
     assert.deepEqual(reasons([reply(ALICE, mine, T0 + 11, 'an answer')]), [[0, 'reply-in-yours']])
   })
+
+  it('in a DM a message starts no conversation: it is a mention or a message, a reply included', () => {
+    const first = comment(ALICE, T0 + 10, 'are you around?')
+    const naming = comment(ALICE, T0 + 11, `${mention(BOB)} look`)
+    const mine = comment(BOB, T0 + 12, 'yes')
+    const answer = reply(ALICE, mine, T0 + 13, 'great')
+    const got = [...unreadReasons([first, naming, mine, answer], BOB, { dm: true }).values()]
+    assert.deepEqual(got, ['message', 'mention', 'message', 'message'])
+  })
 })

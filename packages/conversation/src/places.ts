@@ -686,9 +686,25 @@ export function unreadOnListedFile<E extends Message>(
  */
 export type UnreadReason = 'mention' | 'new-conversation' | 'reply-in-yours' | 'message'
 
+/**
+ * Where the messages are, for their reason: a place or a file, whose top-level messages start conversations, or a DM,
+ * whose messages are the conversation itself, so none of them starts one or is a reply in yours.
+ */
+export interface UnreadReasonOptions {
+  /** A DM: each message is a mention or a message (§11.8). */
+  dm?: boolean
+}
+
 /** The {@link UnreadReason} of one message: `root` is its conversation's root id when it is a reply, `inConversationSince` as in {@link isUnreadOnPlace}. */
-export function unreadReason(message: Pick<Message, 'content' | 'created_at'>, root: string | undefined, inConversationSince: number | undefined, me: string): UnreadReason {
+export function unreadReason(
+  message: Pick<Message, 'content' | 'created_at'>,
+  root: string | undefined,
+  inConversationSince: number | undefined,
+  me: string,
+  options: UnreadReasonOptions = {},
+): UnreadReason {
   if (peopleNamedInBody(message.content).has(me)) return 'mention'
+  if (options.dm) return 'message'
   if (root === undefined) return 'new-conversation'
   if (inConversationSince !== undefined && message.created_at >= inConversationSince) return 'reply-in-yours'
   return 'message'
@@ -698,10 +714,10 @@ export function unreadReason(message: Pick<Message, 'content' | 'created_at'>, r
  * The {@link UnreadReason} of every message in `messages`, by id: a place's stream, a listed file's conversation, a
  * team's chat or a DM, as the reader holds it. Pair it with the rule that says which of them are unread.
  */
-export function unreadReasons(messages: readonly Message[], me: string): ReadonlyMap<string, UnreadReason> {
+export function unreadReasons(messages: readonly Message[], me: string, options: UnreadReasonOptions = {}): ReadonlyMap<string, UnreadReason> {
   const out = new Map<string, UnreadReason>()
   eachMessage(messages, me, (message, root, inSince) => {
-    out.set(message.id, unreadReason(message, root, inSince, me))
+    out.set(message.id, unreadReason(message, root, inSince, me, options))
     return false
   })
   return out
