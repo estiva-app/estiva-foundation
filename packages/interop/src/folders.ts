@@ -579,13 +579,14 @@ export function refusalCode(reason: string | undefined): string | undefined {
 /** Why a move was refused, as {@link readMoveRefusal} reads it. */
 export type MoveRefusalWhy = 'team-archived' | 'not-a-member' | 'changed-meanwhile' | 'not-home' | 'leaves-by-moving' | 'unexplained' | 'refused'
 
-const MOVE_CODES: Readonly<Record<string, MoveRefusalWhy>> = {
-  archived: 'team-archived',
-  'not-member': 'not-a-member',
-  changed: 'changed-meanwhile',
-  'not-home': 'not-home',
-  'leaves-by-moving': 'leaves-by-moving',
-}
+/** A `Map`, so a code such as `constructor` never reads an inherited property. */
+const MOVE_CODES: ReadonlyMap<string, MoveRefusalWhy> = new Map([
+  ['archived', 'team-archived'],
+  ['not-member', 'not-a-member'],
+  ['changed', 'changed-meanwhile'],
+  ['not-home', 'not-home'],
+  ['leaves-by-moving', 'leaves-by-moving'],
+])
 
 /**
  * What a refusal of `events[index]` from {@link planMoveFromFolders} means,
@@ -615,7 +616,7 @@ export function readMoveRefusal(
   const code = refusalCode(text)
   const why: MoveRefusalWhy =
     code !== undefined
-      ? (MOVE_CODES[code] ?? 'unexplained')
+      ? (MOVE_CODES.get(code) ?? 'unexplained')
       : /archived/i.test(text)
         ? 'team-archived'
         : /only the team's members|not a channel member/i.test(text)

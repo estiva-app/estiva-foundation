@@ -418,6 +418,7 @@ describe('readMoveRefusal', () => {
   it('a code it does not know is unexplained, never guessed from the words or offered as try again', () => {
     assert.equal(readMoveRefusal(moved.events, 0, 'invalid: author-lists-first: only its author lists it first').why, 'unexplained')
     assert.equal(readMoveRefusal(moved.events, 0, 'invalid: some-new-rule: the team is archived').why, 'unexplained')
+    assert.equal(readMoveRefusal(moved.events, 0, 'invalid: constructor: a code that names an object property').why, 'unexplained')
   })
 
   it('a refusal with no code is read by its words, as from a server that predates the codes', () => {
