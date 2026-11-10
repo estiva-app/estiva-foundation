@@ -139,6 +139,15 @@ describe('topics come newest activity first', () => {
     assert.equal(activity.at.get(ONBOARDING), T0 + 50)
   })
 
+  it('says which file each found file sits directly under, so a listed project\'s issue is told from a page two levels down', async () => {
+    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    assert.equal(activity.parents?.get(ISSUE), PROJECT)
+    assert.equal(activity.parents?.get(SUBPAGE), PAGE)
+    assert.equal(activity.parents?.get(SUBSUBPAGE), SUBPAGE)
+    assert.equal(activity.parents?.get(PROJECT), undefined)
+  })
+
   it('an issue listed on one topic still counts for the topic that lists its project', async () => {
     const both: ActivityTopic[] = [
       { address: WIDGETS, createdAt: T0, folder: TEAM, files: [{ address: PROJECT, folder: SHIP_TEAM }] },
@@ -231,7 +240,9 @@ describe('topics come newest activity first', () => {
     assert.equal(activity.at.get(WIDGETS), T0 + 90)
     assert.deepEqual(activity.comments?.get(PAGE)?.map((e) => e.content), ['on the page'])
     assert.deepEqual(activity.comments?.get(PROJECT)?.map((e) => e.content), ['on the project'])
-    assert.equal(activity.comments?.has(SUBPAGE), false)
+    // One level under a listed page its comments are kept (ACT-2), two levels under they are not.
+    assert.deepEqual(activity.comments?.get(SUBPAGE)?.map((e) => e.content), ['under the page'])
+    assert.equal(activity.comments?.has(SUBSUBPAGE), false)
   })
 
   it('asks one request a level of files under the listed ones, each holding every target still open, however many targets', async () => {
@@ -331,12 +342,13 @@ describe('topics reorder live', () => {
     // Heard after a newer one, it is kept before it.
     relay.publish(event({ kind: 1111, created_at: NOW + 3, tags: [['A', PAGE], ['K', '30842'], ['h', LEAF_TEAM]], content: 'earlier' }))
     assert.deepEqual(heard, [])
-    assert.deepEqual(said, [[PAGE, 'on the page'], [PROJECT, 'on the project'], [PAGE, 'earlier']])
+    assert.deepEqual(said, [[PAGE, 'on the page'], [PROJECT, 'on the project'], [ISSUE, 'on an issue under it'], [PAGE, 'earlier']])
     assert.deepEqual(activity.comments?.get(PAGE)?.slice(-2).map((e) => e.content), ['earlier', 'on the page'])
     assert.ok(activity.comments?.get(PAGE)?.every((e) => e.kind === 1111))
     assert.equal(activity.comments?.get(PAGE)?.filter((e) => e.id === onPage.id).length, 1)
     assert.deepEqual(activity.comments?.get(PROJECT)?.map((e) => e.content), ['on the project'])
-    assert.equal(activity.comments?.has(ISSUE), false)
+    // One level under a listed project, its issue's comments are kept too (ACT-2: what names you there lights the topic).
+    assert.deepEqual(activity.comments?.get(ISSUE)?.map((e) => e.content), ['on an issue under it'])
     // Nothing more asked: no REQ opened since.
     assert.equal(relay.reqs.flat().length, reqsBefore)
     watch.stop()
@@ -369,6 +381,7 @@ describe('topics reorder live', () => {
     relay.publish(change(fresh, 'status', 'done', NOW + 4, SHIP_TEAM))
     assert.deepEqual(heard.at(-1), [WIDGETS, NOW + 4])
     assert.ok(activity.files.get(WIDGETS)!.some((file) => file.address === fresh))
+    assert.equal(activity.parents?.get(fresh), PROJECT)
     watch.stop()
   })
 

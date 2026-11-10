@@ -6,6 +6,23 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.37.0 — 2026-11-10
+
+**SPEC §11.8: what names you on a file a place lists lights the place, at
+Important too** (ACT-2; record
+at-important-what-names-you-on-a-listed-file-lights-the-topic).
+
+- `unreadOnListedFile(messages, merged, judge)`: the messages on a file a
+  topic lists that light the topic. At either level, a mention of `P` and a
+  reply in a conversation `P` is in (wrote its root or a reply, was mentioned
+  there, or the reply's `p` names `P` as the author it answers). At All, on a
+  directly listed file, every message since `P` chose All too. With `under`
+  (a file one level under a listed one), only what names `P`. A new
+  conversation naming nobody never lights at Important; a mute keeps only the
+  mentions; nothing lights when `P` is not in the place or before `P`'s start
+  on it. Each message answers to the file's own marker, or its thread's.
+- Nothing new is written; `unreadOnPlace` is unchanged.
+
 ## 0.36.0 — 2026-11-09
 
 **SPEC §13.6.2: a line that is only a link to the file a comment is on draws

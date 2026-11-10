@@ -23,6 +23,8 @@ import {
   serializeTeamsBlob,
   teamMembersOf,
   unreadOnPlace,
+  unreadOnListedFile,
+  threadContext,
   type Following,
   type PlaceFacts,
   type TeamsList,
@@ -217,6 +219,12 @@ describe('§11.8 what is unread on a place', () => {
     assert.deepEqual(ids(unreadOnPlace([top, early, mine, late], {}, judge(inAt('important')))), [top.id, late.id])
   })
 
+  it('at Important a reply to P own comment lights even when the reader does not hold that comment (its p names P)', () => {
+    const top = comment(BOB, T0 + 10, 'my question')
+    const answer = reply(CAROL, top, T0 + 11, 'an answer')
+    assert.deepEqual(ids(unreadOnPlace([answer], {}, judge(inAt('important')))), [answer.id])
+  })
+
   it('choosing All lights replies P is not in from that moment, never the older ones', () => {
     const top = comment(ALICE, T0 + 10, 'new')
     const before = reply(CAROL, top, T0 + 11, 'before All')
@@ -244,6 +252,74 @@ describe('§11.8 what is unread on a place', () => {
     const fresh = comment(ALICE, T0 + 40, 'fresh')
     assert.deepEqual(ids(unreadOnPlace([old, own, fresh], {}, judge(inAt('all', T0 + 20)))), [fresh.id])
     assert.deepEqual(ids(unreadOnPlace([old, own, fresh], { [`file:${D}`]: T0 + 40 }, judge(inAt('all', T0 + 20)))), [])
+  })
+})
+
+describe('§11.8 what names you on a file a place lists (ACT-2)', () => {
+  const ISSUE_D = '5b7c1a52-9a9e-4d0e-8f4c-2b8f2b2f6a10'
+  const ISSUE = `30851:${CAROL}:${ISSUE_D}`
+  const stream = `file:${ISSUE_D}`
+  const onIssue = (by: string, at: number, content = '') =>
+    event({ kind: 1111, pubkey: by, created_at: at, content, tags: [['A', ISSUE], ['K', '30851'], ['P', CAROL], ['a', ISSUE], ['k', '30851'], ['p', CAROL], ['h', TEAM]] })
+  const answer = (by: string, top: SignedEvent, at: number, content = '') =>
+    event({ kind: 1111, pubkey: by, created_at: at, content, tags: [['A', ISSUE], ['K', '30851'], ['P', CAROL], ['e', top.id], ['k', '1111'], ['p', top.pubkey], ['h', TEAM]] })
+  const inAt = (level: 'all' | 'important', since = T0, allSince?: number): Following => ({ kind: 'topic', in: true, level, since, ways: ['level'], ...(allSince !== undefined ? { allSince } : {}) })
+  const judge = (f: Following, opts: { muted?: boolean; under?: boolean } = {}) => ({ stream, me: BOB, following: f, ...opts })
+  const ids = (list: SignedEvent[]) => list.map((e) => e.id)
+
+  it('at Important a mention of P lights the place, a new conversation naming nobody does not, and at All it does', () => {
+    const named = onIssue(ALICE, T0 + 10, `${mention(BOB)} can you look?`)
+    const plain = onIssue(ALICE, T0 + 11, 'looks good')
+    assert.deepEqual(ids(unreadOnListedFile([named, plain], {}, judge(inAt('important')))), [named.id])
+    assert.deepEqual(ids(unreadOnListedFile([named, plain], {}, judge(inAt('all', T0, T0)))), [named.id, plain.id])
+  })
+
+  it('a reply in a conversation P started lights at Important, held root or not, and one in a conversation P is not in does not', () => {
+    const mine = onIssue(BOB, T0 + 10, 'my question')
+    const toMe = answer(ALICE, mine, T0 + 11, 'an answer')
+    const theirs = onIssue(ALICE, T0 + 12, 'their note')
+    const toThem = answer(CAROL, theirs, T0 + 13, 'agreed')
+    assert.deepEqual(ids(unreadOnListedFile([mine, toMe, theirs, toThem], {}, judge(inAt('important')))), [toMe.id])
+    assert.deepEqual(ids(unreadOnListedFile([toMe, toThem], {}, judge(inAt('important')))), [toMe.id])
+  })
+
+  it('a reply lights once P replied in someone else conversation, never the ones before', () => {
+    const theirs = onIssue(ALICE, T0 + 10, 'their note')
+    const early = answer(CAROL, theirs, T0 + 11)
+    const mine = answer(BOB, theirs, T0 + 12, 'me too')
+    const late = answer(CAROL, theirs, T0 + 13)
+    assert.deepEqual(ids(unreadOnListedFile([theirs, early, mine, late], {}, judge(inAt('important')))), [late.id])
+  })
+
+  it('an older mention stays lit under newer comments naming nobody, until the file or its thread is read', () => {
+    const named = onIssue(ALICE, T0 + 10, `${mention(BOB)} please`)
+    const later = [onIssue(CAROL, T0 + 11, 'one'), onIssue(CAROL, T0 + 12, 'two')]
+    assert.deepEqual(ids(unreadOnListedFile([named, ...later], {}, judge(inAt('important')))), [named.id])
+    assert.deepEqual(ids(unreadOnListedFile([named, ...later], { [stream]: T0 + 12 }, judge(inAt('important')))), [])
+    const mine = onIssue(BOB, T0 + 20, 'mine')
+    const toMe = answer(ALICE, mine, T0 + 21)
+    assert.deepEqual(ids(unreadOnListedFile([mine, toMe], { [threadContext(mine.id)!]: T0 + 21 }, judge(inAt('important')))), [])
+  })
+
+  it('a mute keeps only the mentions, and when P is not in the place nothing on its files lights', () => {
+    const named = onIssue(ALICE, T0 + 10, `${mention(BOB)} please`)
+    const mine = onIssue(BOB, T0 + 11, 'mine')
+    const toMe = answer(ALICE, mine, T0 + 12)
+    assert.deepEqual(ids(unreadOnListedFile([named, mine, toMe], {}, judge(inAt('all', T0, T0), { muted: true }))), [named.id])
+    assert.deepEqual(ids(unreadOnListedFile([named, mine, toMe], {}, judge({ kind: 'topic', in: false, ways: [] }))), [])
+  })
+
+  it('on a file one level under a listed one only what names P lights, at All too', () => {
+    const named = onIssue(ALICE, T0 + 10, `${mention(BOB)} please`)
+    const plain = onIssue(ALICE, T0 + 11, 'looks good')
+    assert.deepEqual(ids(unreadOnListedFile([named, plain], {}, judge(inAt('all', T0, T0), { under: true }))), [named.id])
+  })
+
+  it('nothing from before P started on the place lights, and at All only what came after choosing All beyond what names P', () => {
+    const old = onIssue(ALICE, T0 + 5, `${mention(BOB)} old`)
+    const before = onIssue(ALICE, T0 + 15, 'before All')
+    const after = onIssue(ALICE, T0 + 25, 'after All')
+    assert.deepEqual(ids(unreadOnListedFile([old, before, after], {}, judge(inAt('all', T0 + 10, T0 + 20)))), [after.id])
   })
 })
 
