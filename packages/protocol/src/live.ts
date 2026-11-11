@@ -200,9 +200,27 @@ const MAX_AUTH_FAILURES = 3
 export const RELAY_BUSY_CLOSED = 'error: relay busy'
 
 /**
- * How many times a subscription the relay closed as busy is re-issued, with
- * backoff, before its `onClosed` hears about it: about 15 s at the default
- * backoff.
+ * NIP-01's prefix for a read the relay refused because this person asked for
+ * too much too fast (buzz: a per-person frame quota over a 5 s window). Two of
+ * one person's tabs opening within a second hit it. It is asked again exactly
+ * as busy is: the client decides by the prefix and never reads the rest of the
+ * reason (SPEC §2), so the relay's `retry in <n>s` prose is not parsed.
+ */
+const RATE_LIMITED_PREFIX = 'rate-limited:'
+
+/**
+ * The least a rate-limited read waits before it is asked again, jittered up to
+ * a fifth more. NIP-01 does not say how long a quota lasts; buzz counts frames
+ * per person over 5 s, and a re-ask inside that window is refused for certain
+ * while still using up frames the person's other reads and sends need.
+ */
+const RATE_LIMITED_MIN_WAIT_MS = 5_000
+
+/**
+ * How many times a subscription the relay closed as busy or rate-limited is
+ * re-issued, with backoff, before its `onClosed` hears about it. At the default
+ * backoff the four busy waits are 1, 2, 4 and 8 s, each jittered to between half
+ * and all of it; a rate-limited wait is at least {@link RATE_LIMITED_MIN_WAIT_MS}.
  */
 const MAX_BUSY_RETRIES = 4
 
@@ -212,9 +230,9 @@ interface LiveSubscription {
   onEvent: (event: SignedEvent) => void
   onEose?: (() => void) | undefined
   onClosed?: ((reason: string) => void) | undefined
-  /** Busy closes since the last EOSE. */
+  /** Busy or rate-limited closes since the last EOSE. */
   busyRetries: number
-  /** The pending re-issue after a busy close, if any. */
+  /** The pending re-issue after a busy or rate-limited close, if any. */
   busyTimer: unknown
 }
 
@@ -339,19 +357,23 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
   }
 
   /**
-   * The relay closed `sub` as busy: ask again after a backoff, quietly, so the
-   * app keeps what it shows. Returns false once the retries are spent, and the
-   * subscriber is told.
+   * The relay closed `sub` as busy, or as rate-limited: ask again after a
+   * backoff, quietly, so the app keeps what it shows. Returns false once the
+   * retries are spent, and the subscriber is told.
    */
-  function retryBusy(sub: LiveSubscription): boolean {
+  function retryBusy(sub: LiveSubscription, reason: string): boolean {
     if (sub.busyRetries >= MAX_BUSY_RETRIES) {
       sub.busyRetries = 0
       return false
     }
-    const delay =
-      Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + backoff.jitter() / 2)
+    const jitter = backoff.jitter()
+    const busyDelay = Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + jitter / 2)
+    const delay = reason.startsWith(RATE_LIMITED_PREFIX)
+      ? Math.max(busyDelay, RATE_LIMITED_MIN_WAIT_MS * (1 + jitter / 5))
+      : busyDelay
     sub.busyRetries += 1
-    log('relay busy; re-issuing the subscription', {
+    log('re-issuing the subscription', {
+      reason,
       subId: sub.id,
       delayMs: Math.round(delay),
       attempt: sub.busyRetries,
@@ -481,7 +503,9 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       case 'CLOSED': {
         const sub = subscriptions.get(frame.subId)
         log('subscription closed by the relay', { subId: frame.subId, reason: frame.message })
-        if (sub && frame.message === RELAY_BUSY_CLOSED && retryBusy(sub)) return
+        const askAgain =
+          frame.message === RELAY_BUSY_CLOSED || frame.message.startsWith(RATE_LIMITED_PREFIX)
+        if (sub && askAgain && retryBusy(sub, frame.message)) return
         sub?.onClosed?.(frame.message)
         // `auth-required` here means the connection is unauthenticated — the
         // poisoned-but-open state. Reconnecting is the only fix, and dropping
