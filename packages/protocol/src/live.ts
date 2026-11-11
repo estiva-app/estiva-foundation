@@ -201,26 +201,19 @@ export const RELAY_BUSY_CLOSED = 'error: relay busy'
 
 /**
  * NIP-01's prefix for a read the relay refused because this person asked for
- * too much too fast (buzz: a per-person frame quota, `rate-limited: quota
- * exceeded; retry in 2s`). Two of one person's tabs opening within a second
- * hit it; asking again after the relay's wait helps, as it does for busy.
+ * too much too fast (buzz: a per-person frame quota over a 5 s window). Two of
+ * one person's tabs opening within a second hit it. It is asked again exactly
+ * as busy is: the client decides by the prefix and never reads the rest of the
+ * reason (SPEC §2), so the relay's `retry in <n>s` prose is not parsed.
  */
 const RATE_LIMITED_PREFIX = 'rate-limited:'
 
 /**
- * The relay's own wait in a rate-limited reason, `retry in <n>s`, in ms; null
- * when it gives none. The prefix decides whether to ask again; this only
- * lengthens the wait, never shortens it below the relay's.
- */
-function rateLimitHintMs(reason: string): number | null {
-  const match = /\bretry in (\d+)s\b/.exec(reason)
-  return match ? Number(match[1]) * 1_000 : null
-}
-
-/**
  * How many times a subscription the relay closed as busy or rate-limited is
- * re-issued, with backoff, before its `onClosed` hears about it: about 15 s at
- * the default backoff, longer when the relay names its wait.
+ * re-issued, with backoff, before its `onClosed` hears about it. At the default
+ * backoff the four waits are 1, 2, 4 and 8 s, each jittered to between half and
+ * all of it: the last re-issue comes 7.5–15 s after the refusal, past a 5 s
+ * rate-limit window.
  */
 const MAX_BUSY_RETRIES = 4
 
@@ -360,26 +353,17 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
    * The relay closed `sub` as busy, or as rate-limited: ask again after a
    * backoff, quietly, so the app keeps what it shows. Returns false once the
    * retries are spent, and the subscriber is told.
-   *
-   * `hintMs` is the wait a rate-limited close names. It starts the backoff
-   * instead of `baseMs`, doubling per refusal, and the jitter only adds to it
-   * (up to half again), so no re-issue comes before the relay's wait and two
-   * tabs refused together do not ask together again.
    */
-  function retryBusy(sub: LiveSubscription, hintMs: number | null = null): boolean {
+  function retryBusy(sub: LiveSubscription, reason: string): boolean {
     if (sub.busyRetries >= MAX_BUSY_RETRIES) {
       sub.busyRetries = 0
       return false
     }
     const delay =
-      hintMs === null
-        ? Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) *
-          (0.5 + backoff.jitter() / 2)
-        : Math.max(hintMs, Math.min(backoff.maxMs, hintMs * 2 ** sub.busyRetries)) *
-          (1 + backoff.jitter() / 2)
+      Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + backoff.jitter() / 2)
     sub.busyRetries += 1
-    const why = hintMs === null ? 'relay busy' : 'rate-limited'
-    log(`${why}; re-issuing the subscription`, {
+    log('re-issuing the subscription', {
+      reason,
       subId: sub.id,
       delayMs: Math.round(delay),
       attempt: sub.busyRetries,
@@ -509,14 +493,9 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       case 'CLOSED': {
         const sub = subscriptions.get(frame.subId)
         log('subscription closed by the relay', { subId: frame.subId, reason: frame.message })
-        if (sub && frame.message === RELAY_BUSY_CLOSED && retryBusy(sub)) return
-        if (
-          sub &&
-          frame.message.startsWith(RATE_LIMITED_PREFIX) &&
-          retryBusy(sub, rateLimitHintMs(frame.message))
-        ) {
-          return
-        }
+        const askAgain =
+          frame.message === RELAY_BUSY_CLOSED || frame.message.startsWith(RATE_LIMITED_PREFIX)
+        if (sub && askAgain && retryBusy(sub, frame.message)) return
         sub?.onClosed?.(frame.message)
         // `auth-required` here means the connection is unauthenticated — the
         // poisoned-but-open state. Reconnecting is the only fix, and dropping

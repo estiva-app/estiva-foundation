@@ -444,11 +444,12 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
   // buzz's own words past its per-person frame quota (ALO-13).
   const LIMITED = 'rate-limited: quota exceeded; retry in 2s'
   const FILTERS = [{ kinds: [9], '#h': ['team-1'] }, { kinds: [1111], limit: 50 }]
-  // The default backoff's shape, with the jitter at its low end.
+  // The default backoff's shape, with the jitter at its low end: the busy
+  // waits are 500, 1000, 2000 and 4000 ms.
   const BACKOFF = { baseMs: 1_000, maxMs: 30_000, jitter: () => 0 }
 
-  async function limitedHarness(jitter = () => 0) {
-    const h = harness({ backoff: { ...BACKOFF, jitter } })
+  async function limitedHarness() {
+    const h = harness({ backoff: BACKOFF })
     const onEvent = fn()
     const onClosed = fn()
     const sub = h.relay.subscribe(FILTERS, onEvent, { onClosed })
@@ -457,13 +458,13 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
     return { h, s, sub, subId, onEvent, onClosed }
   }
 
-  it('asks again for the same read, under the same id, once the relay\'s "retry in 2s" has passed', async () => {
+  it('asks again for the same read, under the same id, after the busy backoff', async () => {
     const { h, s, subId, onEvent, onClosed } = await limitedHarness()
 
     s.deliver(['CLOSED', subId, LIMITED])
     assert.equal(onClosed.calls.length, 0, 'the app is not told, so it keeps what it shows')
-    h.advance(1_999)
-    assert.equal(s.sentOf('REQ').length, 1, 'not before the relay\'s wait')
+    h.advance(499)
+    assert.equal(s.sentOf('REQ').length, 1, 'not before the backoff')
 
     h.advance(1)
     assert.deepEqual(s.sentOf('REQ')[1], ['REQ', subId, ...FILTERS])
@@ -471,36 +472,16 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
     assert.deepEqual(onEvent.calls, [[{ id: 'e1' }]], 'live updates arrive again')
   })
 
-  it('never asks before the relay\'s wait, whatever the jitter draws', async () => {
-    const { h, s, subId } = await limitedHarness(() => 1)
-
-    s.deliver(['CLOSED', subId, LIMITED])
-    h.advance(2_999)
-    assert.equal(s.sentOf('REQ').length, 1, 'jitter only adds to the wait')
-    h.advance(1)
-    assert.equal(s.sentOf('REQ').length, 2)
-  })
-
   it('waits longer after a second refusal', async () => {
     const { h, s, subId } = await limitedHarness()
 
     s.deliver(['CLOSED', subId, LIMITED])
-    h.advance(2_000)
+    h.advance(500)
     s.deliver(['CLOSED', subId, LIMITED])
-    h.advance(3_999)
+    h.advance(999)
     assert.equal(s.sentOf('REQ').length, 2, 'still waiting out the doubled wait')
     h.advance(1)
     assert.deepEqual(s.sentOf('REQ')[2], ['REQ', subId, ...FILTERS])
-  })
-
-  it('asks again after the busy backoff when the relay names no wait', async () => {
-    const { h, s, subId } = await limitedHarness()
-
-    s.deliver(['CLOSED', subId, 'rate-limited: slow down'])
-    h.advance(499)
-    assert.equal(s.sentOf('REQ').length, 1)
-    h.advance(1)
-    assert.deepEqual(s.sentOf('REQ')[1], ['REQ', subId, ...FILTERS])
   })
 
   it('tells the subscriber the relay\'s reason once four quiet retries are spent', async () => {
