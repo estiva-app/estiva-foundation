@@ -12,11 +12,11 @@ SPEC §2). Buzz closes a read past its per-person frame quota with
 two of one person's tabs opening within a second hit. The live client passed
 it to `onClosed`, and an app that only logs that (Peek's Topics column and
 conversation list) got no live updates in that tab until a reload. It now
-re-sends the same `REQ` under the same id, quietly, exactly as for a busy relay
-(`error: relay busy`, unchanged): the same jittered backoff (1, 2, 4, 8 s at the
-default, each between half and all of it, so the last re-issue comes 7.5–15 s
-after the refusal, past buzz's 5 s window) and the same cap, after which
-`onClosed` hears the relay's reason. It decides by the `rate-limited:` prefix
+re-sends the same `REQ` under the same id, quietly, as for a busy relay
+(`error: relay busy`, unchanged): the same jittered backoff and the same cap of
+four, after which `onClosed` hears the relay's reason, but each wait is at least
+5–6 s, so the re-ask lands past buzz's 5 s window instead of being refused
+again and spending frames the person's other reads and sends need. It decides by the `rate-limited:` prefix
 alone and does not read the relay's `retry in <n>s` (SPEC §2: never by other
 prose). An unsubscribe or a reconnect while it waits cancels the re-issue. A
 MINOR, since the client now sends a `REQ` it did not before.

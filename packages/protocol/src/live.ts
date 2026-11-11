@@ -209,11 +209,18 @@ export const RELAY_BUSY_CLOSED = 'error: relay busy'
 const RATE_LIMITED_PREFIX = 'rate-limited:'
 
 /**
+ * The least a rate-limited read waits before it is asked again, jittered up to
+ * a fifth more. NIP-01 does not say how long a quota lasts; buzz counts frames
+ * per person over 5 s, and a re-ask inside that window is refused for certain
+ * while still using up frames the person's other reads and sends need.
+ */
+const RATE_LIMITED_MIN_WAIT_MS = 5_000
+
+/**
  * How many times a subscription the relay closed as busy or rate-limited is
  * re-issued, with backoff, before its `onClosed` hears about it. At the default
- * backoff the four waits are 1, 2, 4 and 8 s, each jittered to between half and
- * all of it: the last re-issue comes 7.5–15 s after the refusal, past a 5 s
- * rate-limit window.
+ * backoff the four busy waits are 1, 2, 4 and 8 s, each jittered to between half
+ * and all of it; a rate-limited wait is at least {@link RATE_LIMITED_MIN_WAIT_MS}.
  */
 const MAX_BUSY_RETRIES = 4
 
@@ -359,8 +366,11 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       sub.busyRetries = 0
       return false
     }
-    const delay =
-      Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + backoff.jitter() / 2)
+    const jitter = backoff.jitter()
+    const busyDelay = Math.min(backoff.maxMs, backoff.baseMs * 2 ** sub.busyRetries) * (0.5 + jitter / 2)
+    const delay = reason.startsWith(RATE_LIMITED_PREFIX)
+      ? Math.max(busyDelay, RATE_LIMITED_MIN_WAIT_MS * (1 + jitter / 5))
+      : busyDelay
     sub.busyRetries += 1
     log('re-issuing the subscription', {
       reason,

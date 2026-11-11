@@ -445,7 +445,8 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
   const LIMITED = 'rate-limited: quota exceeded; retry in 2s'
   const FILTERS = [{ kinds: [9], '#h': ['team-1'] }, { kinds: [1111], limit: 50 }]
   // The default backoff's shape, with the jitter at its low end: the busy
-  // waits are 500, 1000, 2000 and 4000 ms.
+  // waits are 500, 1000, 2000 and 4000 ms, and a rate-limited one is never
+  // shorter than buzz's 5 s window.
   const BACKOFF = { baseMs: 1_000, maxMs: 30_000, jitter: () => 0 }
 
   async function limitedHarness() {
@@ -458,13 +459,13 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
     return { h, s, sub, subId, onEvent, onClosed }
   }
 
-  it('asks again for the same read, under the same id, after the busy backoff', async () => {
+  it('asks again for the same read, under the same id, once the 5 s window has passed', async () => {
     const { h, s, subId, onEvent, onClosed } = await limitedHarness()
 
     s.deliver(['CLOSED', subId, LIMITED])
     assert.equal(onClosed.calls.length, 0, 'the app is not told, so it keeps what it shows')
-    h.advance(499)
-    assert.equal(s.sentOf('REQ').length, 1, 'not before the backoff')
+    h.advance(4_999)
+    assert.equal(s.sentOf('REQ').length, 1, 'not inside the window, where it would be refused again')
 
     h.advance(1)
     assert.deepEqual(s.sentOf('REQ')[1], ['REQ', subId, ...FILTERS])
@@ -472,16 +473,24 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
     assert.deepEqual(onEvent.calls, [[{ id: 'e1' }]], 'live updates arrive again')
   })
 
-  it('waits longer after a second refusal', async () => {
+  it('waits out a fresh window again after a second refusal', async () => {
     const { h, s, subId } = await limitedHarness()
 
     s.deliver(['CLOSED', subId, LIMITED])
-    h.advance(500)
+    h.advance(5_000)
     s.deliver(['CLOSED', subId, LIMITED])
-    h.advance(999)
-    assert.equal(s.sentOf('REQ').length, 2, 'still waiting out the doubled wait')
+    h.advance(4_999)
+    assert.equal(s.sentOf('REQ').length, 2, 'still inside the second window')
     h.advance(1)
     assert.deepEqual(s.sentOf('REQ')[2], ['REQ', subId, ...FILTERS])
+  })
+
+  it('keeps the shorter busy wait for a relay that says it is busy', async () => {
+    const { h, s, subId } = await limitedHarness()
+
+    s.deliver(['CLOSED', subId, 'error: relay busy'])
+    h.advance(500)
+    assert.deepEqual(s.sentOf('REQ')[1], ['REQ', subId, ...FILTERS])
   })
 
   it('tells the subscriber the relay\'s reason once four quiet retries are spent', async () => {
