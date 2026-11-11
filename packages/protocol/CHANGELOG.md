@@ -4,6 +4,22 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.56.0 — 2026-11-11
+
+**Wire: a live watch the relay refused as rate-limited is asked again** (ALO-13;
+SPEC §2). Buzz closes a read past its per-person frame quota with
+`CLOSED "rate-limited: quota exceeded; retry in 2s"` (NIP-01's prefix), which
+two of one person's tabs opening within a second hit. The live client passed
+it to `onClosed`, and an app that only logs that (Peek's Topics column and
+conversation list) got no live updates in that tab until a reload. It now
+re-sends the same `REQ` under the same id, quietly, like a busy relay
+(`error: relay busy`, unchanged): never before the wait the relay names
+(`retry in <n>s`, doubling per refusal, jitter only adding up to half again so
+two refused tabs do not ask together), or after the busy backoff when it names
+none. The two share the cap: after four quiet retries `onClosed` hears the
+relay's reason. An unsubscribe or a reconnect while it waits cancels the
+re-issue. A MINOR, since the client now sends a `REQ` it did not before.
+
 ## 0.55.1 — 2026-11-06
 
 **Wire: nothing** (ALO-16; SPEC §13.3). `textAsksOf` kept none of my changes
