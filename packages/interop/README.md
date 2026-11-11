@@ -801,8 +801,9 @@ One field for every file, whatever its kind: a change setting `archived` to
 is a change, so anyone who may write in the Folder may, and the change's
 `content` is the resolution a person gave. **A Folder itself is the
 exception** (SPEC §3.2): its archive counts only from an owner or admin on its
-`kind:39001`, published in its own `h` — offer Archive on a Folder only to
-`folder.admins`.
+`kind:39001` — or, on a team whose 39001 lists no owner, from the workspace's
+owners and admins on the relay's roster (`kind:13534`) — published in its own
+`h`. Offer Archive on a Folder only to `folder.admins`, which holds both.
 
 **The cascade is read, never written.** A Folder's contents leave out an
 archived file and everything under it — an issue with its project, a sub-topic

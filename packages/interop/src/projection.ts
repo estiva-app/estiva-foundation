@@ -2521,7 +2521,8 @@ export function isArchived(file: { archived?: Archive } | null | undefined): boo
  *
  * **A Folder is the exception** (SPEC §3.2): on a `kind:39000` address only a
  * change in the Folder's own `h` by one of `folderAdmins` — the owners and
- * admins on its relay-signed `kind:39001` — counts. A caller that has not read
+ * admins on its relay-signed `kind:39001`, and on a team with no owner the
+ * workspace's owners and admins — counts. A caller that has not read
  * the admin list passes none, and then no change counts: a Folder shown live
  * when it is archived is recoverable, one any member could hide is not.
  */
@@ -6746,10 +6747,55 @@ function folderAdminsOf(admins: SignedEvent | undefined, channel: SignedEvent | 
   ]
 }
 
+/** NIP-43's relay membership list: the workspace's roster, one `member` tag per key, with its role. */
+const KIND_RELAY_MEMBERS = 13534
+
+/** The relay's roster, as a filter to add to a request that already reads a team's records. */
+const RELAY_MEMBERS_FILTER = { kinds: [KIND_RELAY_MEMBERS], limit: 1 }
+
+/**
+ * The workspace's owners and admins: the `member` tags whose role is `owner`
+ * or `admin` on the newest `kind:13534` signed by `relay` (the key that signed
+ * the team's `kind:39000`). A roster anybody else signed means nothing.
+ */
+function workspaceAdminsOf(events: readonly SignedEvent[], relay: string): string[] {
+  const roster = events
+    .filter((event) => event.kind === KIND_RELAY_MEMBERS && event.pubkey === relay)
+    .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0]
+  if (!roster) return []
+  return roster.tags
+    .filter((tag) => tag[0] === 'member' && tag[1] && FOLDER_ADMIN_ROLES.has(tag[2] ?? ''))
+    .map((tag) => tag[1])
+}
+
+/**
+ * Who may rename and archive a team: the owners and admins its relay-signed
+ * `kind:39001` lists, and, when that list names no `owner`, the workspace's
+ * owners and admins on the relay-signed roster as well. A team with no 39001 at
+ * all is not taken as one with no owner: nothing says who is on it. Only a
+ * team (`isTeam`: it holds a `kind:30890`) is looked after this way; a DM or
+ * another conversation space, whose list names no owner either, never is.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-team-with-no-owner-is-looked-after-by-the-workspaces-admins.md
+ */
+function teamStewardsOf(
+  admins: SignedEvent | undefined,
+  channel: SignedEvent | undefined,
+  events: readonly SignedEvent[],
+  isTeam: boolean,
+): string[] {
+  const own = folderAdminsOf(admins, channel)
+  if (!isTeam || !admins || !channel || admins.pubkey !== channel.pubkey) return own
+  if (channel.tags.some((tag) => tag[0] === 't' && tag[1] === 'dm')) return own
+  const hasOwner = admins.tags.some((tag) => tag[0] === 'p' && tag[1] && tag.slice(2).includes('owner'))
+  return hasOwner ? own : [...new Set([...own, ...workspaceAdminsOf(events, channel.pubkey)])]
+}
+
 /**
  * A Folder's own archive (SPEC §3.2): the `archived` changes on its channel's
- * address, counting only one carrying the Folder's own `h` whose author the
- * relay lists as its owner or admin. From anybody else the relay accepts the
+ * address, counting only one carrying the Folder's own `h` whose author is in
+ * its {@link FolderSummary.admins} (its owners and admins, and on a team with
+ * no owner the workspace's too). From anybody else the relay accepts the
  * change, and it means nothing.
  */
 function folderArchiveOf(changes: SignedEvent[], folder: Pick<FolderSummary, 'id' | 'channel' | 'admins'>): Archive | undefined {
@@ -6792,8 +6838,12 @@ export interface FolderSummary {
   company?: true
   /**
    * Who may rename and archive it: the owners and admins on its relay-signed
-   * `kind:39001`. Offer Archive only to them — a reader ignores an archive from
-   * anybody else (§3.2). Absent when the relay returned no admin list.
+   * `kind:39001` and, on a team whose 39001 lists no owner, the workspace's
+   * owners and admins on the relay-signed roster (`kind:13534`) too. Offer
+   * Archive only to them — a reader ignores an archive from anybody else
+   * (§3.2). Absent when the relay returned no admin list.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-team-with-no-owner-is-looked-after-by-the-workspaces-admins.md
    */
   admins?: string[]
   /**
@@ -6905,7 +6955,8 @@ export interface FolderContents extends FolderSummary {
  *
  * Both shapes in one pass: folders the relay maintains state for, and bare
  * channels that have none yet. A channel with state appears once, titled by its
- * `kind:39000` (SPEC §3.2), with the owners and admins its `kind:39001` lists.
+ * `kind:39000` (SPEC §3.2), with who may rename and archive it
+ * ({@link FolderSummary.admins}).
  *
  * **A direct route, deliberately.** §4.2's post-mortem on REW-11 is that
  * discovering children only through their parent loses them when the parent
@@ -7014,6 +7065,8 @@ async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[
     { kinds: [KIND_FOLDER_STATE], limit: 500 },
     { kinds: [KIND_CHANNEL], limit: 500 },
     { kinds: [KIND_CHANNEL_ADMINS], limit: 500 },
+    // Who looks after a team with no owner (FolderSummary.admins). Same request.
+    RELAY_MEMBERS_FILTER,
   ])
   const byId = new Map<string, FolderSummary>()
   const channelOf = new Map<string, SignedEvent>()
@@ -7044,7 +7097,7 @@ async function readFolderRecords(query: QueryFn): Promise<{ events: SignedEvent[
     if (name !== undefined) folder.name = name
     if (channel.tags.some((tag) => tag[0] === 'private')) folder.private = true
     if (channel.tags.some((tag) => tag[0] === 'company')) folder.company = true
-    const admins = folderAdminsOf(adminsOf.get(id), channel)
+    const admins = teamStewardsOf(adminsOf.get(id), channel, events, folder.hasState)
     if (admins.length) folder.admins = admins
     folder.channel = pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: id, relays: [] })
   }
@@ -7480,12 +7533,17 @@ export async function resolveFolderContents(
     { kinds: [KIND_FOLDER_STATE], '#d': [folder], limit: 1 },
     { kinds: [KIND_CHANNEL], '#d': [folder], limit: 1 },
     { kinds: [KIND_CHANNEL_ADMINS], '#d': [folder], limit: 1 },
+    // Who looks after it, and every team it lists, when one has no owner. Same request.
+    RELAY_MEMBERS_FILTER,
   ])
   const state = identity.find((e) => e.kind === KIND_FOLDER_STATE && tagValue(e, 'd') === folder)
   const channel = identity.find((e) => e.kind === KIND_CHANNEL && tagValue(e, 'd') === folder)
-  const admins = folderAdminsOf(
+  const roster = identity.filter((e) => e.kind === KIND_RELAY_MEMBERS)
+  const admins = teamStewardsOf(
     identity.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === folder),
     channel,
+    roster,
+    state !== undefined,
   )
   const channelAddress = channel
     ? pointerToAddress({ kind: KIND_CHANNEL, pubkey: channel.pubkey, identifier: folder, relays: [] })
@@ -7599,7 +7657,7 @@ export async function resolveFolderContents(
       // Every change, in groups small enough that a busy Folder's changes cannot
       // push one file's off the page — one Folder has already had 688. Same request.
       ...archiveFilters(channelAddress ? [...changesAsked, channelAddress] : changesAsked),
-      // A Folder listed here counts its archive only from its own admins (§3.2). Same request.
+      // A Folder listed here counts its archive only from who looks after it (§3.2). Same request.
       ...(nestedFolderIds.length ? [{ kinds: [KIND_CHANNEL_ADMINS], '#d': nestedFolderIds, limit: nestedFolderIds.length }] : []),
     ], query),
     queryChunked(rootFilters.filter((filter) => 'fields' in filter), query),
@@ -7642,9 +7700,12 @@ export async function resolveFolderContents(
     const nestedAdmins =
       pointer.kind === KIND_CHANNEL
         ? new Set(
-            folderAdminsOf(
+            teamStewardsOf(
               events.find((e) => e.kind === KIND_CHANNEL_ADMINS && tagValue(e, 'd') === pointer.identifier),
               root,
+              roster,
+              // A team listed in this one; a DM listed here is still never looked after.
+              true,
             ),
           )
         : undefined

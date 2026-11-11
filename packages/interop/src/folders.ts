@@ -117,8 +117,8 @@ export function planCreateFolder(
  * Rename a Folder: `[kind:9002]`, and nothing else.
  *
  * The title is the channel's name (§3.2), so the channel is the only home to
- * write. The relay refuses it to anybody but the channel's owners and admins.
- * A name left on an older state by a command is never shown.
+ * write. The relay refuses it to anybody but the channel's owners and admins
+ * (and, on a team with no owner, the workspace's). A name left on an older state by a command is never shown.
  */
 export function planRenameFolder(
   pubkey: string,
@@ -221,8 +221,9 @@ export function planUnlistFile(
  * unlist a file from somewhere a person would have to remember.
  *
  * **Always in the Folder's own `h`**, and readers count it only from an owner
- * or admin on the Folder's `kind:39001` (§3.2) — the people who may rename it.
- * So offer Archive only to them (`FolderSummary.admins`): from anybody else the
+ * or admin on the Folder's `kind:39001` — or, on a team with no owner, from an
+ * owner or admin of the workspace (§3.2) — the people who may rename it. So
+ * offer Archive only to them (`FolderSummary.admins`): from anybody else the
  * relay accepts the event and every reader ignores it.
  *
  * `resolution` is what the person archiving said about it, carried as the

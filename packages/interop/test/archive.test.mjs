@@ -473,6 +473,85 @@ describe('a Folder is archived the way any file is', () => {
     assert.deepEqual(folders[0].admins, [HELPER])
   })
 
+  describe('a team with no owner is looked after by the workspace’s owners and admins (TEA-10)', () => {
+    const WORKSPACE_ADMIN = 'd'.repeat(64)
+    const WORKSPACE_OWNER = 'e'.repeat(64)
+    // The relay's roster (NIP-43): one `member` tag per key, with its role; a service carries a fourth element.
+    const rosterBy = (signer, ...members) => event({ kind: 13534, pubkey: signer, tags: [['-'], ...members.map((m) => ['member', ...m])] })
+    const roster = rosterBy(RELAY, [WORKSPACE_ADMIN, 'admin'], [WORKSPACE_OWNER, 'owner', 'service'], [KEEPER, 'member'])
+    // Its last owner left: the relay's list keeps the admin, and names no owner.
+    const ownerless = event({ kind: 39001, pubkey: RELAY, tags: [['d', APIARY], ['p', HELPER, 'admin']] })
+    const base = [apiary, stateOf(APIARY, 'Apiary', [])]
+    const listed = async (events) => (await listFolders(relay([...base, ...events]))).find((f) => f.id === APIARY)
+    const opened = (events) => resolveFolderContents(APIARY, relay([...base, ...events]), noPeople)
+
+    test('a workspace admin’s archive counts on a team whose list names no owner, and the listing offers them Archive', async () => {
+      const byWorkspaceAdmin = archive(addressOf(apiary), { by: WORKSPACE_ADMIN })
+      const folder = await listed([ownerless, roster, byWorkspaceAdmin])
+      assert.equal(folder.archived?.by, WORKSPACE_ADMIN)
+      assert.deepEqual(new Set(folder.admins), new Set([HELPER, WORKSPACE_ADMIN, WORKSPACE_OWNER]))
+      const contents = await opened([ownerless, roster, byWorkspaceAdmin])
+      assert.equal(contents.archived?.by, WORKSPACE_ADMIN, 'opened by id, too')
+      assert.deepEqual(new Set(contents.admins), new Set([HELPER, WORKSPACE_ADMIN, WORKSPACE_OWNER]))
+      // A team with nobody on its list at all is looked after the same way.
+      const empty = event({ kind: 39001, pubkey: RELAY, tags: [['d', APIARY]] })
+      assert.equal((await listed([empty, roster, byWorkspaceAdmin])).archived?.by, WORKSPACE_ADMIN)
+      // A plain member of the workspace is not one of them.
+      assert.equal((await listed([ownerless, roster, archive(addressOf(apiary), { by: KEEPER })])).archived, undefined)
+    })
+
+    test('a nested team with no owner counts its archive from a workspace admin, in its own h', async () => {
+      const peekLike = event({
+        kind: 31990,
+        pubkey: RELAY,
+        tags: [['d', 'folders'], ['k', '39000']],
+        content: JSON.stringify({ name: 'Folders', projections: { 39000: { widget: 'card', slots: { title: { tag: 'name' } } } } }),
+      })
+      const events = [peekLike, apiary, orchard, ownerless, roster, stateOf(APIARY, 'Apiary', []), stateOf(ORCHARD, 'Orchard', [addressOf(apiary)])]
+      const gone = await resolveFolderContents(ORCHARD, relay([...events, archive(addressOf(apiary), { by: WORKSPACE_ADMIN })]), noPeople)
+      assert.deepEqual(titles(gone), [])
+      const stays = await resolveFolderContents(ORCHARD, relay([...events.filter((e) => e !== ownerless), apiaryAdmins, archive(addressOf(apiary), { by: WORKSPACE_ADMIN })]), noPeople)
+      assert.deepEqual(titles(stays), ['Apiary'], 'with an owner, a workspace admin’s archive means nothing')
+    })
+
+    test('on a team with an owner, a workspace admin is not among who may archive it, and their archive means nothing', async () => {
+      const byWorkspaceAdmin = archive(addressOf(apiary), { by: WORKSPACE_ADMIN })
+      const folder = await listed([apiaryAdmins, roster, byWorkspaceAdmin])
+      assert.equal(folder.archived, undefined)
+      assert.deepEqual(folder.admins, [HELPER])
+      assert.equal((await opened([apiaryAdmins, roster, byWorkspaceAdmin])).archived, undefined)
+    })
+
+    test('a DM, or a group with no team listing, is not looked after by the workspace’s admins', async () => {
+      const byWorkspaceAdmin = archive(addressOf(apiary), { by: WORKSPACE_ADMIN })
+      // No `kind:30890`: a conversation space, not a team (SPEC §3.1).
+      const bare = [apiary, ownerless, roster, byWorkspaceAdmin]
+      const unlisted = (await listFolders(relay(bare))).find((f) => f.id === APIARY)
+      assert.equal(unlisted?.archived, undefined)
+      assert.ok(!unlisted?.admins?.includes(WORKSPACE_ADMIN), 'listed without a listing')
+      assert.ok(!(await resolveFolderContents(APIARY, relay(bare), noPeople)).admins?.includes(WORKSPACE_ADMIN), 'opened')
+      // A DM nested in a team: the relay's 39000 for it says dm, and its list names no owner.
+      const peekLike = event({
+        kind: 31990,
+        pubkey: RELAY,
+        tags: [['d', 'folders'], ['k', '39000']],
+        content: JSON.stringify({ name: 'Folders', projections: { 39000: { widget: 'card', slots: { title: { tag: 'name' } } } } }),
+      })
+      const dm = event({ kind: 39000, pubkey: RELAY, tags: [...apiary.tags.filter((t) => t[0] !== 't'), ['t', 'dm']] })
+      const events = [peekLike, dm, orchard, ownerless, roster, stateOf(ORCHARD, 'Orchard', [addressOf(dm)])]
+      const stays = await resolveFolderContents(ORCHARD, relay([...events, archive(addressOf(dm), { by: WORKSPACE_ADMIN })]), noPeople)
+      assert.deepEqual(titles(stays), ['Apiary'], 'a workspace admin’s archive of a DM means nothing')
+    })
+
+    test('a roster somebody other than the relay signed is ignored', async () => {
+      const forged = rosterBy(KEEPER, [KEEPER, 'owner'], [WORKSPACE_ADMIN, 'admin'])
+      const folder = await listed([ownerless, forged, archive(addressOf(apiary), { by: KEEPER })])
+      assert.equal(folder.archived, undefined)
+      assert.deepEqual(folder.admins, [HELPER])
+      assert.equal((await opened([ownerless, forged, archive(addressOf(apiary), { by: WORKSPACE_ADMIN })])).archived, undefined)
+    })
+  })
+
   test('opened by id, an archived Folder still lists what it holds, and carries its archive', async () => {
     const archived = archive(addressOf(apiary), { note: 'Season over.' })
     const contents = await resolveFolderContents(APIARY, relay([hiveLog, apiary, apiaryAdmins, hive, topic, stateOf(APIARY, 'Apiary', both), archived]), noPeople)
