@@ -485,6 +485,19 @@ describe('a relay that rate-limits this person (two tabs opening at once)', () =
     assert.deepEqual(s.sentOf('REQ')[2], ['REQ', subId, ...FILTERS])
   })
 
+  it('tells a one-shot read that asked not to wait at once, so it can ask elsewhere', async () => {
+    const h = harness({ backoff: BACKOFF })
+    const onClosed = fn()
+    h.relay.subscribe(FILTERS, fn(), { onClosed, retryRateLimited: false })
+    const s = await reachLive(h)
+    const subId = s.sentOf('REQ')[0]?.[1] as string
+
+    s.deliver(['CLOSED', subId, LIMITED])
+    assert.deepEqual(onClosed.calls, [[LIMITED]])
+    h.advance(60_000)
+    assert.equal(s.sentOf('REQ').length, 1, 'not asked again over the socket')
+  })
+
   it('keeps the shorter busy wait for a relay that says it is busy', async () => {
     const { h, s, subId } = await limitedHarness()
 
