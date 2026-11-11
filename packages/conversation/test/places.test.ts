@@ -28,6 +28,7 @@ import {
   whatLitPlace,
   whatLitListedFile,
   whatLitStream,
+  mergeLitLines,
   unreadIn,
   type LitLine,
   threadContext,
@@ -639,6 +640,37 @@ describe('§11.8 what lit a stream, new and seen (ACT-4)', () => {
       [4, 'new-conversation', false],
       [1, 'mention', false],
       [3, 'reply-in-yours', true],
+    ])
+  })
+
+  it('a team list from places that list the same file gives that file one line, every new line above every seen one, and a limit keeps every new line', () => {
+    const ISSUE_D = '7c1e2f30-4a5b-4c6d-8e7f-901a2b3c4d5e'
+    const ISSUE = `30851:${CAROL}:${ISSUE_D}`
+    const onIssue = (by: string, at: number, content = '') =>
+      event({ kind: 1111, pubkey: by, created_at: at, content, tags: [['A', ISSUE], ['K', '30851'], ['P', CAROL], ['a', ISSUE], ['k', '30851'], ['p', CAROL], ['h', TEAM]] })
+    // The issue: a mention of P read at T0 + 15 (seen), and a newer comment not yet read (new).
+    const issueNamed = onIssue(ALICE, T0 + 10, `${mention(BOB)} please`)
+    const issueFresh = onIssue(ALICE, T0 + 20, 'new on the issue')
+    // The topic: a reply in P's conversation read at T0 + 40 (seen, and newer than the issue's new line), and a new comment.
+    const mine = comment(BOB, T0 + 1, 'my question')
+    const toMe = reply(CAROL, mine, T0 + 30, 'an answer')
+    const topicFresh = comment(ALICE, T0 + 50, 'new on the topic')
+    const merged = { ...read(T0 + 40), [`file:${ISSUE_D}`]: T0 + 15 }
+    const issueLines = whatLitListedFile([issueNamed, issueFresh], merged, { stream: `file:${ISSUE_D}`, me: BOB, following: { ...allIn, kind: 'topic', allSince: T0 } })
+    const topicLines = whatLitPlace([mine, toMe, topicFresh], merged, onPlace)
+    // Place A is the topic, which lists the issue; place B lists the issue too. The team's list is the two places'.
+    const placeA = mergeLitLines([topicLines, issueLines])
+    const placeB = mergeLitLines([issueLines])
+    const said = (lines: LitLine<SignedEvent>[]) => lines.map((l) => (l.type === 'message' ? [l.message.content, l.seen] : ['reaction']))
+    assert.deepEqual(said(mergeLitLines([placeA, placeB])), [
+      ['new on the topic', false],
+      ['new on the issue', false],
+      ['an answer', true],
+      [`${mention(BOB)} please`, true],
+    ])
+    assert.deepEqual(said(mergeLitLines([placeA, placeB], { limit: 1 })), [
+      ['new on the topic', false],
+      ['new on the issue', false],
     ])
   })
 })

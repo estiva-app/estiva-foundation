@@ -165,6 +165,7 @@ export {
   whatLitPlace,
   whatLitListedFile,
   whatLitStream,
+  mergeLitLines,
   type LitLine,
   type LitLineOptions,
   type UnreadReason,
@@ -250,7 +251,7 @@ export {
   type FetchedReadState,
 } from './readState.js'
 
-export { unreadIn, isUnread, lightsIn, seenIn, type StreamJudge } from './unread.js'
+export { unreadIn, isUnread, type StreamJudge } from './unread.js'
 
 export {
   streamHasUnread,

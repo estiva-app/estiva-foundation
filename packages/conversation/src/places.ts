@@ -702,7 +702,10 @@ export type LitLine<E> =
 
 /** Options for a stream's list. */
 export interface LitLineOptions extends UnreadReasonOptions {
-  /** At most this many lines: every new one, then the newest seen ones up to it. Unbounded when left out. */
+  /**
+   * At most this many lines, except that every new line is kept: all the new ones, then the newest seen ones up to
+   * it. Each part is newest first, and the new part comes before the seen one. Unbounded when left out.
+   */
   limit?: number
 }
 
@@ -723,15 +726,27 @@ function linesOf<E extends Message>(
     if (unread || KEPT_ONCE_SEEN.has(reason)) out.push({ type: 'message', message, reason, seen: !unread })
     return false
   })
-  out.sort((a, b) => lineAt(b) - lineAt(a) || lineId(b).localeCompare(lineId(a)))
+  return mergeLitLines([out], options)
+}
+
+const lineEvent = <E extends Message>(line: LitLine<E>): E => (line.type === 'message' ? line.message : line.reaction)
+
+/**
+ * Several streams' lists as one (§11.8 *What lit a stream, new and seen*): a place's list is its own stream's and each
+ * listed file's, and a team's list is its places'. One line per message (the first list that has it wins), every new
+ * line before every seen one, each part newest first by §6.3's ordering, and `limit` bounds only the seen lines — the
+ * same order and limit as each stream's own list, so a file listed in two places is one line and a seen line never
+ * sits above a new one.
+ */
+export function mergeLitLines<E extends Message>(lists: readonly (readonly LitLine<E>[])[], options: { limit?: number } = {}): LitLine<E>[] {
+  const byId = new Map<string, LitLine<E>>()
+  for (const list of lists) for (const line of list) if (!byId.has(lineEvent(line).id)) byId.set(lineEvent(line).id, line)
+  const out = [...byId.values()].sort((a, b) => byOrder(lineEvent(b), lineEvent(a)))
   // New before seen; a limit never cuts a new line, since those are what light the dot: it bounds the seen ones.
   const fresh = out.filter((line) => !line.seen)
   const seen = out.filter((line) => line.seen)
   return [...fresh, ...(options.limit === undefined ? seen : seen.slice(0, Math.max(0, options.limit - fresh.length)))]
 }
-
-const lineAt = (line: LitLine<Message>) => (line.type === 'message' ? line.message : line.reaction).created_at
-const lineId = (line: LitLine<Message>) => (line.type === 'message' ? line.message : line.reaction).id
 
 /**
  * A place's list, new then seen, each newest first (§11.8 *What lit a stream, new and seen*): every message that is unread on the place
