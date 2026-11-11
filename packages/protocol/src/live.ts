@@ -175,11 +175,16 @@ export interface LiveRelay {
    *
    * Registering before `live` is normal and supported — that is what makes a
    * subscription survive a reconnect rather than being lost with the socket.
+   *
+   * `retryRateLimited: false` hands a `rate-limited:` refusal to `onClosed` at
+   * once instead of asking again after the wait: for a one-shot read that has
+   * somewhere else to ask (an app's HTTP fallback). A live watch keeps the
+   * default and is asked again.
    */
   subscribe(
     filters: Record<string, unknown>[],
     onEvent: (event: SignedEvent) => void,
-    options?: { onEose?: () => void; onClosed?: (reason: string) => void },
+    options?: { onEose?: () => void; onClosed?: (reason: string) => void; retryRateLimited?: boolean },
   ): Subscription
   state(): RelayState
   /** Stop for good. Does not reconnect afterwards. */
@@ -230,6 +235,8 @@ interface LiveSubscription {
   onEvent: (event: SignedEvent) => void
   onEose?: (() => void) | undefined
   onClosed?: ((reason: string) => void) | undefined
+  /** Whether a `rate-limited:` close is asked again (the default) or handed to `onClosed`. */
+  retryRateLimited: boolean
   /** Busy or rate-limited closes since the last EOSE. */
   busyRetries: number
   /** The pending re-issue after a busy or rate-limited close, if any. */
@@ -504,7 +511,8 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         const sub = subscriptions.get(frame.subId)
         log('subscription closed by the relay', { subId: frame.subId, reason: frame.message })
         const askAgain =
-          frame.message === RELAY_BUSY_CLOSED || frame.message.startsWith(RATE_LIMITED_PREFIX)
+          frame.message === RELAY_BUSY_CLOSED ||
+          (frame.message.startsWith(RATE_LIMITED_PREFIX) && sub?.retryRateLimited === true)
         if (sub && askAgain && retryBusy(sub, frame.message)) return
         sub?.onClosed?.(frame.message)
         // `auth-required` here means the connection is unauthenticated — the
@@ -566,6 +574,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         onEvent,
         onEose: subOptions?.onEose,
         onClosed: subOptions?.onClosed,
+        retryRateLimited: subOptions?.retryRateLimited ?? true,
         busyRetries: 0,
         busyTimer: null,
       }

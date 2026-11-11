@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.57.0 — 2026-11-11
+
+**Wire: unchanged by default; an app can keep a one-shot read's refusal**
+(ALO-13). `subscribe(…, { retryRateLimited: false })` hands a `rate-limited:`
+close to `onClosed` at once, as before 0.56.0, instead of asking again after the
+5–6 s wait. It is for a one-shot read that has somewhere else to ask: Peek's
+socket reader moves a refused read to HTTP at once. Live watches keep the
+default and are asked again. A busy close is asked again either way.
+
 ## 0.56.0 — 2026-11-11
 
 **Wire: a live watch the relay refused as rate-limited is asked again** (ALO-13;
