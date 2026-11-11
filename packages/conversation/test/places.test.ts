@@ -25,6 +25,11 @@ import {
   unreadOnPlace,
   unreadOnListedFile,
   unreadReasons,
+  whatLitPlace,
+  whatLitListedFile,
+  whatLitStream,
+  unreadIn,
+  type LitLine,
   threadContext,
   type Following,
   type PlaceFacts,
@@ -554,5 +559,77 @@ describe('§11.8 why a message is unread (ACT-3)', () => {
     const answer = reply(ALICE, mine, T0 + 13, 'great')
     const got = [...unreadReasons([first, naming, mine, answer], BOB, { dm: true }).values()]
     assert.deepEqual(got, ['message', 'mention', 'message', 'message'])
+  })
+})
+
+describe('§11.8 what lit a stream, new and seen (ACT-4)', () => {
+  const allIn: Following = { kind: 'space', in: true, level: 'all', since: T0, ways: ['team'] }
+  const onPlace = { stream: TOPIC, me: BOB, following: allIn }
+  const read = (at: number) => ({ [`file:${D}`]: at })
+  /** Each line as [index in `list`, reason, seen]. */
+  const shown = (lines: LitLine<SignedEvent>[], list: SignedEvent[]) =>
+    lines.map((l) => (l.type === 'message' ? [list.indexOf(l.message), l.reason, l.seen] : ['reaction']))
+
+  it('once read, a mention of P and a reply in P conversation stay as seen lines, and a plain message leaves the list', () => {
+    const plain = comment(ALICE, T0 + 10, 'looks good')
+    const named = comment(CAROL, T0 + 11, `${mention(BOB)} can you look?`)
+    const mine = comment(BOB, T0 + 12, 'my question')
+    const toMe = reply(CAROL, mine, T0 + 13, 'an answer')
+    const fresh = comment(ALICE, T0 + 20, 'new today')
+    const list = [plain, named, mine, toMe, fresh]
+    assert.deepEqual(shown(whatLitPlace(list, read(T0 + 15), onPlace), list), [
+      [4, 'new-conversation', false],
+      [3, 'reply-in-yours', true],
+      [1, 'mention', true],
+    ])
+  })
+
+  it('the unseen lines are exactly what is unread on the place, so the list and the dot never disagree', () => {
+    const top = comment(ALICE, T0 + 10, 'new')
+    const r = reply(CAROL, top, T0 + 11, 'reply')
+    const named = reply(CAROL, top, T0 + 30, `${mention(BOB)} see this`)
+    const important: Following = { ...allIn, level: 'important' }
+    for (const following of [allIn, important]) {
+      const judge = { ...onPlace, following }
+      const unseen = whatLitPlace([top, r, named], read(T0 + 10), judge).filter((l) => !l.seen).map((l) => (l.type === 'message' ? l.message.id : ''))
+      assert.deepEqual(unseen.sort(), unreadOnPlace([top, r, named], read(T0 + 10), judge).map((e) => e.id).sort())
+    }
+  })
+
+  it('a listed file keeps a read mention of P on the place and drops a read comment naming nobody, and lists nothing when P is not in', () => {
+    const ISSUE_D = '5b7c1a52-9a9e-4d0e-8f4c-2b8f2b2f6a10'
+    const ISSUE = `30851:${CAROL}:${ISSUE_D}`
+    const onIssue = (by: string, at: number, content = '') =>
+      event({ kind: 1111, pubkey: by, created_at: at, content, tags: [['A', ISSUE], ['K', '30851'], ['P', CAROL], ['a', ISSUE], ['k', '30851'], ['p', CAROL], ['h', TEAM]] })
+    const named = onIssue(ALICE, T0 + 10, `${mention(BOB)} please`)
+    const plain = onIssue(ALICE, T0 + 11, 'looks good')
+    const judge = { stream: `file:${ISSUE_D}`, me: BOB, following: { ...allIn, kind: 'topic' as const, allSince: T0 } }
+    const merged = { [`file:${ISSUE_D}`]: T0 + 11 }
+    assert.deepEqual(shown(whatLitListedFile([named, plain], merged, judge), [named, plain]), [[0, 'mention', true]])
+    assert.deepEqual(whatLitListedFile([named, plain], merged, { ...judge, following: { kind: 'topic', in: false, ways: [] } }), [])
+  })
+
+  it('a DM keeps a read mention and drops a read message, and its unseen lines are what is unread in it', () => {
+    const DM = 'dm-context'
+    const dmMessage = (by: string, at: number, content = '') => event({ kind: 9, pubkey: by, created_at: at, content, tags: [['h', DM]] })
+    const old = dmMessage(ALICE, T0 + 10, 'hi')
+    const named = dmMessage(ALICE, T0 + 11, `${mention(BOB)} ping`)
+    const fresh = dmMessage(ALICE, T0 + 20, 'still there?')
+    const judge = { stream: DM, me: BOB, member: true }
+    const merged = { [DM]: T0 + 11 }
+    const list = [old, named, fresh]
+    assert.deepEqual(shown(whatLitStream(list, merged, judge, { dm: true }), list), [
+      [2, 'message', false],
+      [1, 'mention', true],
+    ])
+    assert.deepEqual(unreadIn(list, merged, judge).map((e) => e.id), [fresh.id])
+  })
+
+  it('a limit keeps the newest lines, new and seen together', () => {
+    const list = [comment(CAROL, T0 + 10, `${mention(BOB)} one`), comment(CAROL, T0 + 11, `${mention(BOB)} two`), comment(ALICE, T0 + 20, 'three')]
+    assert.deepEqual(shown(whatLitPlace(list, read(T0 + 15), onPlace, { limit: 2 }), list), [
+      [2, 'new-conversation', false],
+      [1, 'mention', true],
+    ])
   })
 })
