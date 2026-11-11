@@ -31,6 +31,7 @@ import { byOrder } from './order.js'
 import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, streamMarkerOf, threadContext } from './readState.js'
 import { peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
+import { lightsIn, seenIn, type StreamJudge } from './unread.js'
 
 /** A team's own address kind: on it, a level or a member change is about the team's chat. */
 const KIND_TEAM = 39000
@@ -614,16 +615,28 @@ export function isUnreadOnPlace(
   judge: PlaceJudge,
   inConversationSince: number | undefined,
 ): boolean {
+  return lightsOnPlace(message, root, judge, inConversationSince) && newerThanItsMarker(message, root, merged, judge, startedOn(message, judge.following))
+}
+
+/** Whether `me` was in the place when the message was said. */
+function startedOn(message: Pick<Message, 'created_at'>, following: Following): boolean {
+  return following.in && (following.since === undefined || message.created_at >= following.since)
+}
+
+/**
+ * Whether one message on a place lights it for `me` at all, read or not (§11.8 *What is unread on a place*, without the
+ * marker): a mention at any level; otherwise, unmuted and in the place, a new conversation, a reply in one `me` is in,
+ * and at All every message since All. Unread is this and newer than its marker.
+ */
+function lightsOnPlace(message: Message, root: string | undefined, judge: PlaceJudge, inConversationSince: number | undefined): boolean {
   if (message.pubkey === judge.me) return false
+  if (peopleNamedInBody(message.content).has(judge.me)) return true
   const { following } = judge
-  const mentioned = peopleNamedInBody(message.content).has(judge.me)
-  const started = following.in && (following.since === undefined || message.created_at >= following.since)
   const levelLights =
     (following.level === 'all' && message.created_at >= (following.allSince ?? following.since ?? 0)) ||
     root === undefined ||
     (inConversationSince !== undefined && message.created_at >= inConversationSince)
-  if (!mentioned && (judge.muted || !started || !levelLights)) return false
-  return newerThanItsMarker(message, root, merged, judge, started)
+  return !judge.muted && startedOn(message, following) && levelLights
 }
 
 /** Whether a message that lights by its level is still unread: its stream's marker, or its thread's for a reply (§11.3). */
@@ -657,17 +670,118 @@ export function unreadOnListedFile<E extends Message>(
   merged: Readonly<Record<string, number>>,
   judge: PlaceJudge & { under?: boolean },
 ): E[] {
-  const { following, me } = judge
-  if (!following.in) return []
-  const allFrom = following.level === 'all' && !judge.under && !judge.muted ? (following.allSince ?? following.since ?? 0) : undefined
+  if (!judge.following.in) return []
   // A root comment's `p` is the file's author, which says nothing of `P`: only a reply's counts (`eachMessage`).
-  return eachMessage(messages, me, (message, root, inSince) => {
-    if (message.pubkey === me) return false
-    if (following.since !== undefined && message.created_at < following.since) return false
-    const mentioned = peopleNamedInBody(message.content).has(me)
-    const inYours = !judge.muted && root !== undefined && inSince !== undefined && message.created_at >= inSince
-    const atAll = allFrom !== undefined && message.created_at >= allFrom
-    return (mentioned || inYours || atAll) && newerThanItsMarker(message, root, merged, judge, true)
+  return eachMessage(messages, judge.me, (message, root, inSince) =>
+    lightsOnListedFile(message, root, judge, inSince) && newerThanItsMarker(message, root, merged, judge, true),
+  )
+}
+
+/** Whether one message on a listed file lights the place for `me` at all, read or not ({@link unreadOnListedFile} without the marker). */
+function lightsOnListedFile(message: Message, root: string | undefined, judge: PlaceJudge & { under?: boolean }, inSince: number | undefined): boolean {
+  const { following, me } = judge
+  if (!following.in || message.pubkey === me) return false
+  if (following.since !== undefined && message.created_at < following.since) return false
+  const allFrom = following.level === 'all' && !judge.under && !judge.muted ? (following.allSince ?? following.since ?? 0) : undefined
+  const mentioned = peopleNamedInBody(message.content).has(me)
+  const inYours = !judge.muted && root !== undefined && inSince !== undefined && message.created_at >= inSince
+  const atAll = allFrom !== undefined && message.created_at >= allFrom
+  return mentioned || inYours || atAll
+}
+
+// ── What lit a stream, new and seen ─────────────────────────────────────────
+
+/**
+ * One line of a stream's list (§11.8 *What lit a stream, new and seen*): a message, with why it lit
+ * ({@link UnreadReason}), or a reaction to `P`'s message (ACT-7; no line of this type is listed until a reaction's
+ * `orange:` mark is read, so none is today). `seen` is false for what is unread now: the New part of the list.
+ */
+export type LitLine<E> =
+  | { type: 'message'; message: E; reason: UnreadReason; seen: boolean }
+  | { type: 'reaction'; reaction: E; seen: boolean }
+
+/** Options for a stream's list. */
+export interface LitLineOptions extends UnreadReasonOptions {
+  /**
+   * At most this many lines, except that every new line is kept: all the new ones, then the newest seen ones up to
+   * it. Each part is newest first, and the new part comes before the seen one. Unbounded when left out.
+   */
+  limit?: number
+}
+
+/** What stays in the list once seen: what was about `P` (Miky, 2026-11-11). A plain message read is in its conversation. */
+const KEPT_ONCE_SEEN: ReadonlySet<UnreadReason> = new Set(['mention', 'reply-in-yours'])
+
+function linesOf<E extends Message>(
+  messages: readonly E[],
+  me: string,
+  options: LitLineOptions,
+  judge: (message: E, root: string | undefined, inSince: number | undefined) => { lights: boolean; unread: boolean },
+): LitLine<E>[] {
+  const out: LitLine<E>[] = []
+  eachMessage(messages, me, (message, root, inSince) => {
+    const { lights, unread } = judge(message, root, inSince)
+    if (!lights) return false
+    const reason = unreadReason(message, root, inSince, me, options)
+    if (unread || KEPT_ONCE_SEEN.has(reason)) out.push({ type: 'message', message, reason, seen: !unread })
+    return false
+  })
+  return mergeLitLines([out], options)
+}
+
+const lineEvent = <E extends Message>(line: LitLine<E>): E => (line.type === 'message' ? line.message : line.reaction)
+
+/**
+ * Several streams' lists as one (§11.8 *What lit a stream, new and seen*): a place's list is its own stream's and each
+ * listed file's, and a team's list is its places'. One line per message (the first list that has it wins), every new
+ * line before every seen one, each part newest first by §6.3's ordering, and `limit` bounds only the seen lines — the
+ * same order and limit as each stream's own list, so a file listed in two places is one line and a seen line never
+ * sits above a new one.
+ */
+export function mergeLitLines<E extends Message>(lists: readonly (readonly LitLine<E>[])[], options: { limit?: number } = {}): LitLine<E>[] {
+  const byId = new Map<string, LitLine<E>>()
+  for (const list of lists) for (const line of list) if (!byId.has(lineEvent(line).id)) byId.set(lineEvent(line).id, line)
+  const out = [...byId.values()].sort((a, b) => byOrder(lineEvent(b), lineEvent(a)))
+  // New before seen; a limit never cuts a new line, since those are what light the dot: it bounds the seen ones.
+  const fresh = out.filter((line) => !line.seen)
+  const seen = out.filter((line) => line.seen)
+  return [...fresh, ...(options.limit === undefined ? seen : seen.slice(0, Math.max(0, options.limit - fresh.length)))]
+}
+
+/**
+ * A place's list, new then seen, each newest first (§11.8 *What lit a stream, new and seen*): every message that is unread on the place
+ * ({@link unreadOnPlace}), and every one that lit it and is seen now when it was about `me` — a mention of them or a
+ * reply in their conversation. The unseen lines are exactly {@link unreadOnPlace}'s; judged by today's following.
+ */
+export function whatLitPlace<E extends Message>(messages: readonly E[], merged: Readonly<Record<string, number>>, judge: PlaceJudge, options: LitLineOptions = {}): LitLine<E>[] {
+  return linesOf(messages, judge.me, options, (message, root, inSince) => {
+    const lights = lightsOnPlace(message, root, judge, inSince)
+    return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, startedOn(message, judge.following)) }
+  })
+}
+
+/** A listed file's lines on the place that lists it, as {@link whatLitPlace}: the unseen ones are {@link unreadOnListedFile}'s. */
+export function whatLitListedFile<E extends Message>(
+  messages: readonly E[],
+  merged: Readonly<Record<string, number>>,
+  judge: PlaceJudge & { under?: boolean },
+  options: LitLineOptions = {},
+): LitLine<E>[] {
+  if (!judge.following.in) return []
+  return linesOf(messages, judge.me, options, (message, root, inSince) => {
+    const lights = lightsOnListedFile(message, root, judge, inSince)
+    return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, true) }
+  })
+}
+
+/**
+ * A stream's lines by membership (a DM, with `{ dm: true }`, or a file `P` is a member of), as {@link whatLitPlace}: the
+ * unseen ones are {@link unreadIn}'s.
+ */
+export function whatLitStream<E extends Message>(messages: readonly E[], merged: Readonly<Record<string, number>>, judge: StreamJudge, options: LitLineOptions = {}): LitLine<E>[] {
+  return linesOf(messages, judge.me, options, (message, root) => {
+    const lights = lightsIn(message, judge)
+    return { lights, unread: lights && !seenIn(message, root, merged, judge) }
   })
 }
 

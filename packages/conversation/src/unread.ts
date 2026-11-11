@@ -73,10 +73,27 @@ export function unreadIn<E extends Message>(messages: readonly E[], merged: Read
 
 /** Whether one message is unread: §11.8's four conditions. `root` is its thread's root id when it is a reply. */
 export function isUnread(message: Message, root: string | undefined, merged: Readonly<Record<string, number>>, judge: StreamJudge): boolean {
+  return lightsIn(message, judge) && !seenIn(message, root, merged, judge)
+}
+
+/**
+ * Whether one message lights the stream for `P` at all, read or not: §11.8's first three conditions. A message that
+ * lights and is not {@link seenIn} is unread; one that lights and is seen is a line of the stream's list (§11.8 *What
+ * lit a stream, new and seen*).
+ */
+export function lightsIn(message: Pick<Message, 'pubkey' | 'content' | 'created_at'>, judge: StreamJudge): boolean {
   if (message.pubkey === judge.me) return false
   const mentioned = peopleNamedInBody(message.content).has(judge.me)
   if (!mentioned && (!judge.member || judge.muted)) return false
-  if (judge.since !== undefined && message.created_at < judge.since) return false
+  return judge.since === undefined || message.created_at >= judge.since
+}
+
+/** Whether a message that lights is seen: at or below its effective marker (§11.3), or below the reply floor or the floor (§11.6). */
+export function seenIn(message: Pick<Message, 'created_at'>, root: string | undefined, merged: Readonly<Record<string, number>>, judge: StreamJudge): boolean {
+  return !newerThanMarker(message, root, merged, judge)
+}
+
+function newerThanMarker(message: Pick<Message, 'created_at'>, root: string | undefined, merged: Readonly<Record<string, number>>, judge: StreamJudge): boolean {
   const thread = root === undefined ? undefined : threadContext(root)
   const marker = thread === undefined ? streamMarkerOf(merged, judge.stream) : effectiveReadAt(merged, thread, judge.stream)
   if (marker !== undefined) return message.created_at > marker

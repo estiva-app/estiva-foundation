@@ -6,6 +6,32 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.39.0 — 2026-11-11
+
+**SPEC §11.8: what lit a stream, new and seen** (ACT-4). Every app draws the same
+list behind a place's dot: what is new, then what was about you and is seen now.
+
+- `whatLitPlace(messages, merged, judge, options?)`, `whatLitListedFile(…)` and
+  `whatLitStream(…)` (a DM with `{ dm: true }`, or a file you are a member of):
+  every new line, then the seen ones, each part newest first by §6.3's
+  ordering; each line `{ type: 'message', message, reason, seen }`. A line
+  is unseen exactly when `unreadOnPlace`, `unreadOnListedFile` or `unreadIn`
+  says the message is unread, so the list and the dot never disagree. Once
+  seen, only a `mention` or a `reply-in-yours` stays (Miky, 11 Nov: a plain
+  message you read is in its conversation). `limit` never cuts a new line: it
+  keeps every new one, then the newest seen ones up to the limit.
+  Judged by today's following.
+- `mergeLitLines(lists, { limit? })`: several streams' lists as one, in the
+  same order and limit — a place's list (its own stream and each file it
+  lists) and a team's list (its places). A file listed in two places is one
+  line, and a seen line never sits above a new one from another list.
+- `LitLine` is a union that already names `{ type: 'reaction', reaction, seen }`
+  for a reaction to your message (ACT-7); no reaction line is listed yet.
+- `isUnread`, `isUnreadOnPlace` and `unreadOnListedFile` are split inside into
+  whether a message lights the stream and whether it is seen, so the list and
+  the dot share one rule.
+- Which messages are unread is unchanged; nothing new is read or written.
+
 ## 0.38.0 — 2026-11-10
 
 **SPEC §11.8: why a message is unread** (ACT-3). An app that explains a dot
