@@ -625,11 +625,20 @@ describe('§11.8 what lit a stream, new and seen (ACT-4)', () => {
     assert.deepEqual(unreadIn(list, merged, judge).map((e) => e.id), [fresh.id])
   })
 
-  it('a limit keeps the newest lines, new and seen together', () => {
-    const list = [comment(CAROL, T0 + 10, `${mention(BOB)} one`), comment(CAROL, T0 + 11, `${mention(BOB)} two`), comment(ALICE, T0 + 20, 'three')]
-    assert.deepEqual(shown(whatLitPlace(list, read(T0 + 15), onPlace, { limit: 2 }), list), [
-      [2, 'new-conversation', false],
-      [1, 'mention', true],
+  it('a limit keeps every new line, an older unread mention included, and bounds only the seen ones', () => {
+    // The stream is read only to T0 + 2, so the mention at T0 + 5 is unread; P's own thread is read to T0 + 40, so the
+    // two replies in it are seen, and newer than the unread mention.
+    const mine = comment(BOB, T0 + 1, 'my question')
+    const named = comment(CAROL, T0 + 5, `${mention(BOB)} still needs you`)
+    const seenOne = reply(CAROL, mine, T0 + 30, 'one')
+    const seenTwo = reply(CAROL, mine, T0 + 31, 'two')
+    const fresh = comment(ALICE, T0 + 50, 'three')
+    const list = [mine, named, seenOne, seenTwo, fresh]
+    const merged = { ...read(T0 + 2), [threadContext(mine.id)!]: T0 + 40 }
+    assert.deepEqual(shown(whatLitPlace(list, merged, onPlace, { limit: 3 }), list), [
+      [4, 'new-conversation', false],
+      [1, 'mention', false],
+      [3, 'reply-in-yours', true],
     ])
   })
 })

@@ -702,7 +702,7 @@ export type LitLine<E> =
 
 /** Options for a stream's list. */
 export interface LitLineOptions extends UnreadReasonOptions {
-  /** The newest this many lines, unseen and seen together. Unbounded when left out. */
+  /** At most this many lines: every new one, then the newest seen ones up to it. Unbounded when left out. */
   limit?: number
 }
 
@@ -724,14 +724,17 @@ function linesOf<E extends Message>(
     return false
   })
   out.sort((a, b) => lineAt(b) - lineAt(a) || lineId(b).localeCompare(lineId(a)))
-  return options.limit === undefined ? out : out.slice(0, options.limit)
+  // New before seen; a limit never cuts a new line, since those are what light the dot: it bounds the seen ones.
+  const fresh = out.filter((line) => !line.seen)
+  const seen = out.filter((line) => line.seen)
+  return [...fresh, ...(options.limit === undefined ? seen : seen.slice(0, Math.max(0, options.limit - fresh.length)))]
 }
 
 const lineAt = (line: LitLine<Message>) => (line.type === 'message' ? line.message : line.reaction).created_at
 const lineId = (line: LitLine<Message>) => (line.type === 'message' ? line.message : line.reaction).id
 
 /**
- * A place's list, newest first (§11.8 *What lit a stream, new and seen*): every message that is unread on the place
+ * A place's list, new then seen, each newest first (§11.8 *What lit a stream, new and seen*): every message that is unread on the place
  * ({@link unreadOnPlace}), and every one that lit it and is seen now when it was about `me` — a mention of them or a
  * reply in their conversation. The unseen lines are exactly {@link unreadOnPlace}'s; judged by today's following.
  */
