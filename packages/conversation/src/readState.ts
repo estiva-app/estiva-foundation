@@ -244,7 +244,10 @@ export function toContextSeconds(atMs: number): number {
 export function isPublishableContextId(id: string): boolean {
   if (id === REPLY_FLOOR_CONTEXT || id === REACTIONS_FLOOR_CONTEXT) return true
   if (id.length === 0 || utf8(id) > MAX_CONTEXT_ID_BYTES) return false
-  return isReactionsKey(id) ? isConversationContextId(id.slice(REACTIONS_PREFIX.length)) : isConversationContextId(id)
+  if (!isReactionsKey(id)) return isConversationContextId(id)
+  // A reaction on a reply or a message counts in its root's stream, so there is no `reactions:thread:` or `reactions:msg:` (§11.1).
+  const rest = id.slice(REACTIONS_PREFIX.length)
+  return !rest.startsWith('thread:') && !rest.startsWith('msg:') && isConversationContextId(rest)
 }
 
 /** A context of one conversation's own marker (§11.1): not a floor, not a `reactions:` key. */

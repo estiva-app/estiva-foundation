@@ -917,19 +917,24 @@ export function reactionsSeenWrites(
 ): { context: string; atMs: number }[] {
   const newest = new Map<string, number>()
   for (const { reaction, contexts } of lines) {
-    const write = writeContextOf(contexts)
-    if (write === undefined) continue
-    const key = reactionsContext(write)
     const atMs = Math.min(reaction.at * 1000, nowMs)
-    if ((newest.get(key) ?? -1) < atMs) newest.set(key, atMs)
+    for (const write of writeContextsOf(contexts)) {
+      const key = reactionsContext(write)
+      if ((newest.get(key) ?? -1) < atMs) newest.set(key, atMs)
+    }
   }
   return [...newest].map(([context, atMs]) => ({ context, atMs }))
 }
 
-/** Where a stream's reactions are written: its `file:<d>` (named, or from an address whose `d` is an id), else its address or channel. */
-function writeContextOf(contexts: readonly string[]): string | undefined {
-  const byId = contexts.find((c) => c.startsWith('file:')) ?? contexts.map((c) => fileIdContext(FILE_ADDRESS.test(c) ? fileIdOf(c) : undefined)).find((c) => c !== undefined)
-  return byId ?? contexts[0]
+/**
+ * Where a reaction's streams are written, one key per stream: a file as its `file:<d>` (named, or from an address
+ * whose `d` is an id), else its address; a channel as its uuid. A root on two files is in both files' streams
+ * (§11.1), so seeing its reaction writes both.
+ */
+function writeContextsOf(contexts: readonly string[]): string[] {
+  const out = new Set<string>()
+  for (const context of contexts) out.add(fileIdContext(FILE_ADDRESS.test(context) ? fileIdOf(context) : undefined) ?? context)
+  return [...out]
 }
 
 /**

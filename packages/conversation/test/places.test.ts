@@ -745,6 +745,14 @@ describe('§11.8 a reaction to your message turns the place orange (ACT-7)', () 
     ])
   })
 
+  it('seeing a reaction to a comment on two files writes both files’ keys, so neither file stays orange', () => {
+    const otherD = `${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`
+    const other = `30851:${CAROL}:${otherD}`
+    const otherById = `file:${otherD}`
+    const writes = reactionsSeenWrites([{ reaction: reaction(1, R0 + 100), contexts: [TOPIC, BY_ID, other, otherById] }], (R0 + 1000) * 1000)
+    assert.deepEqual(new Set(writes.map((w) => w.context)), new Set([`reactions:${BY_ID}`, `reactions:${otherById}`]))
+  })
+
   it('a reaction dated ahead of the clock is written as seen only up to now, so a later one still turns the place orange', () => {
     const nowMs = (R0 + 100) * 1000
     assert.deepEqual(reactionsSeenWrites([{ reaction: reaction(1, R0 + 5000), contexts: [TEAM] }], nowMs), [{ context: `reactions:${TEAM}`, atMs: nowMs }])
