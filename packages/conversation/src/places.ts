@@ -25,11 +25,23 @@
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-team-has-members-and-followers-and-a-place-is-followed-at-a-level.md
  */
 import { fileIdOf, KIND, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { FILE_ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE } from './kinds.js'
+import { FILE_ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { APPDATA_TAG, FOLLOW_FIELD_PREFIX, buildMembershipChange, memberOfField } from './membership.js'
 import { byOrder } from './order.js'
-import { REPLY_FLOOR_CONTEXT, belowReplyFloor, effectiveReadAt, streamMarkerOf, threadContext } from './readState.js'
-import { peopleNamedInBody } from './strength.js'
+import { REACTIONS_TO_ME_FROM, type ReactionToMe } from './reactions.js'
+import {
+  REPLY_FLOOR_CONTEXT,
+  belowReplyFloor,
+  channelContext,
+  effectiveReadAt,
+  fileContext,
+  fileIdContext,
+  reactionsContext,
+  reactionsSeenOf,
+  streamMarkerOf,
+  threadContext,
+} from './readState.js'
+import { anchorIdsOf, anchorsOf, peopleNamedInBody } from './strength.js'
 import { groupThreads } from './threads.js'
 import { lightsIn, seenIn, type StreamJudge } from './unread.js'
 
@@ -693,12 +705,12 @@ function lightsOnListedFile(message: Message, root: string | undefined, judge: P
 
 /**
  * One line of a stream's list (§11.8 *What lit a stream, new and seen*): a message, with why it lit
- * ({@link UnreadReason}), or a reaction to `P`'s message (ACT-7; no line of this type is listed until a reaction's
- * `orange:` mark is read, so none is today). `seen` is false for what is unread now: the New part of the list.
+ * ({@link UnreadReason}), or a reaction to `P`'s message (ACT-7), new until its conversation's `reactions:` key is
+ * written past it. `seen` is false for what is unread now: the New part of the list.
  */
 export type LitLine<E> =
   | { type: 'message'; message: E; reason: UnreadReason; seen: boolean }
-  | { type: 'reaction'; reaction: E; seen: boolean }
+  | { type: 'reaction'; reaction: ReactionToMe; seen: boolean }
 
 /** Options for a stream's list. */
 export interface LitLineOptions extends UnreadReasonOptions {
@@ -707,6 +719,12 @@ export interface LitLineOptions extends UnreadReasonOptions {
    * it. Each part is newest first, and the new part comes before the seen one. Unbounded when left out.
    */
   limit?: number
+  /**
+   * The reactions to `P`'s messages in this stream ({@link reactionsToMe}, mapped to it by {@link reactionStreamOf}):
+   * each is a line, new by {@link newReactionsIn}, else seen. A reaction to `P` is always about `P`, so a seen one
+   * stays in the list.
+   */
+  reactions?: readonly ReactionToMe[]
 }
 
 /** What stays in the list once seen: what was about `P` (Miky, 2026-11-11). A plain message read is in its conversation. */
@@ -717,6 +735,7 @@ function linesOf<E extends Message>(
   me: string,
   options: LitLineOptions,
   judge: (message: E, root: string | undefined, inSince: number | undefined) => { lights: boolean; unread: boolean },
+  reactions: { merged: Readonly<Record<string, number>>; judge: ReactionJudge },
 ): LitLine<E>[] {
   const out: LitLine<E>[] = []
   eachMessage(messages, me, (message, root, inSince) => {
@@ -726,10 +745,12 @@ function linesOf<E extends Message>(
     if (unread || KEPT_ONCE_SEEN.has(reason)) out.push({ type: 'message', message, reason, seen: !unread })
     return false
   })
-  return mergeLitLines([out], options)
+  return mergeLitLines([out, reactionLines<E>(options.reactions ?? [], reactions.merged, reactions.judge)], options)
 }
 
-const lineEvent = <E extends Message>(line: LitLine<E>): E => (line.type === 'message' ? line.message : line.reaction)
+/** What a line is ordered and told apart by: its message, or its reaction as an event of that id and time. */
+const lineEvent = <E extends Message>(line: LitLine<E>): Pick<Message, 'id' | 'created_at' | 'tags'> =>
+  line.type === 'message' ? line.message : { id: line.reaction.id, created_at: line.reaction.at, tags: [] }
 
 /**
  * Several streams' lists as one (§11.8 *What lit a stream, new and seen*): a place's list is its own stream's and each
@@ -754,10 +775,16 @@ export function mergeLitLines<E extends Message>(lists: readonly (readonly LitLi
  * reply in their conversation. The unseen lines are exactly {@link unreadOnPlace}'s; judged by today's following.
  */
 export function whatLitPlace<E extends Message>(messages: readonly E[], merged: Readonly<Record<string, number>>, judge: PlaceJudge, options: LitLineOptions = {}): LitLine<E>[] {
-  return linesOf(messages, judge.me, options, (message, root, inSince) => {
-    const lights = lightsOnPlace(message, root, judge, inSince)
-    return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, startedOn(message, judge.following)) }
-  })
+  return linesOf(
+    messages,
+    judge.me,
+    options,
+    (message, root, inSince) => {
+      const lights = lightsOnPlace(message, root, judge, inSince)
+      return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, startedOn(message, judge.following)) }
+    },
+    { merged, judge: { contexts: [judge.stream], following: judge.following, muted: judge.muted } },
+  )
 }
 
 /** A listed file's lines on the place that lists it, as {@link whatLitPlace}: the unseen ones are {@link unreadOnListedFile}'s. */
@@ -768,10 +795,16 @@ export function whatLitListedFile<E extends Message>(
   options: LitLineOptions = {},
 ): LitLine<E>[] {
   if (!judge.following.in) return []
-  return linesOf(messages, judge.me, options, (message, root, inSince) => {
-    const lights = lightsOnListedFile(message, root, judge, inSince)
-    return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, true) }
-  })
+  return linesOf(
+    messages,
+    judge.me,
+    options,
+    (message, root, inSince) => {
+      const lights = lightsOnListedFile(message, root, judge, inSince)
+      return { lights, unread: lights && newerThanItsMarker(message, root, merged, judge, true) }
+    },
+    { merged, judge: { contexts: [judge.stream], following: judge.following, muted: judge.muted } },
+  )
 }
 
 /**
@@ -779,10 +812,124 @@ export function whatLitListedFile<E extends Message>(
  * unseen ones are {@link unreadIn}'s.
  */
 export function whatLitStream<E extends Message>(messages: readonly E[], merged: Readonly<Record<string, number>>, judge: StreamJudge, options: LitLineOptions = {}): LitLine<E>[] {
-  return linesOf(messages, judge.me, options, (message, root) => {
-    const lights = lightsIn(message, judge)
-    return { lights, unread: lights && !seenIn(message, root, merged, judge) }
-  })
+  return linesOf(
+    messages,
+    judge.me,
+    options,
+    (message, root) => {
+      const lights = lightsIn(message, judge)
+      return { lights, unread: lights && !seenIn(message, root, merged, judge) }
+    },
+    // Not a member: no reaction lights, as no message but a mention does.
+    { merged, judge: { contexts: [judge.stream], following: null, muted: judge.muted || !judge.member, since: judge.since } },
+  )
+}
+
+// ── A reaction to your message — §11.8, ACT-7 ───────────────────────────────
+
+/**
+ * The §11.1 contexts of the stream a reacted message is in, where its reactions are seen: a reaction on a reply counts
+ * in its root's stream. A chat message (`kind:9`, root or reply) is in its channel's general stream, the bare uuid of
+ * its `h`. A comment (`kind:1111`, root or reply) is in its file's stream: the address its thread is about and
+ * `file:<d>`, both where the comment or the address gives them. Empty for anything else, and for a comment §6.4
+ * ignores.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ */
+export function reactionStreamOf(target: Pick<SignedEvent, 'kind' | 'tags'>): string[] {
+  if (target.kind === KIND_MESSAGE) {
+    const channel = channelContext(tag(target, 'h'))
+    return channel === undefined ? [] : [channel]
+  }
+  if (target.kind !== KIND_COMMENT) return []
+  const out = new Set<string>()
+  for (const address of anchorsOf(target)) {
+    const context = fileContext(address)
+    if (context === undefined) continue
+    out.add(context)
+    const byId = fileIdContext(fileIdOf(address))
+    if (byId !== undefined) out.add(byId)
+  }
+  for (const id of anchorIdsOf(target)) {
+    const byId = fileIdContext(id)
+    if (byId !== undefined) out.add(byId)
+  }
+  return [...out]
+}
+
+/** Who is judging the reactions in one conversation stream, and on what terms. */
+export interface ReactionJudge {
+  /** The stream's §11.1 contexts ({@link reactionStreamOf}): a file named both ways passes both. */
+  contexts: readonly string[]
+  /** {@link followingOf} for `P` on the place the stream is on or listed by; `null` for a DM or a stream `P` is a member of. */
+  following: Following | null
+  /** Whether `P` muted the place (or the stream): a reaction is not a mention, so nothing lights. */
+  muted?: boolean
+  /** For a DM or a member stream, unix seconds `P` came in; with a `following`, the later of this and its `since` counts. */
+  since?: number
+}
+
+/** When a reaction in the stream starts to count for `P`: the later of `P`'s start and {@link REACTIONS_TO_ME_FROM}; undefined when nothing does. */
+function reactionsStartOf(judge: ReactionJudge): number | undefined {
+  if (judge.muted) return undefined
+  if (judge.following !== null && !judge.following.in) return undefined
+  return Math.max(judge.following?.since ?? 0, judge.since ?? 0, REACTIONS_TO_ME_FROM)
+}
+
+function reactionLines<E>(reactions: readonly ReactionToMe[], merged: Readonly<Record<string, number>>, judge: ReactionJudge): LitLine<E>[] {
+  const start = reactionsStartOf(judge)
+  if (start === undefined) return []
+  const seenTo = reactionsSeenOf(merged, judge.contexts)
+  return reactions
+    .filter((reaction) => reaction.at >= start)
+    .map((reaction): LitLine<E> => ({ type: 'reaction', reaction, seen: reaction.at <= seenTo }))
+}
+
+/**
+ * The reactions to `P`'s messages in one conversation stream that are new (§11.8, ACT-7): `reactions` are already
+ * mapped to the stream ({@link reactionStreamOf}); each is new when it is at or after `P`'s start there (following's
+ * `since`, or a DM's or a member stream's) and {@link REACTIONS_TO_ME_FROM}, and later than the stream's `reactions:`
+ * key and the reactions floor ({@link reactionsSeenOf}). Not in the place, or a muted one: none. Newest first, as given.
+ *
+ * Nothing but this conversation's `reactions:` key and the reactions floor clears one: opening the conversation reads
+ * its messages, and only writing its {@link reactionsSeenWrites} sees its reactions.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ */
+export function newReactionsIn(reactions: readonly ReactionToMe[], merged: Readonly<Record<string, number>>, judge: ReactionJudge): ReactionToMe[] {
+  return reactionLines<never>(reactions, merged, judge).flatMap((line) => (line.type === 'reaction' && !line.seen ? [line.reaction] : []))
+}
+
+/**
+ * What showing reactions to `P` writes (ACT-7): for each conversation, the `reactions:` key at the newest reaction
+ * shown — its `created_at`, never the clock, so a reaction that arrives meanwhile stays new — and never later than
+ * `nowMs`, so a reaction dated ahead of the clock cannot mark later ones seen. Written under the stream's write
+ * context: `file:<d>` for a file named by its id, else its address; the bare uuid for a chat. `contexts` is the
+ * reaction's stream ({@link reactionStreamOf}). Each is ready for the read-state queue: `markRead([context], atMs)`.
+ * Resting on a row whose card listed them, and opening a conversation that draws them, both write it.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/reactions-seen-is-kept-under-reactions-and-opening-it-sees-it.md
+ */
+export function reactionsSeenWrites(
+  lines: readonly { reaction: ReactionToMe; contexts: readonly string[] }[],
+  nowMs: number = Date.now(),
+): { context: string; atMs: number }[] {
+  const newest = new Map<string, number>()
+  for (const { reaction, contexts } of lines) {
+    const write = writeContextOf(contexts)
+    if (write === undefined) continue
+    const key = reactionsContext(write)
+    const atMs = Math.min(reaction.at * 1000, nowMs)
+    if ((newest.get(key) ?? -1) < atMs) newest.set(key, atMs)
+  }
+  return [...newest].map(([context, atMs]) => ({ context, atMs }))
+}
+
+/** Where a stream's reactions are written: its `file:<d>` (named, or from an address whose `d` is an id), else its address or channel. */
+function writeContextOf(contexts: readonly string[]): string | undefined {
+  const byId = contexts.find((c) => c.startsWith('file:')) ?? contexts.map((c) => fileIdContext(FILE_ADDRESS.test(c) ? fileIdOf(c) : undefined)).find((c) => c !== undefined)
+  return byId ?? contexts[0]
 }
 
 /**

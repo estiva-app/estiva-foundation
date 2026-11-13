@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.40.0'
+export const CONVERSATION_VERSION = '0.41.0'
 
 export {
   KIND_MESSAGE,
@@ -59,9 +59,15 @@ export {
   reactionEventsOf,
   foldReactions,
   groupReactions,
+  REACTIONS_TO_ME_FROM,
+  reactionsToMeFilter,
+  reactionTakeBackFilter,
+  keepReactionToMe,
+  reactionsToMe,
   type ReactionHorizon,
   type ReactionEvent,
   type Reaction,
+  type ReactionToMe,
 } from './reactions.js'
 
 export { decorationsOf, type Decoration, type Decorations, type QueryFn } from './decorations.js'
@@ -166,6 +172,10 @@ export {
   whatLitListedFile,
   whatLitStream,
   mergeLitLines,
+  reactionStreamOf,
+  newReactionsIn,
+  reactionsSeenWrites,
+  type ReactionJudge,
   type LitLine,
   type LitLineOptions,
   type UnreadReason,
@@ -218,6 +228,10 @@ export {
   messageContext,
   toContextSeconds,
   isPublishableContextId,
+  isCarriedContextId,
+  REACTIONS_FLOOR_CONTEXT,
+  reactionsContext,
+  reactionsSeenOf,
   loadSlotIdentity,
   rotateSlotId,
   readStateDTag,
