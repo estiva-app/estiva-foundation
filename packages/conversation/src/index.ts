@@ -12,7 +12,7 @@
  * apps: it imports no app's data layer, opens no socket, and takes every
  * environment touch — the relay read, the clock, storage — as a parameter.
  */
-export const CONVERSATION_VERSION = '0.39.0'
+export const CONVERSATION_VERSION = '0.40.0'
 
 export {
   KIND_MESSAGE,
@@ -250,6 +250,21 @@ export {
   type Nip44,
   type FetchedReadState,
 } from './readState.js'
+
+export {
+  createReadStateQueue,
+  watchDwell,
+  dwellKey,
+  dwellContexts,
+  READ_DWELL_MS,
+  READ_STATE_PUBLISH_DEBOUNCE_MS,
+  READ_STATE_MAX_RETRY_MS,
+  type ReadStateQueue,
+  type ReadStateQueueOptions,
+  type ReadStateQueueState,
+  type ReadStateAttempt,
+  type VisibilitySource,
+} from './readStateQueue.js'
 
 export { unreadIn, isUnread, type StreamJudge } from './unread.js'
 
