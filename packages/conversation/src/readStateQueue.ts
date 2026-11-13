@@ -245,6 +245,8 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
       }
       const sending = pending
       const contexts = { ...known }
+      // Our slot as read back: what it holds is carried verbatim, keys this version does not know included (§11.1).
+      const slot = ownCopy?.contexts
       pending = {}
       if (published && sameContexts(published, contexts)) return attempt('unchanged')
       try {
@@ -267,6 +269,7 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
           // "duplicate" as accepted, so a larger blob published within the second (a flush on hide right after the
           // debounced one) could lose to the smaller one with nothing to say so.
           Math.max(Date.now(), (slotAt + 1) * 1000),
+          slot,
         )
         if (result.ok) {
           published = contexts

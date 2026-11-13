@@ -70,15 +70,6 @@ describe('a file’s marker in two keys (§11.1, §11.8, C45)', () => {
   const comment = (created_at: number) => ({ id: '1'.repeat(64), pubkey: 'b'.repeat(64), kind: 1111, created_at, tags: [], content: '' })
   const judge = { stream: PROJECT, me: ME, member: true }
 
-  it('keeps a file:<d> key in a blob, and carries one whose rest is not a lowercase UUID without ever judging it', () => {
-    const contexts = { [BY_ID]: 5, [`file:${ISSUE}`]: 6, 'file:x': 7, [`file:${ID.toUpperCase()}`]: 8 }
-    const blob = parseReadStateBlob(serializeReadStateBlob({ v: 1, client_id: 'c', contexts }))
-    assert.deepEqual(blob?.contexts, contexts)
-    // Only the well-formed key is the file's marker; the others are another app's, and read as nothing.
-    assert.equal(streamMarkerOf(blob!.contexts, PROJECT), 5)
-    assert.equal(streamMarkerOf(blob!.contexts, BY_ID), 5)
-  })
-
   it('reads a file’s comments by the later of its address key and its file: key', () => {
     // file:<d> at 200 is later than the address key at 100: a comment at 150 is read.
     assert.equal(isUnread(comment(150), undefined, { [PROJECT]: 100, [BY_ID]: 200 }, judge), false)
@@ -136,10 +127,7 @@ describe('slots', () => {
 })
 
 describe('the blob', () => {
-  it('parses per entry, carrying a key it does not know, dropping a bad timestamp or an over-long key, and refuses a non-v1 blob', () => {
-    const long = 'x'.repeat(257)
-    const blob = parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'x', contexts: { [FOLDER]: 5, bad: 6, [ISSUE]: -1, [long]: 7, '': 8 } }))
-    assert.deepEqual(blob, { v: 1, client_id: 'x', contexts: { [FOLDER]: 5, bad: 6 } })
+  it('refuses a non-v1 blob (entries: readStateCarry.test.ts)', () => {
     assert.equal(parseReadStateBlob(JSON.stringify({ v: 2, contexts: {} })), undefined)
   })
 
@@ -474,52 +462,26 @@ describe('fetch and publish, injected', () => {
   })
 })
 
-describe('a key this code does not know is carried, never judged (§11.1, ACT-7)', () => {
-  const identity = { slotId: '0'.repeat(32), clientId: 'peek-00000000' }
-  const nip44 = { encrypt: async (p: string) => `enc:${p}`, decrypt: async (c: string) => (c.startsWith('enc:') ? c.slice(4) : undefined) }
-  const LATER = `someday:${FOLDER}`
-
-  it('survives parse, merge, advance and the published slot verbatim, and reads nothing as read', async () => {
-    const parsed = parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'old', contexts: { [LATER]: 9, [FOLDER]: 5 } }))!
-    const merged = mergeSlots([{ blob: parsed, createdAt: 100 }, { blob: { v: 1, client_id: 'b', contexts: { [ISSUE]: 7 } }, createdAt: 100 }])
-    assert.deepEqual(merged, { [LATER]: 9, [FOLDER]: 5, [ISSUE]: 7 })
-    const advanced = advanceContexts(parsed.contexts, { [FOLDER]: 12 }).contexts
-    assert.deepEqual(advanced, { [LATER]: 9, [FOLDER]: 12 })
-    let published: SignedEvent | undefined
-    await publishReadState(
-      { nip44, sign: async (u) => ({ ...u, id: '0'.repeat(64), sig: '' }), publish: async (e) => ((published = e), { ok: true }) },
-      ME,
-      identity,
-      advanced,
-      5000,
-    )
-    assert.deepEqual(JSON.parse(published!.content.slice(4)).contexts, { [FOLDER]: 12, [LATER]: 9 })
-    // Never judged: it is not the folder's marker, and this code never writes one itself.
-    assert.equal(streamMarkerOf(merged, FOLDER), 5)
-    assert.deepEqual(advanceContexts({}, { [LATER]: 9 }).contexts, {})
-  })
-})
-
 describe('the reactions to P are seen per conversation (§11.1, §11.3, §11.6, ACT-7)', () => {
   const ID = '15e9b50a-825a-4537-8b4a-df46efb9c7e4'
   const PROJECT = `30850:${'a'.repeat(64)}:${ID}`
   const BY_ID = `file:${ID}`
   const R = (context: string) => reactionsContext(context)
 
-  const publishable: [string, boolean][] = [
-    [R(FOLDER), true],
-    [R(ISSUE), true],
-    [R(BY_ID), true],
-    [R(threadContext(ROOT)!), true],
-    [R(REPLY_FLOOR_CONTEXT), false],
-    [R(REACTIONS_FLOOR_CONTEXT), false],
-    [R(R(FOLDER)), false],
-    [R(`folder:${ISSUE}`), false],
-    [R('file:x'), false],
-    [R(''), false],
+  const publishable: [string, string, boolean][] = [
+    ['a chat’s reactions, by its channel uuid', R(FOLDER), true],
+    ['a file’s reactions, by its address', R(ISSUE), true],
+    ['a file’s reactions, by its id', R(BY_ID), true],
+    ['a thread’s reactions', R(threadContext(ROOT)!), true],
+    ['floor: reactions of the reply floor', R(REPLY_FLOOR_CONTEXT), false],
+    ['floor: reactions of the reactions floor', R(REACTIONS_FLOOR_CONTEXT), false],
+    ['nested: reactions of a reactions key', R(R(FOLDER)), false],
+    ['reserved: reactions of the folder grain (§11.5)', R(`folder:${ISSUE}`), false],
+    ['malformed: reactions of a file id that is not a uuid', R('file:x'), false],
+    ['malformed: reactions of nothing', R(''), false],
   ]
-  for (const [key, ok] of publishable) {
-    it(`${ok ? 'writes' : 'never writes'} ${key.slice(0, 40)}`, () => {
+  for (const [name, key, ok] of publishable) {
+    it(`${ok ? 'writes' : 'never writes'} ${name}`, () => {
       assert.deepEqual(advanceContexts({}, { [key]: 5 }).contexts, ok ? { [key]: 5 } : {})
     })
   }
@@ -529,6 +491,12 @@ describe('the reactions to P are seen per conversation (§11.1, §11.3, §11.6, 
     assert.equal(reactionsSeenOf(merged, [ISSUE]), 100)
     assert.equal(effectiveReadAt(merged, R(ISSUE), ISSUE), 100)
     assert.equal(reactionsSeenOf({ [ISSUE]: 900 }, [ISSUE]), 0)
+  })
+
+  it('the effective marker of a reactions: key is the later of the key and the reactions floor, as reactionsSeenOf reads it', () => {
+    assert.equal(effectiveReadAt({ [R(ISSUE)]: 100, [REACTIONS_FLOOR_CONTEXT]: 300 }, R(ISSUE), ISSUE), 300)
+    assert.equal(effectiveReadAt({ [REACTIONS_FLOOR_CONTEXT]: 300 }, R(ISSUE)), 300)
+    assert.equal(effectiveReadAt({ [R(ISSUE)]: 400, [REACTIONS_FLOOR_CONTEXT]: 300 }, R(ISSUE)), 400)
   })
 
   it('a reactions: key reads no message as read', () => {

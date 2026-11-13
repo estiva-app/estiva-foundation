@@ -15,29 +15,38 @@ a-reaction-is-seen-once-in-its-conversation; keys decided by Miky 13 Nov as
 (`effectiveAuthor`).
 
 - **Read state carries a key it does not know** (§11.1). `parseReadStateBlob`,
-  `mergeSlots`, `advanceContexts` (its `current`) and `publishReadState` keep
-  every key of at most 256 bytes with a valid timestamp verbatim
-  (`isCarriedContextId`), and never judge it. Until now they dropped it, so an
-  app on an older version erased a newer app's keys each time it republished
-  its slot. Only an update must still be `isPublishableContextId`. A malformed
-  `file:`, `thread:` or `msg:` key is now carried too, and is still no marker.
+  `mergeSlots` and `advanceContexts` (its `current`) keep every key of at most
+  256 bytes with a valid timestamp verbatim (`isCarriedContextId`), a key named
+  like an `Object.prototype` member included, and never judge it. Until now
+  they dropped it, so an app on an older version erased a newer app's keys each
+  time it republished its slot. `publishReadState(…, nowMs, slot?)` carries
+  what `slot` (this slot as read back) holds; the app's own map still goes
+  through `isPublishableContextId`, so a reserved or unknown key is written
+  only when the slot already held it. `createReadStateQueue` passes its slot.
+  A malformed `file:`, `thread:` or `msg:` key is now carried too, and is
+  still no marker.
 - `reactionsContext(context)` → `reactions:<context>` (a channel uuid, a file
   address, `file:<d>`, `thread:`/`msg:`), publishable; and
   `REACTIONS_FLOOR_CONTEXT` (`reactions-floor`), kept as `reply-floor` is:
   refused among updates, raised by the byte cap and the merged count cap when
   they drop a `reactions:` key, and taken as at most its slot's `created_at`.
-  A `reactions:` key has no parent (§11.3): no stream, thread or floor marker
-  reaches it, it reaches none of them, and nothing drops it as dominated.
+  A `reactions:` key has no parent (§11.3): no stream, thread or reply-floor
+  marker reaches it, it reaches none of them, and nothing drops it as
+  dominated; `effectiveReadAt` reads it with the reactions floor.
 - `reactionsSeenOf(merged, contexts)`: the later of `reactions:<ctx>` over a
   stream's contexts (an address also reads `reactions:file:<d>`) and the floor.
 - `REACTIONS_TO_ME_FROM` (2026-11-13T17:00Z), `reactionsToMeFilter(me, since?)`,
-  `reactionTakeBackFilter(ids, since?)`, `keepReactionToMe(reaction, target, me,
-  relayKey?)` (§6.6's four conditions) and `reactionsToMe(reactions,
-  targetsById, me, { relayKey?, gone? })` → `ReactionToMe[]`, newest first, one
-  per person, message and emoji.
+  `reactionTakeBackFilter(ids, since?)` (`null` for no ids),
+  `keepReactionToMe(reaction, target, me, relayKey?, nowMs?)` (§6.6's four
+  conditions, and not more than 60 s ahead of the clock) and
+  `reactionsToMe(reactions, targetsById, me, { relayKey?, deletions?, nowMs? })`
+  → `ReactionToMe[]`, newest first, one per person, message and emoji. A
+  `kind:5` removes a reaction only when its author signed it, and a message
+  only when its effective author did.
 - `reactionStreamOf(target)`, `newReactionsIn(reactions, merged, judge)` and
-  `reactionsSeenWrites(lines)` (newest shown reaction per conversation, under
-  `file:<d>` for a file, never the clock). `whatLitPlace`, `whatLitListedFile`
+  `reactionsSeenWrites(lines, nowMs?)` → `{ context, atMs }[]` for
+  `markRead([context], atMs)` (newest shown reaction per conversation, under
+  `file:<d>` for a file, never the clock and never past it). `whatLitPlace`, `whatLitListedFile`
   and `whatLitStream` take `{ reactions }` and list each as a `reaction` line,
   new or seen; `LitLine`'s reaction line now carries a `ReactionToMe`.
 

@@ -269,10 +269,23 @@ export function isCarriedContextId(id: string): boolean {
 
 /** A blob's carried entries: every {@link isCarriedContextId} key with a valid timestamp. */
 function carried(contexts: Readonly<Record<string, unknown>>): Record<string, number> {
-  const out: Record<string, number> = {}
+  const out = contextMap()
   for (const [key, value] of Object.entries(contexts)) if (isCarriedContextId(key) && isTimestamp(value)) out[key] = value
   return out
 }
+
+/**
+ * An empty context map. A carried key may be named like a member of `Object.prototype` (`constructor`, `toString`,
+ * `valueOf`): it is an own property here, so every lookup of a key read from a blob checks {@link has}, never
+ * `map[key] === undefined`. A non-enumerable `Symbol.toPrimitive` keeps the map printable (`String(map)`) when an own
+ * `toString` or `valueOf` key shadows the prototype's; it is not a key, so nothing serialises or compares it.
+ */
+function contextMap(): Record<string, number> {
+  return Object.defineProperty({}, Symbol.toPrimitive, { value: () => '[object Object]', enumerable: false })
+}
+
+/** Whether the map holds `key` itself, not by its prototype. */
+const has = (map: Readonly<Record<string, number>>, key: string): boolean => Object.prototype.hasOwnProperty.call(map, key)
 
 const isTimestamp = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_TIMESTAMP
@@ -404,7 +417,7 @@ export function parseReadStateBlob(plaintext: string | undefined): ReadStateBlob
 
 /** Serialize for encryption, keys sorted, so an unchanged set is an unchanged string. */
 export function serializeReadStateBlob(blob: ReadStateBlob): string {
-  const contexts: Record<string, number> = {}
+  const contexts = contextMap()
   for (const key of Object.keys(blob.contexts).sort()) contexts[key] = blob.contexts[key]
   return JSON.stringify({ v: blob.v, client_id: blob.client_id, contexts })
 }
@@ -430,7 +443,7 @@ const byNewestThenKey = (contexts: Readonly<Record<string, number>>) => (a: stri
 export function capContextsToBytes(contexts: Readonly<Record<string, number>>, budget: number = MAX_CONTEXTS_BYTES): CappedContexts {
   const cost = (key: string, value: number) => utf8(JSON.stringify(key)) + 1 + String(value).length
   const keys = Object.keys(contexts).sort(byNewestThenKey(contexts))
-  const kept: Record<string, number> = {}
+  const kept = contextMap()
   let bytes = 2
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i]
@@ -459,8 +472,8 @@ const isFloor = (key: string) => key === REPLY_FLOOR_CONTEXT || key === REACTION
 
 /** A context map split into its floors and everything else. */
 export function splitFloors(contexts: Readonly<Record<string, number>>): { floors: Record<string, number>; markers: Record<string, number> } {
-  const floors: Record<string, number> = {}
-  const markers: Record<string, number> = {}
+  const floors = contextMap()
+  const markers = contextMap()
   for (const [key, value] of Object.entries(contexts)) (isFloor(key) ? floors : markers)[key] = value
   return { floors, markers }
 }
@@ -488,7 +501,7 @@ export function capReadStateContexts(contexts: Readonly<Record<string, number>>,
       continue
     }
     if (needed.size === 0) return capped
-    const kept: Record<string, number> = { ...capped.contexts }
+    const kept = Object.assign(contextMap(), capped.contexts)
     for (const f of FLOORS) {
       if (!needed.has(f.context)) continue
       kept[f.context] = capped.evicted.reduce((max, key) => (f.pays(key) && rest[key] > max ? rest[key] : max), held[f.context] ?? 0)
@@ -508,7 +521,7 @@ export function advanceContexts(current: Readonly<Record<string, number>>, updat
   const next: Record<string, number> = carried(current)
   for (const [id, seconds] of Object.entries(updates)) {
     if (isFloor(id) || !isPublishableContextId(id) || !isTimestamp(seconds)) continue
-    if (next[id] === undefined || seconds > next[id]) next[id] = seconds
+    if (!has(next, id) || seconds > next[id]) next[id] = seconds
   }
   return capReadStateContexts(next)
 }
@@ -554,13 +567,13 @@ export interface SlotBlob {
 
 /** Every slot merged by the max rule, capped at {@link MAX_CONTEXTS} newest first, ties by key. */
 export function mergeSlots(slots: readonly (Pick<SlotBlob, 'blob'> & { createdAt?: number })[]): Record<string, number> {
-  const merged: Record<string, number> = {}
+  const merged = contextMap()
   for (const { blob, createdAt } of slots) {
     // Every well-formed key, known or not, is carried (§11.1); only the known ones are ever judged.
     for (const [id, value] of Object.entries(carried(blob.contexts))) {
       // A floor is the value of a marker the cap dropped, so never later than the blob that holds it (§11.6).
       const seconds = isFloor(id) && createdAt !== undefined ? Math.min(value, createdAt) : value
-      if (merged[id] === undefined || seconds > merged[id]) merged[id] = seconds
+      if (!has(merged, id) || seconds > merged[id]) merged[id] = seconds
     }
   }
   const { floors, markers: rest } = splitFloors(merged)
@@ -576,7 +589,7 @@ export function mergeSlots(slots: readonly (Pick<SlotBlob, 'blob'> & { createdAt
     needed.add(f.context)
     room -= 1
   }
-  const kept: Record<string, number> = {}
+  const kept = contextMap()
   for (const id of sorted.slice(0, room)) kept[id] = rest[id]
   const dropped = sorted.slice(room)
   for (const f of FLOORS) {
@@ -626,8 +639,8 @@ export function effectiveReadAt(
   from: number = THREAD_RULE_FROM,
 ): number | undefined {
   const own = merged[context]
-  // A `reactions:` key has no parent (§11.3): no stream's marker reaches it.
-  if (isReactionsKey(context)) return own
+  // A `reactions:` key has no parent (§11.3): no stream's marker reaches it, only the reactions floor.
+  if (isReactionsKey(context)) return later(own, merged[REACTIONS_FLOOR_CONTEXT])
   const parent = stream === undefined ? undefined : streamMarkerOf(merged, stream)
   if (isThreadKey(context)) return threadReadAt({ thread: own, stream: parent, floor: merged[REPLY_FLOOR_CONTEXT] }, from)
   return later(own, parent)
@@ -858,11 +871,17 @@ export async function publishReadState(
   identity: SlotIdentity,
   contexts: Readonly<Record<string, number>>,
   nowMs: number,
+  slot?: Readonly<Record<string, number>>,
 ): Promise<{ ok: boolean; reason?: string }> {
-  // Filtered here as well: the blob is grow-only, so only well-formed keys and timestamps go in. The whole map goes in
-  // as `current`, carried: the floors (which `advanceContexts` refuses among the updates) and every key another app
-  // or a later version wrote, which this one must not erase by republishing its slot (§11.1).
-  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts(contexts, {}).contexts })
+  // Filtered here as well: the blob is grow-only, and a map built outside `advanceContexts` must not put an id into
+  // it, so the caller's markers go in as updates, through the gate. The floors go in as `current`, since
+  // `advanceContexts` refuses one among the updates. What `slot` — this slot as read back — already holds is carried
+  // verbatim, a key this code does not know included: another app or a later version wrote it, and republishing the
+  // slot must not erase it (§11.1). A key that is in neither is never written.
+  const { floors, markers } = splitFloors(contexts)
+  const held = carried(slot ?? {})
+  for (const [floor, at] of Object.entries(carried(floors))) held[floor] = has(held, floor) ? Math.max(at, held[floor]) : at
+  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts(held, markers).contexts })
   if (utf8(plaintext) > MAX_BLOB_BYTES) return { ok: false, reason: `read state is ${utf8(plaintext)} bytes, over ${MAX_BLOB_BYTES}` }
   const ciphertext = await deps.nip44.encrypt(plaintext)
   const signed = await deps.sign(buildReadStateEvent(pubkey, nowMs, identity.slotId, ciphertext))

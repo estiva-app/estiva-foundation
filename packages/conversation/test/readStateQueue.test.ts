@@ -10,6 +10,7 @@ import {
   MAX_CONTEXTS_BYTES,
   REPLY_FLOOR_CONTEXT,
   createReadStateQueue,
+  reactionsSeenWrites,
   readStateDTag,
   watchDwell,
   type ReadStateQueueOptions,
@@ -87,6 +88,20 @@ describe('createReadStateQueue', () => {
     assert.deepEqual(blob.contexts, { [T1]: AT / 1000, [T2]: AT / 1000 })
     assert.equal(blob.client_id, queue.identity().clientId)
     assert.match(blob.client_id, /^test-/)
+  })
+
+  it('seeing a reaction publishes reactions:<file:d> at the reaction’s own second, not the clock (ACT-7)', async () => {
+    const { queue, relay } = setup()
+    const D = '15e9b50a-825a-4537-8b4a-df46efb9c7e4'
+    const at = AT / 1000 - 600
+    const reaction = { id: '7'.repeat(64), by: BOB, at, emoji: '👍', target: '9'.repeat(64) }
+    for (const { context, atMs } of reactionsSeenWrites([{ reaction, contexts: [`30851:${ALICE}:${D}`, `file:${D}`] }], AT)) queue.markRead([context], atMs)
+    mock.timers.tick(3000)
+    await queue.flush()
+    const event = [...relay.events.values()][0]
+    assert.equal(event.kind, 30078)
+    assert.equal(event.pubkey, ALICE)
+    assert.deepEqual(relay.blob(ALICE, queue.identity().slotId).contexts, { [`reactions:file:${D}`]: at })
   })
 
   it('reads the slot back before every write, so a second tab never drops what the first one published', async () => {

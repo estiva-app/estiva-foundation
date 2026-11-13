@@ -12,6 +12,8 @@ const KATERINA = 'b'.repeat(64)
 const CAROL = 'c'.repeat(64)
 const RELAY = 'f'.repeat(64)
 const FROM = REACTIONS_TO_ME_FROM
+/** The reader's clock: an hour after orange starts, past every fixture's `created_at`. */
+const NOW_MS = (FROM + 3600) * 1000
 
 let seq = 0
 const event = (partial: Partial<SignedEvent> & { kind: number }): SignedEvent => ({
@@ -37,6 +39,10 @@ describe('§6.6 the read for the reactions to P', () => {
   it('watches deletions of the reactions drawn and of the messages they react to', () => {
     assert.deepEqual(reactionTakeBackFilter(['1'.repeat(64), '2'.repeat(64), '1'.repeat(64)]), { kinds: [5], '#e': ['1'.repeat(64), '2'.repeat(64)] })
   })
+
+  it('asks nothing when there is nothing to watch, rather than an empty #e', () => {
+    assert.equal(reactionTakeBackFilter([]), null)
+  })
 })
 
 describe('§6.6 a reader keeps a reaction only when it is to P’s message', () => {
@@ -59,9 +65,11 @@ describe('§6.6 a reader keeps a reaction only when it is to P’s message', () 
     ['a target that is not a message or a comment', react(myIssue), myIssue, undefined, false],
     ['a target that is deleted or unreadable', react(mine), undefined, undefined, false],
     ['a target that is not the reaction’s last e', react(mine, { tags: [['e', mine.id], ['e', theirs.id], ['p', ME]] }), mine, undefined, false],
+    ['a reaction dated a minute ahead of the clock', react(mine, { created_at: NOW_MS / 1000 + 60 }), mine, undefined, true],
+    ['a reaction dated more than a minute ahead of the clock', react(mine, { created_at: NOW_MS / 1000 + 61 }), mine, undefined, false],
   ]
   for (const [name, reaction, target, relayKey, kept] of cases) {
-    it(`${kept ? 'keeps' : 'drops'} ${name}`, () => assert.equal(keepReactionToMe(reaction, target, ME, relayKey), kept))
+    it(`${kept ? 'keeps' : 'drops'} ${name}`, () => assert.equal(keepReactionToMe(reaction, target, ME, relayKey, NOW_MS), kept))
   }
 })
 
@@ -70,21 +78,37 @@ describe('reactionsToMe: the reactions kept, newest first', () => {
   const other = message()
   const targets = new Map([mine, other].map((m) => [m.id, m]))
 
-  it('drops a reaction taken back and one on a message deleted later, and counts one per person, message and emoji', () => {
+  const deletion = (by: string, ...ids: string[]) => event({ kind: 5, pubkey: by, tags: ids.map((id) => ['e', id]) })
+
+  it('drops a reaction its author took back and one on a message its author deleted, and counts one per person, message and emoji', () => {
     const first = react(mine)
     const again = react(mine)
     const takenBack = react(other, { pubkey: CAROL })
     const onDeleted = react(other, { content: '🎉' })
     const fresh = react(mine, { pubkey: CAROL, content: '🚀' })
-    const got = reactionsToMe([first, again, takenBack, onDeleted, fresh], targets, ME, { gone: new Set([takenBack.id]) })
+    const got = reactionsToMe([first, again, takenBack, onDeleted, fresh], targets, ME, { deletions: [deletion(CAROL, takenBack.id)], nowMs: NOW_MS })
     assert.deepEqual(got.map((r) => r.id), [fresh.id, onDeleted.id, first.id])
     assert.deepEqual(got[0], { id: fresh.id, by: CAROL, at: fresh.created_at, emoji: '🚀', target: mine.id })
-    const deleted = reactionsToMe([first, onDeleted], targets, ME, { gone: new Set([other.id]) })
+    const deleted = reactionsToMe([first, onDeleted], targets, ME, { deletions: [deletion(ME, other.id)], nowMs: NOW_MS })
     assert.deepEqual(deleted.map((r) => r.id), [first.id])
+  })
+
+  it('a deletion signed by anybody else removes neither the reaction nor the message', () => {
+    const r = react(mine)
+    const forged = [deletion(CAROL, r.id), deletion(KATERINA, mine.id), deletion(CAROL, mine.id)]
+    assert.deepEqual(reactionsToMe([r], targets, ME, { deletions: forged, nowMs: NOW_MS }).map((x) => x.id), [r.id])
+  })
+
+  it('a message the relay signed for me is deleted by my own kind:5, read with the relay key', () => {
+    const forMe = message({ pubkey: RELAY, tags: [['h', '85db5b59-9e49-4ea1-8e93-3d2a2d78c048'], ['actor', ME]] })
+    const r = react(forMe)
+    const held = new Map([[forMe.id, forMe]])
+    assert.deepEqual(reactionsToMe([r], held, ME, { relayKey: RELAY, nowMs: NOW_MS }).map((x) => x.id), [r.id])
+    assert.deepEqual(reactionsToMe([r], held, ME, { relayKey: RELAY, deletions: [deletion(ME, forMe.id)], nowMs: NOW_MS }), [])
   })
 
   it('names the person who reacted, not the relay that signed for them', () => {
     const forKaterina = react(mine, { pubkey: RELAY, tags: [['e', mine.id], ['actor', KATERINA], ['p', ME]] })
-    assert.deepEqual(reactionsToMe([forKaterina], targets, ME, { relayKey: RELAY }).map((r) => r.by), [KATERINA])
+    assert.deepEqual(reactionsToMe([forKaterina], targets, ME, { relayKey: RELAY, nowMs: NOW_MS }).map((r) => r.by), [KATERINA])
   })
 })

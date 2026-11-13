@@ -737,11 +737,16 @@ describe('§11.8 a reaction to your message turns the place orange (ACT-7)', () 
       { reaction: reaction(2, R0 + 300), contexts: [TOPIC] },
       { reaction: reaction(3, R0 + 200), contexts: [TEAM] },
       { reaction: reaction(4, R0 + 50), contexts: [`30851:${CAROL}:not-an-id`] },
-    ])
+    ], (R0 + 1000) * 1000)
     assert.deepEqual(writes, [
-      { context: `reactions:${BY_ID}`, at: R0 + 300 },
-      { context: `reactions:${TEAM}`, at: R0 + 200 },
-      { context: `reactions:30851:${CAROL}:not-an-id`, at: R0 + 50 },
+      { context: `reactions:${BY_ID}`, atMs: (R0 + 300) * 1000 },
+      { context: `reactions:${TEAM}`, atMs: (R0 + 200) * 1000 },
+      { context: `reactions:30851:${CAROL}:not-an-id`, atMs: (R0 + 50) * 1000 },
     ])
+  })
+
+  it('a reaction dated ahead of the clock is written as seen only up to now, so a later one still turns the place orange', () => {
+    const nowMs = (R0 + 100) * 1000
+    assert.deepEqual(reactionsSeenWrites([{ reaction: reaction(1, R0 + 5000), contexts: [TEAM] }], nowMs), [{ context: `reactions:${TEAM}`, atMs: nowMs }])
   })
 })

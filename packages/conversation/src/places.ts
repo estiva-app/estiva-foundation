@@ -902,21 +902,26 @@ export function newReactionsIn(reactions: readonly ReactionToMe[], merged: Reado
 
 /**
  * What showing reactions to `P` writes (ACT-7): for each conversation, the `reactions:` key at the newest reaction
- * shown — its `created_at`, never the clock, so a reaction that arrives meanwhile stays new. Written under the
- * stream's write context: `file:<d>` for a file named by its id, else its address; the bare uuid for a chat. `contexts`
- * is the reaction's stream ({@link reactionStreamOf}). Feed each to the read-state queue as a marker.
+ * shown — its `created_at`, never the clock, so a reaction that arrives meanwhile stays new — and never later than
+ * `nowMs`, so a reaction dated ahead of the clock cannot mark later ones seen. Written under the stream's write
+ * context: `file:<d>` for a file named by its id, else its address; the bare uuid for a chat. `contexts` is the
+ * reaction's stream ({@link reactionStreamOf}). Each is ready for the read-state queue: `markRead([context], atMs)`.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
  */
-export function reactionsSeenWrites(lines: readonly { reaction: ReactionToMe; contexts: readonly string[] }[]): { context: string; at: number }[] {
+export function reactionsSeenWrites(
+  lines: readonly { reaction: ReactionToMe; contexts: readonly string[] }[],
+  nowMs: number = Date.now(),
+): { context: string; atMs: number }[] {
   const newest = new Map<string, number>()
   for (const { reaction, contexts } of lines) {
     const write = writeContextOf(contexts)
     if (write === undefined) continue
     const key = reactionsContext(write)
-    if ((newest.get(key) ?? -1) < reaction.at) newest.set(key, reaction.at)
+    const atMs = Math.min(reaction.at * 1000, nowMs)
+    if ((newest.get(key) ?? -1) < atMs) newest.set(key, atMs)
   }
-  return [...newest].map(([context, at]) => ({ context, at }))
+  return [...newest].map(([context, atMs]) => ({ context, atMs }))
 }
 
 /** Where a stream's reactions are written: its `file:<d>` (named, or from an address whose `d` is an id), else its address or channel. */

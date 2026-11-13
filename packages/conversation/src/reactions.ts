@@ -176,11 +176,16 @@ export function reactionsToMeFilter(me: string, since?: number): { kinds: number
  * The deletions that take a reaction to `me` back, or delete the message it
  * reacted to later: `{kinds:[5], "#e":[…]}` over the reactions drawn **and**
  * their targets, kept open. What it returns goes in {@link reactionsToMe}'s
- * `gone`.
+ * `deletions`. `null` when there is nothing to watch: skip the request, since
+ * an empty `#e` asks a relay for nothing or for everything.
  */
-export function reactionTakeBackFilter(ids: readonly string[], since?: number): { kinds: number[]; '#e': string[]; since?: number } {
+export function reactionTakeBackFilter(ids: readonly string[], since?: number): { kinds: number[]; '#e': string[]; since?: number } | null {
+  if (ids.length === 0) return null
   return { kinds: [KIND_DELETION], '#e': [...new Set(ids)], ...(since !== undefined ? { since } : {}) }
 }
+
+/** How far ahead of the reader's clock a reaction may be dated and still count, in seconds. */
+const CLOCK_SKEW_S = 60
 
 /** One reaction to `me`'s message, kept by §6.6. */
 export interface ReactionToMe {
@@ -213,13 +218,22 @@ const lastP = (event: Pick<SignedEvent, 'tags'>): string | undefined => {
  *   else, keeps nothing, and without the key a message the relay signed on
  *   `me`'s behalf is the relay's;
  * - `me` is not the reaction's effective author;
- * - it is from {@link REACTIONS_TO_ME_FROM} on.
+ * - it is from {@link REACTIONS_TO_ME_FROM} on, and not more than 60 s ahead of
+ *   `nowMs`: one dated in the future would stay orange past every "seen"
+ *   written at the time it was shown.
  *
  * `target` is the event the reader fetched by id; undefined when it is deleted
  * or unreadable, which keeps nothing.
  */
-export function keepReactionToMe(reaction: Tagged & Pick<SignedEvent, 'id'>, target: (Tagged & Pick<SignedEvent, 'id'>) | undefined, me: string, relayKey?: string | null): boolean {
+export function keepReactionToMe(
+  reaction: Tagged & Pick<SignedEvent, 'id'>,
+  target: (Tagged & Pick<SignedEvent, 'id'>) | undefined,
+  me: string,
+  relayKey?: string | null,
+  nowMs: number = Date.now(),
+): boolean {
   if (reaction.kind !== KIND_REACTION || reaction.created_at < REACTIONS_TO_ME_FROM) return false
+  if (reaction.created_at > Math.floor(nowMs / 1000) + CLOCK_SKEW_S) return false
   if (lastP(reaction) !== me) return false
   if (!target || reactionTargetOf(reaction) !== target.id.toLowerCase()) return false
   if (!isConversationKind(target.kind)) return false
@@ -229,28 +243,45 @@ export function keepReactionToMe(reaction: Tagged & Pick<SignedEvent, 'id'>, tar
 
 /**
  * The reactions to `me`'s messages, kept by {@link keepReactionToMe}, newest
- * first, one per `(by, target, emoji)` (the earliest, as §6.6 counts). A
- * reaction or a target whose id is in `gone` — a `kind:5` seen for it — is
- * dropped: a reaction taken back, or a message deleted after it was reacted to,
- * lights nothing. `targetsById` holds the targets the reader has, by lowercase
- * id.
+ * first, one per `(by, target, emoji)` (the earliest, as §6.6 counts).
+ * `deletions` are the `kind:5` events read with {@link reactionTakeBackFilter}:
+ * one signed by a reaction's author takes that reaction back, and one signed by
+ * a target's effective author deletes that message, so none of its reactions
+ * lights. A `kind:5` by anybody else removes nothing. `targetsById` holds the
+ * targets the reader has, by lowercase id.
  */
 export function reactionsToMe(
   reactions: readonly SignedEvent[],
   targetsById: ReadonlyMap<string, Tagged & Pick<SignedEvent, 'id'>>,
   me: string,
-  opts: { relayKey?: string | null; gone?: ReadonlySet<string> } = {},
+  opts: { relayKey?: string | null; deletions?: readonly SignedEvent[]; nowMs?: number } = {},
 ): ReactionToMe[] {
-  const { relayKey, gone } = opts
+  const { relayKey, nowMs = Date.now() } = opts
+  // Event id → who deleted it, by effective author, so each removal is checked against the author of what it names.
+  const deletedBy = new Map<string, Set<string>>()
+  for (const deletion of opts.deletions ?? []) {
+    if (deletion.kind !== KIND_DELETION) continue
+    const signer = effectiveAuthor(deletion, relayKey)
+    for (const t of deletion.tags) {
+      if (t[0] !== 'e' || !isEventId(t[1])) continue
+      const id = t[1].toLowerCase()
+      const by = deletedBy.get(id) ?? new Set<string>()
+      by.add(signer)
+      deletedBy.set(id, by)
+    }
+  }
+  const deleted = (event: Tagged & Pick<SignedEvent, 'id'>) => deletedBy.get(event.id.toLowerCase())?.has(effectiveAuthor(event, relayKey)) ?? false
   const out: ReactionToMe[] = []
   const counted = new Set<string>()
   const seen = new Set<string>()
   for (const reaction of [...reactions].sort(byOrder)) {
-    if (seen.has(reaction.id) || gone?.has(reaction.id)) continue
+    if (seen.has(reaction.id)) continue
     seen.add(reaction.id)
+    if (deleted(reaction)) continue
     const target = reactionTargetOf(reaction)
-    if (target === undefined || gone?.has(target)) continue
-    if (!keepReactionToMe(reaction, targetsById.get(target), me, relayKey)) continue
+    const held = target === undefined ? undefined : targetsById.get(target)
+    if (target === undefined || (held !== undefined && deleted(held))) continue
+    if (!keepReactionToMe(reaction, held, me, relayKey, nowMs)) continue
     const by = effectiveAuthor(reaction, relayKey)
     const emoji = reactionEmojiOf(reaction)
     const key = JSON.stringify([by, target, emoji])
