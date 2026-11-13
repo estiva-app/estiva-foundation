@@ -86,6 +86,7 @@ export const REPLY_FLOOR_CONTEXT = 'reply-floor'
  * saw never turns a place orange again.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/reactions-seen-is-kept-under-reactions-and-opening-it-sees-it.md
  */
 export const REACTIONS_FLOOR_CONTEXT = 'reactions-floor'
 
@@ -100,6 +101,7 @@ const REACTIONS_PREFIX = 'reactions:'
  * clears none of its reactions and seeing them reads none of its messages.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/reactions-seen-is-kept-under-reactions-and-opening-it-sees-it.md
  */
 export function reactionsContext(context: string): string {
   return `${REACTIONS_PREFIX}${context}`

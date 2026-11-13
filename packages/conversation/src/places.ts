@@ -906,8 +906,10 @@ export function newReactionsIn(reactions: readonly ReactionToMe[], merged: Reado
  * `nowMs`, so a reaction dated ahead of the clock cannot mark later ones seen. Written under the stream's write
  * context: `file:<d>` for a file named by its id, else its address; the bare uuid for a chat. `contexts` is the
  * reaction's stream ({@link reactionStreamOf}). Each is ready for the read-state queue: `markRead([context], atMs)`.
+ * Resting on a row whose card listed them, and opening a conversation that draws them, both write it.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/reactions-seen-is-kept-under-reactions-and-opening-it-sees-it.md
  */
 export function reactionsSeenWrites(
   lines: readonly { reaction: ReactionToMe; contexts: readonly string[] }[],
