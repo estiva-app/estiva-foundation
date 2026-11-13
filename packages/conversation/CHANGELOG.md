@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.42.0 — 2026-11-13
+
+- **SPEC §11.1, §11.2:** a `reactions:` key never names a thread or a message
+  (a reaction counts in its root's stream): an app cannot write
+  `reactions:thread:…` or `reactions:msg:…`, and dropping one a blob carries
+  raises no `reactions-floor`.
+- **SPEC §11.1:** seeing a reaction to a comment on two files writes both
+  files' `reactions:` keys, since the comment is in both streams;
+  `reactionsSeenWrites` used to write only the first.
+
 ## 0.41.0 — 2026-11-13
 
 **SPEC §6.6, §11.1, §11.3, §11.6, §11.8: a reaction to your message, seen once

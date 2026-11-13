@@ -472,7 +472,7 @@ describe('the reactions to P are seen per conversation (§11.1, §11.3, §11.6, 
     ['a chat’s reactions, by its channel uuid', R(FOLDER), true],
     ['a file’s reactions, by its address', R(ISSUE), true],
     ['a file’s reactions, by its id', R(BY_ID), true],
-    ['a thread’s reactions', R(threadContext(ROOT)!), true],
+    ['no stream: reactions of a thread (they count in its root’s stream)', R(threadContext(ROOT)!), false],
     ['floor: reactions of the reply floor', R(REPLY_FLOOR_CONTEXT), false],
     ['floor: reactions of the reactions floor', R(REACTIONS_FLOOR_CONTEXT), false],
     ['nested: reactions of a reactions key', R(R(FOLDER)), false],
@@ -520,6 +520,17 @@ describe('the reactions to P are seen per conversation (§11.1, §11.3, §11.6, 
   for (const [name, merged, contexts, want] of bothWays) {
     it(`a file named both ways is seen to the later key: ${name}`, () => assert.equal(reactionsSeenOf(merged, contexts), want))
   }
+
+  it('a reactions: key on a thread or a message is no stream: an app cannot write one, and dropping one carried raises no floor', () => {
+    const hex = 'b'.repeat(64)
+    const odd = { [R(`thread:${hex}`)]: 1_600_000_000, [R(`msg:${hex}`)]: 1_600_000_000 }
+    assert.deepEqual(advanceContexts({}, odd).contexts, {})
+    const contexts: Record<string, number> = { ...odd }
+    for (let i = 0; i < 1200; i++) contexts[`30851:${'a'.repeat(64)}:${i}`] = 1_700_000_000 + i
+    const capped = capReadStateContexts(contexts)
+    assert.ok(capped.evicted.includes(R(`thread:${hex}`)) || capped.evicted.includes(R(`msg:${hex}`)))
+    assert.equal(capped.contexts[REACTIONS_FLOOR_CONTEXT], undefined)
+  })
 
   it('the reactions floor is raised to the newest reactions: key the byte cap drops, and not by an update', () => {
     const contexts: Record<string, number> = {}
