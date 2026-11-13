@@ -29,6 +29,11 @@ import {
   whatLitListedFile,
   whatLitStream,
   mergeLitLines,
+  newReactionsIn,
+  reactionStreamOf,
+  reactionsSeenWrites,
+  REACTIONS_TO_ME_FROM,
+  type ReactionToMe,
   unreadIn,
   type LitLine,
   threadContext,
@@ -671,6 +676,72 @@ describe('§11.8 what lit a stream, new and seen (ACT-4)', () => {
     assert.deepEqual(said(mergeLitLines([placeA, placeB], { limit: 1 })), [
       ['new on the topic', false],
       ['new on the issue', false],
+    ])
+  })
+})
+
+describe('§11.8 a reaction to your message turns the place orange (ACT-7)', () => {
+  const R0 = REACTIONS_TO_ME_FROM
+  const inAt = (since: number): Following => ({ kind: 'topic', in: true, level: 'important', since, ways: ['level'] })
+  const BY_ID = `file:${D}`
+  const reaction = (id: number, at: number): ReactionToMe => ({ id: id.toString(16).padStart(64, '0'), by: ALICE, at, emoji: '👍', target: '9'.repeat(64) })
+  const ids = (list: ReactionToMe[]) => list.map((r) => r.at - R0)
+
+  it('a reaction is in its message’s conversation: a chat message’s channel, a comment’s or a reply’s file both ways', () => {
+    const chat = event({ kind: 9, tags: [['h', TEAM]] })
+    const top = comment(BOB, T0)
+    const answer = reply(ALICE, top, T0 + 1)
+    const byIdOnly = event({ kind: 1111, tags: [['O', D], ['K', '30840'], ['h', TEAM]] })
+    assert.deepEqual(reactionStreamOf(chat), [TEAM])
+    assert.deepEqual(reactionStreamOf(top), [TOPIC, BY_ID])
+    assert.deepEqual(reactionStreamOf(answer), [TOPIC, BY_ID])
+    assert.deepEqual(reactionStreamOf(byIdOnly), [BY_ID])
+    assert.deepEqual(reactionStreamOf(event({ kind: 30840, tags: [['d', D]] })), [])
+  })
+
+  const reactions = [reaction(4, R0 + 400), reaction(3, R0 + 300), reaction(2, R0 + 200), reaction(1, R0 + 100)]
+  const judged: [string, Record<string, number>, Parameters<typeof newReactionsIn>[2], number[]][] = [
+    ['all new with no key, from P’s start', {}, { contexts: [TOPIC, BY_ID], following: inAt(R0 + 150) }, [400, 300, 200]],
+    ['new only past the key, written by id and read by address', { [`reactions:${BY_ID}`]: R0 + 300 }, { contexts: [TOPIC], following: inAt(R0) }, [400]],
+    ['new only past the reactions floor', { 'reactions-floor': R0 + 200 }, { contexts: [TOPIC, BY_ID], following: inAt(R0) }, [400, 300]],
+    ['not cleared by opening the file, its threads or the reply floor', { [BY_ID]: R0 + 999, [TOPIC]: R0 + 999, 'reply-floor': R0 + 999 }, { contexts: [TOPIC, BY_ID], following: inAt(R0) }, [400, 300, 200, 100]],
+    ['not cleared by another conversation’s key', { [`reactions:${TEAM}`]: R0 + 999 }, { contexts: [TOPIC, BY_ID], following: inAt(R0) }, [400, 300, 200, 100]],
+    ['none when P is not in the place', {}, { contexts: [TOPIC], following: { kind: 'topic', in: false, ways: [] } }, []],
+    ['none when P muted it', {}, { contexts: [TOPIC], following: inAt(R0), muted: true }, []],
+    ['a DM from when P came in', {}, { contexts: [TEAM], following: null, since: R0 + 250 }, [400, 300]],
+  ]
+  for (const [name, merged, judge, want] of judged) {
+    it(`new reactions: ${name}`, () => assert.deepEqual(ids(newReactionsIn(reactions, merged, judge)), want))
+  }
+
+  it('the list shows a new reaction among the new lines and a seen one under Earlier, and none from before P came in', () => {
+    const merged = { [BY_ID]: R0 + 360, [`reactions:${BY_ID}`]: R0 + 300 }
+    const judge = { stream: TOPIC, me: BOB, following: inAt(R0 + 150) }
+    const lines = whatLitPlace([comment(ALICE, R0 + 500, 'newest')], merged, judge, { reactions })
+    const said = lines.map((l) => (l.type === 'message' ? [l.message.content, l.seen] : [l.reaction.at - R0, l.seen]))
+    assert.deepEqual(said, [
+      ['newest', false],
+      [400, false],
+      [300, true],
+      [200, true],
+    ])
+    assert.deepEqual(whatLitListedFile([], merged, { ...judge, following: { kind: 'topic', in: false, ways: [] } }, { reactions }), [])
+    const dm = whatLitStream([], { [`reactions:${TEAM}`]: R0 + 300 }, { stream: TEAM, me: BOB, member: true, since: R0 }, { reactions })
+    assert.deepEqual(dm.map((l) => l.seen), [false, true, true, true])
+    assert.deepEqual(whatLitStream([], {}, { stream: TEAM, me: BOB, member: false }, { reactions }), [])
+  })
+
+  it('seeing them writes the newest shown reaction per conversation, under file:<d> for a file and the uuid for a chat', () => {
+    const writes = reactionsSeenWrites([
+      { reaction: reaction(1, R0 + 100), contexts: [TOPIC, BY_ID] },
+      { reaction: reaction(2, R0 + 300), contexts: [TOPIC] },
+      { reaction: reaction(3, R0 + 200), contexts: [TEAM] },
+      { reaction: reaction(4, R0 + 50), contexts: [`30851:${CAROL}:not-an-id`] },
+    ])
+    assert.deepEqual(writes, [
+      { context: `reactions:${BY_ID}`, at: R0 + 300 },
+      { context: `reactions:${TEAM}`, at: R0 + 200 },
+      { context: `reactions:30851:${CAROL}:not-an-id`, at: R0 + 50 },
     ])
   })
 })

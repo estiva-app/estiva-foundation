@@ -78,6 +78,35 @@ export const THREAD_RULE_FROM = 1791226800
  */
 export const REPLY_FLOOR_CONTEXT = 'reply-floor'
 
+/**
+ * The reserved context of the reactions floor (§11.1, §11.6, ACT-7): every
+ * reaction to `P`'s message at or before it counts as seen. Raised, never
+ * lowered, when a cap drops a `reactions:` key — to that key's value — as
+ * {@link REPLY_FLOOR_CONTEXT} is for a `thread:` key, so a reaction somebody
+ * saw never turns a place orange again.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ */
+export const REACTIONS_FLOOR_CONTEXT = 'reactions-floor'
+
+const REACTIONS_PREFIX = 'reactions:'
+
+/**
+ * Where "seen" is kept for the reactions to `P`'s messages in one conversation
+ * (§11.1, ACT-7): `reactions:` + the stream's context — `reactions:file:<d>`,
+ * `reactions:<file address>`, `reactions:<channel uuid>`. A reaction on a reply
+ * counts in its root's stream. It has no parent (§11.3): no stream, thread or
+ * floor marker reaches it, and it reaches none of them, so opening a file
+ * clears none of its reactions and seeing them reads none of its messages.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ */
+export function reactionsContext(context: string): string {
+  return `${REACTIONS_PREFIX}${context}`
+}
+
+const isReactionsKey = (key: string) => key.startsWith(REACTIONS_PREFIX)
+
 const EVENT_ID_RE = /^[0-9a-f]{64}$/
 const SLOT_ID_RE = /^[0-9a-f]{32}$/
 
@@ -156,6 +185,30 @@ export function streamMarkerOf(merged: Readonly<Record<string, number>>, stream:
   return out
 }
 
+/**
+ * Until when the reactions to `P`'s messages in one conversation are seen
+ * (§11.3, §11.6, ACT-7): the later of `reactions:<context>` over the stream's
+ * contexts and the reactions floor. A file is named both ways — pass its
+ * address and `file:<d>`; an address whose `d` is a file id reads
+ * `reactions:file:<d>` as well. Nothing else reaches it: no stream, thread or
+ * reply-floor marker. Unix seconds; 0 when nothing is held, which is earlier
+ * than every reaction that counts.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-reaction-is-seen-once-in-its-conversation.md
+ */
+export function reactionsSeenOf(merged: Readonly<Record<string, number>>, streamContexts: readonly string[]): number {
+  let out = merged[REACTIONS_FLOOR_CONTEXT] ?? 0
+  const read = (context: string | undefined) => {
+    const at = context === undefined ? undefined : merged[reactionsContext(context)]
+    if (at !== undefined && at > out) out = at
+  }
+  for (const context of streamContexts) {
+    read(context)
+    if (ADDRESS_RE.test(context)) read(fileIdContext(fileIdOf(context)))
+  }
+  return out
+}
+
 /** `thread:<root-event-id>`, NIP-RS's own scheme. */
 export function threadContext(rootEventId: string | null | undefined): string | undefined {
   if (!rootEventId) return undefined
@@ -178,18 +231,47 @@ export function toContextSeconds(atMs: number): number {
 }
 
 /**
- * Is this a context id worth putting in a grow-only blob: a channel uuid, a
- * file address, `thread:`/`msg:` with 64 lowercase hex, or the reply floor.
- * The reserved `folder:` is refused until §11.5 specifies it.
+ * Is this a context id this code **writes and judges**: a channel uuid, a file
+ * address, `file:<d>`, `thread:`/`msg:` with 64 lowercase hex, `reactions:`
+ * before any of those, or one of the two floors. The reserved `folder:` is
+ * refused until §11.5 specifies it.
+ *
+ * Only what an app writes must pass it ({@link advanceContexts}' updates).
+ * What a blob already holds is carried by {@link isCarriedContextId}.
  */
 export function isPublishableContextId(id: string): boolean {
-  if (id === REPLY_FLOOR_CONTEXT) return true
+  if (id === REPLY_FLOOR_CONTEXT || id === REACTIONS_FLOOR_CONTEXT) return true
   if (id.length === 0 || utf8(id) > MAX_CONTEXT_ID_BYTES) return false
+  return isReactionsKey(id) ? isConversationContextId(id.slice(REACTIONS_PREFIX.length)) : isConversationContextId(id)
+}
+
+/** A context of one conversation's own marker (§11.1): not a floor, not a `reactions:` key. */
+function isConversationContextId(id: string): boolean {
   if (id.startsWith('thread:')) return EVENT_ID_RE.test(id.slice('thread:'.length))
   if (id.startsWith('msg:')) return EVENT_ID_RE.test(id.slice('msg:'.length))
   // A key beginning `file:` whose remainder is not a lowercase UUID is not a file context (§11.1).
   if (id.startsWith(FILE_ID_PREFIX)) return isFileId(id.slice(FILE_ID_PREFIX.length))
   return UUID_RE.test(id) || ADDRESS_RE.test(id)
+}
+
+/**
+ * Is this a key a blob **carries**, known or not (§11.1, ACT-7): any non-empty
+ * string of at most {@link MAX_CONTEXT_ID_BYTES} bytes. A key this code does not
+ * know — another app's, a later version's — is kept verbatim through
+ * {@link parseReadStateBlob}, {@link mergeSlots}, {@link advanceContexts} and
+ * {@link publishReadState}, and never judged: dropping it would erase what a
+ * newer app wrote every time an older one republished its slot. Judging is
+ * {@link isPublishableContextId}'s.
+ */
+export function isCarriedContextId(id: string): boolean {
+  return typeof id === 'string' && id.length > 0 && id !== '__proto__' && utf8(id) <= MAX_CONTEXT_ID_BYTES
+}
+
+/** A blob's carried entries: every {@link isCarriedContextId} key with a valid timestamp. */
+function carried(contexts: Readonly<Record<string, unknown>>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(contexts)) if (isCarriedContextId(key) && isTimestamp(value)) out[key] = value
+  return out
 }
 
 const isTimestamp = (value: unknown): value is number =>
@@ -315,12 +397,9 @@ export function parseReadStateBlob(plaintext: string | undefined): ReadStateBlob
   if (blob.v !== 1) return undefined
   const clientId =
     typeof blob.client_id === 'string' && blob.client_id.length >= 1 && utf8(blob.client_id) <= MAX_CLIENT_ID_BYTES ? blob.client_id : ''
-  const contexts: Record<string, number> = {}
   const source = typeof blob.contexts === 'object' && blob.contexts !== null ? blob.contexts : {}
-  for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
-    if (isPublishableContextId(key) && isTimestamp(value)) contexts[key] = value
-  }
-  return { v: 1, client_id: clientId, contexts }
+  // Every well-formed key is kept, known or not (§11.1): an unknown one is carried, never judged.
+  return { v: 1, client_id: clientId, contexts: carried(source as Record<string, unknown>) }
 }
 
 /** Serialize for encryption, keys sorted, so an unchanged set is an unchanged string. */
@@ -363,39 +442,72 @@ export function capContextsToBytes(contexts: Readonly<Record<string, number>>, b
   return { contexts: kept, bytes, evicted: [] }
 }
 
-const isThreadKey = (key: string) => key.startsWith('thread:')
+const isThreadKey = (key: string) => key.startsWith('thread:') && isPublishableContextId(key)
 
 /**
- * {@link capContextsToBytes} for a read-state blob (§11.6): the reply floor
- * is never evicted, and dropping a `thread:` marker first raises the floor to
- * its value. Under the thread rule a `thread:` marker is never made redundant
- * by its stream, so without the floor every eviction would light replies the
- * person already read. Deterministic and idempotent, like the cap it wraps.
+ * The two floors (§11.6), and the keys each pays for when a cap drops them: the
+ * reply floor for a `thread:` marker, the reactions floor for a `reactions:`
+ * key. A key nobody knows pays for nothing: it is never judged, so dropping it
+ * costs nothing that a floor would have to hold.
+ */
+export const FLOORS: readonly { context: string; pays: (key: string) => boolean }[] = [
+  { context: REPLY_FLOOR_CONTEXT, pays: isThreadKey },
+  { context: REACTIONS_FLOOR_CONTEXT, pays: (key) => isReactionsKey(key) && isPublishableContextId(key) },
+]
+
+const isFloor = (key: string) => key === REPLY_FLOOR_CONTEXT || key === REACTIONS_FLOOR_CONTEXT
+
+/** A context map split into its floors and everything else. */
+export function splitFloors(contexts: Readonly<Record<string, number>>): { floors: Record<string, number>; markers: Record<string, number> } {
+  const floors: Record<string, number> = {}
+  const markers: Record<string, number> = {}
+  for (const [key, value] of Object.entries(contexts)) (isFloor(key) ? floors : markers)[key] = value
+  return { floors, markers }
+}
+
+/**
+ * {@link capContextsToBytes} for a read-state blob (§11.6): a floor is never
+ * evicted, and dropping a `thread:` marker first raises the reply floor to its
+ * value, dropping a `reactions:` key the reactions floor. Under the thread rule
+ * a `thread:` marker is never made redundant by its stream, and a `reactions:`
+ * key has no parent at all, so without the floors every eviction would light
+ * what the person already read or saw. Deterministic and idempotent, like the
+ * cap it wraps.
  */
 export function capReadStateContexts(contexts: Readonly<Record<string, number>>, budget: number = MAX_CONTEXTS_BYTES): CappedContexts {
-  const { [REPLY_FLOOR_CONTEXT]: floor, ...rest } = contexts
-  if (floor === undefined) {
-    const capped = capContextsToBytes(rest, budget)
-    if (!capped.evicted.some(isThreadKey)) return capped
+  const { floors: held, markers: rest } = splitFloors(contexts)
+  // A floor's slot is set aside first, at the widest value it can hold, so raising it never overflows. Only the floors
+  // held or needed are reserved, so a blob with no thread or reactions key evicted is capped as before.
+  const needed = new Set(Object.keys(held))
+  for (;;) {
+    const reserve = [...needed].reduce((sum, floor) => sum + utf8(JSON.stringify(floor)) + 1 + String(MAX_TIMESTAMP).length + 1, 0)
+    const capped = capContextsToBytes(rest, budget - reserve)
+    const more = FLOORS.filter((f) => !needed.has(f.context) && capped.evicted.some(f.pays))
+    if (more.length > 0) {
+      for (const f of more) needed.add(f.context)
+      continue
+    }
+    if (needed.size === 0) return capped
+    const kept: Record<string, number> = { ...capped.contexts }
+    for (const f of FLOORS) {
+      if (!needed.has(f.context)) continue
+      kept[f.context] = capped.evicted.reduce((max, key) => (f.pays(key) && rest[key] > max ? rest[key] : max), held[f.context] ?? 0)
+    }
+    return { contexts: kept, bytes: utf8(JSON.stringify(kept)), evicted: capped.evicted }
   }
-  // The floor's slot is set aside first, at the widest value it can hold, so raising it never overflows.
-  const reserve = utf8(JSON.stringify(REPLY_FLOOR_CONTEXT)) + 1 + String(MAX_TIMESTAMP).length + 1
-  const capped = capContextsToBytes(rest, budget - reserve)
-  const raised = capped.evicted.reduce((max, key) => (isThreadKey(key) && rest[key] > max ? rest[key] : max), floor ?? 0)
-  const kept = { ...capped.contexts, [REPLY_FLOOR_CONTEXT]: raised }
-  return { contexts: kept, bytes: utf8(JSON.stringify(kept)), evicted: capped.evicted }
 }
 
 /**
  * Apply markers, taking the later of each (§11.4: never lower one), then cap.
- * Unpublishable ids and out-of-range timestamps are dropped, and so is a reply
- * floor among the updates: only the cap raises it (§11.6), so a stray value
- * cannot mark every reply read. The floor `current` already holds is kept.
+ * Unpublishable ids and out-of-range timestamps among the updates are dropped,
+ * and so is a floor: only the cap raises one (§11.6), so a stray value cannot
+ * mark every reply read or every reaction seen. What `current` holds is
+ * carried, a key this code does not know and the floors included (§11.1).
  */
 export function advanceContexts(current: Readonly<Record<string, number>>, updates: Readonly<Record<string, number>>): CappedContexts {
-  const next: Record<string, number> = { ...current }
+  const next: Record<string, number> = carried(current)
   for (const [id, seconds] of Object.entries(updates)) {
-    if (id === REPLY_FLOOR_CONTEXT || !isPublishableContextId(id) || !isTimestamp(seconds)) continue
+    if (isFloor(id) || !isPublishableContextId(id) || !isTimestamp(seconds)) continue
     if (next[id] === undefined || seconds > next[id]) next[id] = seconds
   }
   return capReadStateContexts(next)
@@ -444,22 +556,33 @@ export interface SlotBlob {
 export function mergeSlots(slots: readonly (Pick<SlotBlob, 'blob'> & { createdAt?: number })[]): Record<string, number> {
   const merged: Record<string, number> = {}
   for (const { blob, createdAt } of slots) {
-    for (const [id, value] of Object.entries(blob.contexts)) {
-      if (!isPublishableContextId(id) || !isTimestamp(value)) continue
+    // Every well-formed key, known or not, is carried (§11.1); only the known ones are ever judged.
+    for (const [id, value] of Object.entries(carried(blob.contexts))) {
       // A floor is the value of a marker the cap dropped, so never later than the blob that holds it (§11.6).
-      const seconds = id === REPLY_FLOOR_CONTEXT && createdAt !== undefined ? Math.min(value, createdAt) : value
+      const seconds = isFloor(id) && createdAt !== undefined ? Math.min(value, createdAt) : value
       if (merged[id] === undefined || seconds > merged[id]) merged[id] = seconds
     }
   }
-  const { [REPLY_FLOOR_CONTEXT]: floor, ...rest } = merged
+  const { floors, markers: rest } = splitFloors(merged)
   const keys = Object.keys(rest)
-  if (keys.length + (floor === undefined ? 0 : 1) <= MAX_CONTEXTS) return merged
-  // Over the count cap, as over the byte cap: the floor stays, and pays for every `thread:` marker dropped.
+  if (keys.length + Object.keys(floors).length <= MAX_CONTEXTS) return merged
+  // Over the count cap, as over the byte cap: the floors stay, each paying for the keys it covers that are dropped.
   const sorted = keys.sort(byNewestThenKey(rest))
+  // Room is kept for each floor held or needed, so the merged view is at most MAX_CONTEXTS keys, floors included.
+  const needed = new Set(Object.keys(floors))
+  let room = MAX_CONTEXTS - needed.size
+  for (const f of FLOORS) {
+    if (needed.has(f.context) || !sorted.slice(room - 1).some(f.pays)) continue
+    needed.add(f.context)
+    room -= 1
+  }
   const kept: Record<string, number> = {}
-  for (const id of sorted.slice(0, MAX_CONTEXTS - 1)) kept[id] = rest[id]
-  const raised = sorted.slice(MAX_CONTEXTS - 1).reduce((max, key) => (isThreadKey(key) && rest[key] > max ? rest[key] : max), floor ?? 0)
-  if (floor !== undefined || raised > 0) kept[REPLY_FLOOR_CONTEXT] = raised
+  for (const id of sorted.slice(0, room)) kept[id] = rest[id]
+  const dropped = sorted.slice(room)
+  for (const f of FLOORS) {
+    if (!needed.has(f.context)) continue
+    kept[f.context] = dropped.reduce((max, key) => (f.pays(key) && rest[key] > max ? rest[key] : max), floors[f.context] ?? 0)
+  }
   return kept
 }
 
@@ -503,6 +626,8 @@ export function effectiveReadAt(
   from: number = THREAD_RULE_FROM,
 ): number | undefined {
   const own = merged[context]
+  // A `reactions:` key has no parent (§11.3): no stream's marker reaches it.
+  if (isReactionsKey(context)) return own
   const parent = stream === undefined ? undefined : streamMarkerOf(merged, stream)
   if (isThreadKey(context)) return threadReadAt({ thread: own, stream: parent, floor: merged[REPLY_FLOOR_CONTEXT] }, from)
   return later(own, parent)
@@ -734,11 +859,10 @@ export async function publishReadState(
   contexts: Readonly<Record<string, number>>,
   nowMs: number,
 ): Promise<{ ok: boolean; reason?: string }> {
-  // Filtered here as well: the blob is grow-only, and a map built outside `advanceContexts` must not put an id into it.
-  // The floor goes in as `current`, since `advanceContexts` refuses one among the updates.
-  const { [REPLY_FLOOR_CONTEXT]: floor, ...markers } = contexts
-  const held: Record<string, number> = floor !== undefined && isTimestamp(floor) ? { [REPLY_FLOOR_CONTEXT]: floor } : {}
-  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts(held, markers).contexts })
+  // Filtered here as well: the blob is grow-only, so only well-formed keys and timestamps go in. The whole map goes in
+  // as `current`, carried: the floors (which `advanceContexts` refuses among the updates) and every key another app
+  // or a later version wrote, which this one must not erase by republishing its slot (§11.1).
+  const plaintext = serializeReadStateBlob({ v: 1, client_id: identity.clientId, contexts: advanceContexts(contexts, {}).contexts })
   if (utf8(plaintext) > MAX_BLOB_BYTES) return { ok: false, reason: `read state is ${utf8(plaintext)} bytes, over ${MAX_BLOB_BYTES}` }
   const ciphertext = await deps.nip44.encrypt(plaintext)
   const signed = await deps.sign(buildReadStateEvent(pubkey, nowMs, identity.slotId, ciphertext))

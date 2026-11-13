@@ -26,9 +26,13 @@ import {
   mergeSlots,
   parseReadStateBlob,
   publishReadState,
+  REACTIONS_FLOOR_CONTEXT,
+  reactionsContext,
+  reactionsSeenOf,
   REPLY_FLOOR_CONTEXT,
   rotateSlotId,
   serializeReadStateBlob,
+  streamMarkerOf,
   threadContext,
   threadReadAt,
   belowReplyFloor,
@@ -66,11 +70,13 @@ describe('a file’s marker in two keys (§11.1, §11.8, C45)', () => {
   const comment = (created_at: number) => ({ id: '1'.repeat(64), pubkey: 'b'.repeat(64), kind: 1111, created_at, tags: [], content: '' })
   const judge = { stream: PROJECT, me: ME, member: true }
 
-  it('keeps a file:<d> key in a blob, and drops one whose rest is not a lowercase UUID', () => {
-    const blob = parseReadStateBlob(
-      serializeReadStateBlob({ v: 1, client_id: 'c', contexts: { [BY_ID]: 5, [`file:${ISSUE}`]: 6, 'file:x': 7, [`file:${ID.toUpperCase()}`]: 8 } }),
-    )
-    assert.deepEqual(blob?.contexts, { [BY_ID]: 5 })
+  it('keeps a file:<d> key in a blob, and carries one whose rest is not a lowercase UUID without ever judging it', () => {
+    const contexts = { [BY_ID]: 5, [`file:${ISSUE}`]: 6, 'file:x': 7, [`file:${ID.toUpperCase()}`]: 8 }
+    const blob = parseReadStateBlob(serializeReadStateBlob({ v: 1, client_id: 'c', contexts }))
+    assert.deepEqual(blob?.contexts, contexts)
+    // Only the well-formed key is the file's marker; the others are another app's, and read as nothing.
+    assert.equal(streamMarkerOf(blob!.contexts, PROJECT), 5)
+    assert.equal(streamMarkerOf(blob!.contexts, BY_ID), 5)
   })
 
   it('reads a file’s comments by the later of its address key and its file: key', () => {
@@ -130,9 +136,10 @@ describe('slots', () => {
 })
 
 describe('the blob', () => {
-  it('parses per entry and refuses a non-v1 blob', () => {
-    const blob = parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'x', contexts: { [FOLDER]: 5, bad: 6, [ISSUE]: -1 } }))
-    assert.deepEqual(blob, { v: 1, client_id: 'x', contexts: { [FOLDER]: 5 } })
+  it('parses per entry, carrying a key it does not know, dropping a bad timestamp or an over-long key, and refuses a non-v1 blob', () => {
+    const long = 'x'.repeat(257)
+    const blob = parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'x', contexts: { [FOLDER]: 5, bad: 6, [ISSUE]: -1, [long]: 7, '': 8 } }))
+    assert.deepEqual(blob, { v: 1, client_id: 'x', contexts: { [FOLDER]: 5, bad: 6 } })
     assert.equal(parseReadStateBlob(JSON.stringify({ v: 2, contexts: {} })), undefined)
   })
 
@@ -464,5 +471,119 @@ describe('fetch and publish, injected', () => {
       5000,
     )
     assert.equal(JSON.parse(published!.content.slice(4)).contexts[REPLY_FLOOR_CONTEXT], 1)
+  })
+})
+
+describe('a key this code does not know is carried, never judged (§11.1, ACT-7)', () => {
+  const identity = { slotId: '0'.repeat(32), clientId: 'peek-00000000' }
+  const nip44 = { encrypt: async (p: string) => `enc:${p}`, decrypt: async (c: string) => (c.startsWith('enc:') ? c.slice(4) : undefined) }
+  const LATER = `someday:${FOLDER}`
+
+  it('survives parse, merge, advance and the published slot verbatim, and reads nothing as read', async () => {
+    const parsed = parseReadStateBlob(JSON.stringify({ v: 1, client_id: 'old', contexts: { [LATER]: 9, [FOLDER]: 5 } }))!
+    const merged = mergeSlots([{ blob: parsed, createdAt: 100 }, { blob: { v: 1, client_id: 'b', contexts: { [ISSUE]: 7 } }, createdAt: 100 }])
+    assert.deepEqual(merged, { [LATER]: 9, [FOLDER]: 5, [ISSUE]: 7 })
+    const advanced = advanceContexts(parsed.contexts, { [FOLDER]: 12 }).contexts
+    assert.deepEqual(advanced, { [LATER]: 9, [FOLDER]: 12 })
+    let published: SignedEvent | undefined
+    await publishReadState(
+      { nip44, sign: async (u) => ({ ...u, id: '0'.repeat(64), sig: '' }), publish: async (e) => ((published = e), { ok: true }) },
+      ME,
+      identity,
+      advanced,
+      5000,
+    )
+    assert.deepEqual(JSON.parse(published!.content.slice(4)).contexts, { [FOLDER]: 12, [LATER]: 9 })
+    // Never judged: it is not the folder's marker, and this code never writes one itself.
+    assert.equal(streamMarkerOf(merged, FOLDER), 5)
+    assert.deepEqual(advanceContexts({}, { [LATER]: 9 }).contexts, {})
+  })
+})
+
+describe('the reactions to P are seen per conversation (§11.1, §11.3, §11.6, ACT-7)', () => {
+  const ID = '15e9b50a-825a-4537-8b4a-df46efb9c7e4'
+  const PROJECT = `30850:${'a'.repeat(64)}:${ID}`
+  const BY_ID = `file:${ID}`
+  const R = (context: string) => reactionsContext(context)
+
+  const publishable: [string, boolean][] = [
+    [R(FOLDER), true],
+    [R(ISSUE), true],
+    [R(BY_ID), true],
+    [R(threadContext(ROOT)!), true],
+    [R(REPLY_FLOOR_CONTEXT), false],
+    [R(REACTIONS_FLOOR_CONTEXT), false],
+    [R(R(FOLDER)), false],
+    [R(`folder:${ISSUE}`), false],
+    [R('file:x'), false],
+    [R(''), false],
+  ]
+  for (const [key, ok] of publishable) {
+    it(`${ok ? 'writes' : 'never writes'} ${key.slice(0, 40)}`, () => {
+      assert.deepEqual(advanceContexts({}, { [key]: 5 }).contexts, ok ? { [key]: 5 } : {})
+    })
+  }
+
+  it('a reactions: key has no parent: opening the file, its threads or the reply floor never sees its reactions', () => {
+    const merged = { [ISSUE]: 900, [threadContext(ROOT)!]: 900, [REPLY_FLOOR_CONTEXT]: 900, [R(ISSUE)]: 100 }
+    assert.equal(reactionsSeenOf(merged, [ISSUE]), 100)
+    assert.equal(effectiveReadAt(merged, R(ISSUE), ISSUE), 100)
+    assert.equal(reactionsSeenOf({ [ISSUE]: 900 }, [ISSUE]), 0)
+  })
+
+  it('a reactions: key reads no message as read', () => {
+    assert.equal(streamMarkerOf({ [R(ISSUE)]: 900, [R(BY_ID)]: 900 }, ISSUE), undefined)
+    assert.equal(streamMarkerOf({ [R(PROJECT)]: 900 }, BY_ID), undefined)
+  })
+
+  it('is kept beside a later stream marker, never dropped as dominated', () => {
+    const merged = mergeSlots([{ blob: { v: 1, client_id: 'c', contexts: { [ISSUE]: 900, [R(ISSUE)]: 100 } } }])
+    assert.equal(merged[R(ISSUE)], 100)
+    assert.equal(advanceContexts(merged, { [ISSUE]: 950 }).contexts[R(ISSUE)], 100)
+  })
+
+  const bothWays: [string, Record<string, number>, string[], number][] = [
+    ['by its id, asked by address', { [R(BY_ID)]: 50, [R(PROJECT)]: 40 }, [PROJECT], 50],
+    ['by its address, asked both ways', { [R(PROJECT)]: 60, [R(BY_ID)]: 50 }, [PROJECT, BY_ID], 60],
+    ['by its id, asked by id', { [R(BY_ID)]: 50 }, [BY_ID], 50],
+    ['under the floor', { [R(BY_ID)]: 50, [REACTIONS_FLOOR_CONTEXT]: 70 }, [PROJECT, BY_ID], 70],
+    ['in another conversation only', { [R(FOLDER)]: 80 }, [PROJECT, BY_ID], 0],
+  ]
+  for (const [name, merged, contexts, want] of bothWays) {
+    it(`a file named both ways is seen to the later key: ${name}`, () => assert.equal(reactionsSeenOf(merged, contexts), want))
+  }
+
+  it('the reactions floor is raised to the newest reactions: key the byte cap drops, and not by an update', () => {
+    const contexts: Record<string, number> = {}
+    for (let i = 0; i < 1200; i++) contexts[R(`30851:${'a'.repeat(64)}:${i}`)] = 1_700_000_000 + i
+    const capped = capReadStateContexts(contexts)
+    assert.ok(capped.evicted.length > 0)
+    assert.ok(capped.bytes <= MAX_CONTEXTS_BYTES)
+    const floor = capped.contexts[REACTIONS_FLOOR_CONTEXT]
+    assert.equal(floor, Math.max(...capped.evicted.map((k) => contexts[k])))
+    for (const key of capped.evicted) assert.ok(reactionsSeenOf(capped.contexts, [key.slice('reactions:'.length)]) >= contexts[key])
+    assert.equal(capped.contexts[REPLY_FLOOR_CONTEXT], undefined)
+    assert.deepEqual(capReadStateContexts(capped.contexts), { ...capped, evicted: [] })
+    assert.deepEqual(advanceContexts({ [REACTIONS_FLOOR_CONTEXT]: 5 }, { [REACTIONS_FLOOR_CONTEXT]: 9 }).contexts, { [REACTIONS_FLOOR_CONTEXT]: 5 })
+  })
+
+  it('the reactions floor survives the merged count cap, raised by the reactions: keys it drops, and never past its blob', () => {
+    const slots = []
+    for (let s = 0; s < 15; s++) {
+      const contexts: Record<string, number> = { [REACTIONS_FLOOR_CONTEXT]: 10 }
+      for (let i = 0; i < 760; i++) contexts[R(`30851:${'a'.repeat(64)}:${s * 1000 + i}`)] = 1_700_000_000 + s * 1000 + i
+      slots.push({ blob: { v: 1 as const, client_id: `c${s}`, contexts } })
+    }
+    const merged = mergeSlots(slots)
+    assert.ok(Object.keys(merged).length <= 10_000)
+    assert.ok(merged[REACTIONS_FLOOR_CONTEXT] > 1_700_000_000)
+    for (const slot of slots) {
+      for (const [key, value] of Object.entries(slot.blob.contexts)) {
+        if (merged[key] === undefined) assert.ok(reactionsSeenOf(merged, [key.slice('reactions:'.length)]) >= value)
+      }
+    }
+    assert.deepEqual(mergeSlots([{ blob: { v: 1, client_id: 'c', contexts: { [REACTIONS_FLOOR_CONTEXT]: MAX_TIMESTAMP } }, createdAt: 1000 }]), {
+      [REACTIONS_FLOOR_CONTEXT]: 1000,
+    })
   })
 })

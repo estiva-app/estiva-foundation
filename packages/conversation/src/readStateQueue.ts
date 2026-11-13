@@ -24,8 +24,8 @@ import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
 import type { QueryFn } from './decorations.js'
 import { KIND_APP_DATA } from './kinds.js'
 import {
-  REPLY_FLOOR_CONTEXT,
   advanceContexts as advance,
+  splitFloors,
   loadSlotIdentity,
   parseReadStateBlob,
   publishReadState,
@@ -197,8 +197,9 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
     // Seeded from our own slot, never the merge: a slot is this installation's account of what it read, and seeding
     // from the merge grows every slot to everything the person has read. The floor goes in as `current`, since
     // `advanceContexts` refuses one among the updates.
-    const { [REPLY_FLOOR_CONTEXT]: floor, ...marked } = known
-    const held = floor === undefined ? own : { ...own, [REPLY_FLOOR_CONTEXT]: Math.max(floor, own[REPLY_FLOOR_CONTEXT] ?? 0) }
+    const { floors, markers: marked } = splitFloors(known)
+    const held = { ...own }
+    for (const [floor, at] of Object.entries(floors)) held[floor] = Math.max(at, own[floor] ?? 0)
     known = advanceContexts(held, marked)
     published = own
     hydrated = true

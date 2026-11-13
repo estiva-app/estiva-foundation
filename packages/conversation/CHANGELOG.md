@@ -6,6 +6,41 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.41.0 — 2026-11-13
+
+**SPEC §6.6, §11.1, §11.3, §11.6, §11.8: a reaction to your message, seen once
+in its conversation** (ACT-7; records a-reaction-names-whose-message-it-reacts-to,
+a-reaction-is-seen-once-in-its-conversation; keys decided by Miky 13 Nov as
+`reactions:` and `reactions-floor`). Needs `@estiva-app/protocol` 0.58.0
+(`effectiveAuthor`).
+
+- **Read state carries a key it does not know** (§11.1). `parseReadStateBlob`,
+  `mergeSlots`, `advanceContexts` (its `current`) and `publishReadState` keep
+  every key of at most 256 bytes with a valid timestamp verbatim
+  (`isCarriedContextId`), and never judge it. Until now they dropped it, so an
+  app on an older version erased a newer app's keys each time it republished
+  its slot. Only an update must still be `isPublishableContextId`. A malformed
+  `file:`, `thread:` or `msg:` key is now carried too, and is still no marker.
+- `reactionsContext(context)` → `reactions:<context>` (a channel uuid, a file
+  address, `file:<d>`, `thread:`/`msg:`), publishable; and
+  `REACTIONS_FLOOR_CONTEXT` (`reactions-floor`), kept as `reply-floor` is:
+  refused among updates, raised by the byte cap and the merged count cap when
+  they drop a `reactions:` key, and taken as at most its slot's `created_at`.
+  A `reactions:` key has no parent (§11.3): no stream, thread or floor marker
+  reaches it, it reaches none of them, and nothing drops it as dominated.
+- `reactionsSeenOf(merged, contexts)`: the later of `reactions:<ctx>` over a
+  stream's contexts (an address also reads `reactions:file:<d>`) and the floor.
+- `REACTIONS_TO_ME_FROM` (2026-11-13T17:00Z), `reactionsToMeFilter(me, since?)`,
+  `reactionTakeBackFilter(ids, since?)`, `keepReactionToMe(reaction, target, me,
+  relayKey?)` (§6.6's four conditions) and `reactionsToMe(reactions,
+  targetsById, me, { relayKey?, gone? })` → `ReactionToMe[]`, newest first, one
+  per person, message and emoji.
+- `reactionStreamOf(target)`, `newReactionsIn(reactions, merged, judge)` and
+  `reactionsSeenWrites(lines)` (newest shown reaction per conversation, under
+  `file:<d>` for a file, never the clock). `whatLitPlace`, `whatLitListedFile`
+  and `whatLitStream` take `{ reactions }` and list each as a `reaction` line,
+  new or seen; `LitLine`'s reaction line now carries a `ReactionToMe`.
+
 ## 0.40.0 — 2026-11-13
 
 **SPEC: none changed.** The same blob goes to the same coordinate; this moves
