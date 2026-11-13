@@ -6,6 +6,29 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.40.0 — 2026-11-13
+
+**SPEC: none changed.** The same blob goes to the same coordinate; this moves
+the queue that writes it out of Ship and Leaf, which each held a copy
+(TOPIC-3).
+
+- `createReadStateQueue(options)`: one per tab. `markRead(contexts, atMs)`
+  debounces a whole-blob publish of this installation's slot; `flush()`,
+  `installFlushOnHide(document)`, `identity()`, `state()` (what is known,
+  pending and published, for a diagnostic), `reset()`. Before every write
+  it reads its own coordinate back (so two tabs of one browser never drop each
+  other's markers), skipping the decrypt when the content is the one it last
+  saw or published. It does not publish while the slot is unreachable or
+  refuses to decrypt, takes a new slot id when the coordinate holds another
+  installation's blob or one that will never decrypt, drops a queue whose
+  person signed out or changed, and backs off to a minute between failures.
+  `onMarked` and `onAttempt` let an app draw a mark at once and keep a
+  diagnostic.
+- `watchDwell(contexts, newestAtMs, mark, document)`: marks what stayed on
+  screen for `READ_DWELL_MS` (1.5 s) while the page is shown, never past the
+  newest message drawn or the clock. `dwellKey` / `dwellContexts` give a React
+  effect a stable key for the set.
+
 ## 0.39.0 — 2026-11-11
 
 **SPEC §11.8: what lit a stream, new and seen** (ACT-4). Every app draws the same

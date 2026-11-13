@@ -251,6 +251,21 @@ export {
   type FetchedReadState,
 } from './readState.js'
 
+export {
+  createReadStateQueue,
+  watchDwell,
+  dwellKey,
+  dwellContexts,
+  READ_DWELL_MS,
+  READ_STATE_PUBLISH_DEBOUNCE_MS,
+  READ_STATE_MAX_RETRY_MS,
+  type ReadStateQueue,
+  type ReadStateQueueOptions,
+  type ReadStateQueueState,
+  type ReadStateAttempt,
+  type VisibilitySource,
+} from './readStateQueue.js'
+
 export { unreadIn, isUnread, type StreamJudge } from './unread.js'
 
 export {

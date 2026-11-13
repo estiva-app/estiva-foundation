@@ -42,7 +42,7 @@ pass, the clock is a `createdAtMs` you pass, and drafts take their storage.
 | membership | §11.8 | `membershipOf`, `membersOf`, `streamOf`, `membershipFilters`, `candidateFilesOf`, `buildMembershipChange` |
 | muting | §11.8 | `parseMutedBlob`, `serializeMutedBlob`, `buildMutedEvent`, `mutedFilter`, `mutedFromFollowed` |
 | places and following | §11.8 *Places and following* | `followingOf`, `placeKindOf`, `placeFilters`, `unreadOnPlace`, `isUnreadOnPlace`, `buildLevelChange`, `parseTeamsBlob`, `serializeTeamsBlob`, `buildTeamsEvent`, `teamsFilter` |
-| read state | §11.1–§11.6 | `channelContext`, `fileContext`, `threadContext`, `loadSlotIdentity`, `advanceContexts`, `fetchReadState`, `publishReadState`, `mergeSlots`, `effectiveReadAt`, `THREAD_RULE_FROM`, `REPLY_FLOOR_CONTEXT`, `capReadStateContexts` |
+| read state | §11.1–§11.6 | `channelContext`, `fileContext`, `threadContext`, `loadSlotIdentity`, `advanceContexts`, `fetchReadState`, `publishReadState`, `createReadStateQueue`, `watchDwell`, `mergeSlots`, `effectiveReadAt`, `THREAD_RULE_FROM`, `REPLY_FLOOR_CONTEXT`, `capReadStateContexts` |
 | unread | §11.3, §11.8 | `unreadIn`, `isUnread` |
 | a mention in a file's text | §11.8, §13.1 | `mentionAddsFor`, `newlyNamedPeople`, `peopleNamedInText` |
 
@@ -52,8 +52,11 @@ Chat, an edit, a reaction and a deletion are built with
 
 Read state takes its environment like the rest: slot storage and randomness
 (`loadSlotIdentity`), the relay query, the signer and NIP-44 (`fetchReadState`,
-`publishReadState`). When to write — the debounce, the dwell before a view
-counts as read — stays the app's.
+`publishReadState`). When to write can come from here too:
+`createReadStateQueue` is the one queue a tab marks read through (the
+debounce, the read-back of its own slot before every whole-blob publish, the
+backoff, a change of person), and `watchDwell` marks what stayed on screen for
+`READ_DWELL_MS`. Ship and Leaf use both; an app may still write its own.
 
 **Light a dot from the files you already load, not from discovery alone.** A
 file's membership comes from `membershipOf` over that file's own events, which
