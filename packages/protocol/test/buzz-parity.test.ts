@@ -179,14 +179,36 @@ describe('shape rules taken from builders.rs', () => {
     ])
   })
 
-  it('kind:7 reaction carries only an e-tag — no h tag', () => {
+  it('kind:7 reaction names its target by e and the target author as its last p — no h tag', () => {
     // Buzz derives the channel from the target's own #e tag and ignores a
     // client-supplied #h, so adding one would change the id for no benefit.
-    const target = '3'.repeat(64)
-    const event = buildReaction(PUBKEY, 0, { targetEventId: target, emoji: '👍' })
+    // The p is NIP-25's, and the record a-reaction-names-whose-message-it-reacts-to.
+    const target = { id: '3'.repeat(64), pubkey: '5'.repeat(64), tags: [['h', CHANNEL]] }
+    const event = buildReaction(PUBKEY, 0, { target, emoji: '👍' })
     assert.equal(event.kind, 7)
-    assert.deepEqual(event.tags, [['e', target]])
+    assert.deepEqual(event.tags, [
+      ['e', target.id],
+      ['p', target.pubkey],
+    ])
     assert.equal(event.content, '👍')
+  })
+
+  it('kind:7 reaction to a message that mentions someone still names the message author, not the mentioned person', () => {
+    const target = { id: '3'.repeat(64), pubkey: '5'.repeat(64), tags: [['h', CHANNEL], ['p', '6'.repeat(64)]] }
+    const event = buildReaction(PUBKEY, 0, { target, emoji: '👍', relayKey: '7'.repeat(64) })
+    assert.deepEqual(event.tags.at(-1), ['p', '5'.repeat(64)])
+  })
+
+  it('kind:7 reaction to a relay-signed message names its actor, else its p (effective author, SPEC §6.5)', () => {
+    const relay = '7'.repeat(64)
+    const withActor = { id: '3'.repeat(64), pubkey: relay, tags: [['h', CHANNEL], ['p', '6'.repeat(64)], ['actor', '8'.repeat(64)]] }
+    assert.deepEqual(buildReaction(PUBKEY, 0, { target: withActor, emoji: '👍', relayKey: relay }).tags.at(-1), ['p', '8'.repeat(64)])
+    const withP = { id: '3'.repeat(64), pubkey: relay, tags: [['h', CHANNEL], ['p', '6'.repeat(64)]] }
+    assert.deepEqual(buildReaction(PUBKEY, 0, { target: withP, emoji: '👍', relayKey: relay }).tags.at(-1), ['p', '6'.repeat(64)])
+  })
+
+  it('kind:7 reaction refuses a target whose author is not a key', () => {
+    assert.throws(() => buildReaction(PUBKEY, 0, { target: { id: '3'.repeat(64), pubkey: 'nope', tags: [] }, emoji: '👍' }))
   })
 
   it('kind:5 deletion targets one event with empty content', () => {

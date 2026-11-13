@@ -4,6 +4,30 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.58.0 — 2026-11-13
+
+**Wire behaviour: every reaction names whose message it reacts to** (ACT-6;
+SPEC §6.6; record a-reaction-names-whose-message-it-reacts-to). A `kind:7`
+from `buildReaction` now carries `["p", <target's author>]` after its `e`, as
+its last `p` (NIP-25), so an app finds the reactions to a person's messages
+with `{kinds:[7], "#p":[person]}`. The `p` is not a mention (§11.8). Old
+reactions carry none and are not backfilled.
+
+**Breaking:** `buildReaction`'s args take the message, not its id —
+`{ target: { id, pubkey, tags }, emoji, relayKey? }` in place of
+`{ targetEventId, emoji }` — so the name is always worked out one way. New:
+
+- `effectiveAuthor(event, relayKey?)` — who wrote an event (SPEC §6.5): a
+  relay-signed one is its `actor`'s, else its first `p`'s; any other is its
+  signer's (mirrors Buzz `effective_message_author`). ACT-7's reader uses the
+  same function, so writer and reader agree.
+- `needsRelayKey(event)` — only an event with an `actor` or a `p` can be
+  someone else's; read the key only then.
+- `RELAY_KEY_FILTER` — `{kinds:[39000], limit:1}`: a team record's signer is
+  the relay's key (NIP-11 does not carry it on production).
+
+The `reaction` wire vector was given the new shape on purpose.
+
 ## 0.57.0 — 2026-11-11
 
 **Wire: unchanged by default; an app can keep a one-shot read's refusal**

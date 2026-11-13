@@ -47,13 +47,14 @@
 /** Bumped by hand with the version in package.json — `test/version.test.ts`
  * pins the two together. It exists so "the upgrade reached the app" can be
  * checked by grepping a built bundle rather than by trusting a lockfile. */
-export const PROTOCOL_VERSION = '0.57.0'
+export const PROTOCOL_VERSION = '0.58.0'
 
 export {
   // types
   type NostrTag,
   type UnsignedEvent,
   type SignedEvent,
+  type Authored,
   type Profile,
   type ThreadRef,
   type ChannelVisibility,
@@ -91,6 +92,9 @@ export {
   buildDmOpen,
   buildDmHide,
   buildReaction,
+  effectiveAuthor,
+  needsRelayKey,
+  RELAY_KEY_FILTER,
   buildDeletion,
   buildEdit,
   buildMessage,

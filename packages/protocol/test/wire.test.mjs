@@ -42,7 +42,8 @@ const rebuild = {
   addMember: () => P.buildAddMember(PUB, MS, { channelUuid: CH, targetPubkey: PUB2.toUpperCase(), role: 'admin' }),
   dmOpen: () => P.buildDmOpen(PUB, MS, { otherPubkeys: [PUB2.toUpperCase()] }),
   dmHide: () => P.buildDmHide(PUB, MS, { channelUuid: CH }),
-  reaction: () => P.buildReaction(PUB, MS, { targetEventId: EV1, emoji: '\u{1F389}' }),
+  // Given a new shape on purpose in 0.58.0 (ACT-6): the last `p` names the target's author.
+  reaction: () => P.buildReaction(PUB, MS, { target: { id: EV1, pubkey: PUB2, tags: [] }, emoji: '\u{1F389}' }),
   deletion: () => P.buildDeletion(PUB, MS, { targetEventId: EV1 }),
   'message-awkward-content': () => P.buildMessage(PUB, MS, { channelUuid: CH, content: AWKWARD }),
   'message-direct-reply': () => P.buildMessage(PUB, MS, { channelUuid: CH, content: 'r', threadRef: { rootId: EV1, parentId: EV1 } }),
