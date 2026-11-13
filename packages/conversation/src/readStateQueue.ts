@@ -275,7 +275,14 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
       pending = advanceContexts(pending, sending)
       retryLater()
     })
-    return inFlight
+    // A throw nobody expected (an app's callback) must not leave the chain rejected: every later flush would be skipped
+    // and nothing marked in this tab would reach the relay again.
+    const run = inFlight
+    inFlight = run.catch((error: unknown) => {
+      consoleWarn('[read-state] flush failed:', error)
+      if (Object.keys(pending).length > 0) retryLater()
+    })
+    return run
   }
 
   function markRead(contexts: readonly (string | undefined)[], atMs: number = Date.now()): void {

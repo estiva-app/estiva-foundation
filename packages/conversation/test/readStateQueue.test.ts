@@ -211,6 +211,59 @@ describe('createReadStateQueue', () => {
     assert.equal(contexts[CHANNEL], 1000)
   })
 
+  it('keeps the marks after the relay refuses a publish, and publishes them on the retry', async () => {
+    const relay = fakeRelay()
+    let refused = 0
+    const publish: typeof relay.publish = async (e) => (refused++ === 0 ? { ok: false, reason: 'rate-limited' } : relay.publish(e))
+    const { queue } = setup({ publish }, relay)
+    const warn = mock.method(console, 'warn', () => {})
+    queue.markRead([T1], AT)
+    await queue.flush()
+    assert.equal(relay.events.size, 0)
+    assert.deepEqual(Object.keys(queue.state().pending), [T1])
+    mock.timers.tick(3000)
+    await queue.flush()
+    warn.mock.restore()
+    assert.deepEqual(relay.blob(ALICE, queue.identity().slotId).contexts, { [T1]: AT / 1000 })
+  })
+
+  it('reads back the newest copy of its slot when the relay returns more than one', async () => {
+    const relay = fakeRelay()
+    const { queue } = setup({}, relay)
+    const slot = queue.identity()
+    const copy = async (createdAt: number, contexts: Record<string, number>) =>
+      relay.sign({ kind: 30078, pubkey: ALICE, created_at: createdAt, tags: [['d', readStateDTag(slot.slotId)]], content: `enc:${JSON.stringify({ v: 1, client_id: slot.clientId, contexts })}` })
+    const older = await copy(1, { [T1]: 100 })
+    const newer = await copy(2, { [T1]: 100, [T2]: 200 })
+    const query: typeof relay.query = async () => [older, newer]
+    const { queue: q } = setup({ query }, relay, (() => {
+      const s = memoryStorage()
+      s.setItem('test.readstate.slot', JSON.stringify(slot))
+      return s
+    })())
+    void queue
+    q.markRead([T3], AT)
+    await q.flush()
+    assert.deepEqual(Object.keys(relay.blob(ALICE, slot.slotId).contexts).sort(), [T1, T2, T3])
+  })
+
+  it('keeps publishing after a flush threw where nothing expected it to', async () => {
+    let calls = 0
+    const { queue, relay } = setup({
+      canWrite: () => {
+        if (calls++ === 0) throw new Error('a session check that broke')
+        return true
+      },
+    })
+    const warn = mock.method(console, 'warn', () => {})
+    queue.markRead([T1], AT)
+    await queue.flush().catch(() => {})
+    queue.markRead([T2], AT)
+    await queue.flush()
+    warn.mock.restore()
+    assert.deepEqual(Object.keys(relay.blob(ALICE, queue.identity().slotId).contexts).sort(), [T1, T2])
+  })
+
   it('drops a mark made while nobody is signed in', async () => {
     const { queue, relay, as } = setup()
     as(undefined)
