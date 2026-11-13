@@ -663,20 +663,79 @@ export function buildDmHide(pubkey: string, createdAtMs: number, args: { channel
   }
 }
 
+/** The parts of an event that say who wrote it. */
+export type Authored = { pubkey: string; tags: string[][] }
+
+// Any case, as Buzz's `hex::decode` takes it; an author is answered in lowercase.
+const isHex64 = (value: string | undefined): value is string => !!value && /^[0-9a-fA-F]{64}$/.test(value)
+
 /**
- * kind:7 reaction — mirrors `build_reaction` (builders.rs:463).
+ * Who wrote an event: its **effective author** (SPEC §6.5), the person the
+ * relay holds to it for an edit, a deletion and a reaction's name.
+ *
+ * Mirrors Buzz's `effective_message_author` (buzz-relay `handlers/ingest.rs`):
+ * an event the relay signed on someone's behalf (a workflow's message) is that
+ * person's — its 64-hex `actor`, else its first 64-hex `p` — and any other
+ * event is its signer's. An agent's message is the agent's, not its NIP-OA
+ * owner's, and an edit (`40003`) never changes whose a message is.
+ *
+ * `relayKey` is the key the relay signs with: the signer of any team record,
+ * read with {@link RELAY_KEY_FILTER}. Without it every event is its signer's,
+ * which is right for every event that carries neither an `actor` nor a `p`
+ * ({@link needsRelayKey}). A writer and a reader of a reaction's name both call
+ * this, so the two never work an author out differently (record
+ * a-reaction-names-whose-message-it-reacts-to).
+ */
+export function effectiveAuthor(event: Authored, relayKey?: string | null): string {
+  if (!relayKey || event.pubkey !== relayKey) return event.pubkey
+  // Buzz reads the first `actor` only (a malformed one falls through to `p`), and the first valid `p`.
+  const first = event.tags.find((t) => t[0] === 'actor')?.[1]
+  const actor = isHex64(first) ? first : undefined
+  const named = event.tags.find((t) => t[0] === 'p' && isHex64(t[1]))?.[1]
+  return (actor ?? named)?.toLowerCase() ?? event.pubkey
+}
+
+/**
+ * Whether {@link effectiveAuthor} could answer anything but the signer for this
+ * event — only one carrying an `actor` or a `p` can be someone else's. An app
+ * reads the relay's key ({@link RELAY_KEY_FILTER}) only then, so reacting to
+ * an ordinary message costs no read.
+ */
+export function needsRelayKey(event: Authored): boolean {
+  return event.tags.some((t) => (t[0] === 'actor' || t[0] === 'p') && isHex64(t[1]))
+}
+
+/**
+ * The read that answers the relay's signing key: any one team record
+ * (`kind:39000`), whose signer it is (SPEC §3.2; NIP-11 does not carry it on
+ * production). Read it once and keep it: the key is one per deployment.
+ */
+export const RELAY_KEY_FILTER: { kinds: number[]; limit: number } = { kinds: [39000], limit: 1 }
+
+/**
+ * kind:7 reaction — mirrors `build_reaction` (buzz-sdk builders.rs).
  *
  * Note there is **no `h` tag**: Buzz derives the channel from the *target's*
  * `#e` tag and explicitly ignores a client-supplied `#h` (`NOSTR.md`). Adding one
  * would change the event id for no benefit.
+ *
+ * **Its last `p` names the target's effective author** (NIP-25; SPEC §6.6;
+ * record a-reaction-names-whose-message-it-reacts-to), so any app finds the
+ * reactions to a person's messages with `{kinds:[7], "#p":[person]}`. The
+ * target is the message itself, not its id, so the name is always worked out
+ * the one way ({@link effectiveAuthor}); pass `relayKey` when
+ * {@link needsRelayKey} says the target could be relay-signed. The `p` is not a
+ * mention (§11.8).
  */
 export function buildReaction(
   pubkey: string,
   createdAtMs: number,
-  args: { targetEventId: string; emoji: string },
+  args: { target: Authored & { id: string }; emoji: string; relayKey?: string | null },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
-  assertHex64(args.targetEventId, 'targetEventId')
+  assertHex64(args.target.id, 'target.id')
+  const author = effectiveAuthor(args.target, args.relayKey)
+  assertHex64(author, 'target author')
   if ([...args.emoji].length > MAX_EMOJI_CHARS) {
     throw new Error(`emoji longer than ${MAX_EMOJI_CHARS} chars`)
   }
@@ -684,7 +743,10 @@ export function buildReaction(
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
     kind: KIND.REACTION,
-    tags: [['e', args.targetEventId]],
+    tags: [
+      ['e', args.target.id],
+      ['p', author],
+    ],
     content: args.emoji,
   }
 }
