@@ -666,7 +666,8 @@ export function buildDmHide(pubkey: string, createdAtMs: number, args: { channel
 /** The parts of an event that say who wrote it. */
 export type Authored = { pubkey: string; tags: string[][] }
 
-const isHex64 = (value: string | undefined): value is string => !!value && /^[0-9a-f]{64}$/.test(value)
+// Any case, as Buzz's `hex::decode` takes it; an author is answered in lowercase.
+const isHex64 = (value: string | undefined): value is string => !!value && /^[0-9a-fA-F]{64}$/.test(value)
 
 /**
  * Who wrote an event: its **effective author** (SPEC §6.5), the person the
@@ -689,7 +690,7 @@ export function effectiveAuthor(event: Authored, relayKey?: string | null): stri
   if (!relayKey || event.pubkey !== relayKey) return event.pubkey
   const actor = event.tags.find((t) => t[0] === 'actor' && isHex64(t[1]))?.[1]
   const named = event.tags.find((t) => t[0] === 'p' && isHex64(t[1]))?.[1]
-  return actor ?? named ?? event.pubkey
+  return (actor ?? named)?.toLowerCase() ?? event.pubkey
 }
 
 /**
@@ -707,7 +708,7 @@ export function needsRelayKey(event: Authored): boolean {
  * (`kind:39000`), whose signer it is (SPEC §3.2; NIP-11 does not carry it on
  * production). Read it once and keep it: the key is one per deployment.
  */
-export const RELAY_KEY_FILTER = { kinds: [39000], limit: 1 } as const
+export const RELAY_KEY_FILTER: { kinds: number[]; limit: number } = { kinds: [39000], limit: 1 }
 
 /**
  * kind:7 reaction — mirrors `build_reaction` (buzz-sdk builders.rs).

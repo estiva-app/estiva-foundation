@@ -4,7 +4,8 @@
  *
  * Chat, an edit, a reaction and a deletion are `@estiva-app/protocol`'s
  * `buildMessage`, `buildEdit`, `buildReaction` and `buildDeletion`, which are
- * already Buzz-shaped and byte-pinned. What is conversation-specific is the
+ * byte-pinned there (a reaction also names its target's author, which upstream
+ * Buzz does not write: SPEC §6.6). What is conversation-specific is the
  * NIP-22 pair below, whose shape the SPEC decided rather than Buzz.
  */
 import { fileIdFormOf, fileIdOf, imetaTag, toNostrSeconds, type Imeta, type NostrTag, type UnsignedEvent } from '@estiva-app/protocol'

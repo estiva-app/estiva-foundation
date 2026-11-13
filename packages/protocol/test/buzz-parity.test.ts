@@ -208,7 +208,13 @@ describe('shape rules taken from builders.rs', () => {
   })
 
   it('kind:7 reaction refuses a target whose author is not a key', () => {
-    assert.throws(() => buildReaction(PUBKEY, 0, { target: { id: '3'.repeat(64), pubkey: 'nope', tags: [] }, emoji: '👍' }))
+    assert.throws(() => buildReaction(PUBKEY, 0, { target: { id: '3'.repeat(64), pubkey: 'nope', tags: [] }, emoji: '👍' }), /target author/)
+  })
+
+  it('kind:7 reaction to a relay-signed message whose actor is in capitals names it as Buzz does, in lowercase', () => {
+    const relay = '7'.repeat(64)
+    const target = { id: '3'.repeat(64), pubkey: relay, tags: [['actor', 'AB'.repeat(32)]] }
+    assert.deepEqual(buildReaction(PUBKEY, 0, { target, emoji: '👍', relayKey: relay }).tags.at(-1), ['p', 'ab'.repeat(32)])
   })
 
   it('kind:5 deletion targets one event with empty content', () => {
