@@ -247,6 +247,18 @@ describe('createReadStateQueue', () => {
     assert.deepEqual(Object.keys(relay.blob(ALICE, slot.slotId).contexts).sort(), [T1, T2, T3])
   })
 
+  // The relay keeps the lower id when two copies of a slot share a second, and calls the loser a duplicate.
+  it('dates a publish after the copy it read back, so a larger blob in the same second is not the one dropped', async () => {
+    const { queue, relay } = setup()
+    queue.markRead([T1], AT)
+    await queue.flush()
+    const d = `${ALICE}:${readStateDTag(queue.identity().slotId)}`
+    const first = relay.events.get(d)!.created_at
+    queue.markRead([T2], AT)
+    await queue.flush()
+    assert.ok(relay.events.get(d)!.created_at > first)
+  })
+
   it('keeps publishing after a flush threw where nothing expected it to', async () => {
     let calls = 0
     const { queue, relay } = setup({

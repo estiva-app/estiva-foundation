@@ -139,6 +139,8 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
   /** The last content seen at our coordinate and what it held, so an unchanged slot is not decrypted again. */
   let ownCopy: { content: string; contexts: Record<string, number> } | undefined
   let hydrated = false
+  /** When the copy of our slot read back was written (unix seconds), so the next publish is dated after it. */
+  let slotAt = 0
   let timer: Timer | undefined
   let retryMs = 0
   let inFlight: Promise<void> = Promise.resolve()
@@ -177,6 +179,7 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
     const events = await query([{ kinds: [KIND_APP_DATA], authors: [pubkey], '#d': [readStateDTag(slot.slotId)] }])
     const newest = events.filter((e) => e.pubkey === pubkey).sort((a, b) => b.created_at - a.created_at)[0]
     let own: Record<string, number> = {}
+    slotAt = newest?.created_at ?? 0
     if (newest && ownCopy?.content === newest.content) own = ownCopy.contexts
     else if (newest) {
       const blob = parseReadStateBlob(await nip44.decrypt(newest.content))
@@ -259,7 +262,10 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
           pubkey,
           currentIdentity(),
           contexts,
-          Date.now(),
+          // After the copy read back, never in the same second: on a tie the relay keeps the lower id and answers
+          // "duplicate" as accepted, so a larger blob published within the second (a flush on hide right after the
+          // debounced one) could lose to the smaller one with nothing to say so.
+          Math.max(Date.now(), (slotAt + 1) * 1000),
         )
         if (result.ok) {
           published = contexts
@@ -324,6 +330,7 @@ export function createReadStateQueue(options: ReadStateQueueOptions): ReadStateQ
     published = undefined
     ownCopy = undefined
     hydrated = false
+    slotAt = 0
     retryMs = 0
     inFlight = Promise.resolve()
   }
