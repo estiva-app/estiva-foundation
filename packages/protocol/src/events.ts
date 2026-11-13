@@ -688,7 +688,9 @@ const isHex64 = (value: string | undefined): value is string => !!value && /^[0-
  */
 export function effectiveAuthor(event: Authored, relayKey?: string | null): string {
   if (!relayKey || event.pubkey !== relayKey) return event.pubkey
-  const actor = event.tags.find((t) => t[0] === 'actor' && isHex64(t[1]))?.[1]
+  // Buzz reads the first `actor` only (a malformed one falls through to `p`), and the first valid `p`.
+  const first = event.tags.find((t) => t[0] === 'actor')?.[1]
+  const actor = isHex64(first) ? first : undefined
   const named = event.tags.find((t) => t[0] === 'p' && isHex64(t[1]))?.[1]
   return (actor ?? named)?.toLowerCase() ?? event.pubkey
 }
