@@ -379,6 +379,17 @@ describe('a file several Folders list is list-read once per load (APP-11)', () =
     assert.ok(b.some((e) => e.kind === 1851 && firstA(e) === addressOf(south)))
   })
 
+  test('one read whose two lists share a file asks for it once and answers it once, read before or not', async () => {
+    const relay = listRelay(world())
+    const query = createLoadQuery(relay.query)
+    const both = await query([...listRead(['north', 'south']), ...listRead(['south', 'pear'])])
+    assert.equal(relay.timesSent(south), 1)
+    assert.equal(both.filter((e) => e.id === south.id).length, 1)
+    const again = await query([...listRead(['south']), ...listRead(['south', 'north'])])
+    assert.equal(again.filter((e) => e.id === south.id).length, 1)
+    assert.equal(relay.requests.length, 1, 'all of it was read already')
+  })
+
   test('a read with the text is not answered from one without it, and a page without room for every file goes to the relay as asked', async () => {
     const relay = listRelay(world())
     const query = createLoadQuery(relay.query)

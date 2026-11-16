@@ -232,16 +232,22 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     const joined: { again: Filter; entry: Promise<SignedEvent[] | null> }[] = []
     const joinedByTag: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
     const askedFiles: ListRead[] = []
-    const joinedFiles: Promise<SignedEvent[]>[] = []
+    // A Set, and the files this call asks, so a file two of its filters name is answered and asked once.
+    const joinedFiles = new Set<Promise<SignedEvent[]>>()
+    const askedHere = new Set<string>()
     for (const filter of filters) {
       // Several Folders list the same files: each is read once per load, the rest of a list read goes on (APP-11).
       const list = listReadOf(filter)
       if (list) {
         const fresh: string[] = []
         for (const d of new Set(list.ds)) {
-          const held = files.get(fileKey(list, d))
-          if (held) joinedFiles.push(held)
-          else fresh.push(d)
+          const key = fileKey(list, d)
+          const held = files.get(key)
+          if (held) joinedFiles.add(held)
+          else if (!askedHere.has(key)) {
+            askedHere.add(key)
+            fresh.push(d)
+          }
         }
         if (fresh.length === 0) continue
         // `limit` counts first records: one per file asked.
