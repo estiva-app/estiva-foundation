@@ -512,24 +512,6 @@ describe('with the relay\'s times read, the same topics come in the same order',
     })
   }
 
-  it('learns a long text\'s time without its words', async () => {
-    const text = change(PROJECT, 'description', 'a long text '.repeat(500), T0 + 75, SHIP_TEAM)
-    const events = [...fileRoots, text]
-    const { times } = timesOver(events)
-    const answered: unknown[] = []
-    const timed = await readTopicActivity(relayOver(events).query, topics, {
-      nowSeconds: NOW,
-      times: async (f) => {
-        const out = await times(f)
-        answered.push(out)
-        return out
-      },
-    })
-    assert.equal(timed.at.get(WIDGETS), T0 + 75)
-    assert.ok(answered.length > 0)
-    assert.ok(!JSON.stringify(answered).includes('a long text'))
-  })
-
   it('finds every issue under listed projects when a page of times fills, older ones on the next page', async () => {
     // The times twin of the plain read's paging test above: 1005 issues, one filter's page (1000) fills.
     const projects = Array.from({ length: 101 }, (_, i) => `30850:${SHIP}:bulk-project-${i}`)

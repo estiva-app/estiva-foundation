@@ -37,7 +37,7 @@
  * No decision record states this order of topics: the rule lives here, and
  * writing it up as SPEC §6.14 text is on the project's Later list.
  */
-import { fileIdOf, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
+import { fileIdOf, RELAY_PAGE_CEILING, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
 import { answeredByEach, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
@@ -424,6 +424,8 @@ export async function readTopicActivity(
       chunked(ds, VALUES_PER_FILTER).map((values) => ({ fields: 'times', kinds: [kind], '#d': values })),
     )
     const own = ownFilters.length > 0 ? read(ownFilters) : Promise.resolve([])
+    // Awaited after the walk; a refusal before then is not left unhandled, and still throws there.
+    own.catch(() => undefined)
     // Each file under one is answered once per parent; each parent is walked once.
     const found = new Set<string>()
     let level = [...listed.keys()].filter((address) => CHILD_KINDS[kindOf(address) ?? -1])
@@ -535,7 +537,7 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
 export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[]>
 
 /** Roots asked per page of a times read: a parent with thousands under it is still read whole, a page at a time. */
-const TIMES_PAGE = 1000
+const TIMES_PAGE = RELAY_PAGE_CEILING
 const MAX_TIMES_PAGES = 20
 
 /** The files under the given ones, by the times read, every page of each filter. */
