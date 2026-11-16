@@ -130,6 +130,16 @@ describe('opening a file by the open read (ALO-6)', () => {
     assert.equal(interop.prevOf(listed, 'description'), undefined, 'not the first record: its text is unread')
   })
 
+  test('a list that never draws what a file says opens it without its text: the newest title, and its text unread (APP-11)', async () => {
+    const relay = opening(events)
+    const objects = await resolveForeignObjects([addressOf(launch)], relay.query, noPeople, undefined, { openRead: [PLAN], withoutText: true })
+    const object = objects[addressOf(launch)]
+    assert.equal(object.slots.title?.value, 'Launch, renamed')
+    assert.deepEqual(relay.opens().map((f) => [f['#d'], f.text]), [[['launch'], undefined]], 'one open read, without the text')
+    assert.deepEqual(relay.changesByA(), [], 'no change is read by `#a`')
+    assert.equal(interop.prevOf(object, 'description'), undefined, 'its text is unread, so no edit builds on it')
+  })
+
   test('a deleted project, which the open read leaves out, is read whole and says who deleted it', async () => {
     const gone = change(launch, 'deleted', 'true', OTHER)
     const relay = opening([...events, gone])

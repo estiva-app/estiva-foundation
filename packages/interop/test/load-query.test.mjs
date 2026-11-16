@@ -325,3 +325,102 @@ describe('a read in flight is joined, not repeated', () => {
     assert.equal((await retry).length, 2)
   })
 })
+
+describe('a file several Folders list is list-read once per load (APP-11)', () => {
+  /*
+    Peek's Desk reads up to ten Folders' contents ahead in one load, and on Miky's workspace (16 Nov) their list
+    reads named 548 files 1,548 times, 2.4 MB a Folder. A list read answers each file named by its `d` whole: its
+    first record and its fields' current changes (SPEC §6.13), so a file asked once in a load is answered from then on.
+  */
+  const firstA = (e) => e.tags.find((t) => t[0] === 'a')?.[1]
+  /** A relay answering `fields: "newest"` as ours does: each root named, and the current change of each of its fields. */
+  function listRelay(events) {
+    const requests = []
+    const sent = []
+    const query = async (filters) => {
+      requests.push(filters)
+      const out = filters.flatMap((f) => {
+        if (f.fields !== 'newest') return events.filter((e) => matches(f, e)).slice(0, f.limit ?? Infinity)
+        const roots = events.filter((e) => matches(f, e)).slice(0, f.limit)
+        const current = new Map()
+        for (const root of roots) {
+          for (const c of events.filter((e) => e.kind === 1851 && firstA(e) === addressOf(root))) {
+            const key = `${firstA(c)}|${c.tags.find((t) => t[0] === 'field')[1]}`
+            if (!current.has(key) || current.get(key).created_at < c.created_at) current.set(key, c)
+          }
+        }
+        return [...roots, ...current.values()]
+      })
+      sent.push(...out)
+      return out
+    }
+    return { query, requests, sent, timesSent: (e) => sent.filter((s) => s.id === e.id).length }
+  }
+  const listRead = (ds, extra = {}) => [{ kinds: [HIVE], authors: [KEEPER], '#d': ds, limit: ds.length, fields: 'newest', ...extra }]
+  const ids = (events) => events.map((e) => e.id).sort()
+
+  test('a second Folder listing the same file asks the relay only for the files not read yet, and gets the same answer', async () => {
+    const relay = listRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query(listRead(['north', 'south']))
+    const second = await query(listRead(['north', 'pear']))
+    assert.deepEqual(relay.requests[1], listRead(['pear']))
+    assert.deepEqual(ids(second), ids(await listRelay(world()).query(listRead(['north', 'pear']))))
+    assert.equal(relay.timesSent(north), 1)
+  })
+
+  test('Folders read side by side, as the Desk loads them ahead, ask for a file they share once', async () => {
+    const relay = listRelay(world())
+    const query = createLoadQuery(relay.query)
+    const [a, b] = await Promise.all([query(listRead(['north', 'south'])), query(listRead(['south', 'pear']))])
+    assert.equal(relay.timesSent(south), 1)
+    assert.ok(ids(a).includes(south.id) && ids(b).includes(south.id))
+    // South's current archived change comes with it in both answers.
+    assert.ok(b.some((e) => e.kind === 1851 && firstA(e) === addressOf(south)))
+  })
+
+  test('one read whose two lists share a file asks for it once and answers it once, read before or not', async () => {
+    const relay = listRelay(world())
+    const query = createLoadQuery(relay.query)
+    const both = await query([...listRead(['north', 'south']), ...listRead(['south', 'pear'])])
+    assert.equal(relay.timesSent(south), 1)
+    assert.equal(both.filter((e) => e.id === south.id).length, 1)
+    const again = await query([...listRead(['south']), ...listRead(['south', 'north'])])
+    assert.equal(again.filter((e) => e.id === south.id).length, 1)
+    assert.equal(relay.requests.length, 1, 'all of it was read already')
+  })
+
+  test('a read with the text is not answered from one without it, and a page without room for every file goes to the relay as asked', async () => {
+    const relay = listRelay(world())
+    const query = createLoadQuery(relay.query)
+    await query(listRead(['north']))
+    await query(listRead(['north'], { text: true }))
+    assert.deepEqual(relay.requests[1], listRead(['north'], { text: true }))
+    const short = [{ kinds: [HIVE], authors: [KEEPER], '#d': ['north', 'south'], limit: 1, fields: 'newest' }]
+    await query(short)
+    assert.deepEqual(relay.requests[2], short)
+  })
+
+  test('a refused list read fails whoever waits on it, and the next ask goes to the relay again', async () => {
+    const base = listRelay(world())
+    let refuse = true
+    const query = createLoadQuery(async (filters) => {
+      if (refuse) {
+        base.requests.push(filters)
+        throw new Error('rate-limited')
+      }
+      return base.query(filters)
+    })
+    await assert.rejects(Promise.all([query(listRead(['north'])), query(listRead(['north']))]), /rate-limited/)
+    refuse = false
+    assert.ok(ids(await query(listRead(['north']))).includes(north.id))
+    assert.deepEqual(base.requests.at(-1), listRead(['north']))
+  })
+
+  test('another load reads the file afresh', async () => {
+    const relay = listRelay(world())
+    await createLoadQuery(relay.query)(listRead(['north']))
+    await createLoadQuery(relay.query)(listRead(['north']))
+    assert.equal(relay.timesSent(north), 2)
+  })
+})
