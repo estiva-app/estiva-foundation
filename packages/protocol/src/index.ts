@@ -151,6 +151,8 @@ export {
   type PublishResult,
   type QueryResult,
   type SearchMatch,
+  type FileTimes,
+  timesOf,
   type RelayFileReads,
   relayFileReadsOf,
   PROJECT_TYPE,

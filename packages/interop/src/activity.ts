@@ -37,7 +37,7 @@
  * No decision record states this order of topics: the rule lives here, and
  * writing it up as SPEC §6.14 text is on the project's Later list.
  */
-import { fileIdOf, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
+import { fileIdOf, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
 import { answeredByEach, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
@@ -290,7 +290,16 @@ interface Probe {
 export async function readTopicActivity(
   query: QueryFn,
   topics: readonly ActivityTopic[],
-  options: { nowSeconds?: number } = {},
+  options: {
+    nowSeconds?: number
+    /**
+     * The relay's times read (SPEC §6.13, `"fields": "times"`), where NIP-11
+     * says `file_list.times` (`relayFileReadsOf`): the listed files' changes
+     * and the files under them are then learnt as times, never as whole
+     * changes and roots. Without it, every change is read whole as before.
+     */
+    times?: TimesFn
+  } = {},
 ): Promise<TopicActivity> {
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000)
   const capped = (at: number) => Math.min(at, now)
@@ -324,12 +333,14 @@ export async function readTopicActivity(
   const folderOfFile = new Map<string, string | null>()
   for (const topic of topics) for (const file of topic.files) if (!folderOfFile.get(file.address)) folderOfFile.set(file.address, file.folder)
 
+  const times = options.times
   const fileProbes = (target: ActivityFile, list: string[], keepsComments = false): Probe[] => {
     const file = target.address
     const id = fileIdOf(file)
     // Every change carries the file's `a`; its `O` only since 30 Oct 2026. A comment carries `A`, or `O` in its newer form (§6.4).
+    // With the times read, a file's changes are learnt as times (readByTimes), and only its comments are read.
     return [
-      { filter: { kinds: [KIND_CHANGE], '#a': [file] }, target, topics: list },
+      ...(times ? [] : [{ filter: { kinds: [KIND_CHANGE], '#a': [file] }, target, topics: list }]),
       { filter: { kinds: [KIND_COMMENT], '#A': [file] }, target, topics: list, keepsComments },
       ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, target, topics: list, keepsComments }] : []),
     ]
@@ -346,7 +357,8 @@ export async function readTopicActivity(
   // first page of each file found by the level before, and every probe still
   // open, a page further back. No filter here names a team (`#h`), the only
   // values a relay caps per request, so none is split across requests.
-  const under = filesUnder([...listed.keys()])
+  if (times) await readByTimes(times)
+  const under = filesUnder(times ? [] : [...listed.keys()])
   // Each file found under a listed one, as last found, and the topics it has been read for.
   const asFound = new Map<string, ActivityFile>()
   const readFor = new Map<string, Set<string>>()
@@ -386,6 +398,81 @@ export async function readTopicActivity(
   }
   for (const list of comments.values()) list.sort(oldestFirst)
   return { at, files, folders, comments, parents }
+
+  /**
+   * The listed files' changes and the files under them, a level at a time, as
+   * the relay's times: each current change judged by the same rule as a whole
+   * one ({@link countsAsActivity}), each file found under one placed and its
+   * comments queued in `first` as {@link filesUnder} and the probes do.
+   */
+  async function readByTimes(read: TimesFn): Promise<void> {
+    const count = (entry: FileTimes, on: Iterable<string>) => {
+      const list = [...on]
+      for (const change of entry.changes) {
+        const event = changeOf(entry.a, change)
+        for (const topic of list) if (countsAsActivity(event, topic)) bump(topic, change.created_at)
+      }
+    }
+    const byKind = new Map<number, string[]>()
+    for (const file of listed.keys()) {
+      const kind = kindOf(file)
+      const d = idOf(file)
+      if (kind === undefined || !d) continue
+      byKind.set(kind, [...(byKind.get(kind) ?? []), d])
+    }
+    const ownFilters = [...byKind].flatMap(([kind, ds]) =>
+      chunked(ds, VALUES_PER_FILTER).map((values) => ({ fields: 'times', kinds: [kind], '#d': values })),
+    )
+    const own = ownFilters.length > 0 ? read(ownFilters) : Promise.resolve([])
+    // Each file under one is answered once per parent; each parent is walked once.
+    const found = new Set<string>()
+    let level = [...listed.keys()].filter((address) => CHILD_KINDS[kindOf(address) ?? -1])
+    const walked = new Set(level)
+    for (let depth = 0; depth < MAX_DEPTH && level.length > 0; depth++) {
+      const asked = new Set(level)
+      // A replaceable root the relay still holds twice is one file: its newest names its team.
+      const newest = new Map<string, FileTimes>()
+      for (const entry of await timesUnder(read, level)) {
+        if (!entry.under || !asked.has(entry.under) || !(CHILD_KINDS[kindOf(entry.under)!] ?? []).includes(kindOf(entry.a) ?? -1)) continue
+        const held = newest.get(entry.a)
+        if (!held || entry.created_at > held.created_at) newest.set(entry.a, entry)
+      }
+      const perParent = new Map<string, number>()
+      const next: string[] = []
+      for (const entry of [...newest.values()].sort((a, b) => b.created_at - a.created_at)) {
+        const parent = entry.under!
+        const taken = perParent.get(parent) ?? 0
+        if (taken >= MAX_CHILDREN) continue
+        perParent.set(parent, taken + 1)
+        if (found.has(`${parent} ${entry.a}`)) continue
+        found.add(`${parent} ${entry.a}`)
+        const file: ActivityFile = { address: entry.a, folder: entry.h }
+        parents.set(entry.a, parent)
+        const before = new Set(topicsOf.get(entry.a) ?? [])
+        for (const topic of topicsOf.get(parent) ?? []) {
+          if (!before.has(topic)) files.get(topic)!.push(file)
+          onTopic(entry.a, topic)
+          // A new issue filed in a listed project is news.
+          bump(topic, entry.created_at)
+        }
+        count(entry, topicsOf.get(entry.a) ?? [])
+        // Its comments, for the topics it was not already read for as a listed file.
+        const fresh = [...(topicsOf.get(entry.a) ?? [])].filter((topic) => !before.has(topic) && !listed.get(entry.a)?.has(topic))
+        const kept = listed.has(parent) && !listed.has(entry.a)
+        if (kept && !comments.has(entry.a)) comments.set(entry.a, [])
+        if (fresh.length > 0) first.push(...fileProbes(file, fresh, kept))
+        if (CHILD_KINDS[kindOf(entry.a) ?? -1] && !walked.has(entry.a)) {
+          walked.add(entry.a)
+          next.push(entry.a)
+        }
+      }
+      level = next
+    }
+    for (const entry of await own) {
+      const on = listed.get(entry.a)
+      if (on) count(entry, on)
+    }
+  }
 
   /**
    * Per probe, the newest event that counts for one of its topics, from the
@@ -442,6 +529,47 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
   return out
+}
+
+/** The relay's times read (`Relay.queryTimes`, or an app's own post through `timesOf`): every filter says `"fields": "times"`. */
+export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[]>
+
+/** Roots asked per page of a times read: a parent with thousands under it is still read whole, a page at a time. */
+const TIMES_PAGE = 1000
+const MAX_TIMES_PAGES = 20
+
+/** The files under the given ones, by the times read, every page of each filter. */
+async function timesUnder(read: TimesFn, parents: readonly string[]): Promise<FileTimes[]> {
+  const kinds = [...new Set(parents.flatMap((address) => CHILD_KINDS[kindOf(address)!]!))]
+  let asking: Record<string, unknown>[] = chunked(parents, VALUES_PER_FILTER).map((values) => ({ fields: 'times', kinds, '#a': values, limit: TIMES_PAGE }))
+  const out: FileTimes[] = []
+  for (let page = 0; asking.length > 0 && page < MAX_TIMES_PAGES; page++) {
+    const answer = await read(asking)
+    out.push(...answer)
+    asking = asking.flatMap((filter) => {
+      const values = new Set(filter['#a'] as string[])
+      // The roots this filter picked, by the file each sits under.
+      const mine = answer.filter((entry) => entry.under !== undefined && values.has(entry.under))
+      if (mine.length < TIMES_PAGE) return []
+      const until = Math.min(...mine.map((entry) => entry.created_at))
+      // A second holding a whole page: asking again would repeat it.
+      return until === filter.until ? [] : [{ ...filter, until }]
+    })
+  }
+  return out
+}
+
+/** A current change as the times read answers it, shaped as the change {@link countsAsActivity} judges: its fields as `set` tags. */
+function changeOf(file: string, change: FileTimes['changes'][number]): SignedEvent {
+  return {
+    id: change.id,
+    pubkey: '',
+    created_at: change.created_at,
+    kind: KIND_CHANGE,
+    tags: [['a', file], ...Object.entries(change.fields).map(([field, value]) => ['set', field, value ?? ''])],
+    content: '',
+    sig: '',
+  }
 }
 
 /**

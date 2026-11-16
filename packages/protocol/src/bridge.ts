@@ -210,8 +210,33 @@ export interface QueryResult {
   events: SignedEvent[]
   /** With `search` (SPEC §6.13): the files found, best first. The relay's statement, never signed. */
   matches?: SearchMatch[]
+  /** With `"fields": "times"` (SPEC §6.13): when each picked file's fields last changed. The relay's statement, never signed. */
+  times?: FileTimes[]
   reason?: string
   httpStatus?: number
+}
+
+/**
+ * One file as the times read answers it — SPEC §6.13, `"fields": "times"`:
+ * its address, its first record's team and time, the file it sits under (its
+ * first record's first `a`), and each current change with the fields it sets,
+ * the text's value left out (`null`). Answered only where the events would be.
+ */
+export interface FileTimes {
+  a: string
+  created_at: number
+  h: string | null
+  under?: string
+  changes: { id: string; created_at: number; fields: Record<string, string | null> }[]
+}
+
+function isFileTimes(value: unknown): value is FileTimes {
+  const t = value as FileTimes
+  return (
+    !!t && typeof t.a === 'string' && typeof t.created_at === 'number' && (t.h === null || typeof t.h === 'string') &&
+    (t.under === undefined || typeof t.under === 'string') && Array.isArray(t.changes) &&
+    t.changes.every((c) => !!c && typeof c.id === 'string' && typeof c.created_at === 'number' && !!c.fields && typeof c.fields === 'object')
+  )
 }
 
 /** One file a `search` found, and which of its words held the typing — SPEC §6.13. */
@@ -224,6 +249,19 @@ export interface SearchMatch {
     /** The words around a typed word in the text, as plain text: an author's words, never markup. */
     around?: string
   }
+}
+
+/**
+ * A times read's answer (`POST /query` with `"fields": "times"`), for an app
+ * that posts with its own fetch: busy throws {@link RelayBusyError}, any other
+ * failure or an answer that is not a times answer throws.
+ */
+export function timesOf({ status, text }: { status: number; text: string }): FileTimes[] {
+  if (isRelayBusyResponse(status, text)) throw new RelayBusyError(status)
+  const result = parseQueryResponse(status, text)
+  if (!result.ok) throw new Error(`query failed: ${result.reason}`)
+  if (!result.times) throw new Error('query failed: not a times answer')
+  return result.times
 }
 
 /** The relay's answer to `POST /query`, interpreted. */
@@ -239,7 +277,10 @@ export function parseQueryResponse(status: number, text: string): QueryResult {
   }
   try {
     const parsed = JSON.parse(text)
-    // A search answers an object (§6.13); every other read a bare array.
+    // A search and the times read answer an object (§6.13); every other read a bare array.
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.times)) {
+      return { ok: true, events: [], times: parsed.times.filter(isFileTimes), httpStatus: status }
+    }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.events)) {
       const matches = Array.isArray(parsed.matches) ? parsed.matches.filter(isSearchMatch) : []
       return { ok: true, events: parsed.events, matches, httpStatus: status }
@@ -268,6 +309,8 @@ function isSearchMatch(value: unknown): value is SearchMatch {
  * - `inOrder`: the types the relay keeps in order (`files.requires_prev`), and
  *   whether it has made the switch at all (`files` present).
  * - `search`: the types it finds by their words (`file_search.types`).
+ * - `times`: `/query` answers `"fields": "times"` (`file_list.times`), so an
+ *   app learns when files changed without reading the changes.
  *
  * A relay that says nothing reads as none of them, which is always safe: the
  * app reads every change and folds them itself.
@@ -278,6 +321,7 @@ export interface RelayFileReads {
   switched: boolean
   inOrder: string[]
   search: string[]
+  times: boolean
 }
 
 export function relayFileReadsOf(info: unknown): RelayFileReads {
@@ -294,6 +338,7 @@ export function relayFileReadsOf(info: unknown): RelayFileReads {
     switched: !!files,
     inOrder: strings(files?.requires_prev),
     search: strings(obj(doc.file_search)?.types),
+    times: list?.newest === true && list.times === true,
   }
 }
 
@@ -857,6 +902,15 @@ export class Relay {
     const result = parseQueryResponse(status, text)
     if (!result.ok) throw new Error(`query failed: ${result.reason}`)
     return { events: result.events, matches: result.matches ?? [] }
+  }
+
+  /**
+   * The times read (SPEC §6.13, `"fields": "times"`; NIP-11 `file_list.times`,
+   * {@link relayFileReadsOf}): each filter must say `"fields": "times"`. Never
+   * sent to a relay that does not advertise it.
+   */
+  async queryTimes(filters: Record<string, unknown>[]): Promise<FileTimes[]> {
+    return timesOf(await this.post('/query', filters))
   }
 
   /**
