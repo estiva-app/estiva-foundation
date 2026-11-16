@@ -284,8 +284,9 @@ describe('readYourTopics: the requests it makes', () => {
       const lists = request.filter((f) => f.fields).length
       assert.ok(lists === 0 || lists === request.length, 'a list read goes alone')
     }
-    // At most: 1 roots and mute list · 2 changes naming me and team lists, beside the topics' list read · 3 listed
-    // ids and parents' manifests · 4 the parents by the list read (one level: a project has none), beside activity's
+    // At most: 1 roots and mute list · 2 changes naming me and team lists · 3 the list read of the topics that could be
+    // mine (after 2, since ALO-22) · 4 listed ids and parents' manifests · 5 the parents by the list read (one level: a
+    // project has none), beside activity's
     // two ticks (the files under the listed ones, then what is under those with the found files' first pages).
     assert.ok(calls.length <= 7, `${calls.length} requests`)
     assert.ok(long.calls.length > calls.length, `the long way: ${long.calls.length}`)
