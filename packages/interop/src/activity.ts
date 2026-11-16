@@ -559,14 +559,18 @@ async function timesUnder(read: TimesFn, parents: readonly string[]): Promise<Fi
   return out
 }
 
-/** A current change as the times read answers it, shaped as the change {@link countsAsActivity} judges: its fields as `set` tags. */
+/**
+ * A current change as the times read answers it, shaped as the change {@link countsAsActivity} judges: its field names
+ * as `set` tags with no value. The rule reads a value only for `lists:` on the topic itself, whose changes are still
+ * read whole.
+ */
 function changeOf(file: string, change: FileTimes['changes'][number]): SignedEvent {
   return {
     id: change.id,
     pubkey: '',
     created_at: change.created_at,
     kind: KIND_CHANGE,
-    tags: [['a', file], ...Object.entries(change.fields).map(([field, value]) => ['set', field, value ?? ''])],
+    tags: [['a', file], ...change.fields.map((field) => ['set', field, ''])],
     content: '',
     sig: '',
   }

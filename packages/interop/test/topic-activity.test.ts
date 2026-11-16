@@ -442,7 +442,7 @@ function timesOver(events: SignedEvent[]) {
       const hit = roots
         .filter((e) => matches(e, rest) && (!ds || (ds as string[]).includes(dOf(e))))
         .sort((a, b) => b.created_at - a.created_at)
-      for (const e of typeof f.limit === 'number' ? hit.slice(0, f.limit) : hit) picked.set(addressOf(e), e)
+      for (const e of typeof f.limit === 'number' ? hit.slice(0, f.limit) : hit) picked.set(e.id, e)
     }
     return [...picked.values()].map((r) => {
       const a = addressOf(r)
@@ -459,7 +459,7 @@ function timesOver(events: SignedEvent[]) {
       const changes = [...heads].map(([field, c]) => ({
         id: c.id,
         created_at: c.created_at,
-        fields: { [field]: field === 'description' ? null : c.tags.find((t) => t[0] === 'value')![1]! },
+        fields: [field],
       }))
       const under = r.tags.find((t) => t[0] === 'a')?.[1]
       return { a, created_at: r.created_at, h, ...(under ? { under } : {}), changes }
@@ -488,6 +488,8 @@ describe('with the relay\'s times read, the same topics come in the same order',
       change(WIDGETS, 'lists:new-d', 'false', T0 + 66),
       change(WIDGETS, `order:${PAGE.split(':')[2]}`, 'a0', T0 + 67),
     ]],
+    // Its newest record names the team: the file is in Leaf's team, as the plain read has it.
+    ['an issue the relay still holds twice, moved to another team', [message(ONBOARDING, T0 + 50), root(ISSUE, T0 - 100, LEAF_TEAM, PROJECT)]],
   ]
   for (const [name, extra] of scenarios) {
     it(name, async () => {
@@ -497,7 +499,7 @@ describe('with the relay\'s times read, the same topics come in the same order',
       const timed = await readTopicActivity(relay.query, topics, { nowSeconds: NOW, times: timesOver(events).times })
       assert.deepEqual(order(timed), order(plain))
       assert.deepEqual(new Map(timed.at), new Map(plain.at))
-      const listedOf = (a: TopicActivity) => new Map([...a.files].map(([t, fs]) => [t, fs.map((f) => f.address).sort()]))
+      const listedOf = (a: TopicActivity) => new Map([...a.files].map(([t, fs]) => [t, fs.map((f) => `${f.address} in ${f.folder}`).sort()]))
       assert.deepEqual(listedOf(timed), listedOf(plain))
       assert.deepEqual(new Map(timed.parents), new Map(plain.parents))
       // No file's change and no file under one is read whole: only the topics' own changes and comments.
@@ -526,5 +528,16 @@ describe('with the relay\'s times read, the same topics come in the same order',
     assert.equal(timed.at.get(WIDGETS), T0 + 75)
     assert.ok(answered.length > 0)
     assert.ok(!JSON.stringify(answered).includes('a long text'))
+  })
+
+  it('finds every issue under listed projects when a page of times fills, older ones on the next page', async () => {
+    // The times twin of the plain read's paging test above: 1005 issues, one filter's page (1000) fills.
+    const projects = Array.from({ length: 101 }, (_, i) => `30850:${SHIP}:bulk-project-${i}`)
+    const bulk: ActivityTopic = { address: `30840:${MIKY}:bulk-d`, createdAt: T0, folder: TEAM, files: projects.map((address) => ({ address, folder: SHIP_TEAM })) }
+    const issues = Array.from({ length: 1005 }, (_, i) => root(`30851:${QA2}:bulk-issue-${i}`, T0 + 10 + i, SHIP_TEAM, projects[i % 3]))
+    const activity = await readTopicActivity(relayOver(issues).query, [bulk], { nowSeconds: NOW, times: timesOver(issues).times })
+    const found = new Set(activity.files.get(bulk.address)!.map((file) => file.address))
+    const missing = issues.map((issue) => `30851:${QA2}:${issue.tags[0]![1]}`).filter((address) => !found.has(address))
+    assert.deepEqual(missing, [])
   })
 })

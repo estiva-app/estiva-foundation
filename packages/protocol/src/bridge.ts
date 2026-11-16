@@ -219,15 +219,16 @@ export interface QueryResult {
 /**
  * One file as the times read answers it — SPEC §6.13, `"fields": "times"`:
  * its address, its first record's team and time, the file it sits under (its
- * first record's first `a`), and each current change with the fields it sets,
- * the text's value left out (`null`). Answered only where the events would be.
+ * first record's first `a`), and each current change with the names of the
+ * fields it sets, never their values (the text named only to a reader of the
+ * file's home). Answered only where the events would be.
  */
 export interface FileTimes {
   a: string
   created_at: number
   h: string | null
   under?: string
-  changes: { id: string; created_at: number; fields: Record<string, string | null> }[]
+  changes: { id: string; created_at: number; fields: string[] }[]
 }
 
 function isFileTimes(value: unknown): value is FileTimes {
@@ -235,7 +236,7 @@ function isFileTimes(value: unknown): value is FileTimes {
   return (
     !!t && typeof t.a === 'string' && typeof t.created_at === 'number' && (t.h === null || typeof t.h === 'string') &&
     (t.under === undefined || typeof t.under === 'string') && Array.isArray(t.changes) &&
-    t.changes.every((c) => !!c && typeof c.id === 'string' && typeof c.created_at === 'number' && !!c.fields && typeof c.fields === 'object')
+    t.changes.every((c) => !!c && typeof c.id === 'string' && typeof c.created_at === 'number' && Array.isArray(c.fields) && c.fields.every((f) => typeof f === 'string'))
   )
 }
 

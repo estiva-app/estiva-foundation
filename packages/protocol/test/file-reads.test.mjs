@@ -28,15 +28,16 @@ test('a relay advertising file_list.times is asked for times, and a times answer
   assert.equal(relayFileReadsOf({ file_list: { times: true } }).times, false)
   const body = JSON.stringify({
     times: [
-      { a: '30851:pk:i', created_at: 5, h: 'team', under: '30850:pk:p', changes: [{ id: 'c', created_at: 9, fields: { description: null, status: 'done' } }] },
+      { a: '30851:pk:i', created_at: 5, h: 'team', under: '30850:pk:p', changes: [{ id: 'c', created_at: 9, fields: ['status', 'description'] }] },
       { a: 'not a file', changes: 'no' },
+      { a: '30851:pk:j', created_at: 5, h: null, changes: [{ id: 'd', created_at: 9, fields: { status: 'done' } }] },
     ],
   })
   const result = parseQueryResponse(200, body)
   assert.equal(result.ok, true)
   assert.deepEqual(result.events, [])
   assert.deepEqual(result.times?.map((t) => t.a), ['30851:pk:i'])
-  assert.deepEqual(protocol.timesOf({ status: 200, text: body })[0].changes[0].fields, { description: null, status: 'done' })
+  assert.deepEqual(protocol.timesOf({ status: 200, text: body })[0].changes[0].fields, ['status', 'description'])
   assert.throws(() => protocol.timesOf({ status: 200, text: '[]' }), /not a times answer/)
 })
 
