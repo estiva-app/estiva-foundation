@@ -9,13 +9,16 @@
  *
  * 1. every topic's root, and the viewer's mute list, in one request;
  * 2. the changes naming the viewer on any topic and the team lists naming
- *    them (one request), beside every topic's current fields by the list read
- *    (another: a relay refuses a list read mixed with other filters) — each
- *    topic's title, archive and parent come from that answer, and only the
- *    topics the viewer is in are read further;
- * 3. their listed ids, what the list read skipped and the manifests of their
+ *    them, in one request: whether the viewer is in a topic does not depend on
+ *    its fields, so this says which topics could be theirs;
+ * 3. only those topics' current fields, by the list read (alone: a relay
+ *    refuses a list read mixed with other filters) — each topic's title,
+ *    archive and parent come from that answer, and only the topics the viewer
+ *    is in are read further. Every topic's fields were 0.13 MB of Ship's
+ *    sidebar on Miky's workspace, 64 topics for the 25 he is in (ALO-22);
+ * 4. their listed ids, what the list read skipped and the manifests of their
  *    parents, in one request;
- * 4. their parents, a level a request by the list read, to see whether one is
+ * 5. their parents, a level a request by the list read, to see whether one is
  *    archived, while their activity is read.
  *
  * Without the list read (the relay does not advertise it), round 2 reads each
@@ -113,7 +116,7 @@ export async function readYourTopics(
   const addresses = [...roots.keys()]
   if (addresses.length === 0) return { me, topics: [], at: new Map(), muted: await mutedOpened }
 
-  // 2. How the viewer is in each, which are spaces, and each topic's fields.
+  // 2. How the viewer is in each, which are spaces, and (without the list read) each topic's fields.
   const second = gathered(query)
   const partRead = readAll(second.query, [changesNamingFilter(me, addresses)])
   const statesRead = readAll(second.query, teamListFilters(roots))
@@ -121,30 +124,32 @@ export async function readYourTopics(
   const objectChangesRead = listRead ? Promise.resolve([]) : second.query(addresses.map(plainChangesFilter))
   const listChangesRead = listRead ? Promise.resolve([]) : readAll(second.query, addresses.map(topicListFilter))
   second.send()
-  const [part, states, listed, objectChanges, listChanges, muted] = await Promise.all([
-    partRead,
-    statesRead,
-    listRead ? newestChanges(query, addresses) : Promise.resolve([]),
-    objectChangesRead,
-    listChangesRead,
-    mutedOpened,
-  ])
+  const [part, states, objectChanges, listChanges] = await Promise.all([partRead, statesRead, objectChangesRead, listChangesRead])
   const spaces = spacesOf(states, addresses)
   const byTopic = eventsByTopic(part)
   const facts = { roots, byTopic, states, spaces }
-  const mine = (object: ForeignObject) => {
+  const inIt = (object: ForeignObject) => {
     const topic = readTopicOf(object, me, facts)
-    return topic && topic.yours && (options.spaces || !topic.space) && !muted?.has(topic.address) ? topic : undefined
+    return topic && topic.yours && (options.spaces || !topic.space) ? topic : undefined
   }
-  // A topic the list read did not answer (deleted) is read plain below, as a parent is.
-  const answered = new Set(topicRoots(listed).keys())
-  const byList = listRead ? addresses.filter((address) => answered.has(address)) : addresses
-  const objects = projectTopics([...byList.map((address) => roots.get(address)!), ...(listRead ? listed : objectChanges)], listRead)
+  let objects: ForeignObject[]
+  let listed: SignedEvent[] = []
   if (listRead) {
-    const unanswered = addresses.filter((address) => !answered.has(address))
-    // Asked about only when one would be the viewer's, by its root alone: whether they are in it does not depend on its fields.
-    const maybe = projectTopics(unanswered.map((address) => roots.get(address)!), false).flatMap((object) => (mine(object) ? [object.address!] : []))
-    if (maybe.length > 0) objects.push(...projectTopics([...maybe.map((address) => roots.get(address)!), ...(await query(maybe.map(plainChangesFilter)))], false))
+    // 3. Whether the viewer is in a topic does not depend on its fields, so its root alone says which could be theirs:
+    // only those are read as their current fields, not every topic in the workspace (ALO-22: 25 of Miky's 64). The
+    // mute list is not waited for: muting leaves out a topic below, and decides nothing here.
+    const maybe = projectTopics([...roots.values()], false).flatMap((object) => (inIt(object) ? [object.address!] : []))
+    listed = maybe.length > 0 ? await newestChanges(query, maybe) : []
+    const answered = new Set(topicRoots(listed).keys())
+    objects = projectTopics([...maybe.filter((address) => answered.has(address)).map((address) => roots.get(address)!), ...listed], true)
+    // A topic the list read did not answer (deleted) is read plain, as a parent is.
+    const unanswered = maybe.filter((address) => !answered.has(address))
+    if (unanswered.length > 0) objects.push(...projectTopics([...unanswered.map((address) => roots.get(address)!), ...(await query(unanswered.map(plainChangesFilter)))], false))
+  } else objects = projectTopics([...roots.values(), ...objectChanges], false)
+  const muted = await mutedOpened
+  const mine = (object: ForeignObject) => {
+    const topic = inIt(object)
+    return topic && !muted?.has(topic.address) ? topic : undefined
   }
   const candidates: Omit<ReadTopic, 'listed'>[] = []
   for (const object of objects) {
@@ -153,7 +158,7 @@ export async function readYourTopics(
   }
   if (candidates.length === 0) return { me, topics: [], at: new Map(), muted }
 
-  // 3. Their listed ids, what the list read skipped, and their parents' manifests.
+  // 4. Their listed ids, what the list read skipped, and their parents' manifests.
   const asked = candidates.map((topic) => topic.address)
   const listEvents = listRead ? listed : listChanges
   const plan = listReadPlan(asked, roots, listEvents, listRead)
@@ -170,7 +175,7 @@ export async function readYourTopics(
   const lists = listsFrom(asked, roots, [...listEvents, ...again], resolved)
   const topics: ReadTopic[] = candidates.map((topic) => ({ ...topic, listed: lists.get(topic.address) ?? [] }))
 
-  // 4. Their parents, while their activity is read: one archived with a parent is left out after.
+  // 5. Their parents, while their activity is read: one archived with a parent is left out after.
   const [activity] = await Promise.all([
     readTopicActivity(query, activityTopics(topics), { nowSeconds: options.nowSeconds, times: options.times }),
     markTopicsArchivedWith(

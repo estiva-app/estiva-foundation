@@ -6,6 +6,12 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.101.1 — 2026-11-16
+
+**Manifest: nothing new. Wire: nothing new is written; reads ask less** (ALO-22).
+
+- `readYourTopics` with `listRead` reads the current fields of only the topics that could be the viewer's, after the round that says so (whether they are in a topic does not depend on its fields), not of every topic in the workspace. On Miky's workspace, the 25 of 64 topics he is in: about 0.07 MB less on every cold open that draws Ship's or Leaf's sidebar, for one more round trip. The answer is the same.
+
 ## 0.101.0 — 2026-11-16
 
 **Manifest: nothing new. Wire: nothing new is written; reads ask less** (APP-11).
