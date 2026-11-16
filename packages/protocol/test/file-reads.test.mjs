@@ -14,12 +14,31 @@ const SECRET = '1'.repeat(64)
 
 test('a relay advertising file_list with text is read with the list and opened with its text, before the switch', () => {
   const reads = relayFileReadsOf({ file_list: { newest: true, text: true }, file_search: { types: ['osnova.project'], max_page_size: 20 } })
-  assert.deepEqual(reads, { list: true, text: true, switched: false, inOrder: [], search: ['osnova.project'] })
+  assert.deepEqual(reads, { list: true, text: true, switched: false, inOrder: [], search: ['osnova.project'], times: false })
 })
 
 test('a relay that says nothing about files is read change by change, and never sent "text"', () => {
-  assert.deepEqual(relayFileReadsOf({ name: 'an older relay' }), { list: false, text: false, switched: false, inOrder: [], search: [] })
-  assert.deepEqual(relayFileReadsOf(undefined), { list: false, text: false, switched: false, inOrder: [], search: [] })
+  const none = { list: false, text: false, switched: false, inOrder: [], search: [], times: false }
+  assert.deepEqual(relayFileReadsOf({ name: 'an older relay' }), none)
+  assert.deepEqual(relayFileReadsOf(undefined), none)
+})
+
+test('a relay advertising file_list.times is asked for times, and a times answer is read as times', () => {
+  assert.equal(relayFileReadsOf({ file_list: { newest: true, text: true, times: true } }).times, true)
+  assert.equal(relayFileReadsOf({ file_list: { times: true } }).times, false)
+  const body = JSON.stringify({
+    times: [
+      { a: '30851:pk:i', created_at: 5, h: 'team', under: '30850:pk:p', changes: [{ id: 'c', created_at: 9, fields: ['status', 'description'] }] },
+      { a: 'not a file', changes: 'no' },
+      { a: '30851:pk:j', created_at: 5, h: null, changes: [{ id: 'd', created_at: 9, fields: { status: 'done' } }] },
+    ],
+  })
+  const result = parseQueryResponse(200, body)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.events, [])
+  assert.deepEqual(result.times?.map((t) => t.a), ['30851:pk:i'])
+  assert.deepEqual(protocol.timesOf({ status: 200, text: body })[0].changes[0].fields, ['status', 'description'])
+  assert.throws(() => protocol.timesOf({ status: 200, text: '[]' }), /not a times answer/)
 })
 
 test('"text" without the list is not the open read', () => {

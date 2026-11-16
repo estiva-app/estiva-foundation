@@ -222,6 +222,7 @@ export {
   type ActivityTopic,
   type TopicActivity,
   type ActivityWatch,
+  type TimesFn,
 } from './activity.js'
 
 /**

@@ -52,7 +52,7 @@ import {
   type ListReadOptions,
   type ReadTopic,
 } from './topics.js'
-import { activityTopics, byActivity, readTopicActivity } from './activity.js'
+import { activityTopics, byActivity, readTopicActivity, type TimesFn } from './activity.js'
 
 const KIND_TOPIC = 30840
 const KIND_CHANGE = 1851
@@ -95,6 +95,8 @@ export async function readYourTopics(
     spaces?: boolean
     cache?: ProjectionCache
     nowSeconds?: number
+    /** The relay's times read, where NIP-11 says `file_list.times`: the order is then learnt as times ({@link readTopicActivity}). */
+    times?: TimesFn
   },
 ): Promise<YourTopicsRead> {
   const listRead = options.listRead ?? false
@@ -170,7 +172,7 @@ export async function readYourTopics(
 
   // 4. Their parents, while their activity is read: one archived with a parent is left out after.
   const [activity] = await Promise.all([
-    readTopicActivity(query, activityTopics(topics), { nowSeconds: options.nowSeconds }),
+    readTopicActivity(query, activityTopics(topics), { nowSeconds: options.nowSeconds, times: options.times }),
     markTopicsArchivedWith(
       topics.map((topic) => topic.object),
       query,

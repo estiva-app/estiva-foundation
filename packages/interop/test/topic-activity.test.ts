@@ -420,3 +420,106 @@ describe('topics reorder live', () => {
     watch.stop()
   })
 })
+
+/*
+  ALO-22: where the relay offers the times read (SPEC §6.13, `"fields": "times"`),
+  the order is learnt from when each field of a listed file, and of each file
+  under one, last changed, and only comments are read as events. The same
+  workspace must order the same both ways.
+*/
+/** The times read over the same events: each picked root and each field's current change it folds, the text's value left out. */
+function timesOver(events: SignedEvent[]) {
+  const calls: Filter[][] = []
+  const roots = events.filter((e) => e.kind >= 30840 && e.kind <= 30852)
+  const dOf = (e: SignedEvent) => e.tags.find((t) => t[0] === 'd')![1]!
+  const addressOf = (e: SignedEvent) => `${e.kind}:${e.pubkey}:${dOf(e)}`
+  const times = async (filters: Filter[]) => {
+    calls.push(filters)
+    const picked = new Map<string, SignedEvent>()
+    for (const f of filters) {
+      assert.equal(f.fields, 'times')
+      const { '#d': ds, ...rest } = f
+      const hit = roots
+        .filter((e) => matches(e, rest) && (!ds || (ds as string[]).includes(dOf(e))))
+        .sort((a, b) => b.created_at - a.created_at)
+      for (const e of typeof f.limit === 'number' ? hit.slice(0, f.limit) : hit) picked.set(e.id, e)
+    }
+    return [...picked.values()].map((r) => {
+      const a = addressOf(r)
+      const h = r.tags.find((t) => t[0] === 'h')?.[1] ?? null
+      const heads = new Map<string, SignedEvent>()
+      for (const c of events) {
+        if (c.kind !== 1851 || c.tags.find((t) => t[0] === 'a')?.[1] !== a) continue
+        if (h && c.tags.find((t) => t[0] === 'h')?.[1] !== h) continue
+        const field = c.tags.find((t) => t[0] === 'field')![1]!
+        if (field.startsWith('member:')) continue
+        const held = heads.get(field)
+        if (!held || c.created_at > held.created_at) heads.set(field, c)
+      }
+      const changes = [...heads].map(([field, c]) => ({
+        id: c.id,
+        created_at: c.created_at,
+        fields: [field],
+      }))
+      const under = r.tags.find((t) => t[0] === 'a')?.[1]
+      return { a, created_at: r.created_at, h, ...(under ? { under } : {}), changes }
+    })
+  }
+  return { times, calls }
+}
+
+describe('with the relay\'s times read, the same topics come in the same order', () => {
+  const scenarios: [string, SignedEvent[]][] = [
+    ['a message in a topic', [message(ONBOARDING, T0 + 50)]],
+    ['a status change on an issue under a listed project, not who is on it', [
+      message(ONBOARDING, T0 + 50),
+      change(ISSUE, 'status', 'done', T0 + 70, SHIP_TEAM),
+      change(ISSUE, `member:${MIKY}`, 'true', T0 + 90, SHIP_TEAM),
+    ]],
+    ['a long text saved on a listed project', [message(ONBOARDING, T0 + 50), change(PROJECT, 'description', 'a long text '.repeat(500), T0 + 75, SHIP_TEAM)]],
+    ['a rename of a listed page, which moves nothing', [message(ONBOARDING, T0 + 50), change(PAGE, 'title', 'Renamed', T0 + 95, LEAF_TEAM)]],
+    ['a change on a page two levels down', [message(ONBOARDING, T0 + 50), change(SUBSUBPAGE, 'summary', 'x', T0 + 88, LEAF_TEAM)]],
+    ['a comment on a page two levels down', [message(ONBOARDING, T0 + 50), event({ kind: 1111, created_at: T0 + 80, tags: [['A', SUBSUBPAGE], ['h', LEAF_TEAM]] })]],
+    ['a change filed in another team, which is not on the file', [message(ONBOARDING, T0 + 50), change(ISSUE, 'status', 'done', T0 + 99, TEAM)]],
+    ['a new issue filed in a listed project', [message(ONBOARDING, T0 + 50), root(`30851:${SHIP}:new-d`, T0 + 77, SHIP_TEAM, PROJECT)]],
+    ['putting a file on the topic, then taking it off and arranging', [
+      message(ONBOARDING, T0 + 50),
+      change(WIDGETS, 'lists:new-d', 'true', T0 + 55),
+      change(WIDGETS, 'lists:new-d', 'false', T0 + 66),
+      change(WIDGETS, `order:${PAGE.split(':')[2]}`, 'a0', T0 + 67),
+    ]],
+    // Its newest record names the team: the file is in Leaf's team, as the plain read has it.
+    ['an issue the relay still holds twice, moved to another team', [message(ONBOARDING, T0 + 50), root(ISSUE, T0 - 100, LEAF_TEAM, PROJECT)]],
+  ]
+  for (const [name, extra] of scenarios) {
+    it(name, async () => {
+      const events = [...fileRoots, ...extra]
+      const plain = await readTopicActivity(relayOver(events).query, topics, { nowSeconds: NOW })
+      const relay = relayOver(events)
+      const timed = await readTopicActivity(relay.query, topics, { nowSeconds: NOW, times: timesOver(events).times })
+      assert.deepEqual(order(timed), order(plain))
+      assert.deepEqual(new Map(timed.at), new Map(plain.at))
+      const listedOf = (a: TopicActivity) => new Map([...a.files].map(([t, fs]) => [t, fs.map((f) => `${f.address} in ${f.folder}`).sort()]))
+      assert.deepEqual(listedOf(timed), listedOf(plain))
+      assert.deepEqual(new Map(timed.parents), new Map(plain.parents))
+      // No file's change and no file under one is read whole: only the topics' own changes and comments.
+      const topicAddresses = new Set(topics.map((t) => t.address))
+      for (const f of relay.calls.flat()) {
+        const kinds = (f.kinds as number[] | undefined) ?? []
+        assert.ok(!kinds.includes(30851) && !kinds.includes(30842), `a root read: ${JSON.stringify(f)}`)
+        if (kinds.includes(1851)) assert.ok((f['#a'] as string[]).every((a) => topicAddresses.has(a)), `a file's changes read whole: ${JSON.stringify(f)}`)
+      }
+    })
+  }
+
+  it('finds every issue under listed projects when a page of times fills, older ones on the next page', async () => {
+    // The times twin of the plain read's paging test above: 1005 issues, one filter's page (1000) fills.
+    const projects = Array.from({ length: 101 }, (_, i) => `30850:${SHIP}:bulk-project-${i}`)
+    const bulk: ActivityTopic = { address: `30840:${MIKY}:bulk-d`, createdAt: T0, folder: TEAM, files: projects.map((address) => ({ address, folder: SHIP_TEAM })) }
+    const issues = Array.from({ length: 1005 }, (_, i) => root(`30851:${QA2}:bulk-issue-${i}`, T0 + 10 + i, SHIP_TEAM, projects[i % 3]))
+    const activity = await readTopicActivity(relayOver(issues).query, [bulk], { nowSeconds: NOW, times: timesOver(issues).times })
+    const found = new Set(activity.files.get(bulk.address)!.map((file) => file.address))
+    const missing = issues.map((issue) => `30851:${QA2}:${issue.tags[0]![1]}`).filter((address) => !found.has(address))
+    assert.deepEqual(missing, [])
+  })
+})

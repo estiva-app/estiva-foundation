@@ -4,6 +4,19 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.59.0 — 2026-11-16
+
+**Wire behaviour: none written; one new read** (ALO-22; SPEC §6.13 "When files
+changed, without the changes"; record
+a-relay-may-answer-when-a-file-changed-without-the-change). Nothing an app
+publishes changes. `Relay.queryTimes(filters)` and `timesOf({status, text})`
+ask `/query` with `"fields": "times"` and read its answer, `{times: FileTimes[]}`:
+per file picked, its address, team, first-record time, the file it sits under,
+and each current change's id, time and the names of the fields it sets, never a
+value. `relayFileReadsOf` gains `times` (NIP-11 `file_list.times`, with
+`newest`); a consumer comparing the whole object sees the new key.
+`parseQueryResponse` reads a times answer into `QueryResult.times`.
+
 ## 0.58.0 — 2026-11-13
 
 **Wire behaviour: every reaction names whose message it reacts to** (ACT-6;

@@ -6,6 +6,14 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.100.0 — 2026-11-16
+
+**Manifest: nothing new. Wire: nothing new is written; where the relay advertises `file_list.times`, the topic order asks the times read instead of whole changes and roots** (ALO-22).
+
+- `readTopicActivity(query, topics, { times })` and `readYourTopics(…, { times })`: with the relay's times read (SPEC §6.13, `"fields": "times"`; `Relay.queryTimes`, or `timesOf` over an app's own post), a listed file's changes and the files under it, at every depth, are learnt as times; only comments are read as events. The same rule decides, so the order is the same. Without `times`, nothing changes.
+- Needs `@estiva-app/protocol` 0.59.0 (`FileTimes`).
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-relay-may-answer-when-a-file-changed-without-the-change.md
+
 ## 0.99.0 — 2026-11-10
 
 **Manifest: nothing new. Wire: nothing new is written; one more filter in requests already made** (TEA-10).
