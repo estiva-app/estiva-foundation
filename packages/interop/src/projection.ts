@@ -3748,7 +3748,7 @@ export async function resolveForeignObjects(
     : []
   const [read, opened, creatorLists, fileLists] = await Promise.all([
     queryChunked(filters, query),
-    openedEvents(plans.map(({ plan }) => plan), query),
+    openedEvents(plans.map(({ plan }) => plan), query, !options.withoutText),
     Promise.all(kinds.map((kind) => creatorsOrNone(kind, query, cache))),
     Promise.all(folders.map((folder) => folderFilesOf(folder, query, lookupPeople, cache))),
   ])
@@ -3794,13 +3794,15 @@ export async function resolveForeignObjects(
     // it happened to be resolved beside.
     const own: People = {}
     for (const key of peopleOf(built)) if (key in people) own[key] = people[key]
-    results[reference] = withFiles(
+    const object = withFiles(
       withBorrowed(
         withPeople(built, own),
         borrowedActions(plan.pointer.kind, plan.resolved, creatorsByKind.get(plan.pointer.kind) ?? []),
       ),
       plan.pointer.kind === KIND_CHANNEL_METADATA ? filesByFolder.get(plan.pointer.identifier) : undefined,
     )
+    // Opened without its text: what it says was not read, as a list read's (APP-11).
+    results[reference] = options.withoutText && plan.opened ? textUnread([object])[0]! : object
   }
   return results
 }
@@ -4335,6 +4337,14 @@ export interface ArchiveReadOptions {
    */
   archivedWith?: boolean
   /**
+   * With `openRead`, open each file by the list read (SPEC §6.13) without its
+   * text: its first record and each field's current change, for a list that
+   * draws a file's title, summary and conversation but never what it says.
+   * Each opened file's `prevs.description` reads as unread (`''`), as a list
+   * read's does. The Screener's rows (APP-11: 3.5 MB of text on Miky's Desk).
+   */
+  withoutText?: boolean
+  /**
    * For a Folder's card: also list the files in it this reader can open, as
    * `children` — SPEC §3.2. What its relay-signed `30890` lists, read as
    * {@link resolveFolderContents} reads it, so a file this reader cannot
@@ -4756,7 +4766,7 @@ function planObject(
  * reader's — has its root and every change read as before, so a deleted file
  * still says who deleted it and an unreadable one is still told apart from it.
  */
-async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn): Promise<SignedEvent[]> {
+async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn, text = true): Promise<SignedEvent[]> {
   const opened = new Map<string, ObjectPlan>()
   for (const plan of plans) if (plan.opened) opened.set(plan.address, plan)
   if (opened.size === 0) return []
@@ -4771,7 +4781,7 @@ async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn): Promi
   for (const { kind, pubkey, identifiers } of groups.values()) {
     for (let start = 0; start < identifiers.length; start += RELAY_PAGE_CEILING) {
       const chunk = identifiers.slice(start, start + RELAY_PAGE_CEILING)
-      filters.push({ fields: 'newest', kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length, text: true })
+      filters.push({ fields: 'newest', kinds: [kind], authors: [pubkey], '#d': chunk, limit: chunk.length, ...(text ? { text: true } : {}) })
     }
   }
   const answered = await queryChunked(filters, query)

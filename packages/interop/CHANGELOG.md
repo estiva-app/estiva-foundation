@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.101.0 — 2026-11-16
+
+**Manifest: nothing new. Wire: nothing new is written; reads ask less** (APP-11).
+
+- `createLoadQuery` answers a list read by address (`fields: "newest"`, `#d`, a `limit` with room for every file named) from what the same load already asked: several Folders listing the same files read each once. On Miky's Desk the Folders read ahead asked 548 files 1,548 times, 2.4 MB a Folder.
+- `resolveForeignObjects` takes `withoutText` beside `openRead`: the open read leaves out the text, and each opened file's `prevs.description` reads as unread (`''`), as a list read's does. For a list that never draws what a file says (Peek's Screener, 3.5 MB on Miky's Desk).
+
 ## 0.100.0 — 2026-11-16
 
 **Manifest: nothing new. Wire: nothing new is written; where the relay advertises `file_list.times`, the topic order asks the times read instead of whole changes and roots** (ALO-22).

@@ -82,6 +82,42 @@ function wholeKindsOf(filter: Filter, paged: boolean): WholeKinds | null {
 }
 
 /**
+ * SPEC §6.13's list read of files by address, `{ kinds: [kind], authors:
+ * [pubkey], '#d': ds, limit, fields: 'newest' }` (with `text: true`, the text
+ * too): each `d` answers one file, its first record and its fields' current
+ * changes, and `limit` counts first records. So a page with room for every
+ * file named holds each one whole, or says it has none (deleted, or not this
+ * reader's).
+ */
+interface ListRead {
+  kind: number
+  author: string
+  ds: string[]
+  text: boolean
+}
+
+function listReadOf(filter: Filter): ListRead | null {
+  const { kinds, authors, limit, fields, text, ...rest } = filter
+  const ds = rest['#d']
+  if (Object.keys(rest).length !== 1 || fields !== 'newest' || (text !== undefined && text !== true)) return null
+  if (!Array.isArray(kinds) || kinds.length !== 1 || typeof kinds[0] !== 'number') return null
+  if (!Array.isArray(authors) || authors.length !== 1 || typeof authors[0] !== 'string') return null
+  if (!Array.isArray(ds) || ds.length === 0 || !ds.every((d) => typeof d === 'string')) return null
+  const files = new Set(ds).size
+  if (typeof limit !== 'number' || limit < files || files > RELAY_PAGE_CEILING) return null
+  return { kind: kinds[0], author: authors[0], ds, text: text === true }
+}
+
+/** A list read's answer for one file: its first record (by `d`) and the changes whose file it is (their first `a`, §6.10). */
+function fileOf(read: ListRead, d: string, answer: SignedEvent[]): SignedEvent[] {
+  const address = `${read.kind}:${read.author}:${d}`
+  return answer.filter((event) => {
+    if (event.kind === read.kind && event.pubkey === read.author) return event.tags.find((tag) => tag[0] === 'd')?.[1] === d
+    return event.tags.find((tag) => tag[0] === 'a')?.[1] === address
+  })
+}
+
+/**
  * The tags a whole read answers a later read by: the ones the relay matches as
  * NIP-01 does, on every kind. Never `h`, which is a Folder's scope on the relay
  * (the event's first `h`, its membership checked there), so a tag match would
@@ -163,6 +199,9 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
   const known = new Map<string, Held>()
   // Per kind: every event of it, read by a filter naming only kinds.
   const wholes = new Map<number, Held>()
+  // Per file a list read asked for, `<text|list>:<kind>:<author>:<d>`: what the relay answered for it (APP-11).
+  const files = new Map<string, Promise<SignedEvent[]>>()
+  const fileKey = (read: ListRead, d: string) => `${read.text ? 'text' : 'list'}:${read.kind}:${read.author}:${d}`
   const flights = new Map<string, Promise<SignedEvent[]>>()
 
   const remember = <K>(memo: Map<K, Held>, key: K, entry: Held) => {
@@ -192,7 +231,24 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     // Answered from a held read; `again` is what to ask if that read's page came back full.
     const joined: { again: Filter; entry: Promise<SignedEvent[] | null> }[] = []
     const joinedByTag: { shape: ByTag; value: string; entry: Promise<SignedEvent[] | null> }[] = []
+    const askedFiles: ListRead[] = []
+    const joinedFiles: Promise<SignedEvent[]>[] = []
     for (const filter of filters) {
+      // Several Folders list the same files: each is read once per load, the rest of a list read goes on (APP-11).
+      const list = listReadOf(filter)
+      if (list) {
+        const fresh: string[] = []
+        for (const d of new Set(list.ds)) {
+          const held = files.get(fileKey(list, d))
+          if (held) joinedFiles.push(held)
+          else fresh.push(d)
+        }
+        if (fresh.length === 0) continue
+        // `limit` counts first records: one per file asked.
+        send.push({ ...filter, '#d': fresh, limit: fresh.length })
+        askedFiles.push({ ...list, ds: fresh })
+        continue
+      }
       const whole = wholeKindsOf(filter, paged)
       if (whole) {
         const held = whole.kinds.map((kind) => wholes.get(kind))
@@ -226,6 +282,15 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     }
 
     const answer = send.length ? ask(send) : Promise.resolve([])
+    for (const read of askedFiles) {
+      for (const d of read.ds) {
+        const key = fileKey(read, d)
+        const entry = answer.then((events) => fileOf(read, d, events))
+        files.set(key, entry)
+        // A refused read is forgotten, so the next ask goes to the relay.
+        entry.catch(() => files.get(key) === entry && files.delete(key))
+      }
+    }
     for (const shape of askedWhole) {
       const split = answer.then((events) => completeWhole(shape, events, paged))
       for (const kind of shape.kinds) {
@@ -240,6 +305,7 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     }
 
     const out = [...(await answer)]
+    for (const entry of joinedFiles) out.push(...(await entry))
     const again: Filter[] = []
     for (const { again: filter, entry } of joined) {
       const events = await entry
