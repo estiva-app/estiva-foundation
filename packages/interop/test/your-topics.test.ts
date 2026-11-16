@@ -290,4 +290,14 @@ describe('readYourTopics: the requests it makes', () => {
     assert.ok(calls.length <= 7, `${calls.length} requests`)
     assert.ok(long.calls.length > calls.length, `the long way: ${long.calls.length}`)
   })
+
+  it('reads the current fields of only the 12 topics that could be yours, not all 53 (ALO-22)', async () => {
+    const events = workspace()
+    const { query, calls } = relay(events)
+    const lean = await readYourTopics(query, ME, { listRead: true, decrypt, nowSeconds: NOW })
+    assert.equal(lean.topics.length, 12)
+    const asked = calls.flat().filter((f) => f.fields && (f.kinds as number[] | undefined)?.includes(30840)).flatMap((f) => f['#d'] as string[])
+    const yours = events.filter((e) => e.kind === 30840 && e.pubkey === ME).map((e) => e.tags.find((t) => t[0] === 'd')![1])
+    assert.deepEqual([...new Set(asked)].sort(), yours.sort())
+  })
 })
