@@ -273,6 +273,18 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
     assert.deepEqual(root.children ?? [], [])
   })
 
+  test('a file asked for itself and as its parent’s child is that parent’s child once, from a relay that answers each filter on its own', async () => {
+    // A Leaf document linking a project and one of its issues asks for both in one read (EAC-2: the ring read 1/4, not 1/3).
+    const p1 = project('p1')
+    const linked = issue('linked', p1)
+    const other = issue('other', p1)
+    const r = relay([ship, p1, linked, other])
+    const eachOnItsOwn = async (filters) => (await Promise.all(filters.map((f) => r.query([f])))).flat()
+    const roots = await resolveForeignRoots([addressOf(p1), addressOf(linked)], eachOnItsOwn, undefined, { listRead: true, children: true })
+    const parent = roots.find((o) => o.address === addressOf(p1))
+    assert.deepEqual(parent.children.map((c) => c.address).sort(), [addressOf(linked), addressOf(other)].sort())
+  })
+
   test('without children, nothing under the file is read', async () => {
     const p1 = project('p1')
     const r = relay([ship, p1, issue('stays', p1)])

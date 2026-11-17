@@ -4016,7 +4016,11 @@ export async function resolveForeignRoots(
   }
   if (filters.length === 0 && listed.length === 0) return []
   // A relay refuses a request mixing list reads with plain ones, so each goes on its own.
-  const [plain, answered, named] = await Promise.all([queryChunked(filters, query), queryChunked(listed, query), queryChunked(moves, query)])
+  const [plain, everyAnswer, named] = await Promise.all([queryChunked(filters, query), queryChunked(listed, query), queryChunked(moves, query)])
+  // The relay answers each filter on its own: a file asked for itself and as its parent's child comes back twice, and
+  // would be its parent's child twice, counted twice in its progress (EAC-2).
+  const seen = new Set<string>()
+  const answered = everyAnswer.filter((e) => !seen.has(e.id) && !!seen.add(e.id))
   const events = [...plain, ...answered]
   // A child moved in is named only by its move, so its own first record is read once those are back.
   const held = new Set(answered.flatMap((e) => childAddressOf(e) ?? []))
