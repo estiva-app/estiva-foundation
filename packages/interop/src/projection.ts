@@ -5721,10 +5721,8 @@ function stageOf(
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
  */
 export function statusStageOf(kind: number, value: string, written?: Stage): Stage | undefined {
-  const directory = DIRECTORY_STAGES[kind]?.[STATUS_SLOT]
-  if (directory && written && asStage(written)) return written
-  if (directory?.[value]) return directory[value]
-  return stageByWords(value, value)
+  // No slot spec and no manifest: only a base type's directory makes the field staged.
+  return stageOf(kind, STATUS_SLOT, {} as SlotSpec, {} as Manifest, value, value, asStage(written))
 }
 
 /**
