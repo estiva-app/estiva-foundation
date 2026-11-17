@@ -2444,6 +2444,29 @@ export function stageTagOf(event: Pick<SignedEvent, 'tags'>, field: string): Sta
 }
 
 /**
+ * The tag a change (or a root) that sets `field` to `value` carries last: the
+ * stage of the option the writer offered, `["stage", <field>, <stage>]` (SPEC
+ * §6.2, §7.3). `options` are the ones the writer offered it from — its own
+ * vocabulary, or the layer of §7.4 it read. None when the value is cleared
+ * (`''`), is not among the options, or its option carries no stage of the four:
+ * a writer never guesses what a status means. {@link stageTagOf} reads it back.
+ *
+ * Exported for an app that builds its own changes (Ship, EAC-4); a
+ * manifest-declared action gets it from {@link buildActionEvent}.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+ */
+export function stageTagFor(
+  field: string,
+  value: string,
+  options: readonly { value: string; stage?: string }[] | undefined,
+): ['stage', string, Stage] | undefined {
+  if (value === '') return undefined
+  const stage = asStage(options?.find((option) => option.value === value)?.stage)
+  return stage ? ['stage', field, stage] : undefined
+}
+
+/**
  * The fields one change sets under `rule`: one per `set` when it carries any
  * (SPEC §6.2, applied at the change's time as that many one-field changes),
  * else its field and value tags. A partial change sets nothing.
@@ -6781,10 +6804,10 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   }
   // What the chosen option means, last (§6.2's `stage`): a status says
   // whether it is open, started, done or dropped, whichever app reads it.
-  const stage = declared.emits.field && declared.input?.enum
-    ? manifest.vocabularies?.[declared.input.enum]?.find((entry) => entry.value === value)?.stage
+  const stage = declared.emits.field && declared.input?.enum && typeof value === 'string'
+    ? stageTagFor(declared.emits.field, value, manifest.vocabularies?.[declared.input.enum])
     : undefined
-  if (declared.emits.field && stage && STAGES.has(stage as Stage)) tags.push(['stage', declared.emits.field, stage])
+  if (stage) tags.push(stage)
 
   return {
     pubkey: args.pubkey,

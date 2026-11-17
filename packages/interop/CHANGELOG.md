@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.104.0 — 2026-11-17
+
+**Manifest: nothing new. Wire: nothing new; `buildActionEvent` writes the same `stage` tag it has since 0.73.0** (EAC-4).
+
+- `stageTagFor(field, value, options)` exports the write half of the stage rule, for an app that builds its own changes (Ship): `["stage", <field>, <stage>]`, the stage of the option the writer offered, to append last (SPEC §6.2, §7.3). None for a cleared value, an id not among the options, or a stage outside the four, so a writer never guesses what a status means. `buildActionEvent` now uses it, so both writers keep one rule.
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+
 ## 0.102.1 — 2026-11-17
 
 **Manifest: nothing new. Wire: nothing new is written or read** (EAC-2).
