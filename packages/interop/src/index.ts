@@ -50,6 +50,7 @@ export {
   progressOfStages,
   statusStageOf,
   stageTagOf,
+  stageTagFor,
   type Stage,
   archiveImpact,
   type Archive,
