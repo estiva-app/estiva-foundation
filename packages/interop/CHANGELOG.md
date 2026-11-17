@@ -6,6 +6,16 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.102.0 — 2026-11-17
+
+**Manifest: a status vocabulary's `stage` is no longer read for a project's or an issue's change with no stage; the base type's directory stage is (SPEC §7.4). Wire: nothing new is written; the `stage` tag of SPEC §6.2 is read** (EAC-2).
+
+- A status counts by the stage on the change that set it, `["stage", "status", <stage>]` (or on a root that sets it), then, for `osnova.project` and `osnova.issue`, the stage TYPES.md gives that id, then the words. A stage naming another field, outside the four, or on a change older than the winning one counts for nothing. The `status` slot carries it as `ResolvedSlot.stage`.
+- A card with children carries `progress`: done over every child not dropped, as Ship counts (`progressOf`, exported). A cancelled issue is out of both numbers, so a finished project reads full in every app (Miky, 17 Nov). `resolveFolderProject`'s `doneCount` and `openCount` count the same way: a dropped ticket is in neither, an unknown one is open.
+- `isClosedStatus` reads the slot's stage, so `[` sorts a status no listing names by what its change says.
+- A value outside a slot's vocabulary is shown by its id in `neutral`, not `muted`, which draws as cancelled (Katerina, 30 Oct).
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+
 ## 0.101.1 — 2026-11-16
 
 **Manifest: nothing new. Wire: nothing new is written; reads ask less** (ALO-22).

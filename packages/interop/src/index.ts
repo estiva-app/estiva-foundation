@@ -46,6 +46,8 @@ export {
   isArchived,
   archivedAncestorOf,
   isClosedStatus,
+  progressOf,
+  type Stage,
   archiveImpact,
   type Archive,
   type ArchiveImpact,
