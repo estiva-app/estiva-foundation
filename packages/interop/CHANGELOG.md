@@ -6,6 +6,12 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.102.1 — 2026-11-17
+
+**Manifest: nothing new. Wire: nothing new is written or read** (EAC-2).
+
+- Every read interop splits into chunks (`resolveForeignRoots` with `children` among them) takes each event the relay sends once. The relay answers each filter on its own, so a file asked for itself and as its parent's child came back twice: it was that parent's child twice, and counted twice in its `progress`. Leaf's document asks for a project and one of its issues in one read, and its card read 1/4 where Ship reads 1/3.
+
 ## 0.102.0 — 2026-11-17
 
 **Manifest: a status vocabulary's `stage` is no longer read for a change with no stage, for any kind: a project's or an issue's counts by its base type's directory stage, any other kind's by its words (SPEC §7.4). A manifest's stages still decide whether a field is staged, so whether a change's own `stage` counts. Wire: nothing new is written; the `stage` tag of SPEC §6.2 is read** (EAC-2).
