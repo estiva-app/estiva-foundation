@@ -10,7 +10,7 @@ manifests already published still mean what they meant.
 
 **Manifest: nothing new. Wire: nothing new is written or read** (EAC-2).
 
-- `resolveForeignRoots` with `children` takes each event the relay sends once. The relay answers each filter on its own, so a file asked for itself and as its parent's child came back twice: it was that parent's child twice, and counted twice in its `progress`. Leaf's document asks for a project and one of its issues in one read, and its card read 1/4 where Ship reads 1/3.
+- Every read interop splits into chunks (`resolveForeignRoots` with `children` among them) takes each event the relay sends once. The relay answers each filter on its own, so a file asked for itself and as its parent's child came back twice: it was that parent's child twice, and counted twice in its `progress`. Leaf's document asks for a project and one of its issues in one read, and its card read 1/4 where Ship reads 1/3.
 
 ## 0.102.0 — 2026-11-17
 
