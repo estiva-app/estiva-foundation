@@ -33,6 +33,7 @@ const manifest = {
   actions: [
     { id: 'set-issue-status', label: 'Change status', appliesTo: String(ISSUE), emits: { kind: 1851, field: 'status' }, input: { type: 'string', enum: 'issueStatuses' } },
     { id: 'archive-issue', label: 'Archive', appliesTo: String(ISSUE), emits: { kind: 1851, field: 'archived' }, input: { type: 'string', enum: 'archived' } },
+    { id: 'create-issue', label: 'New issue', appliesTo: '30850', emits: { kind: ISSUE }, input: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: 'issueStatuses' } }, required: ['title'] } },
   ],
 }
 
@@ -76,6 +77,14 @@ test('a field whose options carry no stage writes none', () => {
   assert.equal(stageOn(declared('archive-issue', 'true')), undefined)
 })
 
-test('the tag names the field it was asked for', () => {
-  assert.deepEqual(stageTagFor('priority', 'in_progress', statuses), ['stage', 'priority', 'started'])
+test('a creation that sets a status carries its stage on the root, last; one with no status carries none', () => {
+  const create = (value) => {
+    const built = buildActionEvent({ manifest, kind: 30850, address: `30850:${SHIP}:p1`, objectAuthor: SHIP, folder: FOLDER, actionId: 'create-issue', value, newId: 'new-issue', pubkey: SHIP, createdAtMs: 1_700_000_000_000 })
+    assert.notEqual(typeof built, 'string', String(built))
+    return built
+  }
+  const withStatus = create({ title: 'Ship it', status: 'in_progress' })
+  assert.deepEqual(withStatus.tags.at(-1), ['stage', 'status', 'started'])
+  assert.equal(stageTagOf(withStatus, 'status'), 'started')
+  assert.equal(stageOn(create({ title: 'Ship it' })), undefined)
 })

@@ -6401,6 +6401,13 @@ function buildCreationEvent(args: {
   // Each person the new root names, once, where the relay indexes them — the
   // property's own tag is not indexed (SPEC §11.8, decided 2026-10-05).
   for (const person of people) tags.push(['p', person])
+  // What each chosen option means, last (§6.2's `stage`, §7.3): a creation
+  // that sets a staged property, such as a status, carries its stage on the root.
+  for (const [name, held] of Object.entries(value)) {
+    const vocabName = properties[name]?.enum
+    const stage = vocabName ? stageTagFor(name, held, args.vocabularies?.[vocabName]) : undefined
+    if (stage) tags.push(stage)
+  }
 
   return {
     pubkey: args.pubkey,
