@@ -12,6 +12,13 @@ manifests already published still mean what they meant.
 
 - Every read interop splits into chunks (`resolveForeignRoots` with `children` among them) takes each event the relay sends once. The relay answers each filter on its own, so a file asked for itself and as its parent's child came back twice: it was that parent's child twice, and counted twice in its `progress`. Leaf's document asks for a project and one of its issues in one read, and its card read 1/4 where Ship reads 1/3.
 
+## 0.103.0 — 2026-11-17
+
+**Manifest: nothing new. Wire: nothing new is written or read** (EAC-3).
+
+- `stageTagOf(event, field)`, `statusStageOf(kind, value, written?)` and `progressOfStages(stages)` export the stage rule a resolved `status` slot and `progressOf` already use, for an app that folds its own changes (Ship, the agent): the winning change's stage, then the base type's directory stage, then the words. They give exactly what the card gives for the same events.
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+
 ## 0.102.0 — 2026-11-17
 
 **Manifest: a status vocabulary's `stage` is no longer read for a change with no stage, for any kind: a project's or an issue's counts by its base type's directory stage, any other kind's by its words (SPEC §7.4). A manifest's stages still decide whether a field is staged, so whether a change's own `stage` counts. Wire: nothing new is written; the `stage` tag of SPEC §6.2 is read** (EAC-2).

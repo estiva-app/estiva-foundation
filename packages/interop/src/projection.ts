@@ -2433,8 +2433,13 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
   return fields
 }
 
-/** The stage an event (a change or a root) gives `field`: `["stage", <field>, <stage>]`, one of the four. */
-function stageTagOf(event: SignedEvent, field: string): Stage | undefined {
+/**
+ * The stage an event (a change or a root) gives `field`: `["stage", <field>, <stage>]`,
+ * one of the four (SPEC §6.2). Exported for an app that folds its own changes
+ * (Ship, EAC-3): read it from the event the field's current value came from,
+ * never from an older one, and pass it to {@link statusStageOf}.
+ */
+export function stageTagOf(event: Pick<SignedEvent, 'tags'>, field: string): Stage | undefined {
   return asStage(event.tags.find((t) => t[0] === 'stage' && t[1] === field)?.[2])
 }
 
@@ -5703,6 +5708,34 @@ function stageOf(
   return stageByWords(raw, label)
 }
 
+/**
+ * The stage a project's or an issue's `status` counts by, for an app that folds
+ * its own changes rather than resolving a slot (Ship, the agent; EAC-3). The
+ * same three readings {@link ResolvedSlot.stage} carries: `written`, the stage
+ * on the change or root that set the current value ({@link stageTagOf}); else
+ * the base type's directory stage for the id; else the words. For a kind that
+ * is not a base type no manifest is at hand to say the field is staged, so
+ * `written` is not read and the words decide, as a slot with no staged
+ * vocabulary does.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+ */
+export function statusStageOf(kind: number, value: string, written?: Stage): Stage | undefined {
+  const directory = DIRECTORY_STAGES[kind]?.[STATUS_SLOT]
+  if (directory && written && asStage(written)) return written
+  if (directory?.[value]) return directory[value]
+  return stageByWords(value, value)
+}
+
+/**
+ * Done over every one not dropped, from each one's stage: {@link progressOf}'s
+ * count, for an app that holds stages rather than resolved slots. A stage
+ * `undefined` (an unknown word) is in the total and not done.
+ */
+export function progressOfStages(stages: readonly (Stage | undefined)[]): { done: number; total: number } {
+  return { done: stages.filter((stage) => stage === 'done').length, total: stages.filter((stage) => stage !== 'dropped').length }
+}
+
 /** Finished work, done or dropped: `[` puts a closed issue after an open one (PEE-21). */
 const isClosed = (stage: Stage | undefined) => stage === 'done' || stage === 'dropped'
 
@@ -5727,8 +5760,7 @@ export function isClosedStatus(slot: ResolvedSlot | undefined): boolean {
  */
 export function progressOf(children: readonly { slots: { status?: ResolvedSlot } }[]): { done: number; total: number } | undefined {
   if (!children.length || children.some((child) => !child.slots.status)) return undefined
-  const stages = children.map((child) => child.slots.status?.stage)
-  return { done: stages.filter((stage) => stage === 'done').length, total: stages.filter((stage) => stage !== 'dropped').length }
+  return progressOfStages(children.map((child) => child.slots.status?.stage))
 }
 
 /**
