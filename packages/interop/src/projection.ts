@@ -2336,6 +2336,12 @@ export const BODY_SLOT = 'body'
 /** The slot that is a file's summary, one line of plain text (SPEC §7.2). */
 const SUBTITLE_SLOT = 'subtitle'
 
+/** The slot progress is counted from: it carries the stage (SPEC §6.2). */
+const STATUS_SLOT = 'status'
+
+/** One field as folded: its value, the format and stage its winning change carried. */
+type FoldedField = { value: string; format?: ContentFormat; stage?: Stage }
+
 
 /**
  * Does this change sit in the Folder its target is filed in — SPEC §6.2.
@@ -2392,7 +2398,7 @@ function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | unde
  * version where several are.
  */
 function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
-  const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat; id: string }> = {}
+  const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat; id: string; stage?: Stage }> = {}
   const folders = targetFolders(root)
   const id = root && tagValue(root, 'd')
   for (const change of [...changes].filter((c) => inTargetFolder(c, folders)).sort(byOrder)) {
@@ -2410,16 +2416,26 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
       // §13.4: "an app MUST read the tag from the event it took the value from,
       // never from the object's root" — a description created as marker text and
       // later edited into blocks is a root with no tag and a change with one.
+      // The stage travels with the winning change too (SPEC §6.2): the one
+      // naming this field, on a value that is not cleared. A later change with
+      // none leaves none, never the older change's.
+      const stage = value === '' ? undefined : stageTagOf(change, field)
       fields[field] = {
         value,
         by: change.pubkey,
         at: change.created_at,
         format: contentFormatOf(change),
         id: change.id,
+        ...(stage ? { stage } : {}),
       }
     }
   }
   return fields
+}
+
+/** The stage an event (a change or a root) gives `field`: `["stage", <field>, <stage>]`, one of the four. */
+function stageTagOf(event: SignedEvent, field: string): Stage | undefined {
+  return asStage(event.tags.find((t) => t[0] === 'stage' && t[1] === field)?.[2])
 }
 
 /**
@@ -2861,6 +2877,14 @@ export interface ResolvedSlot {
    * event body, which no action can set.
    */
   field?: string
+  /**
+   * What the status means, on the `status` slot only: the stage on the change
+   * that set it, else its base type's directory stage, else its words (SPEC
+   * §6.2). Undefined when none says, which counts as underway, not as done.
+   * Every app counts by this ({@link progressOf}, {@link isClosedStatus}), so
+   * a status a reader cannot look up still counts as its writer meant.
+   */
+  stage?: Stage
 }
 
 /**
@@ -2915,12 +2939,14 @@ function firstTag(root: SignedEvent, tag: string | string[] | undefined): string
 interface RawSlotValue {
   value: string
   format?: ContentFormat
+  /** The stage the event the value came from gives its field (SPEC §6.2), a change's or a root's. */
+  stage?: Stage
 }
 
 function rawSlotValue(
   spec: SlotSpec,
   root: SignedEvent,
-  folded: Record<string, { value: string; format?: ContentFormat }>,
+  folded: Record<string, FoldedField>,
   isBody: boolean,
 ): RawSlotValue | undefined {
   // `fold` first, and a spec may carry both: a field that starts as a tag on
@@ -2930,7 +2956,7 @@ function rawSlotValue(
   // reassigning it from here.
   if (spec.fold) {
     const change = folded[spec.fold]
-    if (change) return { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined }
+    if (change) return { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined, ...(change.stage ? { stage: change.stage } : {}) }
     /*
       Nobody has changed this field, so the object's own creation value stands.
       §7.2 rule 2 covers seeding from a tag; `field: "content"` seeds from the
@@ -2953,7 +2979,9 @@ function rawSlotValue(
       truncation guard reachable.
     */
     const seedTag = firstTag(root, spec.tag)
-    if (seedTag !== undefined) return { value: seedTag, format: isBody ? contentFormatOf(root) : undefined }
+    // A root that sets a staged property carries its stage, as a change does (SPEC §6.2).
+    const rootStage = stageTagOf(root, spec.fold)
+    if (seedTag !== undefined) return { value: seedTag, format: isBody ? contentFormatOf(root) : undefined, ...(rootStage ? { stage: rootStage } : {}) }
     if (spec.field === 'content' && root.content !== '') {
       return { value: root.content, format: contentFormatOf(root) }
     }
@@ -2966,7 +2994,10 @@ function rawSlotValue(
   if (spec.tag) {
     const value = firstTag(root, spec.tag)
     if (value === undefined) return undefined
-    return { value, format: isBody ? contentFormatOf(root) : undefined }
+    // The stage names the tag the value was read from, the first one the root carries.
+    const read = (Array.isArray(spec.tag) ? spec.tag : [spec.tag]).find((name) => firstTag(root, name) !== undefined)
+    const rootStage = read ? stageTagOf(root, read) : undefined
+    return { value, format: isBody ? contentFormatOf(root) : undefined, ...(rootStage ? { stage: rootStage } : {}) }
   }
   if (spec.field === 'content') return { value: root.content, format: contentFormatOf(root) }
   /*
@@ -2990,7 +3021,7 @@ function rawSlotValue(
 function resolveSlot(
   spec: SlotSpec,
   root: SignedEvent,
-  folded: Record<string, { value: string; format?: ContentFormat }>,
+  folded: Record<string, FoldedField>,
   manifest: Manifest,
   name?: string,
 ): ResolvedSlot | null {
@@ -3031,16 +3062,21 @@ function resolveSlot(
     const entry = manifest.vocabularies?.[spec.map]?.find((v) => v.value === raw)
     // A value outside the declared vocabulary is shown as-is rather than
     // dropped. Another app may have written it, and silently rendering nothing
-    // would hide exactly the corruption the honour system permits.
+    // would hide exactly the corruption the honour system permits. By its id,
+    // in the neutral grey of a status with no colour (Katerina, 30 Oct, EAC-2):
+    // not `muted`, which draws as cancelled.
     value = entry?.label ?? raw
-    colour = entry?.colour ?? 'muted'
+    colour = entry?.colour ?? 'neutral'
   }
+  const field = spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
+  const stage = name === STATUS_SLOT ? stageOf(root.kind, field, spec, manifest, raw, value, source.stage) : undefined
   return {
     label: spec.label,
     value,
     colour,
     isPubkey: spec.as === 'pubkey',
-    field: spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag),
+    field,
+    ...(stage ? { stage } : {}),
     // Present only on a slot that can carry a body. Absent is the honest shape
     // for a title read from a tag — and it keeps the key out of every existing
     // consumer's deep comparisons, which is not the reason but is a real cost
@@ -3122,7 +3158,7 @@ function withDefaultSubtitle(
 function resolveSlots(
   projection: { slots: Record<string, SlotSpec | SlotSpec[]> },
   root: SignedEvent,
-  folded: Record<string, { value: string; format?: ContentFormat }>,
+  folded: Record<string, FoldedField>,
   manifest: Manifest,
 ): { slots: Record<string, ResolvedSlot>; meta: ResolvedSlot[] } {
   const slots: Record<string, ResolvedSlot> = {}
@@ -3188,6 +3224,13 @@ export interface ForeignObject {
    * a renderer can tell "this holds nothing" from "this holds no list".
    */
   children?: ForeignObject[]
+  /**
+   * How far along it is, from `children`: done over every child not dropped,
+   * by each one's stage ({@link progressOf}). Absent when it has no children,
+   * or one has no status. A renderer draws this rather than counting itself,
+   * so every app counts a project the same way.
+   */
+  progress?: { done: number; total: number }
   /**
    * Whether the owning app declares a child list **and** says how to draw it.
    *
@@ -3997,7 +4040,11 @@ export async function resolveForeignRoots(
       viaRecommendation: resolved.viaRecommendation,
       childChanges: childEvents,
     })
-    if (children) parent.children = textUnread(children)
+    if (children) {
+      parent.children = textUnread(children)
+      const progress = progressOf(children)
+      if (progress) parent.progress = progress
+    }
   }
   const objects = options.listRead ? textUnread(projected) : projected
   if (options.archivedWith) {
@@ -4934,7 +4981,8 @@ function peopleOf({ object, children }: AssembledObject): string[] {
 }
 
 function withPeople({ object, children }: AssembledObject, people: People): ForeignObject {
-  return { ...object, people, ...(children ? { children: children.map((c) => ({ ...c, people })) } : {}) }
+  const progress = children && progressOf(children)
+  return { ...object, people, ...(children ? { children: children.map((c) => ({ ...c, people })) } : {}), ...(progress ? { progress } : {}) }
 }
 
 /**
@@ -5496,9 +5544,9 @@ export interface FolderProject {
    * record from its own lists is saying it is no longer part of the project.
    */
   tickets: ForeignObject[]
-  /** Tickets still to do. With `doneCount`, the total the panel counts against. */
+  /** Tickets still to do, every one not done or dropped. With `doneCount`, the total the panel counts against ({@link progressOf}). */
   openCount: number
-  /** Finished tickets — the numerator in the panel's "1/3". */
+  /** Done tickets — the numerator in the panel's "1/3". A dropped one is in neither count. */
   doneCount: number
 }
 
@@ -5524,13 +5572,11 @@ export interface FolderProject {
  * ships, its words are not in the set, and its panel renders blank, which is
  * PEE-10's failure exactly. A declared stage is what removes the guess.
  *
- * Two named sets rather than one allowlist and an "everything else": the panel
- * reads "1/3", done over the two sets added together, and a status that is
- * neither should land in neither. A parked "Backlog" or "Triage" is real work
- * nobody is doing and it would inflate the total into meaninglessness; an
- * unrecognised status some other app invented is not evidence of anything.
+ * *EAC-2 (17 Nov):* the words are now the last of three readings (`stageOf`):
+ * the change's own stage comes first, and a status none of them reads counts as
+ * underway, in the total and not done, as Ship counts it (Miky, 17 Nov).
  *
- * Leaving both out is also what keeps "3/3" reachable. A cancelled ticket is
+ * A dropped status is left out of both numbers, which is what keeps "3/3" reachable. A cancelled ticket is
  * not outstanding and never becomes done, so counting it in the total would
  * leave a finished project stuck at 3/4 for good.
  *
@@ -5577,62 +5623,32 @@ const inSet = (set: Set<string>) => (raw: string | undefined, label: string | un
 const isOpenStatusByLabel = inSet(OPEN_STATUSES)
 const isDoneStatusByLabel = inSet(DONE_STATUSES)
 
-/** The four stages a manifest may declare. Anything else is not a stage. */
-type Stage = 'open' | 'started' | 'done' | 'dropped'
+/**
+ * What a status means: `open`, `started`, `done` or `dropped` (SPEC §7.4).
+ * Anything else is not a stage, and counts as absent rather than as a fifth.
+ */
+export type Stage = 'open' | 'started' | 'done' | 'dropped'
 const STAGES = new Set<Stage>(['open', 'started', 'done', 'dropped'])
+const asStage = (value: string | undefined): Stage | undefined =>
+  value !== undefined && STAGES.has(value as Stage) ? (value as Stage) : undefined
 
 /**
- * The stage the owning app declares for a status value, or undefined.
+ * A base type's default options and their stages, from its directory entry
+ * (TYPES.md: `osnova.project`, `osnova.issue`), by kind and then by field.
  *
- * `undefined` means "this manifest does not say", which is a different fact
- * from "this status is not progress" and must not be collapsed into one — the
- * caller falls back to the word lists only in the first case.
- *
- * A `stage` outside the four is ignored rather than trusted. Validation is an
- * honour system (RFC 0.4 §13.4) and this is a consumer reading another app's
- * self-description; an unrecognised value is treated as undeclared, which
- * degrades to the fallback instead of inventing a fifth stage.
+ * SPEC §7.4: until a relay knows which apps a workspace added, a reader takes a
+ * base type's default stages from here, **never from a manifest it resolved**
+ * — a manifest is one app's self-description, and anyone can publish one.
+ * The company's own statuses never count either (§6.2): a guest who cannot
+ * read them would count the same file differently.
  */
-function declaredStage(
-  manifest: Manifest,
-  spec: SlotSpec | undefined,
-  raw: string | undefined,
-): Stage | undefined {
-  if (!spec?.map || raw === undefined) return undefined
-  const stage = manifest.vocabularies?.[spec.map]?.find((v) => v.value === raw)?.stage
-  return stage && STAGES.has(stage as Stage) ? (stage as Stage) : undefined
+const DIRECTORY_STAGES: Record<number, Record<string, Record<string, Stage>>> = {
+  30850: { status: { planned: 'open', in_progress: 'started', completed: 'done', cancelled: 'dropped' } },
+  30851: { status: { todo: 'open', in_progress: 'started', done: 'done', cancelled: 'dropped' } },
 }
 
-/**
- * Is this status finished work?
- *
- * `dropped` counts as done rather than open, which is what keeps "3/3"
- * reachable: a cancelled ticket is never going to become done, so leaving it
- * outstanding pins a finished project below its total for ever. It is not
- * *progress* either, and an app that wanted to draw that distinction now can —
- * the stage is on the wire and this fold is the consumer's, not the protocol's.
- */
-function isDone(stage: Stage | undefined, raw: string | undefined, label: string | undefined) {
-  if (stage) return stage === 'done' || stage === 'dropped'
-  return isDoneStatusByLabel(raw, label)
-}
-
-/**
- * Is a resolved `status` slot finished work — done or dropped — by its words?
- *
- * For a consumer holding only the object, not its manifest: the declared stage
- * is not on a {@link ResolvedSlot}, so this is the word-list fallback alone.
- * `[` uses it to put a closed issue after an open one (PEE-21).
- */
-export function isClosedStatus(slot: ResolvedSlot | undefined): boolean {
-  return slot !== undefined && isDoneStatusByLabel(slot.value, slot.label)
-}
-
-function isOpen(stage: Stage | undefined, raw: string | undefined, label: string | undefined) {
-  if (stage) return stage === 'open' || stage === 'started'
-  return isOpenStatusByLabel(raw, label)
-}
-
+/** `cancelled` and its kin: finished, but not done. Split out of DONE_STATUSES so the words give a stage. */
+const DROPPED_STATUSES = new Set(['cancelled', 'canceled', 'duplicate'])
 /**
  * Started work sits above the queue.
  *
@@ -5641,11 +5657,75 @@ function isOpen(stage: Stage | undefined, raw: string | undefined, label: string
  * recently.
  */
 const STARTED = new Set(['in progress', 'started', 'doing', 'in review', 'review'])
+const isDroppedByLabel = inSet(DROPPED_STATUSES)
 const isStartedByLabel = inSet(STARTED)
 
-function isStarted(stage: Stage | undefined, raw: string | undefined, label: string | undefined) {
-  if (stage) return stage === 'started'
-  return isStartedByLabel(raw, label)
+/** The reader's own reading of the words, the last resort (SPEC §6.2): a stage, or nothing. */
+function stageByWords(raw: string | undefined, label: string | undefined): Stage | undefined {
+  if (isDroppedByLabel(raw, label)) return 'dropped'
+  if (isDoneStatusByLabel(raw, label)) return 'done'
+  if (isStartedByLabel(raw, label)) return 'started'
+  if (isOpenStatusByLabel(raw, label)) return 'open'
+  return undefined
+}
+
+/**
+ * The stage a status counts by — the one read every app shares (SPEC §6.2,
+ * record a-companys-statuses-are-its-own-layer-of-a-types-properties):
+ *
+ * 1. the stage on the change (or root) that set the field's current value,
+ *    when the field is staged;
+ * 2. else, for a base type, its directory entry's stage for that id;
+ * 3. else the words.
+ *
+ * A field is staged when the base type's directory gives its options stages,
+ * or, for any other kind, when the vocabulary its slot maps to does. A stage on
+ * an unstaged field is ignored, as is one outside the four.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+ */
+function stageOf(
+  kind: number,
+  field: string | undefined,
+  spec: SlotSpec,
+  manifest: Manifest,
+  raw: string,
+  label: string,
+  written: Stage | undefined,
+): Stage | undefined {
+  const directory = field !== undefined ? DIRECTORY_STAGES[kind]?.[field] : undefined
+  const staged = directory !== undefined || (spec.map !== undefined && (manifest.vocabularies?.[spec.map] ?? []).some((v) => asStage(v.stage)))
+  if (staged && written) return written
+  if (directory?.[raw]) return directory[raw]
+  return stageByWords(raw, label)
+}
+
+/** Finished work, done or dropped: `[` puts a closed issue after an open one (PEE-21). */
+const isClosed = (stage: Stage | undefined) => stage === 'done' || stage === 'dropped'
+
+/**
+ * Is a resolved `status` slot finished work, done or dropped? By the stage it
+ * counts by ({@link ResolvedSlot.stage}), else by its words for a slot built
+ * before the stage was on it. `[` uses it to put a closed issue after an open
+ * one (PEE-21).
+ */
+export function isClosedStatus(slot: ResolvedSlot | undefined): boolean {
+  if (slot === undefined) return false
+  return isClosed(slot.stage ?? stageByWords(slot.value, slot.label))
+}
+
+/**
+ * How far along a project is: its done children over every child not dropped,
+ * by the stage each counts by. A cancelled issue is out of both numbers, so a
+ * finished project reads full (Miky, 3 Nov for Ship, 17 Nov for every app).
+ * A child whose status has no stage (an unknown word) is in the total and not
+ * done. `undefined` when there is nothing to count or a child has no status:
+ * a list of things that are not work has no progress.
+ */
+export function progressOf(children: readonly { slots: { status?: ResolvedSlot } }[]): { done: number; total: number } | undefined {
+  if (!children.length || children.some((child) => !child.slots.status)) return undefined
+  const stages = children.map((child) => child.slots.status?.stage)
+  return { done: stages.filter((stage) => stage === 'done').length, total: stages.filter((stage) => stage !== 'dropped').length }
 }
 
 /**
@@ -6045,17 +6125,14 @@ export async function resolveFolderProject(
     }
     const ticketChanges = changesFor(pointerToAddress(ticketPointer))
     const folded = foldChanges(ticketChanges, records, event)
-    const status = statusSpec ? resolveSlot(statusSpec, event, folded, manifest) : null
-    const raw = statusSpec ? rawSlotValue(statusSpec, event, folded, false)?.value : undefined
+    const status = statusSpec ? resolveSlot(statusSpec, event, folded, manifest, STATUS_SLOT) : null
 
-    // The owning app's declaration first, the label guess only if it has none.
-    const stage = declaredStage(manifest, statusSpec, raw)
-    const done = isDone(stage, raw, status?.value)
-    if (done) doneCount += 1
-    else if (isOpen(stage, raw, status?.value)) openCount += 1
-    // A status in neither set — parked, or one this consumer has never seen —
-    // is still a ticket and still listed. It just cannot claim to be progress
-    // in either direction, so it stays out of both counts.
+    // The stage the change says, then the directory's, then the words: as
+    // `progressOf` counts, done over everything not dropped.
+    // A ticket with no status at all is listed and counted in neither, as before.
+    const stage = status?.stage
+    if (status && stage === 'done') doneCount += 1
+    else if (status && stage !== 'dropped') openCount += 1
 
     rows.push({
       ticket: buildObject({
@@ -6067,7 +6144,7 @@ export async function resolveFolderProject(
         viaRecommendation,
         webTemplate: resolved.webTemplate,
       }),
-      rank: isStarted(stage, raw, status?.value) ? 0 : done ? 2 : 1,
+      rank: stage === 'started' ? 0 : isClosed(stage) ? 2 : 1,
       activityMs: Math.max(event.created_at * 1000, ...ticketChanges.map(orderingMs)),
     })
   }

@@ -340,15 +340,16 @@ describe('resolveFolderProject', () => {
       'Retry copy',
     ])
     assert.partialDeepStrictEqual(found?.tickets[0].slots.status, { value: 'In Progress' })
-    // The counts still divide the work; the table no longer does.
+    // The counts still divide the work; the table no longer does. The
+    // cancelled one is in neither, so the project reads 1/3 (Miky, 17 Nov).
     assert.equal(found?.openCount, 2)
-    assert.equal(found?.doneCount, 2)
+    assert.equal(found?.doneCount, 1)
   })
 
-  it('lists a parked or unknown status but counts it in neither half', async () => {
+  it('lists a parked or unknown status and counts it as not done', async () => {
     // "Backlog" is real work nobody is doing, and a status this consumer has
-    // never seen is not evidence of anything. Both are still tickets, and still
-    // listed — they just cannot claim to be progress in either direction.
+    // never seen says nothing about being finished. Both are still tickets,
+    // still listed, and still in the total, as Ship counts them.
     const events = [
       manifest(),
       project('p1'),
@@ -364,7 +365,7 @@ describe('resolveFolderProject', () => {
       'Something another app invented',
       'Parked',
     ])
-    assert.equal(found?.openCount, 0)
+    assert.equal(found?.openCount, 2)
     assert.equal(found?.doneCount, 0)
   })
 
@@ -911,29 +912,45 @@ describe('a manifest that declares its own containment and stages', () => {
     assert.deepEqual(found?.tickets.map((t) => t.slots.title.value), ['owned'])
   })
 
-  it('counts by the declared stage even when the label means nothing to Peek', async () => {
+  it('counts by the stage on the change even when the label means nothing to Peek', async () => {
     // The third-app case, and the whole point. None of these words is in the
-    // consumer's old sets, so the label guess counts every one of them as
-    // neither open nor done and reports 0/0.
+    // consumer's sets and no listing names them; the stage each change carries
+    // is what counts (SPEC §6.2).
+    const staged = (id: string, status: string, stage: string) => [
+      event({ kind: ISSUE_KIND, tags: [['d', id], ['title', id], ['h', FOLDER], ['a', `${PROJECT_KIND}:${AUTHOR}:p1`]] }),
+      event({ kind: CHANGE_KIND, tags: [['a', `${ISSUE_KIND}:${AUTHOR}:${id}`], ['field', 'status'], ['value', status], ['h', FOLDER], ['stage', 'status', stage]] }),
+    ]
     const found = await resolveFolderProject(
       FOLDER,
       relay([
-        declaring({
-          list: { kind: ISSUE_KIND, via: 'a' },
-          issueStatuses: [
-            { value: 'ontvangen', label: 'Ontvangen', colour: 'neutral', stage: 'open' },
-            { value: 'afgerond', label: 'Afgerond', colour: 'green', stage: 'done' },
-          ],
-        }),
+        declaring({ list: { kind: ISSUE_KIND, via: 'a' } }),
         project('p1'),
-        ...ticket('t1', 'ontvangen'),
-        ...ticket('t2', 'afgerond'),
+        ...staged('t1', 'ontvangen', 'open'),
+        ...staged('t2', 'afgerond', 'done'),
       ]),
     )
     assert.deepEqual({ open: found?.openCount, done: found?.doneCount }, { open: 1, done: 1 })
   })
 
-  it('treats a dropped status as done, so a finished project can reach its total', async () => {
+  it('never takes a base type’s stage from a manifest it resolved', async () => {
+    // SPEC §7.4: a manifest is one app's self-description, and anyone can
+    // publish one. A change with no stage counts by the directory's stage for
+    // the id, here none, so by the words: "Afgerond" is not done.
+    const found = await resolveFolderProject(
+      FOLDER,
+      relay([
+        declaring({
+          list: { kind: ISSUE_KIND, via: 'a' },
+          issueStatuses: [{ value: 'afgerond', label: 'Afgerond', colour: 'green', stage: 'done' }],
+        }),
+        project('p1'),
+        ...ticket('t1', 'afgerond'),
+      ]),
+    )
+    assert.deepEqual({ open: found?.openCount, done: found?.doneCount }, { open: 1, done: 0 })
+  })
+
+  it('leaves a dropped status out of both counts, so a finished project reads full', async () => {
     const found = await resolveFolderProject(
       FOLDER,
       relay([
@@ -943,9 +960,9 @@ describe('a manifest that declares its own containment and stages', () => {
         ...ticket('t2', 'cancelled'),
       ]),
     )
-    // 2/2 rather than 1/2: the cancelled one is never going to become done, so
-    // leaving it outstanding pins the project below its total for ever.
-    assert.deepEqual({ open: found?.openCount, done: found?.doneCount }, { open: 0, done: 2 })
+    // 1/1 rather than 1/2: the cancelled one is never going to become done, so
+    // counting it pins the project below its total for ever (Miky, 17 Nov).
+    assert.deepEqual({ open: found?.openCount, done: found?.doneCount }, { open: 0, done: 1 })
   })
 
   it('ignores a stage outside the four and falls back to the label', async () => {
