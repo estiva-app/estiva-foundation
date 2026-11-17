@@ -2994,7 +2994,9 @@ function rawSlotValue(
   if (spec.tag) {
     const value = firstTag(root, spec.tag)
     if (value === undefined) return undefined
-    const rootStage = stageTagOf(root, Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
+    // The stage names the tag the value was read from, the first one the root carries.
+    const read = (Array.isArray(spec.tag) ? spec.tag : [spec.tag]).find((name) => firstTag(root, name) !== undefined)
+    const rootStage = read ? stageTagOf(root, read) : undefined
     return { value, format: isBody ? contentFormatOf(root) : undefined, ...(rootStage ? { stage: rootStage } : {}) }
   }
   if (spec.field === 'content') return { value: root.content, format: contentFormatOf(root) }
@@ -5570,13 +5572,11 @@ export interface FolderProject {
  * ships, its words are not in the set, and its panel renders blank, which is
  * PEE-10's failure exactly. A declared stage is what removes the guess.
  *
- * Two named sets rather than one allowlist and an "everything else": the panel
- * reads "1/3", done over the two sets added together, and a status that is
- * neither should land in neither. A parked "Backlog" or "Triage" is real work
- * nobody is doing and it would inflate the total into meaninglessness; an
- * unrecognised status some other app invented is not evidence of anything.
+ * *EAC-2 (17 Nov):* the words are now the last of three readings (`stageOf`):
+ * the change's own stage comes first, and a status none of them reads counts as
+ * underway, in the total and not done, as Ship counts it (Miky, 17 Nov).
  *
- * Leaving both out is also what keeps "3/3" reachable. A cancelled ticket is
+ * A dropped status is left out of both numbers, which is what keeps "3/3" reachable. A cancelled ticket is
  * not outstanding and never becomes done, so counting it in the total would
  * leave a finished project stuck at 3/4 for good.
  *
@@ -5657,12 +5657,14 @@ const DROPPED_STATUSES = new Set(['cancelled', 'canceled', 'duplicate'])
  * recently.
  */
 const STARTED = new Set(['in progress', 'started', 'doing', 'in review', 'review'])
+const isDroppedByLabel = inSet(DROPPED_STATUSES)
+const isStartedByLabel = inSet(STARTED)
 
 /** The reader's own reading of the words, the last resort (SPEC §6.2): a stage, or nothing. */
 function stageByWords(raw: string | undefined, label: string | undefined): Stage | undefined {
-  if (inSet(DROPPED_STATUSES)(raw, label)) return 'dropped'
+  if (isDroppedByLabel(raw, label)) return 'dropped'
   if (isDoneStatusByLabel(raw, label)) return 'done'
-  if (inSet(STARTED)(raw, label)) return 'started'
+  if (isStartedByLabel(raw, label)) return 'started'
   if (isOpenStatusByLabel(raw, label)) return 'open'
   return undefined
 }
@@ -6127,10 +6129,10 @@ export async function resolveFolderProject(
 
     // The stage the change says, then the directory's, then the words: as
     // `progressOf` counts, done over everything not dropped.
+    // A ticket with no status at all is listed and counted in neither, as before.
     const stage = status?.stage
-    const done = stage === 'done'
-    if (done) doneCount += 1
-    else if (stage !== 'dropped') openCount += 1
+    if (status && stage === 'done') doneCount += 1
+    else if (status && stage !== 'dropped') openCount += 1
 
     rows.push({
       ticket: buildObject({

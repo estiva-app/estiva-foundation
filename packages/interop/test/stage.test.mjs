@@ -123,6 +123,22 @@ describe('a change with no stage — the control', () => {
     assert.deepEqual(object.progress, { done: 1, total: 3 })
   })
 
+  test('counts by the directory’s stage for the id, even when neither the id nor its label is a word the reader knows', async () => {
+    // A project's `planned`, labelled "Later": no word list reads either; TYPES.md says it is open.
+    const withProjects = structuredClone(TRACKER)
+    withProjects.vocabularies.projectStatuses = [{ value: 'planned', label: 'Later', colour: 'neutral', stage: 'done' }]
+    withProjects.projections[PROJECT].slots.status = { fold: 'status', map: 'projectStatuses' }
+    const events = [
+      event({ kind: 31990, tags: [['d', 'tracker'], ['k', String(PROJECT)], ['k', String(ISSUE)]], content: JSON.stringify(withProjects) }),
+      event({ kind: PROJECT, tags: [['d', 'p1'], ['title', 'P']] }),
+      event({ kind: 1851, tags: [['a', projectAddress], ['field', 'status'], ['value', 'planned']] }),
+    ]
+    const object = await resolveForeignObject(projectAddress, relay(events))
+    assert.equal(object.slots.status.value, 'Later')
+    assert.equal(object.slots.status.stage, 'open', 'the directory’s stage, not the words’ nothing nor the listing’s done')
+    assert.equal(isClosedStatus(object.slots.status), false)
+  })
+
   test('never takes a base type’s stage from the manifest it resolved (SPEC §7.4)', async () => {
     const { object } = await card(issue('a'), status('a', 'afgerond'))
     assert.deepEqual(object.progress, { done: 0, total: 1 })

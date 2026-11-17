@@ -8,7 +8,7 @@ manifests already published still mean what they meant.
 
 ## 0.102.0 — 2026-11-17
 
-**Manifest: a status vocabulary's `stage` is no longer read for a project's or an issue's change with no stage; the base type's directory stage is (SPEC §7.4). Wire: nothing new is written; the `stage` tag of SPEC §6.2 is read** (EAC-2).
+**Manifest: a status vocabulary's `stage` is no longer read for a change with no stage, for any kind: a project's or an issue's counts by its base type's directory stage, any other kind's by its words (SPEC §7.4). A manifest's stages still decide whether a field is staged, so whether a change's own `stage` counts. Wire: nothing new is written; the `stage` tag of SPEC §6.2 is read** (EAC-2).
 
 - A status counts by the stage on the change that set it, `["stage", "status", <stage>]` (or on a root that sets it), then, for `osnova.project` and `osnova.issue`, the stage TYPES.md gives that id, then the words. A stage naming another field, outside the four, or on a change older than the winning one counts for nothing. The `status` slot carries it as `ResolvedSlot.stage`.
 - A card with children carries `progress`: done over every child not dropped, as Ship counts (`progressOf`, exported). A cancelled issue is out of both numbers, so a finished project reads full in every app (Miky, 17 Nov). `resolveFolderProject`'s `doneCount` and `openCount` count the same way: a dropped ticket is in neither, an unknown one is open.
