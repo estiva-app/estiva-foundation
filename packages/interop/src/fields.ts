@@ -31,6 +31,7 @@ import {
   type SignedEvent,
   type UnsignedEvent,
 } from '@estiva-app/protocol'
+import { refusalCode } from './folders.js'
 import { folderOf, type QueryFn } from './projection.js'
 
 /** The change event every Estiva app writes (SPEC §6.2). */
@@ -196,12 +197,15 @@ export function textOf(event: SignedEvent): MergeText | undefined {
  * NIP-11. Read it again, switch, and write the change again in order
  * ({@link prevsAfterSwitch}): the person sees nothing (Miky, 9 Nov, ALO-8).
  *
- * Decided on the relay's words after `invalid:`, never on what follows them,
- * so a relay that adds what to do keeps being recognised.
+ * Decided by its reason code, `requires-prev` (§3.3), or, from a relay that
+ * predates the code (a project's refusal until ISS-8), by its words after
+ * `invalid:`; never on what follows them, so a relay that adds what to do
+ * keeps being recognised.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
  */
 export function isSwitchRefusal(reason: string | undefined): boolean {
+  if (refusalCode(reason) === 'requires-prev') return true
   return !!reason && /^invalid: an? \w+ change names the change it follows in prev\b/.test(reason)
 }
 
@@ -576,4 +580,164 @@ export async function writeChanges(args: WriteChangesArgs): Promise<WriteChangeR
     fields = next
   }
   return { ok: false, refused: `still refused after ${tries} tries: ${last}` }
+}
+
+/** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
+export const DELETED_FIELD = 'deleted'
+
+/** What {@link setDeleted} is handed: {@link WriteChangeArgs} for the `deleted` field, `prev` its current change or the first record's id. */
+export interface SetDeletedArgs extends Omit<WriteChangeArgs, 'field' | 'value' | 'format' | 'base'> {
+  deleted: boolean
+}
+
+/**
+ * Delete a file, or restore it, of any type (SPEC §6.5): a change setting
+ * `deleted` to `true`, or to the empty value, after the one it follows, which
+ * anyone who may edit the file may write. The file keeps its id, first record
+ * and every change, so a restore brings it back whole, its issue number
+ * included; nothing else is written, and no `kind:5` is sent. Two people
+ * deleting and restoring at once: the later stands, as for any field.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+ */
+export function setDeleted(args: SetDeletedArgs): Promise<WriteChangeResult> {
+  const { deleted, ...write } = args
+  return writeChange({ ...write, field: DELETED_FIELD, value: deleted ? 'true' : '' })
+}
+
+/** A {@link writeChange} that saved nothing. */
+export type WriteChangeFailure = Extract<WriteChangeResult, { ok: false }>
+
+/** What {@link createFile} and {@link finishCreating} are handed. */
+export interface CreateFileArgs {
+  /** The first record, unsigned: what the file is (id, type, team, title, parent, ref, key, summary), and no text. */
+  root: UnsignedEvent
+  /** The text given at creation, written as the file's first change. None, or an empty one, writes no text. */
+  text?: MergeText
+  /** Any other first value that is not on the first record (a status, an assignee), written after the text, with no text. */
+  others?: readonly { field: string; value: string }[]
+  /** The types the relay keeps in order (`RelayFileReads.inOrder`): several other values go in one change only for these. */
+  inOrder: readonly string[]
+  /** The unsigned one-field change for one field, as {@link WriteChangeArgs.build}: `buildActionEvent` bound to that field's action. */
+  build: (input: { field: string; value: string; format?: string; prev: string; createdAtMs: number }) => UnsignedEvent | string
+  sign: WriteChangeArgs['sign']
+  publish: WriteChangeArgs['publish']
+  query: QueryFn
+  current: WriteChangeArgs['current']
+  now?: () => number
+  tries?: number
+}
+
+/** What {@link createFile} and {@link finishCreating} answer. */
+export type CreateFileResult =
+  | {
+      ok: true
+      root: SignedEvent
+      address: string
+      /** Each field written, by the change it now follows: its next `prev`. */
+      heads: Record<string, string>
+    }
+  /** Nothing was created: the first record was refused or never answered. */
+  | { ok: false; created: false; refused: string }
+  /**
+   * The file exists, but `field` (its text, or another first value) did not
+   * land. Keep the person's words, never say "created", and hand the same
+   * first record to {@link finishCreating} to send the rest again.
+   */
+  | { ok: false; created: true; root: SignedEvent; address: string; field: string; failed: WriteChangeFailure }
+
+const BASE_KINDS = new Set(Object.keys(BASE_TYPE_OF_KIND).map(Number))
+
+/** Whether a first record carries text, which a new one never does (§6.1): a `description` tag, a `set` of it, or a base type's `content`. */
+function carriesText(root: UnsignedEvent): boolean {
+  if (root.tags.some((t) => t[0] === TEXT_FIELD || (t[0] === 'set' && t[1] === TEXT_FIELD))) return true
+  return BASE_KINDS.has(root.kind) && root.content !== ''
+}
+
+/**
+ * Create a file of any type as SPEC §6.1 says: its first record, carrying no
+ * text, then its text as its own one-field change whose `prev` is the first
+ * record's id, then any other first value in a change with no text. A first
+ * record that carries text is refused here, before anything is sent: the
+ * relay refuses it too (`text-is-a-change`) wherever it keeps the type in order.
+ *
+ * Creating is two writes. Until the text lands the file exists with no text:
+ * the answer says so (`created: true`, `ok: false`), and the app keeps the
+ * words and sends them again with {@link finishCreating}, never the first
+ * record, which is written once.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-new-files-text-is-its-first-change.md
+ */
+export async function createFile(args: CreateFileArgs): Promise<CreateFileResult> {
+  if (carriesText(args.root)) {
+    return { ok: false, created: false, refused: "A new file's first record carries no text: its text is its first change (SPEC §6.1). Nothing was sent." }
+  }
+  let root: SignedEvent
+  try {
+    root = await args.sign(args.root)
+    const answer = await args.publish(root)
+    if (!answer.ok) return { ok: false, created: false, refused: answer.reason ?? 'refused with no reason' }
+  } catch (error) {
+    return { ok: false, created: false, refused: error instanceof Error ? error.message : String(error) }
+  }
+  return finishCreating(args, root)
+}
+
+/**
+ * The writes after a first record: the text, then the other first values,
+ * each following the first record (§6.2). Sent again after a failure, it
+ * writes what is missing: a text that landed meanwhile, the creator's own or
+ * someone's, is merged onto with an empty base, so no words are lost, and a
+ * value set again after one already there stands as the later.
+ */
+export async function finishCreating(args: Omit<CreateFileArgs, 'root'>, root: SignedEvent): Promise<CreateFileResult> {
+  const address = addressOfRoot(root)
+  const heads: Record<string, string> = {}
+  const unfinished = (field: string, failed: WriteChangeFailure): CreateFileResult => ({ ok: false, created: true, root, address, field, failed })
+  const common = { sign: args.sign, publish: args.publish, query: args.query, current: args.current, ...(args.now ? { now: args.now } : {}), ...(args.tries ? { tries: args.tries } : {}) }
+  const one = async (field: string, value: string, format?: string): Promise<WriteChangeResult> => {
+    try {
+      return await writeChange({
+        ...common,
+        field,
+        value,
+        ...(format ? { format } : {}),
+        prev: root.id,
+        build: (input) => args.build({ field, ...input }),
+      })
+    } catch (error) {
+      return { ok: false, refused: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  if (args.text && args.text.value !== '') {
+    const text = await one(TEXT_FIELD, args.text.value, args.text.format)
+    if (!text.ok) return unfinished(TEXT_FIELD, text)
+    heads[TEXT_FIELD] = text.id
+  }
+
+  const others = args.others ?? []
+  const type = BASE_TYPE_OF_KIND[root.kind]
+  if (others.length > 1 && type && args.inOrder.includes(type)) {
+    let together: WriteChangeResult
+    try {
+      together = await writeChanges({
+        ...common,
+        inOrder: args.inOrder,
+        fields: others.map((o) => ({ field: o.field, value: o.value, prev: root.id })),
+        build: (input) => args.build(input),
+      })
+    } catch (error) {
+      together = { ok: false, refused: error instanceof Error ? error.message : String(error) }
+    }
+    if (!together.ok) return unfinished(others.map((o) => o.field).join(', '), together)
+    for (const o of others) heads[o.field] = together.id
+  } else {
+    for (const o of others) {
+      const written = await one(o.field, o.value)
+      if (!written.ok) return unfinished(o.field, written)
+      heads[o.field] = written.id
+    }
+  }
+  return { ok: true, root, address, heads }
 }

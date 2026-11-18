@@ -40,7 +40,8 @@
 import { fileIdOf, RELAY_PAGE_CEILING, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
-import { answeredByEach, answers, firstPages, nextPages, type ReadTopic } from './topics.js'
+import { answeredByEach, answers, firstPages, nextPages, readAll, type ReadTopic } from './topics.js'
+import { fieldsSetBy } from './fields.js'
 import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './listedConversations.js'
 
 const KIND_CHANGE = 1851
@@ -439,10 +440,10 @@ export async function readTopicActivity(
         const held = newest.get(entry.a)
         if (!held || entry.created_at > held.created_at) newest.set(entry.a, entry)
       }
+      const placed = await placeMoved(query, read, level, newest)
       const perParent = new Map<string, number>()
       const next: string[] = []
-      for (const entry of [...newest.values()].sort((a, b) => b.created_at - a.created_at)) {
-        const parent = entry.under!
+      for (const { entry, parent } of [...placed.values()].sort((a, b) => b.entry.created_at - a.entry.created_at)) {
         const taken = perParent.get(parent) ?? 0
         if (taken >= MAX_CHILDREN) continue
         perParent.set(parent, taken + 1)
@@ -539,6 +540,73 @@ export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[
 /** Roots asked per page of a times read: a parent with thousands under it is still read whole, a page at a time. */
 const TIMES_PAGE = RELAY_PAGE_CEILING
 const MAX_TIMES_PAGES = 20
+
+/** The field that moves a child to another parent, by the child's kind (§6.7's `movedBy`): an issue's `project`. */
+const MOVED_BY: Readonly<Record<number, string>> = { [KIND_ISSUE]: 'project' }
+
+/**
+ * Each file the times read found under one of `level`, placed under the
+ * parent it is in now (SPEC §6.7, "A `#via` read cannot see a move"): the
+ * times read's `under` is the parent its first record names, so a file moved
+ * since is placed by its current `movedBy` change instead — under its new
+ * parent when that is in `level`, and nowhere here when it is not. A file
+ * moved in from elsewhere is found by the `A` its move carries, and kept
+ * only when that move is still its current one.
+ *
+ * Reads: the moves naming a parent in `level`, the current move of each
+ * found file whose times show one, and the times of each file moved in;
+ * none when nothing under `level` can move.
+ */
+async function placeMoved(
+  query: QueryFn,
+  read: TimesFn,
+  level: readonly string[],
+  found: ReadonlyMap<string, FileTimes>,
+): Promise<Map<string, { entry: FileTimes; parent: string }>> {
+  const placed = new Map([...found].map(([a, entry]) => [a, { entry, parent: entry.under! }]))
+  const movable = level.filter((parent) => (CHILD_KINDS[kindOf(parent)!] ?? []).some((kind) => MOVED_BY[kind]))
+  if (movable.length === 0) return placed
+  const here = new Set(level)
+
+  const moves = new Map<string, SignedEvent>()
+  for (const event of await readAll(query, chunked(movable, VALUES_PER_FILTER).map((values) => ({ kinds: [KIND_CHANGE], '#A': values })))) {
+    moves.set(event.id, event)
+  }
+  // The files moved in that the walk did not find under the same level: their times, by their `d`.
+  const movedIn = new Map<number, Set<string>>()
+  for (const move of moves.values()) {
+    const file = tagValues(move, 'a')[0]
+    const kind = file === undefined ? undefined : kindOf(file)
+    if (!file || kind === undefined || !MOVED_BY[kind] || found.has(file)) continue
+    movedIn.set(kind, (movedIn.get(kind) ?? new Set()).add(idOf(file)!))
+  }
+  const candidates = new Map(found)
+  const asking = [...movedIn].flatMap(([kind, ds]) => chunked([...ds], VALUES_PER_FILTER).map((values) => ({ fields: 'times', kinds: [kind], '#d': values })))
+  for (const entry of asking.length > 0 ? await read(asking) : []) {
+    const held = candidates.get(entry.a)
+    if (!held || entry.created_at > held.created_at) candidates.set(entry.a, entry)
+  }
+
+  // Each candidate's current move, read whole only when it is not one of the moves already in hand.
+  const currentMove = (entry: FileTimes) => {
+    const field = MOVED_BY[kindOf(entry.a) ?? -1]
+    return field ? entry.changes.find((change) => change.fields.includes(field)) : undefined
+  }
+  const unread = [...candidates.values()].map(currentMove).filter((c): c is FileTimes['changes'][number] => !!c && !moves.has(c.id)).map((c) => c.id)
+  for (const ids of chunked(unread, VALUES_PER_FILTER)) for (const event of await query([{ ids }])) moves.set(event.id, event)
+
+  for (const [a, entry] of candidates) {
+    const change = currentMove(entry)
+    const event = change && moves.get(change.id)
+    const field = MOVED_BY[kindOf(a) ?? -1]
+    const set = event && fieldsSetBy(event).find((f) => f.field === field)
+    // No move, or one that could not be read: the first record's parent stands.
+    const parent = set ? set.value : entry.under
+    if (parent && here.has(parent)) placed.set(a, { entry, parent })
+    else placed.delete(a)
+  }
+  return placed
+}
 
 /** The files under the given ones, by the times read, every page of each filter. */
 async function timesUnder(read: TimesFn, parents: readonly string[]): Promise<FileTimes[]> {

@@ -4,6 +4,28 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.60.0 — 2026-11-18
+
+**Wire behaviour: none written; nothing new read** (ISS-3; SPEC §6.1, §6.13;
+records a-file-is-its-fields-each-kept-in-order-by-the-relay and
+a-new-files-text-is-its-first-change). Nothing an app publishes changes.
+
+- Each type switches on its own. `fileFieldsOf(reads, type, optedIn)` is
+  `projectFieldsOf` for any type: on when the relay's `files.requires_prev`
+  names the type, or for a tab that opted in, and only where the relay offers
+  the list read with the opened text; `search` where `file_search.types`
+  names it. `projectFieldsOf` is now `fileFieldsOf` for `PROJECT_TYPE` and
+  answers as before. `ISSUE_TYPE` (`osnova.issue`) and the `FileFieldsSwitch`
+  type with it; `ProjectFields` is that type.
+- `typeFieldsOptedIn(type, search, storage)`: a tab's opt-in for one type.
+  Projects keep `?fields=on`; another type is `?<name>Fields=on`
+  (`?issueFields=on`), kept apart, so a tab can try issues on a team the
+  relay fences for them while projects stay as they are.
+- `mergeTexts` reads an empty base as a text with no blocks, whatever its
+  format: two first texts written onto a new file's empty first record (§6.1,
+  "Creating is two writes") merge block by block instead of asking about the
+  whole text. Two marker texts onto an empty base still ask.
+
 ## 0.59.0 — 2026-11-16
 
 **Wire behaviour: none written; one new read** (ALO-22; SPEC §6.13 "When files

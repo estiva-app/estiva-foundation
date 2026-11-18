@@ -154,6 +154,16 @@ describe('mergeTexts — §13.3', () => {
     assert.deepEqual(mergeTexts({ value: 'a' }, { value: 'a' }, { value: 'b' }).merged, { value: 'b' })
     assert.deepEqual(mergeTexts({ value: 'a' }, { value: 'c' }, { value: 'a' }).merged, { value: 'c' })
   })
+
+  it('two first texts written onto a new file’s empty first record keep both, without asking (§6.1, ISS-3)', () => {
+    const result = mergeTexts({ value: '' }, blocks(doc(p('q1', 'Seen on Safari too'))), blocks(doc(p('b1', 'Steps to reproduce'))))
+    assert.equal(result.asks, undefined)
+    assert.deepEqual(words(JSON.parse(result.merged!.value)), ['Seen on Safari too', 'Steps to reproduce'])
+  })
+
+  it('two marker texts written onto an empty first record still ask: they have no blocks to merge', () => {
+    assert.equal(mergeTexts({ value: '' }, { value: 'theirs' }, { value: 'mine' }).asks?.length, 1)
+  })
 })
 
 describe('textAsksOf — what the editor holds while a save asks (ALO-1\'s story)', () => {

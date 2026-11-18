@@ -366,7 +366,8 @@ export function mergeTexts(base: MergeText, theirs: MergeText, mine: MergeText):
   const same = (a: MergeText, b: MergeText) => a.value === b.value && (a.format ?? '') === (b.format ?? '')
   if (same(mine, base) || same(mine, theirs)) return { merged: theirs }
   if (same(theirs, base)) return { merged: mine }
-  const docs = [base, theirs, mine].map(asDocument)
+  // An empty base held no blocks, whatever its format: a new file's first record, before its text landed (§6.1).
+  const docs = [base.value === '' ? { type: 'doc' as const, content: [] } : asDocument(base), asDocument(theirs), asDocument(mine)]
   if (docs.every((d) => d !== undefined)) {
     const [b, t, m] = docs as BlockDocument[]
     const result = mergeBlockDocuments(b, t, m)

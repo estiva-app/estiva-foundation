@@ -6,6 +6,17 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.106.0 — 2026-11-18
+
+**Manifest: nothing new. Wire: interop writes nothing unless an app calls the new helpers, which write as SPEC §6.1 and §6.5 say; one new read in the topic order, of moves only** (ISS-3). Needs protocol 0.60.0.
+
+- `createFile(args)` creates a file of any type with its text as its first change (§6.1): the first record, carrying no text, then the text as its own one-field change whose `prev` is the first record's id, then any other first value (a status, an assignee) in a change with no text — one change where the relay keeps the type in order, one per field before. A first record carrying text is refused before anything is sent. When the text or a later value does not land, the answer says the file exists (`created: true`) and which field is missing; `finishCreating(args, root)` sends what is missing again, never the first record. A text that landed meanwhile, the creator's or someone's, is merged onto with an empty base, so no words are lost.
+- `setDeleted({ deleted, prev, … })` deletes a file of any type by its `deleted` field, or restores it by emptying it (§6.5), after the change it follows; never a `kind:5`. `DELETED_FIELD` with it.
+- `isSwitchRefusal` recognises the relay's `requires-prev` code (`invalid: requires-prev: an issue change names the change it follows in prev; …`) as well as the uncoded project words it already read.
+- `readTopicActivity` with the times read places an issue under the project it is in now (§6.7, "A `#via` read cannot see a move"): the times read's `under` names the project it was filed in, so an issue moved since counts for the topic listing its new project, and for none when it moved to no project. Reads added: the changes naming a listed project in `A` (one per move), the current `project` change of an issue whose times show one, and the times of an issue moved in. The plain read, for a relay without times, is unchanged.
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-new-files-text-is-its-first-change.md
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+
 ## 0.105.0 — 2026-11-18
 
 **Manifest: nothing new. Wire: nothing new is written or read by interop itself** (EAC-5).

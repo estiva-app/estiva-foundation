@@ -275,6 +275,10 @@ export {
   combineChanges,
   writeChange,
   writeChanges,
+  DELETED_FIELD,
+  setDeleted,
+  createFile,
+  finishCreating,
   type CurrentField,
   type FileFields,
   type Conflict,
@@ -282,6 +286,10 @@ export {
   type WriteChangeArgs,
   type WriteChangesArgs,
   type WriteChangeResult,
+  type WriteChangeFailure,
+  type SetDeletedArgs,
+  type CreateFileArgs,
+  type CreateFileResult,
 } from './fields.js'
 
 /**
