@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.105.0 — 2026-11-18
+
+**Manifest: nothing new. Wire: nothing new is written or read by interop itself** (EAC-5).
+
+- A resolved action's `options` (a `select`, and a form field's vocabulary) now carry each entry's `stage` when it is one of the four, as the new exported `ResolvedOption` type. An app that builds its own change from a card's choice (Leaf) passes them to `stageTagFor`, so its change says what the status means exactly as `buildActionEvent` would. A stage outside the four is left off, as everywhere else.
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-companys-statuses-are-its-own-layer-of-a-types-properties.md
+
 ## 0.104.0 — 2026-11-17
 
 **Manifest: nothing new. Wire: a creating action that sets a staged property now writes its `stage` on the root, last, as SPEC §7.3 says; a change writes the same `stage` it has since 0.73.0** (EAC-4).
