@@ -19,6 +19,7 @@
 
 /** Our own named actions: the only words a step may carry besides a screen. Estiva ID keeps the same list. */
 export type ReportAction = 'sent-message' | 'write-refused'
+const ACTIONS: readonly string[] = ['sent-message', 'write-refused'] satisfies ReportAction[]
 
 export type ReportStep = { screen: string } | { action: ReportAction }
 
@@ -51,6 +52,12 @@ export interface ErrorReporterOptions {
   token: () => string | undefined | Promise<string | undefined>
   /** The current screen as a route pattern (`/app/teams/:id`). */
   screen: () => string
+  /**
+   * Every screen the app names, as route patterns. A screen outside it, as
+   * the current one or in a step, is sent as `<unknown>`. Estiva ID keeps the
+   * same list per app.
+   */
+  screens: readonly string[]
   /** At most this many reports per tab. Default 10. */
   maxPerTab?: number
   /** Defaults to the global `fetch`. */
@@ -149,12 +156,18 @@ const GECKO_FRAME = /^(.*?)@(\S+?):(\d+):(\d+)$/
 /**
  * The stack's frames, newest first, each kept only when its file is one of
  * the app's own bundles; a frame anywhere else keeps neither file nor name.
- * The first line of a V8 stack repeats the message, and is never a frame.
+ *
+ * A V8 stack opens by repeating the error's wording, all its lines, unscrubbed.
+ * A line of `wording` is never read as a frame, however frame-shaped: a regex
+ * error quoting a person's text would otherwise send their lines as frames.
  */
-export function readFrames(stack: unknown, origin: string): ReportFrame[] {
+export function readFrames(stack: unknown, origin: string, wording = ''): ReportFrame[] {
   if (typeof stack !== 'string') return []
   const frames: ReportFrame[] = []
   for (const line of stack.split('\n')) {
+    // The wording's first line comes after the error's name: `SyntaxError: …`.
+    const text = line.trim().replace(/^[\w$.]+: /, '')
+    if (!text || (wording && wording.includes(text))) continue
     const match = line.match(V8_FRAME) ?? line.match(GECKO_FRAME)
     if (!match) continue
     const [, fn, file, lineNo, column] = match as unknown as [string, string | undefined, string, string, string]
@@ -180,12 +193,13 @@ export function readFrames(stack: unknown, origin: string): ReportFrame[] {
  * anything else thrown or rejected (a string, an object) may be anything, so
  * it is reported by its kind alone.
  */
-function describe(error: unknown): { type: string; message: string; stack?: string } {
+function describe(error: unknown): { type: string; message: string; stack?: string; wording?: string } {
   if (error instanceof Error) {
     return {
       type: TYPE.test(error.name) ? error.name : 'Error',
       message: scrubMessage(error.message),
       ...(typeof error.stack === 'string' ? { stack: error.stack } : {}),
+      ...(typeof error.message === 'string' ? { wording: error.message } : {}),
     }
   }
   return { type: error === null ? 'Null' : typeof error === 'object' ? 'NonErrorObject' : 'NonError', message: '' }
@@ -199,6 +213,8 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
   const seen = new Set<string>()
   const trail: Array<ReportStep & { at: number }> = []
   const sent: ErrorReportBody[] = []
+  const listed = (screen: unknown): string =>
+    typeof screen === 'string' && options.screens.includes(screen) ? screen : '<unknown>'
 
   async function deliver(body: ErrorReportBody, kind: string): Promise<void> {
     const token = await options.token()
@@ -218,8 +234,8 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
 
   function report(error: unknown, how: ReportHow = 'error'): void {
     try {
-      const { type, message, stack } = describe(error)
-      const frames = readFrames(stack, options.origin)
+      const { type, message, stack, wording } = describe(error)
+      const frames = readFrames(stack, options.origin, wording)
       const top = frames[0]
       // One kind of error: its type and where it broke (or its wording, with no frame of ours).
       const kind = `${type}|${top?.file ?? ''}:${top?.line ?? ''}:${top?.column ?? ''}|${top ? '' : message}`
@@ -229,7 +245,7 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
         release: options.release,
         how,
         error: { type, message, frames },
-        screen: options.screen(),
+        screen: listed(options.screen()),
         trail: [...trail],
       }
       deliver(body, kind).catch(() => {
@@ -243,9 +259,17 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
   return {
     report,
     step(step) {
+      // Rebuilt from the lists, never copied: whatever else the object carries stays here.
+      let next: ReportStep
+      if ('action' in step) {
+        if (!ACTIONS.includes(step.action)) return
+        next = { action: step.action }
+      } else {
+        next = { screen: listed(step.screen) }
+      }
       const last = trail.at(-1)
-      if (last && 'screen' in step && 'screen' in last && last.screen === step.screen) return
-      trail.push({ ...step, at: now() })
+      if (last && 'screen' in next && 'screen' in last && last.screen === next.screen) return
+      trail.push({ ...next, at: now() })
       if (trail.length > MAX_TRAIL) trail.shift()
     },
     listen(target) {

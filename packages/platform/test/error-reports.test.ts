@@ -23,6 +23,7 @@ function harness(overrides: Partial<ErrorReporterOptions> = {}) {
     origin: ORIGIN,
     token: () => 'qa-1-token',
     screen: () => '/app/teams/:id',
+    screens: ['/app/desk', '/app/dms', '/app/teams/:id'],
     now: () => 1_700_000_000_000,
     fetch: async (url, init) => {
       requests.push({ url, headers: init.headers, body: init.body })
@@ -114,6 +115,47 @@ test('a stack as Firefox and Safari write it keeps the frames in our bundles', a
   assert.deepEqual(body.error.frames, [
     { function: 'render', file: `${ORIGIN}/assets/index-Ab12.js`, line: 1, column: 200 },
     { file: '<other>' },
+  ])
+})
+
+test("frame-shaped lines in an error's own wording never leave as frames", async () => {
+  const { reporter, requests } = harness()
+  // A person's text, quoted whole by an error such as a regex one; Chrome repeats it atop the stack.
+  const planted = [
+    'Launch@https://peek.estiva.app/assets/plantedmessage.js:1:2',
+    `    at Plantedtitle.board (${ORIGIN}/assets/quarterly.js:1:2)`,
+  ].join('\n')
+  const error = new Error(`Peek could not open ${planted}`)
+  error.stack = [`Error: Peek could not open ${planted}`, `    at parseBody (${ORIGIN}/assets/index-Ab12.js:1:4567)`].join(
+    '\n',
+  )
+  reporter.report(error)
+  await flush()
+  for (const word of ['plantedmessage', 'quarterly', 'Plantedtitle']) {
+    assert.ok(!requests[0]?.body.includes(word), `${word} left the browser`)
+  }
+  assert.deepEqual(JSON.parse(requests[0]?.body ?? '').error.frames, [
+    { function: 'parseBody', file: `${ORIGIN}/assets/index-Ab12.js`, line: 1, column: 4567 },
+  ])
+})
+
+test('a screen or a step outside the lists goes as <unknown> or not at all, and nothing else on it is sent', async () => {
+  let current = `/app/teams/${PLANTED_ADDRESS}`
+  const { reporter, requests } = harness({ screen: () => current })
+  const fromRouter = { screen: '/app/dms', params: { id: PLANTED_ADDRESS }, pathname: `/app/dms/${PLANTED_ADDRESS}` }
+  reporter.step(fromRouter)
+  reporter.step({ screen: `/t/${PLANTED_TITLE}` })
+  reporter.step({ action: PLANTED_MESSAGE } as unknown as { action: 'sent-message' })
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  current = '/app/desk'
+  const body = requests[0]?.body ?? ''
+  assert.ok(!body.includes('planted'), 'planted text left the browser')
+  const sent = JSON.parse(body)
+  assert.equal(sent.screen, '<unknown>')
+  assert.deepEqual(sent.trail, [
+    { screen: '/app/dms', at: 1_700_000_000_000 },
+    { screen: '<unknown>', at: 1_700_000_000_000 },
   ])
 })
 
