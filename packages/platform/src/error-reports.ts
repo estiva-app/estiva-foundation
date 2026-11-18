@@ -89,8 +89,6 @@ export interface ErrorReporter {
 }
 
 const MAX_MESSAGE = 200
-/** Of an error's wording, only this much is cleaned: the most of it that can end up in the 200 sent. */
-const MAX_WORDING = 1000
 /** While signed out, a crash is tried again after this long, not on every repeat. */
 const SIGNED_OUT_RETRY_MS = 10_000
 const MAX_FRAMES = 50
@@ -107,8 +105,8 @@ const QUOTES = /["'`‘’“”«»]/
  */
 export function scrubMessage(raw: unknown): string {
   if (typeof raw !== 'string') return ''
-  // Only the start is ever sent, and the cleaning below costs the square of the length past it.
-  let text = raw.slice(0, MAX_WORDING).replace(/\p{Cc}+/gu, ' ')
+  // The whole wording is cleaned, never a cut of it: the rules below read its end.
+  let text = raw.replace(/\p{Cc}+/gu, ' ')
 
   const isQuote = (i: number) =>
     QUOTES.test(text[i] as string) &&
@@ -141,8 +139,11 @@ export function scrubMessage(raw: unknown): string {
       /^Cannot convert .* to an? (BigInt|Symbol|number|string|object|primitive value)\b.*$/s,
       'Cannot convert … to a $1',
     )
-    .replace(/\b[a-z][a-z0-9+.-]*:\/\/.*$/is, '<url>')
-    .replace(/\S+@\S+\.\S+/g, '<address>')
+    // Starts only where a run of scheme letters does: from every dot of `a.a.a…` it cost the square of the length.
+    .replace(/(?<![a-z0-9+.-])[a-z0-9][a-z0-9+.-]*:\/\/.*$/is, '<url>')
+    // Starts only where a word does, and no part of it spans an @: `\S+@\S+` tried from every
+    // letter of a long word costs the square of its length (614 ms at 32 KB).
+    .replace(/(?<![^\s@])[^\s@]+@[^\s@]+\.\S+/g, '<address>')
     .replace(/\b(npub|nsec|note|nevent|naddr|nprofile|nrelay)1[0-9a-z]+/gi, '<id>')
     .replace(/[A-Za-z0-9+/=_-]{16,}/g, (run) => (/\d/.test(run) ? '<id>' : run))
     .replace(/\s+/g, ' ')

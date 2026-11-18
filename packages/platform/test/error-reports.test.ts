@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createErrorReporter, type ErrorReporterOptions } from '../dist/index.js'
+import { createErrorReporter, scrubMessage, type ErrorReporterOptions } from '../dist/index.js'
 
 const ORIGIN = 'https://peek.estiva.app'
 const PLANTED_MESSAGE = 'plantedmessage quarterly numbers'
@@ -176,6 +176,27 @@ test('a screen or a step outside the lists goes as <unknown> or not at all, and 
     { screen: '/app/dms', at: 1_700_000_000_000 },
     { screen: '<unknown>', at: 1_700_000_000_000 },
   ])
+})
+
+test('a 100 KB wording is cleaned without freezing the tab, whatever it is made of', () => {
+  // Quadratic before: 449 ms at 30 KB. The bound leaves a wide margin for a loaded runner.
+  for (const unit of ['a', 'a@', 'a.']) {
+    const started = performance.now()
+    scrubMessage(unit.repeat(100_000 / unit.length))
+    assert.ok(performance.now() - started < 200, `${unit} took ${performance.now() - started} ms`)
+  }
+})
+
+test('a wording far past the 200 sent is still cleaned whole, by its end', () => {
+  const long = 'planted words a person wrote '.repeat(40)
+  for (const [raw, expected] of [
+    [`URL constructor: ${long} is not a valid URL.`, 'URL constructor: … is not a valid URL.'],
+    [`Cannot convert ${long} to a number`, 'Cannot convert … to a number'],
+    [`Topic "general" missing in "${long}"`, 'Topic …'],
+    [`Cannot read "${long.slice(0, 500)} 5' tall ${long}"`, 'Cannot read …'],
+  ]) {
+    assert.equal(scrubMessage(raw), expected)
+  }
 })
 
 test('the same crash 1,000 times in one tab sends one report', async () => {
