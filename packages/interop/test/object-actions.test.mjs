@@ -162,6 +162,16 @@ describe('a card that builds its own change writes the stage a declared action w
     assert.deepEqual(stageTagFor('status', 'in_progress', action.options), ['stage', 'status', 'started'])
   })
 
+  test('a form that sets a status offers its options with their stages too', async () => {
+    const create = {
+      ...addIssue,
+      input: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: 'projectStatuses' } }, required: ['title'] },
+    }
+    const found = await resolveForeignObject(ADDRESS, relay([manifest([create], { vocabularies: { projectStatuses: statuses } }), object]))
+    const options = found.actions.find((a) => a.id === 'add-issue').fields.find((f) => f.name === 'status').options
+    assert.deepEqual(stageTagFor('status', 'completed', options), ['stage', 'status', 'done'])
+  })
+
   test('an option with no stage, or one outside the four, gives the card nothing to write', async () => {
     const found = await resolveForeignObject(ADDRESS, relay([declared, object]))
     const options = found.actions.find((a) => a.id === 'set-project-status').options
