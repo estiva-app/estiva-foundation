@@ -280,6 +280,20 @@ test('the same failure on another screen of the same tab is a second report', as
   )
 })
 
+test('refusals in a row are one step, so a crash after them still shows the screens before', async () => {
+  const { reporter, requests } = harness()
+  reporter.step({ screen: '/app/desk' })
+  reporter.step({ screen: '/app/dms' })
+  for (let i = 0; i < 30; i++) reporter.refused('busy')
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  const crash = requests.map((r) => JSON.parse(r.body)).find((body) => body.how === 'error')
+  assert.deepEqual(
+    crash.trail.map((step: { screen?: string; action?: string }) => step.screen ?? step.action),
+    ['/app/desk', '/app/dms', 'write-refused'],
+  )
+})
+
 test('a relay answering busy 100 times in a minute sends one report', async () => {
   const { reporter, requests } = harness()
   for (let i = 0; i < 100; i++) reporter.refused('busy')

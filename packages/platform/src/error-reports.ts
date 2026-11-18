@@ -352,7 +352,9 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
     else if (typeof action === 'string' && ACTIONS.includes(action)) next = { action: action as ReportAction }
     else return
     const last = trail.at(-1)
+    // A screen or an action straight after itself is one step: a refusal storm keeps the screens before it.
     if (last && 'screen' in next && 'screen' in last && last.screen === next.screen) return
+    if (last && 'action' in next && 'action' in last && last.action === next.action) return
     trail.push({ ...next, at: now() })
     if (trail.length > MAX_TRAIL) trail.shift()
   }
