@@ -1,5 +1,24 @@
 # @estiva-app/platform
 
+## 0.8.0
+
+An error reporter every app shares (PROD-2): when a part of the page breaks, a
+short report goes to Estiva ID's `POST /report`, signed in, and on to Sentry.
+
+- `createErrorReporter({ endpoint, release, origin, token, screen, screens })`
+  gives `report(error, how)`, `step({ screen } | { action })` and
+  `listen(window)`. `screens` is the app's list of route patterns.
+- A report is built from a fixed list: the kind of error, its wording with
+  quoted text, unquoted input, addresses and long ids removed (`scrubMessage`),
+  the stack frames in the app's own `/assets/` bundles (`readFrames`; any other
+  frame keeps neither file nor name, and a line of the error's own wording is
+  never read as a frame), the screen as one of `screens` (else `<unknown>`),
+  the release, and the last ten steps, each rebuilt as a listed screen or one
+  of our named actions. Anything thrown that is not an `Error` is reported by
+  its kind alone.
+- Each kind of error is sent once per tab, ten at most; nothing is sent while
+  signed out, and a failed send never throws into the page.
+
 ## 0.7.1
 
 A reaction or its taking back now reaches a Folder watch (COMM-4).
