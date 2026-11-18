@@ -266,6 +266,20 @@ test('a refused write is sent by its code, records the step, and a code of any o
   assert.ok(!requests[1]!.body.includes(PLANTED_MESSAGE))
 })
 
+test('the same failure on another screen of the same tab is a second report', async () => {
+  let screen = '/app/dms'
+  const { reporter, requests } = harness({ screen: () => screen })
+  reporter.failure('not-saved')
+  reporter.failure('not-saved')
+  screen = '/app/teams/:id'
+  reporter.failure('not-saved')
+  await flush()
+  assert.deepEqual(
+    requests.map((r) => JSON.parse(r.body).screen),
+    ['/app/dms', '/app/teams/:id'],
+  )
+})
+
 test('a relay answering busy 100 times in a minute sends one report', async () => {
   const { reporter, requests } = harness()
   for (let i = 0; i < 100; i++) reporter.refused('busy')

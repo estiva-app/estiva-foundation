@@ -315,11 +315,16 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
     })
   }
 
-  /** A failure or a refusal: no wording and no frames, only its name; once per name per tab. */
+  /**
+   * A failure or a refusal: no wording and no frames, only its name; once per
+   * name per screen per tab, so the same broad name met on another screen is a
+   * second report, and a relay busy a hundred times on one screen is one.
+   */
   function reportHandled(how: 'failure' | 'refused', named: string): void {
     try {
       if (now() - signedOutAt < SIGNED_OUT_RETRY_MS) return
-      const kind = `${how}|${named}`
+      const screen = listed(options.screen())
+      const kind = `${how}|${named}|${screen}`
       if (handled.has(kind) || handled.size >= maxHandledPerTab) return
       handled.add(kind)
       const body: ErrorReportBody = {
@@ -327,7 +332,7 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
         how,
         error: { type: how === 'refused' ? 'WriteRefused' : 'Failure', message: named, frames: [] },
         named,
-        screen: listed(options.screen()),
+        screen,
         trail: [...trail],
       }
       deliver(body, kind, handled).catch(() => {

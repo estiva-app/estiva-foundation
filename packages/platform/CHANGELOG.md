@@ -12,7 +12,7 @@ reported too (PROD-5), not only crashes.
 - `reporter.refused(code)`: the relay's refusal code as protocol's
   `refusalCodeOf` reads it (`archived`, `busy`, `http-500`); any other shape is
   sent as `uncoded`. Records a `write-refused` step.
-- Both are sent once per name per tab, with no wording and no frames, under
+- Both are sent once per name per screen per tab, with no wording and no frames, under
   their own ceiling (`maxHandledPerTab`, default 10) apart from crashes, so a
   relay that keeps refusing cannot use up the crash budget. A relay answering
   "busy" a hundred times sends one report.
