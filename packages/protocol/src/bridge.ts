@@ -408,17 +408,20 @@ export function fieldsOptedIn(search: string, storage: OptInStorage | undefined,
  * any other type is its own word, `?<name>Fields=on` with the type's last
  * part (`?issueFields=on` for `osnova.issue`), so a tab can try issues on a
  * fenced team while projects stay as they are, or the other way round.
+ * `key` is where it is kept, for an app that already keeps its project
+ * opt-in under its own key.
  */
-export function typeFieldsOptedIn(type: string, search: string, storage: OptInStorage | undefined): boolean {
-  if (type === PROJECT_TYPE) return fieldsOptedIn(search, storage)
+export function typeFieldsOptedIn(type: string, search: string, storage: OptInStorage | undefined, key?: string): boolean {
+  if (type === PROJECT_TYPE) return fieldsOptedIn(search, storage, key)
   const name = `${type.slice(type.lastIndexOf('.') + 1)}Fields`
-  return optedIn(name, search, storage, `estiva.${name}`)
+  return optedIn(name, search, storage, key ?? `estiva.${name}`)
 }
 
 function optedIn(param: string, search: string, storage: OptInStorage | undefined, key: string): boolean {
   try {
     if (!storage) return false
-    const asked = new RegExp(`(?:^|[?&])${param}=([^&#]*)`).exec(search)?.[1]
+    const escaped = param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const asked = new RegExp(`(?:^|[?&])${escaped}=([^&#]*)`).exec(search)?.[1]
     if (asked === 'on') storage.setItem(key, 'on')
     if (asked === 'off') storage.removeItem(key)
     return storage.getItem(key) === 'on'
