@@ -131,11 +131,17 @@ test('a tab sends at most ten reports, however many kinds of error it hits', asy
   assert.equal(requests.length, 10)
 })
 
-test('nothing is sent while signed out', async () => {
-  const { reporter, requests } = harness({ token: () => undefined })
+test('nothing is sent while signed out, and the same crash after sign-in still reports', async () => {
+  let token: string | undefined
+  const { reporter, requests } = harness({ token: () => token })
   reporter.report(chromeCrash('x is not a function'))
   await flush()
   assert.equal(requests.length, 0)
+
+  token = 'qa-1-token'
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  assert.equal(requests.length, 1)
 })
 
 test('a rejection that is not an Error is reported by its kind alone, never its text', async () => {

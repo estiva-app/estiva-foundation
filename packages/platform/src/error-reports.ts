@@ -200,9 +200,13 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
   const trail: Array<ReportStep & { at: number }> = []
   const sent: ErrorReportBody[] = []
 
-  async function deliver(body: ErrorReportBody): Promise<void> {
+  async function deliver(body: ErrorReportBody, kind: string): Promise<void> {
     const token = await options.token()
-    if (!token) return
+    if (!token) {
+      // Not sent, so not spent: the same crash after sign-in in this tab still reports.
+      seen.delete(kind)
+      return
+    }
     sent.push(body)
     await send(options.endpoint, {
       method: 'POST',
@@ -228,7 +232,7 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
         screen: options.screen(),
         trail: [...trail],
       }
-      deliver(body).catch(() => {
+      deliver(body, kind).catch(() => {
         // A report that cannot be sent is dropped: reporting must never break the page.
       })
     } catch {
