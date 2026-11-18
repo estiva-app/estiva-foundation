@@ -507,7 +507,8 @@ describe('with the relay\'s times read, the same topics come in the same order',
       for (const f of relay.calls.flat()) {
         const kinds = (f.kinds as number[] | undefined) ?? []
         assert.ok(!kinds.includes(30851) && !kinds.includes(30842), `a root read: ${JSON.stringify(f)}`)
-        if (kinds.includes(1851)) assert.ok((f['#a'] as string[]).every((a) => topicAddresses.has(a)), `a file's changes read whole: ${JSON.stringify(f)}`)
+        // The moves into a listed project (`#A`) are read whole: one per move, never per edit.
+        if (kinds.includes(1851) && !f['#A']) assert.ok((f['#a'] as string[]).every((a) => topicAddresses.has(a)), `a file's changes read whole: ${JSON.stringify(f)}`)
       }
     })
   }
@@ -521,5 +522,50 @@ describe('with the relay\'s times read, the same topics come in the same order',
     const found = new Set(activity.files.get(bulk.address)!.map((file) => file.address))
     const missing = issues.map((issue) => `30851:${QA2}:${issue.tags[0]![1]}`).filter((address) => !found.has(address))
     assert.deepEqual(missing, [])
+  })
+})
+
+/*
+  ISS-3, SPEC §6.7 ("A `#via` read cannot see a move"): the times read's
+  `under` is the project an issue was filed in. An issue moved since counts
+  for the topic listing the project it is in now.
+*/
+describe('with the times read, a moved issue counts under the project it is in now', () => {
+  const OTHER = `30850:${SHIP}:other-project-d`
+  const moved: ActivityTopic[] = [
+    { address: WIDGETS, createdAt: T0, folder: TEAM, files: [{ address: PROJECT, folder: SHIP_TEAM }] },
+    { address: ONBOARDING, createdAt: T0 + 1, folder: TEAM, files: [{ address: OTHER, folder: SHIP_TEAM }] },
+  ]
+  const move = (file: string, to: string, at: number) =>
+    event({ kind: 1851, created_at: at, tags: [['a', file], ['O', file.split(':')[2]!], ['field', 'project'], ['value', to], ['h', SHIP_TEAM], ...(to ? [['A', to]] : [])] })
+  const read = async (events: SignedEvent[]) => readTopicActivity(relayOver(events).query, moved, { nowSeconds: NOW, times: timesOver(events).times })
+  const filed = (activity: TopicActivity, topic: string) => activity.files.get(topic)!.map((f) => f.address)
+
+  it('an issue moved to another listed project is under it, and its edit moves that topic, not the one it left', async () => {
+    const activity = await read([root(PROJECT, T0 - 500, SHIP_TEAM), root(OTHER, T0 - 450, SHIP_TEAM), root(ISSUE, T0 - 400, SHIP_TEAM, PROJECT), move(ISSUE, OTHER, T0 + 20), change(ISSUE, 'status', 'done', T0 + 90, SHIP_TEAM)])
+    assert.deepEqual(filed(activity, ONBOARDING), [OTHER, ISSUE])
+    assert.deepEqual(filed(activity, WIDGETS), [PROJECT])
+    assert.equal(activity.parents.get(ISSUE), OTHER)
+    assert.equal(activity.at.get(ONBOARDING), T0 + 90)
+    assert.equal(activity.at.get(WIDGETS), T0, 'the project it left does not move')
+  })
+
+  it('an issue moved to no project is under none', async () => {
+    const activity = await read([root(PROJECT, T0 - 500, SHIP_TEAM), root(OTHER, T0 - 450, SHIP_TEAM), root(ISSUE, T0 - 400, SHIP_TEAM, PROJECT), move(ISSUE, '', T0 + 20)])
+    assert.deepEqual(filed(activity, WIDGETS), [PROJECT])
+    assert.equal(activity.parents.get(ISSUE), undefined)
+  })
+
+  it('an issue moved in and then out again is not under the project it passed through', async () => {
+    const third = `30850:${SHIP}:third-project-d`
+    const activity = await read([root(PROJECT, T0 - 500, SHIP_TEAM), root(OTHER, T0 - 450, SHIP_TEAM), root(ISSUE, T0 - 400, SHIP_TEAM, PROJECT), move(ISSUE, OTHER, T0 + 20), move(ISSUE, third, T0 + 30)])
+    assert.deepEqual(filed(activity, ONBOARDING), [OTHER])
+    assert.deepEqual(filed(activity, WIDGETS), [PROJECT])
+  })
+
+  it('an issue moved back to where it was filed is under it again', async () => {
+    const activity = await read([root(PROJECT, T0 - 500, SHIP_TEAM), root(OTHER, T0 - 450, SHIP_TEAM), root(ISSUE, T0 - 400, SHIP_TEAM, PROJECT), move(ISSUE, OTHER, T0 + 20), move(ISSUE, PROJECT, T0 + 30)])
+    assert.deepEqual(filed(activity, WIDGETS), [PROJECT, ISSUE])
+    assert.deepEqual(filed(activity, ONBOARDING), [OTHER])
   })
 })

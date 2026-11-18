@@ -346,29 +346,41 @@ export function relayFileReadsOf(info: unknown): RelayFileReads {
 /** A project's type, as NIP-11 names it (TYPES.md). */
 export const PROJECT_TYPE = 'osnova.project'
 
-/** How an app reads projects once switched: opened with their text, and found by their words where the relay says so. */
-export interface ProjectFields {
+/** An issue's type, as NIP-11 names it (TYPES.md). */
+export const ISSUE_TYPE = 'osnova.issue'
+
+/** How an app reads a type once switched: opened with its text, and found by its words where the relay says so. */
+export interface FileFieldsSwitch {
   text: boolean
   search?: true
 }
 
+/** {@link FileFieldsSwitch}, for projects. */
+export type ProjectFields = FileFieldsSwitch
+
 /**
- * Whether an app reads and writes projects by their fields (§6.13) — one rule
- * for Ship, Leaf and Peek (ALO-5, ALO-6).
+ * Whether an app reads and writes one type's files by their fields (§6.13) —
+ * one rule for Ship, Leaf, Peek and the agent, each type switched on its own
+ * (ALO-5, ALO-6; issues in ISS-3).
  *
- * On when the relay announces it keeps projects in order (NIP-11 `files`,
- * `requires_prev` naming `osnova.project`), the one announced moment, or when
- * this tab opted in ({@link fieldsOptedIn}) to try it on the Folders the relay
- * already fences. Either way only where the relay offers the list read and the
- * opened file's text with it: without that a project's page could not read
- * what it edits. Undefined is off: read and write as before.
+ * On when the relay announces it keeps the type in order (NIP-11 `files`,
+ * `requires_prev` naming it), the one announced moment, or when this tab
+ * opted in ({@link fieldsOptedIn}) to try it on the Folders the relay already
+ * fences for that type. Either way only where the relay offers the list read
+ * and the opened file's text with it: without that a file's page could not
+ * read what it edits. Undefined is off: read and write that type as before.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
  */
-export function projectFieldsOf(reads: RelayFileReads, optedIn: boolean): ProjectFields | undefined {
-  const announced = reads.switched && reads.inOrder.includes(PROJECT_TYPE)
+export function fileFieldsOf(reads: RelayFileReads, type: string, optedIn: boolean): FileFieldsSwitch | undefined {
+  const announced = reads.switched && reads.inOrder.includes(type)
   if (!reads.list || !reads.text || !(announced || optedIn)) return undefined
-  return { text: reads.text, ...(reads.search.includes(PROJECT_TYPE) ? { search: true as const } : {}) }
+  return { text: reads.text, ...(reads.search.includes(type) ? { search: true as const } : {}) }
+}
+
+/** {@link fileFieldsOf} for projects, as Ship, Leaf and Peek have called it since ALO-5. */
+export function projectFieldsOf(reads: RelayFileReads, optedIn: boolean): ProjectFields | undefined {
+  return fileFieldsOf(reads, PROJECT_TYPE, optedIn)
 }
 
 /** The part of the browser's `sessionStorage` {@link fieldsOptedIn} keeps the opt-in in. */
@@ -387,9 +399,29 @@ export interface OptInStorage {
  * browser for good. False when the storage cannot be read.
  */
 export function fieldsOptedIn(search: string, storage: OptInStorage | undefined, key = 'estiva.projectFields'): boolean {
+  return optedIn('fields', search, storage, key)
+}
+
+/**
+ * A tab's opt-in to reading one type by its fields, kept as
+ * {@link fieldsOptedIn} keeps the projects' one. Projects keep `?fields=on`;
+ * any other type is its own word, `?<name>Fields=on` with the type's last
+ * part (`?issueFields=on` for `osnova.issue`), so a tab can try issues on a
+ * fenced team while projects stay as they are, or the other way round.
+ * `key` is where it is kept, for an app that already keeps its project
+ * opt-in under its own key.
+ */
+export function typeFieldsOptedIn(type: string, search: string, storage: OptInStorage | undefined, key?: string): boolean {
+  if (type === PROJECT_TYPE) return fieldsOptedIn(search, storage, key)
+  const name = `${type.slice(type.lastIndexOf('.') + 1)}Fields`
+  return optedIn(name, search, storage, key ?? `estiva.${name}`)
+}
+
+function optedIn(param: string, search: string, storage: OptInStorage | undefined, key: string): boolean {
   try {
     if (!storage) return false
-    const asked = /(?:^|[?&])fields=([^&#]*)/.exec(search)?.[1]
+    const escaped = param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const asked = new RegExp(`(?:^|[?&])${escaped}=([^&#]*)`).exec(search)?.[1]
     if (asked === 'on') storage.setItem(key, 'on')
     if (asked === 'off') storage.removeItem(key)
     return storage.getItem(key) === 'on'

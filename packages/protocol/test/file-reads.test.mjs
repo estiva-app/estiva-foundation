@@ -9,6 +9,8 @@ const { Relay, parseQueryResponse, relayFileReadsOf, secretKeySigner } = protoco
 const missing = (name) => () => assert.fail(`${name} is not exported`)
 const projectFieldsOf = protocol.projectFieldsOf ?? missing('projectFieldsOf')
 const fieldsOptedIn = protocol.fieldsOptedIn ?? missing('fieldsOptedIn')
+const fileFieldsOf = protocol.fileFieldsOf ?? missing('fileFieldsOf')
+const typeFieldsOptedIn = protocol.typeFieldsOptedIn ?? missing('typeFieldsOptedIn')
 
 const SECRET = '1'.repeat(64)
 
@@ -109,4 +111,31 @@ test('a tab opts in with ?fields=on, keeps it on reload, and leaves with ?fields
   assert.equal(fieldsOptedIn('#/project/x?tab=a&fields=on', storage), true, 'a hash route’s query counts')
   held.clear()
   assert.equal(fieldsOptedIn('?subfields=on', storage), false, 'only the key itself')
+})
+
+// ISS-3: each type switches on its own. Production on 2026-11-18 keeps projects in order and finds issues by their words.
+const PROD_18_NOV = { files: { requires_prev: ['osnova.project'] }, file_list: { newest: true, text: true, times: true }, file_search: { max_page_size: 20, types: ['osnova.project', 'osnova.issue'] } }
+
+test('a relay keeping projects in order but not issues switches projects on and leaves issues off', () => {
+  const reads = relayFileReadsOf(PROD_18_NOV)
+  assert.deepEqual(fileFieldsOf(reads, 'osnova.project', false), { text: true, search: true })
+  assert.equal(fileFieldsOf(reads, 'osnova.issue', false), undefined)
+  assert.deepEqual(fileFieldsOf(reads, 'osnova.issue', true), { text: true, search: true }, 'a tab trying issues on a fenced team')
+})
+
+test('once the relay keeps issues in order too, issues switch on without any opt-in', () => {
+  const reads = relayFileReadsOf({ ...PROD_18_NOV, files: { requires_prev: ['osnova.project', 'osnova.issue'] } })
+  assert.deepEqual(fileFieldsOf(reads, 'osnova.issue', false), { text: true, search: true })
+  assert.equal(fileFieldsOf(reads, 'osnova.document', false), undefined, 'a type it does not name stays off')
+})
+
+test('a tab opts in to issues with ?issueFields=on, apart from projects’ ?fields=on', () => {
+  const held = new Map()
+  const storage = { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v), removeItem: (k) => held.delete(k) }
+  assert.equal(typeFieldsOptedIn('osnova.project', '?fields=on', storage), true)
+  assert.equal(typeFieldsOptedIn('osnova.issue', '?fields=on', storage), false, 'the projects’ word does not switch issues')
+  assert.equal(typeFieldsOptedIn('osnova.issue', '?issueFields=on', storage), true)
+  assert.equal(typeFieldsOptedIn('osnova.issue', '', storage), true, 'kept for the tab')
+  assert.equal(typeFieldsOptedIn('osnova.issue', '?issueFields=off', storage), false)
+  assert.equal(typeFieldsOptedIn('osnova.project', '', storage), true, 'leaving issues leaves projects on')
 })
