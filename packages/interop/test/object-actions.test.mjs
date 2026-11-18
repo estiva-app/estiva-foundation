@@ -137,6 +137,7 @@ describe('a card that builds its own change writes the stage a declared action w
     { value: 'completed', label: 'Completed', colour: 'green', stage: 'done' },
     { value: 'waiting', label: 'Waiting', colour: 'neutral', stage: 'paused' },
     { value: 'someday', label: 'Someday', colour: 'neutral' },
+    { value: 'shelved', label: 'Shelved', colour: 'neutral', stage: 'archived' },
   ]
   const setStatus = {
     id: 'set-project-status',
@@ -177,6 +178,9 @@ describe('a card that builds its own change writes the stage a declared action w
     const options = found.actions.find((a) => a.id === 'set-project-status').options
     assert.equal(stageTagFor('status', 'waiting', options), undefined)
     assert.equal(stageTagFor('status', 'someday', options), undefined)
+    // An app reading an option's meaning directly never sees a fifth stage either.
+    assert.equal(options.find((o) => o.value === 'shelved').stage, undefined)
+    assert.equal(options.find((o) => o.value === 'waiting').stage, undefined)
   })
 })
 
