@@ -95,3 +95,17 @@ export {
   type SnapshotTimers,
   type StoredSnapshotEvent,
 } from './event-snapshot.js'
+export {
+  createErrorReporter,
+  readFrames,
+  scrubMessage,
+  type ErrorEventTarget,
+  type ErrorReportBody,
+  type ErrorReporter,
+  type ErrorReporterOptions,
+  type FetchLike,
+  type ReportAction,
+  type ReportFrame,
+  type ReportHow,
+  type ReportStep,
+} from './error-reports.js'

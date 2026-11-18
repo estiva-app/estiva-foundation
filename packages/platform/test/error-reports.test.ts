@@ -1,0 +1,197 @@
+/**
+ * The error reporter, read at the wire: every assertion is on the request body
+ * that would leave the browser, so text a person wrote that leaks anywhere on
+ * the way fails here.
+ */
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { createErrorReporter, type ErrorReporterOptions } from '../dist/index.js'
+
+const ORIGIN = 'https://peek.estiva.app'
+const PLANTED_MESSAGE = 'plantedmessage quarterly numbers'
+const PLANTED_TITLE = 'plantedtitle board offsite'
+const PLANTED_ADDRESS = 'plantedaddress-5a1c9e'
+
+/** One turn of the event loop: the reporter reads the token before it sends. */
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+function harness(overrides: Partial<ErrorReporterOptions> = {}) {
+  const requests: Array<{ url: string; headers: Record<string, string>; body: string }> = []
+  const reporter = createErrorReporter({
+    endpoint: 'https://id.estiva.app/report',
+    release: 'ded93b9c',
+    origin: ORIGIN,
+    token: () => 'qa-1-token',
+    screen: () => '/app/teams/:id',
+    now: () => 1_700_000_000_000,
+    fetch: async (url, init) => {
+      requests.push({ url, headers: init.headers, body: init.body })
+      return {}
+    },
+    ...overrides,
+  })
+  return { reporter, requests }
+}
+
+/** A crash as Chrome words it, its stack's first line repeating the message. */
+function chromeCrash(message: string, topLine = 1) {
+  const error = new SyntaxError(message)
+  error.stack = [
+    `SyntaxError: ${message}`,
+    `    at parseBody (${ORIGIN}/assets/index-Ab12.js:${topLine}:4567)`,
+    `    at render (${ORIGIN}/app/teams/${PLANTED_ADDRESS}:3:9)`,
+    `    at ${ORIGIN}/assets/vendor-Cd34.js:2:10`,
+    '    at inject (chrome-extension://abcdef/content.js:1:1)',
+  ].join('\n')
+  return error
+}
+
+/** Text a decrypted message would hold, failing to parse as JSON in this runtime. */
+function parseFailure(): Error {
+  try {
+    JSON.parse(PLANTED_MESSAGE)
+  } catch (error) {
+    return error as Error
+  }
+  throw new Error('JSON.parse accepted the planted text')
+}
+
+test('a crash is sent to Estiva ID with the sign-in, and nothing planted leaves the browser', async () => {
+  const { reporter, requests } = harness()
+  reporter.step({ screen: '/app/desk' })
+  reporter.step({ action: 'sent-message' })
+  reporter.report(chromeCrash(`Unexpected token 'p', "${PLANTED_MESSAGE}" is not valid JSON`), 'boundary')
+  await flush()
+
+  assert.equal(requests.length, 1)
+  const [request] = requests
+  assert.equal(request?.url, 'https://id.estiva.app/report')
+  assert.equal(request?.headers.authorization, 'Bearer qa-1-token')
+  for (const planted of ['plantedmessage', 'quarterly', 'plantedtitle', 'plantedaddress', 'chrome-extension']) {
+    assert.ok(!request?.body.includes(planted), `${planted} left the browser`)
+  }
+  assert.deepEqual(JSON.parse(request?.body ?? ''), {
+    release: 'ded93b9c',
+    how: 'boundary',
+    error: {
+      type: 'SyntaxError',
+      message: 'Unexpected token … is not valid JSON',
+      frames: [
+        { function: 'parseBody', file: `${ORIGIN}/assets/index-Ab12.js`, line: 1, column: 4567 },
+        { file: '<other>' },
+        { file: `${ORIGIN}/assets/vendor-Cd34.js`, line: 2, column: 10 },
+        { file: '<other>' },
+      ],
+    },
+    screen: '/app/teams/:id',
+    trail: [
+      { screen: '/app/desk', at: 1_700_000_000_000 },
+      { action: 'sent-message', at: 1_700_000_000_000 },
+    ],
+  })
+})
+
+test("this runtime's own JSON parse error of a decrypted message sends none of its text", async () => {
+  const { reporter, requests } = harness()
+  reporter.report(parseFailure())
+  await flush()
+  assert.equal(requests.length, 1)
+  assert.ok(!requests[0]?.body.includes('plantedmessage'))
+  assert.ok(!requests[0]?.body.includes('quarterly'))
+})
+
+test('a stack as Firefox and Safari write it keeps the frames in our bundles', async () => {
+  const { reporter, requests } = harness()
+  const error = new TypeError(`can't access property "${PLANTED_TITLE}", e is undefined`)
+  error.stack = [
+    `render@${ORIGIN}/assets/index-Ab12.js:1:200`,
+    `@${ORIGIN}/t/${PLANTED_ADDRESS}:1:1`,
+  ].join('\n')
+  reporter.report(error)
+  await flush()
+  const body = JSON.parse(requests[0]?.body ?? '')
+  assert.equal(body.error.message, "can't access property …, e is undefined")
+  assert.deepEqual(body.error.frames, [
+    { function: 'render', file: `${ORIGIN}/assets/index-Ab12.js`, line: 1, column: 200 },
+    { file: '<other>' },
+  ])
+})
+
+test('the same crash 1,000 times in one tab sends one report', async () => {
+  const { reporter, requests } = harness()
+  for (let i = 0; i < 1000; i++) reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  assert.equal(requests.length, 1)
+})
+
+test('a tab sends at most ten reports, however many kinds of error it hits', async () => {
+  const { reporter, requests } = harness()
+  for (let line = 1; line <= 25; line++) reporter.report(chromeCrash('x is not a function', line))
+  await flush()
+  assert.equal(requests.length, 10)
+})
+
+test('nothing is sent while signed out', async () => {
+  const { reporter, requests } = harness({ token: () => undefined })
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  assert.equal(requests.length, 0)
+})
+
+test('a rejection that is not an Error is reported by its kind alone, never its text', async () => {
+  const { reporter, requests } = harness()
+  reporter.report(PLANTED_MESSAGE, 'unhandled-rejection')
+  reporter.report({ title: PLANTED_TITLE }, 'unhandled-rejection')
+  await flush()
+  assert.equal(requests.length, 2)
+  assert.deepEqual(
+    requests.map((r) => JSON.parse(r.body).error),
+    [
+      { type: 'NonError', message: '', frames: [] },
+      { type: 'NonErrorObject', message: '', frames: [] },
+    ],
+  )
+})
+
+test("the window's unhandled errors and rejections are reported until it stops listening", async () => {
+  const { reporter, requests } = harness()
+  const listeners = new Map<string, (event: { error?: unknown; reason?: unknown }) => void>()
+  const stop = reporter.listen({
+    addEventListener: (type, listener) => listeners.set(type, listener),
+    removeEventListener: (type) => listeners.delete(type),
+  })
+  listeners.get('error')?.({ error: chromeCrash('a is not a function') })
+  listeners.get('unhandledrejection')?.({ reason: new RangeError('Invalid array length') })
+  await flush()
+  assert.deepEqual(
+    requests.map((r) => [JSON.parse(r.body).how, JSON.parse(r.body).error.type]),
+    [
+      ['error', 'SyntaxError'],
+      ['unhandled-rejection', 'RangeError'],
+    ],
+  )
+  stop()
+  assert.equal(listeners.size, 0)
+})
+
+test('the trail keeps the last ten steps, and a screen opened twice in a row once', async () => {
+  const { reporter, requests } = harness()
+  reporter.step({ screen: '/app/desk' })
+  reporter.step({ screen: '/app/desk' })
+  for (let i = 0; i < 12; i++) reporter.step({ screen: i % 2 ? '/app/dms' : '/app/teams/:id' })
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  const trail = JSON.parse(requests[0]?.body ?? '').trail
+  assert.equal(trail.length, 10)
+  assert.ok(!trail.some((step: { screen?: string }) => step.screen === '/app/desk'))
+})
+
+test('a failed send is dropped and never throws into the page', async () => {
+  const { reporter } = harness({
+    fetch: async () => {
+      throw new TypeError('Failed to fetch')
+    },
+  })
+  assert.doesNotThrow(() => reporter.report(chromeCrash('x is not a function')))
+  await flush()
+})
