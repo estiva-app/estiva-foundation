@@ -106,6 +106,7 @@ export {
   type FolderRecord,
   type ResolvedSlot,
   type ResolvedAction,
+  type ResolvedOption,
   type ActionFormField,
   type ProseFormat,
   type ManifestAction,

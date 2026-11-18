@@ -14,7 +14,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, buildActionEvent } from '../dist/index.js'
+import { resolveForeignObject, buildActionEvent, stageTagFor } from '../dist/index.js'
 
 const AUTHOR = 'a'.repeat(64)
 const PROJECT = 30850
@@ -125,6 +125,62 @@ describe('an object-creating action is offered rather than skipped', () => {
     const field = found.actions.find((a) => a.id === 'add-issue').fields.find((f) => f.name === 'priority')
     assert.deepEqual(field.options, [{ value: 'high', label: 'High', colour: 'blue' }])
     assert.equal(field.required, false)
+  })
+})
+
+describe('a card that builds its own change writes the stage a declared action writes (EAC-5)', () => {
+  // Leaf's card picker builds its own 1851 from the resolved options, so the
+  // options must carry what each status means, or its change says nothing.
+  const statuses = [
+    { value: 'planned', label: 'Planned', colour: 'neutral', stage: 'open' },
+    { value: 'in_progress', label: 'In Progress', colour: 'blue', stage: 'started' },
+    { value: 'completed', label: 'Completed', colour: 'green', stage: 'done' },
+    { value: 'waiting', label: 'Waiting', colour: 'neutral', stage: 'paused' },
+    { value: 'someday', label: 'Someday', colour: 'neutral' },
+    { value: 'shelved', label: 'Shelved', colour: 'neutral', stage: 'archived' },
+  ]
+  const setStatus = {
+    id: 'set-project-status',
+    label: 'Change status',
+    appliesTo: String(PROJECT),
+    emits: { kind: 1851, field: 'status' },
+    input: { type: 'string', enum: 'projectStatuses' },
+  }
+  const declared = manifest([setStatus], { vocabularies: { projectStatuses: statuses } })
+
+  test('each option the card offers, passed to stageTagFor, gives the tag buildActionEvent writes last', async () => {
+    const found = await resolveForeignObject(ADDRESS, relay([declared, object]))
+    const action = found.actions.find((a) => a.id === 'set-project-status')
+    const shipManifest = JSON.parse(declared.content)
+    for (const { value } of statuses) {
+      const built = buildActionEvent({
+        manifest: shipManifest, kind: PROJECT, address: ADDRESS, objectAuthor: AUTHOR, folder: FOLDER,
+        actionId: 'set-project-status', value, pubkey: AUTHOR, createdAtMs: 1_700_000_000_000,
+      })
+      const declaredStage = built.tags.find((t) => t[0] === 'stage')
+      assert.deepEqual(stageTagFor('status', value, action.options), declaredStage, value)
+    }
+    assert.deepEqual(stageTagFor('status', 'in_progress', action.options), ['stage', 'status', 'started'])
+  })
+
+  test('a form that sets a status offers its options with their stages too', async () => {
+    const create = {
+      ...addIssue,
+      input: { type: 'object', properties: { title: { type: 'string' }, status: { type: 'string', enum: 'projectStatuses' } }, required: ['title'] },
+    }
+    const found = await resolveForeignObject(ADDRESS, relay([manifest([create], { vocabularies: { projectStatuses: statuses } }), object]))
+    const options = found.actions.find((a) => a.id === 'add-issue').fields.find((f) => f.name === 'status').options
+    assert.deepEqual(stageTagFor('status', 'completed', options), ['stage', 'status', 'done'])
+  })
+
+  test('an option with no stage, or one outside the four, gives the card nothing to write', async () => {
+    const found = await resolveForeignObject(ADDRESS, relay([declared, object]))
+    const options = found.actions.find((a) => a.id === 'set-project-status').options
+    assert.equal(stageTagFor('status', 'waiting', options), undefined)
+    assert.equal(stageTagFor('status', 'someday', options), undefined)
+    // An app reading an option's meaning directly never sees a fifth stage either.
+    assert.equal(options.find((o) => o.value === 'shelved').stage, undefined)
+    assert.equal(options.find((o) => o.value === 'waiting').stage, undefined)
   })
 })
 

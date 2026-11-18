@@ -890,7 +890,26 @@ export interface ActionFormField {
    */
   format?: ProseFormat
   /** When the property names a vocabulary, its entries, already looked up. */
-  options?: { value: string; label: string; colour?: string }[]
+  options?: ResolvedOption[]
+}
+
+/**
+ * A vocabulary entry a consumer draws and writes from. `stage` is the entry's
+ * declared stage when it is one of the four (SPEC §7.3) — what an app that
+ * builds its own change passes to {@link stageTagFor}, so the change says what
+ * the choice means as a declared action's does (EAC-5).
+ */
+export interface ResolvedOption {
+  value: string
+  label: string
+  colour?: string
+  stage?: Stage
+}
+
+/** A vocabulary entry as a consumer gets it: its stage only when it is one of the four. */
+function resolvedOption(entry: { value: string; label: string; colour: string; stage?: string }): ResolvedOption {
+  const stage = asStage(entry.stage)
+  return { value: entry.value, label: entry.label, colour: entry.colour, ...(stage ? { stage } : {}) }
 }
 
 /**
@@ -923,8 +942,8 @@ export interface ResolvedAction {
    * it.
    */
   control: 'select' | 'pubkey' | 'text' | 'form' | 'confirm'
-  /** For `select`: the declared vocabulary, already looked up. */
-  options?: { value: string; label: string; colour?: string }[]
+  /** For `select`: the declared vocabulary, already looked up, each entry with its stage (see {@link ResolvedOption}). */
+  options?: ResolvedOption[]
   /**
    * For `form`: the fields to draw, in declaration order, with any vocabulary
    * already looked up — the same service `options` performs for a `select`.
@@ -1126,13 +1145,7 @@ function resolveActions(
           // Prose only where the value is `content` — a tag is a scalar (§7.3).
           ...(spec.target === 'content' && proseFormatOf(spec.format) ? { format: proseFormatOf(spec.format) } : {}),
           ...(spec.enum && manifest.vocabularies?.[spec.enum]
-            ? {
-                options: manifest.vocabularies[spec.enum].map((v) => ({
-                  value: v.value,
-                  label: v.label,
-                  colour: v.colour,
-                })),
-              }
+            ? { options: manifest.vocabularies[spec.enum].map(resolvedOption) }
             : {}),
         })),
         // The parent is not a property and never appears in `properties`; it
@@ -1156,7 +1169,7 @@ function resolveActions(
       ...(action.effect ? { effect: action.effect } : {}),
       control,
       ...(format ? { format } : {}),
-      options: vocab?.map((v) => ({ value: v.value, label: v.label, colour: v.colour })),
+      options: vocab?.map(resolvedOption),
       current: action.emits.field ? folded[action.emits.field]?.value : undefined,
       field: action.emits.field,
     })

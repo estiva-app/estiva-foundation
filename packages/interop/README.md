@@ -209,7 +209,11 @@ socket, reads no clock and holds no identity, so the built event is a pure
 function of its inputs and the whole suite runs against an array.
 
 `object.actions` is already resolved against the owner's vocabularies, so a
-`select` arrives with its options and the value it currently holds.
+`select` arrives with its options and the value it currently holds. Each
+option carries its declared `stage` when it is one of the four, so an app that
+builds its own change from a choice appends `stageTagFor(field, value,
+action.options)` last and says what the choice means, as `buildActionEvent`
+does (SPEC §7.3).
 
 ### Actions that create an object, not just change one
 
