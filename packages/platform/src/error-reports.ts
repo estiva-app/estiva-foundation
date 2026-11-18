@@ -89,6 +89,10 @@ export interface ErrorReporter {
 }
 
 const MAX_MESSAGE = 200
+/** Of an error's wording, only this much is cleaned: the most of it that can end up in the 200 sent. */
+const MAX_WORDING = 1000
+/** While signed out, a crash is tried again after this long, not on every repeat. */
+const SIGNED_OUT_RETRY_MS = 10_000
 const MAX_FRAMES = 50
 const MAX_TRAIL = 10
 
@@ -103,7 +107,8 @@ const QUOTES = /["'`‘’“”«»]/
  */
 export function scrubMessage(raw: unknown): string {
   if (typeof raw !== 'string') return ''
-  let text = raw.replace(/\p{Cc}+/gu, ' ')
+  // Only the start is ever sent, and the cleaning below costs the square of the length past it.
+  let text = raw.slice(0, MAX_WORDING).replace(/\p{Cc}+/gu, ' ')
 
   const isQuote = (i: number) =>
     QUOTES.test(text[i] as string) &&
@@ -157,21 +162,27 @@ const GECKO_FRAME = /^(.*?)@(\S+?):(\d+):(\d+)$/
  * The stack's frames, newest first, each kept only when its file is one of
  * the app's own bundles; a frame anywhere else keeps neither file nor name.
  *
- * A V8 stack opens by repeating the error's wording, all its lines, unscrubbed.
- * A line of `wording` is never read as a frame, however frame-shaped: a regex
- * error quoting a person's text would otherwise send their lines as frames.
+ * A V8 stack opens with the error's name and its wording, all of the
+ * wording's lines, unscrubbed. A regex error quoting a person's text would
+ * otherwise send their lines as frames, so: a stack with any `at` line is read
+ * for `at` lines only, and a line of `wording` is never a frame, however
+ * frame-shaped. (A caller that has the error cuts the opening off first.)
  */
 export function readFrames(stack: unknown, origin: string, wording = ''): ReportFrame[] {
   if (typeof stack !== 'string') return []
+  const lines = stack.split('\n')
+  const v8 = lines.some((line) => V8_FRAME.test(line))
+  const ownWords = new Set(wording.split('\n').map((line) => line.trim()))
   const frames: ReportFrame[] = []
-  for (const line of stack.split('\n')) {
-    // The wording's first line comes after the error's name: `SyntaxError: …`.
-    const text = line.trim().replace(/^[\w$.]+: /, '')
-    if (!text || (wording && wording.includes(text))) continue
-    const match = line.match(V8_FRAME) ?? line.match(GECKO_FRAME)
+  for (const line of lines) {
+    const text = line.trim()
+    if (!text || ownWords.has(text)) continue
+    const match = v8 ? line.match(V8_FRAME) : line.match(GECKO_FRAME)
     if (!match) continue
     const [, fn, file, lineNo, column] = match as unknown as [string, string | undefined, string, string, string]
-    const own = file.startsWith(`${origin}/assets/`) && /^[A-Za-z0-9_.-]+\.m?js$/.test(file.slice(origin.length + 8))
+    // Estiva ID's ASSET_PATH keeps the same: a bundle's name, at most 100 characters.
+    const own =
+      file.startsWith(`${origin}/assets/`) && /^[A-Za-z0-9_.-]{1,100}\.m?js$/.test(file.slice(origin.length + 8))
     if (!own) {
       frames.push({ file: '<other>' })
     } else {
@@ -195,11 +206,16 @@ export function readFrames(stack: unknown, origin: string, wording = ''): Report
  */
 function describe(error: unknown): { type: string; message: string; stack?: string; wording?: string } {
   if (error instanceof Error) {
+    const wording = typeof error.message === 'string' ? error.message : ''
+    let stack = typeof error.stack === 'string' ? error.stack : undefined
+    // V8's opening, `Name: wording`, goes whole, whatever the name.
+    const opening = wording ? `${String(error.name)}: ${wording}` : String(error.name)
+    if (stack?.startsWith(opening)) stack = stack.slice(opening.length)
     return {
       type: TYPE.test(error.name) ? error.name : 'Error',
-      message: scrubMessage(error.message),
-      ...(typeof error.stack === 'string' ? { stack: error.stack } : {}),
-      ...(typeof error.message === 'string' ? { wording: error.message } : {}),
+      message: scrubMessage(wording),
+      ...(stack !== undefined ? { stack } : {}),
+      wording,
     }
   }
   return { type: error === null ? 'Null' : typeof error === 'object' ? 'NonErrorObject' : 'NonError', message: '' }
@@ -216,13 +232,17 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
   const listed = (screen: unknown): string =>
     typeof screen === 'string' && options.screens.includes(screen) ? screen : '<unknown>'
 
+  let signedOutAt = Number.NEGATIVE_INFINITY
+
   async function deliver(body: ErrorReportBody, kind: string): Promise<void> {
     const token = await options.token()
     if (!token) {
       // Not sent, so not spent: the same crash after sign-in in this tab still reports.
       seen.delete(kind)
+      signedOutAt = now()
       return
     }
+    signedOutAt = Number.NEGATIVE_INFINITY
     sent.push(body)
     await send(options.endpoint, {
       method: 'POST',
@@ -234,6 +254,8 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
 
   function report(error: unknown, how: ReportHow = 'error'): void {
     try {
+      // A crash loop while signed out is not read again on every turn.
+      if (now() - signedOutAt < SIGNED_OUT_RETRY_MS) return
       const { type, message, stack, wording } = describe(error)
       const frames = readFrames(stack, options.origin, wording)
       const top = frames[0]
@@ -260,13 +282,12 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
     report,
     step(step) {
       // Rebuilt from the lists, never copied: whatever else the object carries stays here.
+      // A screen if it has one, else one of our actions, as Estiva ID's readStep reads it.
+      const { screen, action } = step as { screen?: unknown; action?: unknown }
       let next: ReportStep
-      if ('action' in step) {
-        if (!ACTIONS.includes(step.action)) return
-        next = { action: step.action }
-      } else {
-        next = { screen: listed(step.screen) }
-      }
+      if (typeof screen === 'string') next = { screen: listed(screen) }
+      else if (typeof action === 'string' && ACTIONS.includes(action)) next = { action: action as ReportAction }
+      else return
       const last = trail.at(-1)
       if (last && 'screen' in next && 'screen' in last && last.screen === next.screen) return
       trail.push({ ...next, at: now() })

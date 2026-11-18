@@ -139,6 +139,23 @@ test("frame-shaped lines in an error's own wording never leave as frames", async
   ])
 })
 
+test('an opening that no longer matches the error, under a name with a space, still sends no line of it as a frame', async () => {
+  const { reporter, requests } = harness()
+  const error = new Error('Peek could not open')
+  error.name = 'Peek Error'
+  // The stack was taken before a library rewrote the wording.
+  error.stack = [
+    `Peek Error: Launch@${ORIGIN}/assets/plantedmessage.js:1:2`,
+    `    at parseBody (${ORIGIN}/assets/index-Ab12.js:1:4567)`,
+  ].join('\n')
+  reporter.report(error)
+  await flush()
+  assert.ok(!requests[0]?.body.includes('plantedmessage'), 'plantedmessage left the browser')
+  assert.deepEqual(JSON.parse(requests[0]?.body ?? '').error.frames, [
+    { function: 'parseBody', file: `${ORIGIN}/assets/index-Ab12.js`, line: 1, column: 4567 },
+  ])
+})
+
 test('a screen or a step outside the lists goes as <unknown> or not at all, and nothing else on it is sent', async () => {
   let current = `/app/teams/${PLANTED_ADDRESS}`
   const { reporter, requests } = harness({ screen: () => current })
@@ -147,8 +164,10 @@ test('a screen or a step outside the lists goes as <unknown> or not at all, and 
   reporter.step({ screen: `/t/${PLANTED_TITLE}` })
   reporter.step({ action: PLANTED_MESSAGE } as unknown as { action: 'sent-message' })
   reporter.report(chromeCrash('x is not a function'))
-  await flush()
   current = '/app/desk'
+  reporter.report(chromeCrash('x is not a function', 2))
+  await flush()
+  assert.equal(JSON.parse(requests[1]?.body ?? '').screen, '/app/desk')
   const body = requests[0]?.body ?? ''
   assert.ok(!body.includes('planted'), 'planted text left the browser')
   const sent = JSON.parse(body)
@@ -173,14 +192,26 @@ test('a tab sends at most ten reports, however many kinds of error it hits', asy
   assert.equal(requests.length, 10)
 })
 
-test('nothing is sent while signed out, and the same crash after sign-in still reports', async () => {
+test('nothing is sent while signed out, a crash loop then asks for the sign-in rarely, and the same crash after sign-in still reports', async () => {
   let token: string | undefined
-  const { reporter, requests } = harness({ token: () => token })
-  reporter.report(chromeCrash('x is not a function'))
-  await flush()
+  let tokenReads = 0
+  let clock = 1_700_000_000_000
+  const { reporter, requests } = harness({
+    token: () => {
+      tokenReads++
+      return token
+    },
+    now: () => clock,
+  })
+  for (let burst = 0; burst < 2; burst++) {
+    for (let i = 0; i < 500; i++) reporter.report(chromeCrash('x is not a function'))
+    await flush()
+  }
   assert.equal(requests.length, 0)
+  assert.equal(tokenReads, 1)
 
   token = 'qa-1-token'
+  clock += 10_000
   reporter.report(chromeCrash('x is not a function'))
   await flush()
   assert.equal(requests.length, 1)
