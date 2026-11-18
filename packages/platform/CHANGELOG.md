@@ -1,5 +1,24 @@
 # @estiva-app/platform
 
+## 0.9.0
+
+A failure the app tells a person about, and a write the relay refuses, are
+reported too (PROD-5), not only crashes.
+
+- `reporter.failure(what)`: what failed, one of `FAILURES` (`not-sent`,
+  `not-saved`, `not-moved`, `not-loaded`, `sign-in-failed`, …); a name off the
+  list is sent as `unnamed`. The message the person saw is never sent: most
+  name a title, a person or the relay's own sentence.
+- `reporter.refused(code)`: the relay's refusal code as protocol's
+  `refusalCodeOf` reads it (`archived`, `busy`, `http-500`); any other shape is
+  sent as `uncoded`. Records a `write-refused` step.
+- Both are sent once per name per screen per tab, with no wording and no frames, under
+  their own ceiling (`maxHandledPerTab`, default 10) apart from crashes, so a
+  relay that keeps refusing cannot use up the crash budget. A relay answering
+  "busy" a hundred times sends one report.
+- The body gains `named` and `how: 'failure' | 'refused'`; Estiva ID keeps the
+  same list. `report(error, how)` takes only the crash kinds.
+
 ## 0.8.0
 
 An error reporter every app shares (PROD-2): when a part of the page breaks, a

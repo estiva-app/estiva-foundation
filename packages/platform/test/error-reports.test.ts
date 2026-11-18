@@ -226,6 +226,92 @@ test('a tab sends at most ten reports, however many kinds of error it hits', asy
   assert.equal(requests.length, 10)
 })
 
+test('a failure the person was told about is sent by its name only, with its screen and trail', async () => {
+  const { reporter, requests } = harness()
+  reporter.step({ screen: '/app/dms' })
+  reporter.failure('not-sent')
+  await flush()
+  assert.equal(requests.length, 1)
+  const body = JSON.parse(requests[0]!.body)
+  assert.deepEqual(body, {
+    release: 'ded93b9c',
+    how: 'failure',
+    error: { type: 'Failure', message: 'not-sent', frames: [] },
+    named: 'not-sent',
+    screen: '/app/teams/:id',
+    trail: [{ screen: '/app/dms', at: 1_700_000_000_000 }],
+  })
+})
+
+test('a failure named outside the list, such as the message the person saw, is sent as unnamed', async () => {
+  const { reporter, requests } = harness()
+  reporter.failure(`Not sent in ${PLANTED_TITLE}` as never)
+  await flush()
+  assert.equal(requests.length, 1)
+  assert.ok(!requests[0]!.body.includes(PLANTED_TITLE))
+  assert.equal(JSON.parse(requests[0]!.body).named, 'unnamed')
+})
+
+test('a refused write is sent by its code, records the step, and a code of any other shape goes as uncoded', async () => {
+  const { reporter, requests } = harness()
+  reporter.refused('archived')
+  reporter.refused(`invalid: ${PLANTED_MESSAGE}`)
+  await flush()
+  assert.equal(requests.length, 2)
+  const [first, second] = requests.map((r) => JSON.parse(r.body))
+  assert.equal(first.how, 'refused')
+  assert.equal(first.named, 'archived')
+  assert.deepEqual(first.trail, [{ action: 'write-refused', at: 1_700_000_000_000 }])
+  assert.equal(second.named, 'uncoded')
+  assert.ok(!requests[1]!.body.includes(PLANTED_MESSAGE))
+})
+
+test('the same failure on another screen of the same tab is a second report', async () => {
+  let screen = '/app/dms'
+  const { reporter, requests } = harness({ screen: () => screen })
+  reporter.failure('not-saved')
+  reporter.failure('not-saved')
+  screen = '/app/teams/:id'
+  reporter.failure('not-saved')
+  await flush()
+  assert.deepEqual(
+    requests.map((r) => JSON.parse(r.body).screen),
+    ['/app/dms', '/app/teams/:id'],
+  )
+})
+
+test('refusals in a row are one step, so a crash after them still shows the screens before', async () => {
+  const { reporter, requests } = harness()
+  reporter.step({ screen: '/app/desk' })
+  reporter.step({ screen: '/app/dms' })
+  for (let i = 0; i < 30; i++) reporter.refused('busy')
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  const crash = requests.map((r) => JSON.parse(r.body)).find((body) => body.how === 'error')
+  assert.deepEqual(
+    crash.trail.map((step: { screen?: string; action?: string }) => step.screen ?? step.action),
+    ['/app/desk', '/app/dms', 'write-refused'],
+  )
+})
+
+test('a relay answering busy 100 times in a minute sends one report', async () => {
+  const { reporter, requests } = harness()
+  for (let i = 0; i < 100; i++) reporter.refused('busy')
+  await flush()
+  assert.equal(requests.length, 1)
+})
+
+test('failures and refusals have their own ceiling, so they never use up the crash budget', async () => {
+  const { reporter, requests } = harness()
+  for (const what of ['not-sent', 'not-saved', 'not-moved', 'not-joined', 'not-left', 'not-added']) reporter.failure(what as never)
+  for (const code of ['archived', 'busy', 'blocked', 'not-member', 'changed', 'http-500']) reporter.refused(code)
+  reporter.report(chromeCrash('x is not a function'))
+  await flush()
+  const hows = requests.map((r) => JSON.parse(r.body).how)
+  assert.equal(hows.filter((how) => how !== 'error').length, 10)
+  assert.equal(hows.filter((how) => how === 'error').length, 1)
+})
+
 test('nothing is sent while signed out, a crash loop then asks for the sign-in rarely, and the same crash after sign-in still reports', async () => {
   let token: string | undefined
   let tokenReads = 0

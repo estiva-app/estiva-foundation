@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.61.0 — 2026-11-18
+
+**Wire behaviour: none written; nothing new read** (PROD-5; record
+a-refusal-starts-with-a-reason-code-every-app-reads). Nothing an app publishes
+changes.
+
+- `refusalCodeOf(result)`: a refused publish as a short code for an error
+  report, never the relay's sentence: `busy`; the SPEC §3.3 reason code
+  (`invalid: archived: …` → `archived`); else the NIP-01 prefix (`blocked`);
+  else the bridge's one-word error, dashed (`relay-membership-required`); else
+  `http-<status>`; else `uncoded`.
+- `new Relay(url, signer, { onRefused })`: told every refused publish by that
+  code (a duplicate is not a refusal). A throw in it never changes what the
+  caller is told.
+
 ## 0.60.0 — 2026-11-18
 
 **Wire behaviour: none written; nothing new read** (ISS-3; SPEC §6.1, §6.13;
