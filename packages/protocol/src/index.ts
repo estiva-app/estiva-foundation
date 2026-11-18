@@ -178,6 +178,7 @@ export {
   RELAY_BUSY_MESSAGE,
   RelayBusyError,
   isRelayBusyResponse,
+  refusalCodeOf,
   retryAfterMsOf,
   retryWhileBusy,
   type RelayAnswer,

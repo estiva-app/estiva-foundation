@@ -97,12 +97,14 @@ export {
 } from './event-snapshot.js'
 export {
   createErrorReporter,
+  FAILURES,
   readFrames,
   scrubMessage,
   type ErrorEventTarget,
   type ErrorReportBody,
   type ErrorReporter,
   type ErrorReporterOptions,
+  type Failure,
   type FetchLike,
   type ReportAction,
   type ReportFrame,

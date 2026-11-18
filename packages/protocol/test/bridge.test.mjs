@@ -362,3 +362,55 @@ test('an app with its own transport hears the last busy answer when the relay st
   assert.equal(protocol.isRelayBusyResponse(answer.status, answer.text), true)
   assert.equal(asks, 4, 'the first ask and three quiet retries')
 })
+
+// ── a refusal, told to the app's error reporter by its code (PROD-5) ───────
+// why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-refusal-starts-with-a-reason-code-every-app-reads.md
+
+/** A relay giving `answer` to every publish, with the codes `onRefused` hears. */
+function refusingRelay(answer) {
+  const codes = []
+  const relay = new Relay('https://r', secretKeySigner(SECRET), {
+    busyRetryDelaysMs: [],
+    fetch: async () => ({ status: answer.status, text: async () => answer.body, headers: { get: () => null } }),
+    onRefused: (code) => codes.push(code),
+  })
+  return { relay, codes }
+}
+
+const PLANTED = 'plantedtitle board offsite'
+
+for (const [what, answer, code] of [
+  ['a coded refusal by its code', { status: 200, body: JSON.stringify({ accepted: false, message: `invalid: archived: team “${PLANTED}” is archived` }) }, 'archived'],
+  ['an uncoded refusal by its NIP-01 prefix', { status: 200, body: JSON.stringify({ accepted: false, message: `blocked: ${PLANTED}` }) }, 'blocked'],
+  ['the bridge’s own one-word error, dashed', { status: 403, body: JSON.stringify({ error: 'relay_membership_required' }) }, 'relay-membership-required'],
+  ['a refusal by status alone by its status', { status: 500, body: JSON.stringify({ error: `team ${PLANTED} broke` }) }, 'http-500'],
+  ['a relay that stays busy as busy', BUSY, 'busy'],
+  ['a sentence with no prefix as uncoded', { status: 200, body: JSON.stringify({ accepted: false, message: `team ${PLANTED} is archived` }) }, 'uncoded'],
+]) {
+  test(`a refused publish reaches onRefused as ${what}, never its sentence`, async () => {
+    const { relay, codes } = refusingRelay(answer)
+    const result = await relay.publish({ id: 'e1', kind: 9 })
+    assert.equal(result.ok, false)
+    assert.deepEqual(codes, [code])
+  })
+}
+
+test('an accepted publish and a duplicate are not refusals', async () => {
+  for (const message of [undefined, 'duplicate: already have this event']) {
+    const { relay, codes } = refusingRelay({ status: 200, body: JSON.stringify({ accepted: message === undefined, event_id: 'e1', message }) })
+    assert.equal((await relay.publish({ id: 'e1', kind: 9 })).ok, true)
+    assert.deepEqual(codes, [])
+  }
+})
+
+test('an onRefused that throws never changes what the caller is told', async () => {
+  const relay = new Relay('https://r', secretKeySigner(SECRET), {
+    fetch: async () => ({ status: 200, text: async () => JSON.stringify({ accepted: false, message: 'blocked: no' }), headers: { get: () => null } }),
+    onRefused: () => {
+      throw new Error('reporter broke')
+    },
+  })
+  const result = await relay.publish({ id: 'e1', kind: 9 })
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'blocked: no')
+})

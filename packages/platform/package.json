@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/platform",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Browser lifecycle two Estiva apps share: the one live relay socket a tab should hold, its credential read per connect, the network coming back, when a tab re-reads, the copy on the device a reload draws from, and the error reporter.",
   "license": "MIT",
   "type": "module",

@@ -434,6 +434,31 @@ function optedIn(param: string, search: string, storage: OptInStorage | undefine
 export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'
 
 /**
+ * A refused publish as a short code, for an error report (PROD-5): never the
+ * relay's sentence, which may name a team or quote what was sent.
+ *
+ * - `busy`, when the relay stayed busy through the quiet retries;
+ * - the reason code a refusal carries (SPEC §3.3, `invalid: archived: …`);
+ * - else its NIP-01 prefix (`blocked`, `rate-limited`, `auth-required`, …);
+ * - else the bridge's own one-word error, dashed (`relay_membership_required`);
+ * - else `http-<status>` for a refusal by status, and `uncoded` for the rest.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-refusal-starts-with-a-reason-code-every-app-reads.md
+ */
+export function refusalCodeOf(result: Pick<PublishResult, 'reason' | 'httpStatus'>): string {
+  const reason = (result.reason ?? '').trim()
+  if (reason === RELAY_BUSY_MESSAGE) return 'busy'
+  const coded = /^(?:restricted|invalid): ([a-z][a-z0-9-]*): /.exec(reason)?.[1]
+  if (coded) return coded.slice(0, 40)
+  const prefix = /^([a-z][a-z-]*):/.exec(reason)?.[1]
+  if (prefix) return prefix.slice(0, 40)
+  if (/^[a-z][a-z0-9_]*$/.test(reason)) return reason.replace(/_/g, '-').slice(0, 40)
+  const status = result.httpStatus
+  if (status !== undefined && (status < 200 || status >= 300)) return `http-${status}`
+  return 'uncoded'
+}
+
+/**
  * NIP-01's machine-readable prefixes for a refusal the relay means: asking
  * again shortly gets the same answer. Not `error:`, which is how a busy relay
  * answers (`error: relay busy`).
@@ -589,6 +614,12 @@ export interface RelayOptions {
    * seven seconds over three retries.
    */
   busyRetryDelaysMs?: readonly number[]
+  /**
+   * Told of every publish the relay refuses (a duplicate is not a refusal), by
+   * {@link refusalCodeOf}'s code, never the relay's sentence: an app passes it
+   * to its error reporter. A throw here never reaches the publish.
+   */
+  onRefused?: (code: string) => void
 }
 
 /**
@@ -872,9 +903,11 @@ export class Relay {
     this.headers = opts.headers ?? (() => ({}))
     this.transport = opts.fetch
     this.busyRetryDelaysMs = opts.busyRetryDelaysMs ?? BUSY_RETRY_DELAYS_MS
+    this.onRefused = opts.onRefused
   }
 
   private readonly busyRetryDelaysMs: readonly number[]
+  private readonly onRefused: ((code: string) => void) | undefined
 
   /** {@link Relay.send} through {@link retryWhileBusy}. */
   private post(path: string, payload: unknown): Promise<RelayAnswer> {
@@ -907,8 +940,17 @@ export class Relay {
 
   async publish(event: SignedEvent): Promise<PublishResult> {
     const { status, text } = await this.post('/events', event)
-    if (isRelayBusyResponse(status, text)) return { ok: false, reason: RELAY_BUSY_MESSAGE, httpStatus: status }
-    return parsePublishResponse(status, text)
+    const result = isRelayBusyResponse(status, text)
+      ? { ok: false, reason: RELAY_BUSY_MESSAGE, httpStatus: status }
+      : parsePublishResponse(status, text)
+    if (!result.ok && this.onRefused) {
+      try {
+        this.onRefused(refusalCodeOf(result))
+      } catch {
+        // Reporting a refusal never changes what the caller is told.
+      }
+    }
+    return result
   }
 
   /**

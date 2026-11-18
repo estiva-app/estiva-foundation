@@ -23,7 +23,46 @@ const ACTIONS: readonly string[] = ['sent-message', 'write-refused'] satisfies R
 
 export type ReportStep = { screen: string } | { action: ReportAction }
 
-export type ReportHow = 'error' | 'unhandled-rejection' | 'boundary'
+/**
+ * How it was met: a crash (`error`, `unhandled-rejection`, `boundary`), a
+ * failure the app told the person about (`failure`), or a write the relay
+ * refused (`refused`).
+ */
+export type ReportHow = 'error' | 'unhandled-rejection' | 'boundary' | 'failure' | 'refused'
+
+/**
+ * What failed, as the app told the person: the only words a failure report
+ * carries. The message a person saw is never sent, because most of them name
+ * a title, a person or the relay's own sentence. `unnamed` is a failure whose
+ * place names none: still reported, with its screen and trail. Estiva ID keeps
+ * the same list, with the sentence Sentry shows for each.
+ */
+export const FAILURES = [
+  'not-sent',
+  'not-saved',
+  'not-deleted',
+  'not-moved',
+  'not-joined',
+  'not-left',
+  'not-added',
+  'not-created',
+  'not-archived',
+  'not-restored',
+  'not-renamed',
+  'not-resolved',
+  'not-loaded',
+  'not-reached',
+  'not-signed',
+  'signed-out',
+  'sign-in-failed',
+  'link-not-valid',
+  'not-approved',
+  'unnamed',
+] as const
+export type Failure = (typeof FAILURES)[number]
+
+/** A refusal's code as the relay client reads it (`archived`, `busy`, `blocked`, `http-500`): letters, digits and dashes. */
+const CODE = /^[a-z][a-z0-9-]{0,39}$/
 
 export interface ReportFrame {
   function?: string
@@ -37,6 +76,8 @@ export interface ErrorReportBody {
   release: string
   how: ReportHow
   error: { type: string; message: string; frames: ReportFrame[] }
+  /** A failure's name from {@link FAILURES}, or a refusal's code; absent on a crash. */
+  named?: string
   screen: string
   trail: Array<ReportStep & { at: number }>
 }
@@ -58,8 +99,14 @@ export interface ErrorReporterOptions {
    * same list per app.
    */
   screens: readonly string[]
-  /** At most this many reports per tab. Default 10. */
+  /** At most this many crash reports per tab. Default 10. */
   maxPerTab?: number
+  /**
+   * At most this many failure and refusal reports per tab, counted apart from
+   * crashes so a relay that keeps refusing cannot use up the crash budget.
+   * Default 10.
+   */
+  maxHandledPerTab?: number
   /** Defaults to the global `fetch`. */
   fetch?: FetchLike
   now?: () => number
@@ -79,7 +126,20 @@ export interface ErrorEventTarget {
 
 export interface ErrorReporter {
   /** Report an error, once per kind of error per tab. Never throws. */
-  report(error: unknown, how?: ReportHow): void
+  report(error: unknown, how?: 'error' | 'unhandled-rejection' | 'boundary'): void
+  /**
+   * Report that the app told the person something failed, by what failed
+   * (a name outside {@link FAILURES} is sent as `unnamed`). Once per name per
+   * tab. Never throws.
+   */
+  failure(what: Failure): void
+  /**
+   * Report a write the relay refused, by its code as the relay client reads it
+   * (protocol's `refusalCodeOf`), never its sentence; a code of any other shape
+   * is sent as `uncoded`. Once per code per tab, so a relay answering "busy" a
+   * hundred times sends one. Records a `write-refused` step. Never throws.
+   */
+  refused(code: string): void
   /** Record a step for the trail: a screen opened or one of our named actions. */
   step(step: ReportStep): void
   /** Report the window's unhandled errors and rejections; returns the way to stop. */
@@ -227,7 +287,9 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
   const now = options.now ?? (() => Date.now())
   const send: FetchLike =
     options.fetch ?? ((url, init) => (globalThis as unknown as { fetch: FetchLike }).fetch(url, init))
+  const maxHandledPerTab = options.maxHandledPerTab ?? 10
   const seen = new Set<string>()
+  const handled = new Set<string>()
   const trail: Array<ReportStep & { at: number }> = []
   const sent: ErrorReportBody[] = []
   const listed = (screen: unknown): string =>
@@ -235,11 +297,11 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
 
   let signedOutAt = Number.NEGATIVE_INFINITY
 
-  async function deliver(body: ErrorReportBody, kind: string): Promise<void> {
+  async function deliver(body: ErrorReportBody, kind: string, kinds: Set<string>): Promise<void> {
     const token = await options.token()
     if (!token) {
       // Not sent, so not spent: the same crash after sign-in in this tab still reports.
-      seen.delete(kind)
+      kinds.delete(kind)
       signedOutAt = now()
       return
     }
@@ -253,7 +315,44 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
     })
   }
 
-  function report(error: unknown, how: ReportHow = 'error'): void {
+  /** A failure or a refusal: no wording and no frames, only its name; once per name per tab. */
+  function reportHandled(how: 'failure' | 'refused', named: string): void {
+    try {
+      if (now() - signedOutAt < SIGNED_OUT_RETRY_MS) return
+      const kind = `${how}|${named}`
+      if (handled.has(kind) || handled.size >= maxHandledPerTab) return
+      handled.add(kind)
+      const body: ErrorReportBody = {
+        release: options.release,
+        how,
+        error: { type: how === 'refused' ? 'WriteRefused' : 'Failure', message: named, frames: [] },
+        named,
+        screen: listed(options.screen()),
+        trail: [...trail],
+      }
+      deliver(body, kind, handled).catch(() => {
+        // Dropped, as a crash report is.
+      })
+    } catch {
+      // Never break the page while reporting.
+    }
+  }
+
+  function step(step: ReportStep): void {
+    // Rebuilt from the lists, never copied: whatever else the object carries stays here.
+    // A screen if it has one, else one of our actions, as Estiva ID's readStep reads it.
+    const { screen, action } = step as { screen?: unknown; action?: unknown }
+    let next: ReportStep
+    if (typeof screen === 'string') next = { screen: listed(screen) }
+    else if (typeof action === 'string' && ACTIONS.includes(action)) next = { action: action as ReportAction }
+    else return
+    const last = trail.at(-1)
+    if (last && 'screen' in next && 'screen' in last && last.screen === next.screen) return
+    trail.push({ ...next, at: now() })
+    if (trail.length > MAX_TRAIL) trail.shift()
+  }
+
+  function report(error: unknown, how: 'error' | 'unhandled-rejection' | 'boundary' = 'error'): void {
     try {
       // A crash loop while signed out is not read again on every turn.
       if (now() - signedOutAt < SIGNED_OUT_RETRY_MS) return
@@ -271,7 +370,7 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
         screen: listed(options.screen()),
         trail: [...trail],
       }
-      deliver(body, kind).catch(() => {
+      deliver(body, kind, seen).catch(() => {
         // A report that cannot be sent is dropped: reporting must never break the page.
       })
     } catch {
@@ -281,19 +380,14 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
 
   return {
     report,
-    step(step) {
-      // Rebuilt from the lists, never copied: whatever else the object carries stays here.
-      // A screen if it has one, else one of our actions, as Estiva ID's readStep reads it.
-      const { screen, action } = step as { screen?: unknown; action?: unknown }
-      let next: ReportStep
-      if (typeof screen === 'string') next = { screen: listed(screen) }
-      else if (typeof action === 'string' && ACTIONS.includes(action)) next = { action: action as ReportAction }
-      else return
-      const last = trail.at(-1)
-      if (last && 'screen' in next && 'screen' in last && last.screen === next.screen) return
-      trail.push({ ...next, at: now() })
-      if (trail.length > MAX_TRAIL) trail.shift()
+    failure(what) {
+      reportHandled('failure', (FAILURES as readonly string[]).includes(what) ? what : 'unnamed')
     },
+    refused(code) {
+      step({ action: 'write-refused' })
+      reportHandled('refused', typeof code === 'string' && CODE.test(code) ? code : 'uncoded')
+    },
+    step,
     listen(target) {
       const onError = (event: { error?: unknown }) => report(event.error, 'error')
       const onRejection = (event: { reason?: unknown }) => report(event.reason, 'unhandled-rejection')
