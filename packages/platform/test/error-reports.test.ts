@@ -199,6 +199,19 @@ test('a wording far past the 200 sent is still cleaned whole, by its end', () =>
   }
 })
 
+test('a web or mail address is removed in the shapes the slower patterns caught', () => {
+  for (const [raw, expected] of [
+    ['Load failed -https://peek.estiva.app/t/planted-visit', 'Load failed <url>'],
+    ['see .http://planted.example/x y', 'see <url>'],
+    ['+ftp://planted/notes', '<url>'],
+    ['mail planted@@example.com now', 'mail <address> now'],
+    ['to planted@corp@example.com now', 'to <address> now'],
+    ['Expected @ at line 3.', 'Expected @ at line 3.'],
+  ]) {
+    assert.equal(scrubMessage(raw), expected)
+  }
+})
+
 test('the same crash 1,000 times in one tab sends one report', async () => {
   const { reporter, requests } = harness()
   for (let i = 0; i < 1000; i++) reporter.report(chromeCrash('x is not a function'))
