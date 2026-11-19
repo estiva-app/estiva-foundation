@@ -716,6 +716,27 @@ describe('a Folder is archived the way any file is', () => {
     assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, relay(events), noPeople)), 'Newer words')
     assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, listing(events), noPeople, undefined, { listRead: true })), undefined)
   })
+
+  test('with the list read for some kinds only, a kind left out is read whole, its current text included (ISS-6)', async () => {
+    const PLAN = 30850
+    const own = JSON.parse(hiveLog.content)
+    own.projections[PLAN] = { widget: 'card', slots: { title: { tag: 'title' }, body: { fold: 'description', tag: 'description' } } }
+    const log = event({ ...hiveLog, id: 'd'.repeat(64), tags: [...hiveLog.tags, ['k', String(PLAN)]], content: JSON.stringify(own), created_at: hiveLog.created_at + 1 })
+    const plan = event({ kind: PLAN, tags: [['d', 'season'], ['title', 'Season plan'], ['description', 'First words'], ['h', HIVE_TALK]] })
+    const edited = event({ kind: 1851, tags: [['a', addressOf(plan)], ['field', 'description'], ['value', 'Newer words'], ['h', HIVE_TALK]] })
+    const events = [log, hiveTalk, plan, edited]
+    const asked = []
+    const query = async (filters) => {
+      asked.push(...filters)
+      return listing(events)(filters)
+    }
+    const bodyOf = (contents) => contents.files.find((f) => f.slots.title?.value === 'Season plan').slots.body?.value
+    // Leaf's pages are a kind its tree opens from this answer: left out of the list read, they keep their current text.
+    assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, query, noPeople, undefined, { listRead: true, listReadKinds: [30851] })), 'Newer words')
+    assert.ok(!asked.some((filter) => filter.fields), 'nothing is asked by the list read')
+    // Named, it is read by the list read, as with every kind.
+    assert.equal(bodyOf(await resolveFolderContents(HIVE_TALK, listing(events), noPeople, undefined, { listRead: true, listReadKinds: [PLAN] })), undefined)
+  })
 })
 
 describe('a Folder read for some kinds only (43e9a775)', () => {

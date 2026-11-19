@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.107.0 — 2026-11-19
+
+**Manifest: nothing new. Wire: nothing new written; a Folder read can ask the list read for some file kinds only** (ISS-6).
+
+- `resolveFolderContents`'s `listReadKinds`, with `listRead`, names the file kinds read by the list read; the rest are read whole, their current text included, as without it. Every file kind when absent, as before. For an app that opens its own files from this answer and only lists the others: Leaf reads its pages whole and projects and issues by the list read. Without it, a Leaf page opened from the tree lost its text (the list read leaves it unread), and with no list read at all a cold Leaf open read 48 MB of old project changes as Miky.
+- why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
+
 ## 0.106.0 — 2026-11-18
 
 **Manifest: nothing new. Wire: interop writes nothing unless an app calls the new helpers, which write as SPEC §6.1 and §6.5 say; one new read in the topic order, of moves only** (ISS-3). Needs protocol 0.60.0.
