@@ -10,7 +10,7 @@ manifests already published still mean what they meant.
 
 **Manifest: nothing new. Wire: nothing new written; a Folder read can ask the list read for some file kinds only** (ISS-6).
 
-- `resolveFolderContents`'s `listReadKinds`, with `listRead`, names the file kinds read by the list read; the rest are read whole, their current text included, as without it. Every file kind when absent, as before. For an app that opens its own files from this answer and only lists the others: Leaf reads its pages whole and projects and issues by the list read. Without it, a Leaf page opened from the tree lost its text (the list read leaves it unread), and with no list read at all a cold Leaf open read 48 MB of old project changes as Miky.
+- `resolveFolderContents`'s `listReadKinds`, with `listRead`, names the file kinds read by the list read; the rest are read whole, their current text included, as without it. Every file kind when absent, as before. For an app that opens its own files from this answer and only lists the others: Leaf reads its pages whole and projects and issues by the list read. Without it, a Leaf page opened from the tree lost its text (the list read leaves it unread), and with no list read at all a cold Leaf open read 48 MB of old project changes as Miky. A kind left out is read as on `main`, every change of it: Leaf's pages still are, until they open from their own text read.
 - why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
 
 ## 0.106.0 — 2026-11-18
