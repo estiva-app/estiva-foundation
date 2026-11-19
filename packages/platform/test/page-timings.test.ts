@@ -156,7 +156,7 @@ test('an open where no placeholder was ever drawn is marked as such, not sent as
   assert.equal(body?.ready, 'no-placeholder')
 })
 
-test('leaving an open before any placeholder showed sends it as no-placeholder; leaving one still loading sends nothing', async () => {
+test('leaving an open before any placeholder showed sends it as no-placeholder; leaving one still loading sends it as left, with the wait until then', async () => {
   const h = harness()
   h.timer.opened()
   h.advance(200)
@@ -167,8 +167,11 @@ test('leaving an open before any placeholder showed sends it as no-placeholder; 
   h.placeholders(0)
   h.advance(5000)
   await flush()
-  assert.deepEqual(h.bodies().map((b) => b.ready), ['no-placeholder', 'no-placeholder'])
-  assert.ok(!h.bodies().some((b) => b.ready === 'placeholder-gone'), 'the open left while loading is not reported as ready')
+  assert.deepEqual(h.bodies().map((b) => [b.ready, b.waitMs]), [
+    ['no-placeholder', 0],
+    ['left', 800],
+    ['no-placeholder', 0],
+  ])
 })
 
 test('an open left before any placeholder showed keeps its own screen, not the next page’s', async () => {
@@ -227,7 +230,7 @@ test('a page opened in a hidden tab sends no timing', async () => {
   assert.equal(h.requests.length, 0)
 })
 
-test('a tab hidden while the page is still loading sends no timing', async () => {
+test('switching away from a tab still loading sends the open as left, with the wait until then', async () => {
   const h = harness()
   h.timer.loaded()
   h.placeholders(1)
@@ -237,7 +240,19 @@ test('a tab hidden while the page is still loading sends no timing', async () =>
   h.placeholders(0)
   h.advance(60_000)
   await flush()
-  assert.equal(h.requests.length, 0)
+  assert.deepEqual(h.bodies().map((b) => [b.ready, b.waitMs]), [['left', 400]])
+})
+
+test('leaving inside the quiet spell sends the open as ready when its placeholders went', async () => {
+  const h = harness()
+  h.timer.opened()
+  h.placeholders(1)
+  h.advance(300)
+  h.placeholders(0) // ready at 300
+  h.advance(500)
+  h.timer.opened() // left before the quiet spell was over
+  await flush()
+  assert.deepEqual(h.bodies().map((b) => [b.ready, b.waitMs]), [['placeholder-gone', 300]])
 })
 
 test('a placeholder still there after a minute is sent as gave-up at the ceiling', async () => {

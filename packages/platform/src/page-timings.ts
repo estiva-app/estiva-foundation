@@ -33,7 +33,7 @@ export type OpenHow = 'new-tab' | 'reload' | 'in-app'
  * was ever drawn (the wait is when the page last changed); or one was still
  * there when the timer gave up (the wait is the ceiling).
  */
-export type OpenReady = 'placeholder-gone' | 'no-placeholder' | 'gave-up'
+export type OpenReady = 'placeholder-gone' | 'no-placeholder' | 'gave-up' | 'left'
 
 /** The whole body sent to Estiva ID's `/timing`. */
 export interface PageTimingBody {
@@ -199,7 +199,7 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     const current = open
     if (!current) return
     try {
-      if (page.hidden()) return end()
+      if (page.hidden()) return leave(current)
       const now = page.now()
       current.screen = listed(options.screen())
       if (!current.settled) {
@@ -225,13 +225,23 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     }
   }
 
+  /**
+   * The person moved on (another page, another tab) before this open was
+   * ready. Drawn at once: sent as that. Placeholders already gone: ready when
+   * they went. Still loading: sent as `left`, the wait until they left, counted
+   * apart (Miky, 19 Nov: giving up on a slow page is the slowness we are for).
+   * Hidden before anything was drawn: nothing to say, dropped.
+   */
+  function leave(current: Open): void {
+    if (current.goneAt !== undefined) return finish('placeholder-gone', current.goneAt)
+    if (current.sawPlaceholder) return finish('left', page.now())
+    if (!page.hidden()) return finish('no-placeholder', current.changedAt)
+    end()
+  }
+
   function begin(how: OpenHow, start: number): void {
     try {
-      const previous = open
-      // An open left before any placeholder showed was a page drawn at once: sent as that.
-      if (previous && !previous.sawPlaceholder) finish('no-placeholder', previous.changedAt)
-      // One left while it was still loading has no end to report.
-      else end()
+      if (open) leave(open)
       if (page.hidden()) return
       const now = page.now()
       const current: Open = {

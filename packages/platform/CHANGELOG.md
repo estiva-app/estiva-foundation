@@ -19,8 +19,10 @@ page to open goes to Estiva ID's `POST /timing`, signed in, and on to Sentry
 - The body is `{ release, screen, how, waitMs, ready }` and nothing else;
   `how` is `new-tab`, `reload` or `in-app`. A screen off `screens` is
   `<unknown>`.
-- Thrown away: an open in a hidden tab or one hidden before it was ready, one
-  left while still loading, any while signed out, and one that fails to send.
+- An open the person leaves while it is still loading (another page, another
+  tab) is sent as `ready: 'left'`, the wait until they left, counted apart
+  (Miky, 19 Nov). Thrown away: an open in a tab hidden from the start, one
+  hidden before anything drew, any while signed out, and one that fails to send.
 - Its own allowance, `maxPerHour` (120) per tab, apart from the error
   reporter's. The page is watched only while an open runs.
 
