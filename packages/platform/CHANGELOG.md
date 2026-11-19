@@ -1,5 +1,31 @@
 # @estiva-app/platform
 
+## 0.10.0
+
+A page-open timer beside the error reporter: how long a person waited for a
+page to open goes to Estiva ID's `POST /timing`, signed in, and on to Sentry
+(record page-open-timings-go-to-sentry-named-by-the-person-built-from-an-allowed-list).
+
+- `createPageTimer({ endpoint, release, token, screen, screens, page })` gives
+  `loaded()` (call once at boot: a new tab or a reload, timed from the page's
+  own start), `opened()` (call as the app navigates: a click, back or forward)
+  and `stop()`. `browserPage(window)` is the `page` for a real tab.
+- The wait ends when the last loading placeholder outside `aside` and `nav`
+  went (`PLACEHOLDER_SELECTOR`, the speed kit recorder's own) and none came
+  back for `quietMs` (1 s). An open with no placeholder by
+  `noPlaceholderAfterMs` (5 s), or left before one showed, is sent as
+  `ready: 'no-placeholder'`; one still loading after `giveUpAfterMs` (60 s) as
+  `'gave-up'`.
+- The body is `{ release, screen, how, waitMs, ready }` and nothing else;
+  `how` is `new-tab`, `reload` or `in-app`. A screen off `screens` is
+  `<unknown>`.
+- An open the person leaves while it is still loading (another page, another
+  tab) is sent as `ready: 'left'`, the wait until they left, counted apart
+  (Miky, 19 Nov). Thrown away: an open in a tab hidden from the start, one
+  hidden before anything drew, any while signed out, and one that fails to send.
+- Its own allowance, `maxPerHour` (120) per tab, apart from the error
+  reporter's. The page is watched only while an open runs.
+
 ## 0.9.0
 
 A failure the app tells a person about, and a write the relay refuses, are
