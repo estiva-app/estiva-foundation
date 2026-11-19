@@ -7688,6 +7688,16 @@ export async function resolveFolderContents(
      * not as the change before it.
      */
     listRead?: boolean
+    /**
+     * With `listRead`, the file kinds of this Folder's own files it reads so;
+     * every file kind when absent. The rest are read whole, text included, as
+     * without it (a parent outside the Folder is still read by the list read,
+     * for its archive only): an app that opens
+     * a listed file of its own from this answer keeps reading that kind whole
+     * while the kinds it only lists cost their current values (Leaf: its pages
+     * whole, projects and issues by the list read, ISS-6).
+     */
+    listReadKinds?: readonly number[]
   } = {},
 ): Promise<FolderContents> {
   // 1. The folder itself. Both kinds in one trip: the state is the model and
@@ -7801,7 +7811,8 @@ export async function resolveFolderContents(
   // With the list read, a file's current changes come with its root. The relay
   // keeps only its file kinds that way, so a nested Folder, or any other kind,
   // is read as before.
-  const byFields = (kind: number) => options.listRead === true && FILE_KINDS.includes(kind)
+  const listKinds = options.listRead === true ? (options.listReadKinds ?? FILE_KINDS) : []
+  const byFields = (kind: number) => listKinds.includes(kind) && FILE_KINDS.includes(kind)
   const changesAsked = addresses.filter((address) => !byFields(addressPointerOf(address)?.kind ?? NaN))
   const rootFilters = [...groups.values()].map(({ pointer, addresses: group }) => ({
     kinds: [pointer.kind],
