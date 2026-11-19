@@ -7689,8 +7689,10 @@ export async function resolveFolderContents(
      */
     listRead?: boolean
     /**
-     * With `listRead`, the file kinds it reads so; every file kind when absent.
-     * The rest are read whole, text included, as without it: an app that opens
+     * With `listRead`, the file kinds of this Folder's own files it reads so;
+     * every file kind when absent. The rest are read whole, text included, as
+     * without it (a parent outside the Folder is still read by the list read,
+     * for its archive only): an app that opens
      * a listed file of its own from this answer keeps reading that kind whole
      * while the kinds it only lists cost their current values (Leaf: its pages
      * whole, projects and issues by the list read, ISS-6).
