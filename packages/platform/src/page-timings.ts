@@ -104,6 +104,8 @@ export interface PageTimer {
 }
 
 const HOUR_MS = 60 * 60_000
+/** The newest bodies kept in `sent` for a probe. */
+const MAX_KEPT = 50
 
 interface Open {
   how: OpenHow
@@ -113,6 +115,10 @@ interface Open {
   goneAt: number | undefined
   /** When the page last changed. */
   changedAt: number
+  /** No placeholder yet, and the page has been still for a quiet spell: `changedAt` is when it drew. */
+  settled: boolean
+  /** The screen, read at the start and at each change, so a redirect is followed and the next page's is never taken. */
+  screen: string
   timers: unknown[]
   quiet: unknown
 }
@@ -135,6 +141,8 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     options.fetch ?? ((url, init) => (globalThis as unknown as { fetch: FetchLike }).fetch(url, init))
   const sent: PageTimingBody[] = []
   const sentAt: number[] = []
+  const listed = (screen: unknown): string =>
+    typeof screen === 'string' && options.screens.includes(screen) ? screen : '<unknown>'
 
   let open: Open | undefined
   let unwatch: (() => void) | undefined
@@ -154,18 +162,13 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     if (!done) return
     end()
     try {
-      const now = page.now()
-      while (sentAt.length && now - (sentAt[0] as number) > HOUR_MS) sentAt.shift()
-      if (sentAt.length >= maxPerHour) return
-      const screen = options.screen()
       const body: PageTimingBody = {
         release: options.release,
-        screen: typeof screen === 'string' && options.screens.includes(screen) ? screen : '<unknown>',
+        screen: done.screen,
         how: done.how,
         waitMs: Math.max(0, Math.round(at - done.start)),
         ready,
       }
-      sentAt.push(now)
       deliver(body).catch(() => {
         // A timing that cannot be sent is dropped.
       })
@@ -177,7 +180,13 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
   async function deliver(body: PageTimingBody): Promise<void> {
     const token = await options.token()
     if (!token) return
+    // Counted only when sent: opens while signed out leave the hour's allowance whole.
+    const now = page.now()
+    while (sentAt.length && now - (sentAt[0] as number) > HOUR_MS) sentAt.shift()
+    if (sentAt.length >= maxPerHour) return
+    sentAt.push(now)
     sent.push(body)
+    if (sent.length > MAX_KEPT) sent.shift()
     await send(options.endpoint, {
       method: 'POST',
       keepalive: true,
@@ -192,7 +201,13 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     try {
       if (page.hidden()) return end()
       const now = page.now()
-      current.changedAt = now
+      current.screen = listed(options.screen())
+      if (!current.settled) {
+        // A change after a still spell is the drawn page being updated (a live
+        // comment, a clock), not the page drawing: the wait stays where it was.
+        if (!current.sawPlaceholder && now - current.changedAt > quietMs) current.settled = true
+        else current.changedAt = now
+      }
       if (page.placeholders() > 0) {
         current.sawPlaceholder = true
         current.goneAt = undefined
@@ -225,6 +240,8 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
         sawPlaceholder: false,
         goneAt: undefined,
         changedAt: now,
+        settled: false,
+        screen: listed(options.screen()),
         timers: [],
         quiet: undefined,
       }
@@ -284,7 +301,10 @@ export interface TimedWindow {
   }
   performance: { now(): number; getEntriesByType(type: 'navigation'): ArrayLike<object> }
   MutationObserver: new (callback: () => void) => {
-    observe(target: unknown, options: { childList: boolean; subtree: boolean; attributes: boolean }): void
+    observe(
+      target: unknown,
+      options: { childList: boolean; subtree: boolean; attributes: boolean; attributeFilter: string[] },
+    ): void
     disconnect(): void
   }
 }
@@ -302,7 +322,13 @@ export function browserPage(win: TimedWindow): TimedPage {
     },
     watch(onChange) {
       const observer = new win.MutationObserver(onChange)
-      observer.observe(win.document, { childList: true, subtree: true, attributes: true })
+      // Only what can make or clear a placeholder: an editor's or a focus ring's attribute churn is not read.
+      observer.observe(win.document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'aria-busy', 'data-skeleton'],
+      })
       win.document.addEventListener('visibilitychange', onChange)
       return () => {
         observer.disconnect()

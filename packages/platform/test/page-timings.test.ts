@@ -171,6 +171,49 @@ test('leaving an open before any placeholder showed sends it as no-placeholder; 
   assert.ok(!h.bodies().some((b) => b.ready === 'placeholder-gone'), 'the open left while loading is not reported as ready')
 })
 
+test('an open left before any placeholder showed keeps its own screen, not the next page’s', async () => {
+  const h = harness()
+  h.go('/issues/plantedaddress-5a1c9e')
+  h.timer.opened()
+  h.placeholders(0) // the issue draws at once
+  h.advance(200)
+  h.go('/issues') // the app pushes the next address, then says so
+  h.timer.opened()
+  await flush()
+  assert.deepEqual(h.bodies().map((b) => [b.screen, b.ready]), [['issue', 'no-placeholder']])
+})
+
+test('a page drawn at once keeps the moment it drew, whatever live updates follow', async () => {
+  const h = harness()
+  h.timer.opened()
+  h.advance(50)
+  h.placeholders(0) // drawn at 50
+  h.advance(3000)
+  h.placeholders(0) // a live comment arrives at 3,050
+  h.advance(2000)
+  await flush()
+  assert.deepEqual(h.bodies().map((b) => [b.waitMs, b.ready]), [[50, 'no-placeholder']])
+})
+
+test('opens while signed out do not use up the hour’s allowance', async () => {
+  let signedIn = false
+  const h = harness({ maxPerHour: 2, token: () => (signedIn ? 'qa-1-token' : undefined) })
+  const openOnce = () => {
+    h.timer.opened()
+    h.placeholders(1)
+    h.advance(100)
+    h.placeholders(0)
+    h.advance(1000)
+  }
+  for (let i = 0; i < 3; i++) openOnce()
+  await flush()
+  signedIn = true
+  openOnce()
+  openOnce()
+  await flush()
+  assert.equal(h.requests.length, 2)
+})
+
 test('a page opened in a hidden tab sends no timing', async () => {
   const h = harness()
   h.hide()
