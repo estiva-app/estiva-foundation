@@ -24,7 +24,7 @@ function harness(
   let nextHandle = 1
   const requests: Array<{ url: string; headers: Record<string, string>; body: string }> = []
 
-  const timer = createPageTimer({
+  const options: PageTimerOptions = {
     endpoint: 'https://id.estiva.app/timing',
     release: 'ded93b9c',
     token: () => 'qa-1-token',
@@ -61,7 +61,8 @@ function harness(
       return {}
     },
     ...overrides,
-  })
+  }
+  const timer = createPageTimer(options)
 
   /** Move the clock, running each timer that falls due on the way. */
   function advance(ms: number) {
@@ -78,7 +79,12 @@ function harness(
 
   return {
     timer,
+    options,
     requests,
+    /** Placeholders on the page with no change seen, as a page that drew them before the timer started. */
+    setPlaceholders(n: number) {
+      placeholders = n
+    },
     bodies: () => requests.map((r) => JSON.parse(r.body)),
     advance,
     /** The page draws or clears placeholders now, as a DOM change. */
@@ -422,4 +428,45 @@ test('a real tab carries the open across the sign-in pass once, and only if the 
 
   storage.set('estiva.pageTimer.carried', '{not json')
   assert.equal(tabPage(storage, 3_000_000, 0).carried?.(), undefined)
+
+  // A coarse clock: the next page seems to start 40 ms before the leave.
+  tabPage(storage, 4_000_000, 300).carry?.({ how: 'new-tab', start: 0 })
+  assert.deepEqual(tabPage(storage, 4_000_260, 0).carried?.(), { how: 'new-tab', start: -260 })
+})
+
+test('a page load is still timed when the tab’s storage is blocked', async () => {
+  const h = harness({}, { how: 'reload' })
+  const timer = createPageTimer({
+    ...h.options,
+    page: { ...h.options.page, carried: () => { throw new Error('SecurityError: storage blocked') } },
+  })
+  timer.loaded()
+  h.placeholders(1)
+  h.advance(400)
+  h.placeholders(0)
+  h.advance(1000)
+  await flush()
+  assert.deepEqual(h.bodies().map((b) => [b.how, b.waitMs]), [['reload', 400]])
+})
+
+test('an open carried from inside the app sees the placeholders the new page drew before the timer started', async () => {
+  const h = harness({}, { carried: { how: 'in-app', start: -300 } })
+  h.setPlaceholders(2) // drawn at boot, before loaded()
+  h.timer.loaded()
+  h.advance(500)
+  h.placeholders(0)
+  h.advance(1000)
+  await flush()
+  assert.deepEqual(h.bodies().map((b) => [b.how, b.waitMs, b.ready]), [['in-app', 800, 'placeholder-gone']])
+})
+
+test('a picture number later than the live page is not sent', async () => {
+  const h = harness({ picture: () => 5000 })
+  h.timer.loaded()
+  h.placeholders(1)
+  h.advance(400)
+  h.placeholders(0)
+  h.advance(1000)
+  await flush()
+  assert.equal('pictureMs' in (h.bodies()[0] ?? {}), false)
 })

@@ -141,8 +141,8 @@ const MAX_KEPT = 50
 interface Open {
   how: OpenHow
   start: number
-  /** This page's load, not an open inside it: the only open a saved picture belongs to. */
-  load: boolean
+  /** The open this document loaded with (a new tab, a reload, or one carried across sign-in): the only one a saved picture belongs to. */
+  fresh: boolean
   sawPlaceholder: boolean
   /** When the placeholders last went, while none has come back. */
   goneAt: number | undefined
@@ -202,8 +202,8 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
         waitMs: Math.max(0, Math.round(at - done.start)),
         ready,
       }
-      const shown = done.load ? options.picture?.() : undefined
-      if (typeof shown === 'number' && Number.isFinite(shown) && shown >= done.start)
+      const shown = done.fresh ? options.picture?.() : undefined
+      if (typeof shown === 'number' && Number.isFinite(shown) && shown >= done.start && shown <= at)
         body.pictureMs = Math.round(shown - done.start)
       deliver(body).catch(() => {
         // A timing that cannot be sent is dropped.
@@ -275,7 +275,7 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     end()
   }
 
-  function begin(how: OpenHow, start: number, load: boolean): void {
+  function begin(how: OpenHow, start: number, fresh: boolean): void {
     try {
       if (open) leave(open)
       if (page.hidden()) return
@@ -283,7 +283,7 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
       const current: Open = {
         how,
         start,
-        load,
+        fresh,
         sawPlaceholder: false,
         goneAt: undefined,
         changedAt: now,
@@ -309,8 +309,9 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
         ),
       )
       // An open inside the app is read from the page's first change on: the
-      // page on screen at the navigation is still the one being left.
-      if (how !== 'in-app') check()
+      // page on screen at the navigation is still the one being left. A new
+      // document has no page being left, whatever opened it.
+      if (fresh) check()
     } catch {
       end()
     }
@@ -319,8 +320,13 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
   return {
     loaded() {
       try {
-        const carried = page.carried?.()
-        if (carried) begin(carried.how, carried.start, carried.how !== 'in-app')
+        let carried: CarriedOpen | undefined
+        try {
+          carried = page.carried?.()
+        } catch {
+          // Storage the browser blocks: the load is still timed, from its own start.
+        }
+        if (carried) begin(carried.how, carried.start, true)
         else begin(page.loadHow(), 0, true)
       } catch {
         // Never break the page while timing it.
@@ -428,7 +434,7 @@ export function browserPage(win: TimedWindow): TimedPage {
       if (how !== 'new-tab' && how !== 'reload' && how !== 'in-app') return undefined
       if (typeof startAt !== 'number' || typeof leftAt !== 'number') return undefined
       // A sign-in that took a person's passkey, or was left and come back to, is not the wait we time.
-      if (origin - leftAt > CARRY_FOR_MS || origin < leftAt || startAt > leftAt) return undefined
+      if (origin - leftAt > CARRY_FOR_MS || origin < leftAt - CLOCK_SLACK_MS || startAt > leftAt) return undefined
       return { how, start: startAt - origin }
     },
   }
@@ -439,6 +445,9 @@ const CARRIED_KEY = 'estiva.pageTimer.carried'
 
 /** How soon after leaving the next page must start for the open to go on: a sign-in pass with no one asked is well under this. */
 const CARRY_FOR_MS = 10_000
+
+/** Browsers coarsen their clocks (Firefox's resistFingerprinting to 100 ms): the next page may seem to start just before the leave. */
+const CLOCK_SLACK_MS = 100
 
 /** An open waiting out a sign-in pass, in milliseconds since 1970. */
 interface KeptOpen {
