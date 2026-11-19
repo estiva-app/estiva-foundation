@@ -115,6 +115,7 @@ export {
   browserPage,
   createPageTimer,
   PLACEHOLDER_SELECTOR,
+  type CarriedOpen,
   type OpenHow,
   type OpenReady,
   type PageTimer,
