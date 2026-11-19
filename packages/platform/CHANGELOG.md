@@ -1,5 +1,21 @@
 # @estiva-app/platform
 
+## 0.11.0
+
+The page-open timer counts a new tab's sign-in pass, and Peek's saved picture
+is a second number (Miky, 19 Nov).
+
+- `pageTimer.leaving()`: call it just before the tab leaves for Estiva ID to
+  sign in. The open still running goes on in the page the tab comes back to,
+  from its own start, as the speed kit counts it; nothing is sent from the
+  page that left. `browserPage(window)` keeps it in the tab's
+  `sessionStorage`, taken once, and only if the next page starts within 10 s
+  of leaving (a sign-in that asked for a passkey is not the wait we time).
+- `picture: () => number | undefined`: when the page load drew a saved
+  picture of the page first, the moment it showed on the page's clock. The
+  load's timing then carries `pictureMs`, from the same start as `waitMs`;
+  an open inside the app never does.
+
 ## 0.10.0
 
 A page-open timer beside the error reporter: how long a person waited for a

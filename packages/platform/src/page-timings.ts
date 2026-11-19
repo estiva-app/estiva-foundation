@@ -10,7 +10,13 @@
  * their browser, and rebuilds it from its own list.
  *
  * - **Start:** the page's own start for a new tab or a reload; the moment the
- *   app navigates for an open inside it (a click, back or forward).
+ *   app navigates for an open inside it (a click, back or forward). A tab that
+ *   passes through Estiva ID to sign in counts from its first page, before the
+ *   pass, as the speed kit counts it (Miky, 19 Nov): the app calls
+ *   {@link PageTimer.leaving} as it leaves, and the open goes on in the page it
+ *   comes back to.
+ * - **The saved picture** (Peek): when a page load drew a saved copy of the page
+ *   first, the time it showed is a second number, never the wait.
  * - **Ready:** the moment the last loading placeholder outside the sidebar went
  *   (the speed kit's recorder reads the same selector), once none has come back
  *   for a short quiet spell.
@@ -42,6 +48,15 @@ export interface PageTimingBody {
   how: OpenHow
   waitMs: number
   ready: OpenReady
+  /** Only for a page load that drew a saved picture of the page first: when it showed, from the same start as the wait. */
+  pictureMs?: number
+}
+
+/** An open carried to the tab's next page across a sign-in pass, in that page's own clock. */
+export interface CarriedOpen {
+  how: OpenHow
+  /** When it started, in milliseconds on the page's own clock (`now()`); before the page, so below zero. */
+  start: number
 }
 
 /** A loading placeholder, as the speed kit's recorder finds one (peek-app `scripts/app-speed-recorder.js`). */
@@ -59,6 +74,10 @@ export interface TimedPage {
   watch(onChange: () => void): () => void
   /** How this page load started. */
   loadHow(): 'new-tab' | 'reload'
+  /** Keeps an open for the tab's next page, which comes back from Estiva ID's sign-in. */
+  carry?(open: CarriedOpen): void
+  /** The open the tab's previous page carried here, once: nothing if none, or if it is too old to be the same wait. */
+  carried?(): CarriedOpen | undefined
 }
 
 export interface PageTimerTimers {
@@ -78,6 +97,12 @@ export interface PageTimerOptions {
   /** Every screen the app names; anything else is sent as `<unknown>`. */
   screens: readonly string[]
   page: TimedPage
+  /**
+   * When this page load drew a saved picture of the page, on the page's own
+   * clock; nothing when it drew none. Read when the load's open is sent, and
+   * sent beside the wait as `pictureMs`.
+   */
+  picture?: () => number | undefined
   /** At most this many timings per tab in an hour. Default 120. */
   maxPerHour?: number
   /** How long no placeholder may be back before the page counts as ready. Default 1000 ms. */
@@ -97,6 +122,12 @@ export interface PageTimer {
   loaded(): void
   /** Time an open inside the app, from now: call it as the app navigates. */
   opened(): void
+  /**
+   * The tab is leaving for Estiva ID to sign in and will come back: the open
+   * still running goes on in the page it comes back to, from its own start.
+   * Call it just before navigating away; nothing is sent from this page.
+   */
+  leaving(): void
   /** Stop watching; an open still running is thrown away. */
   stop(): void
   /** The bodies sent so far, newest last (for a probe). */
@@ -110,6 +141,8 @@ const MAX_KEPT = 50
 interface Open {
   how: OpenHow
   start: number
+  /** This page's load, not an open inside it: the only open a saved picture belongs to. */
+  load: boolean
   sawPlaceholder: boolean
   /** When the placeholders last went, while none has come back. */
   goneAt: number | undefined
@@ -169,6 +202,9 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
         waitMs: Math.max(0, Math.round(at - done.start)),
         ready,
       }
+      const shown = done.load ? options.picture?.() : undefined
+      if (typeof shown === 'number' && Number.isFinite(shown) && shown >= done.start)
+        body.pictureMs = Math.round(shown - done.start)
       deliver(body).catch(() => {
         // A timing that cannot be sent is dropped.
       })
@@ -239,7 +275,7 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
     end()
   }
 
-  function begin(how: OpenHow, start: number): void {
+  function begin(how: OpenHow, start: number, load: boolean): void {
     try {
       if (open) leave(open)
       if (page.hidden()) return
@@ -247,6 +283,7 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
       const current: Open = {
         how,
         start,
+        load,
         sawPlaceholder: false,
         goneAt: undefined,
         changedAt: now,
@@ -282,14 +319,26 @@ export function createPageTimer(options: PageTimerOptions): PageTimer {
   return {
     loaded() {
       try {
-        begin(page.loadHow(), 0)
+        const carried = page.carried?.()
+        if (carried) begin(carried.how, carried.start, carried.how !== 'in-app')
+        else begin(page.loadHow(), 0, true)
       } catch {
         // Never break the page while timing it.
       }
     },
     opened() {
       try {
-        begin('in-app', page.now())
+        begin('in-app', page.now(), false)
+      } catch {
+        // Never break the page while timing it.
+      }
+    },
+    leaving() {
+      try {
+        const current = open
+        if (!current) return
+        end()
+        page.carry?.({ how: current.how, start: current.start })
       } catch {
         // Never break the page while timing it.
       }
@@ -309,7 +358,13 @@ export interface TimedWindow {
     addEventListener(type: 'visibilitychange', listener: () => void): void
     removeEventListener(type: 'visibilitychange', listener: () => void): void
   }
-  performance: { now(): number; getEntriesByType(type: 'navigation'): ArrayLike<object> }
+  performance: { now(): number; timeOrigin?: number; getEntriesByType(type: 'navigation'): ArrayLike<object> }
+  /** The tab's own storage, where an open waits out a sign-in pass. Without it, a pass is not counted. */
+  sessionStorage?: {
+    getItem(key: string): string | null
+    setItem(key: string, value: string): void
+    removeItem(key: string): void
+  }
   MutationObserver: new (callback: () => void) => {
     observe(
       target: unknown,
@@ -349,5 +404,45 @@ export function browserPage(win: TimedWindow): TimedPage {
       const entry = win.performance.getEntriesByType('navigation')[0] as { type?: unknown } | undefined
       return entry?.type === 'reload' ? 'reload' : 'new-tab'
     },
+    carry(open) {
+      const origin = win.performance.timeOrigin
+      if (origin === undefined || !win.sessionStorage) return
+      const kept: KeptOpen = { how: open.how, startAt: origin + open.start, leftAt: origin + win.performance.now() }
+      win.sessionStorage.setItem(CARRIED_KEY, JSON.stringify(kept))
+    },
+    carried() {
+      const origin = win.performance.timeOrigin
+      const storage = win.sessionStorage
+      if (origin === undefined || !storage) return undefined
+      const raw = storage.getItem(CARRIED_KEY)
+      if (raw === null) return undefined
+      // Taken once: the tab's later pages are their own opens.
+      storage.removeItem(CARRIED_KEY)
+      let kept: Partial<KeptOpen> | null
+      try {
+        kept = JSON.parse(raw) as Partial<KeptOpen> | null
+      } catch {
+        return undefined
+      }
+      const { how, startAt, leftAt } = kept ?? {}
+      if (how !== 'new-tab' && how !== 'reload' && how !== 'in-app') return undefined
+      if (typeof startAt !== 'number' || typeof leftAt !== 'number') return undefined
+      // A sign-in that took a person's passkey, or was left and come back to, is not the wait we time.
+      if (origin - leftAt > CARRY_FOR_MS || origin < leftAt || startAt > leftAt) return undefined
+      return { how, start: startAt - origin }
+    },
   }
+}
+
+/** Where a page leaving for sign-in keeps its open for the next one, in the tab's `sessionStorage`. */
+const CARRIED_KEY = 'estiva.pageTimer.carried'
+
+/** How soon after leaving the next page must start for the open to go on: a sign-in pass with no one asked is well under this. */
+const CARRY_FOR_MS = 10_000
+
+/** An open waiting out a sign-in pass, in milliseconds since 1970. */
+interface KeptOpen {
+  how: OpenHow
+  startAt: number
+  leftAt: number
 }
