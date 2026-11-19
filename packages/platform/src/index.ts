@@ -111,3 +111,16 @@ export {
   type ReportHow,
   type ReportStep,
 } from './error-reports.js'
+export {
+  browserPage,
+  createPageTimer,
+  PLACEHOLDER_SELECTOR,
+  type OpenHow,
+  type OpenReady,
+  type PageTimer,
+  type PageTimerOptions,
+  type PageTimerTimers,
+  type PageTimingBody,
+  type TimedPage,
+  type TimedWindow,
+} from './page-timings.js'
