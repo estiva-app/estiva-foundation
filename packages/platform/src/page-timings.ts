@@ -282,7 +282,7 @@ export interface TimedWindow {
     addEventListener(type: 'visibilitychange', listener: () => void): void
     removeEventListener(type: 'visibilitychange', listener: () => void): void
   }
-  performance: { now(): number; getEntriesByType(type: 'navigation'): ArrayLike<{ type?: string }> }
+  performance: { now(): number; getEntriesByType(type: 'navigation'): ArrayLike<object> }
   MutationObserver: new (callback: () => void) => {
     observe(target: unknown, options: { childList: boolean; subtree: boolean; attributes: boolean }): void
     disconnect(): void
@@ -309,6 +309,9 @@ export function browserPage(win: TimedWindow): TimedPage {
         win.document.removeEventListener('visibilitychange', onChange)
       }
     },
-    loadHow: () => (win.performance.getEntriesByType('navigation')[0]?.type === 'reload' ? 'reload' : 'new-tab'),
+    loadHow() {
+      const entry = win.performance.getEntriesByType('navigation')[0] as { type?: unknown } | undefined
+      return entry?.type === 'reload' ? 'reload' : 'new-tab'
+    },
   }
 }
