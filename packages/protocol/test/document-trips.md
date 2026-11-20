@@ -16,7 +16,12 @@ Found by the test on 20 Nov 2026 (TES-3), on 10,000 documents a rule.
 | A mark on a marker-like word: a bold `*`, a link on `[a](b)` | message, description | The same: `***` around a `*` reads as an empty bold. | As above. |
 | A paragraph line that starts with `# `, `## `, `- `, `1. ` or `> ` | message, description | §13.2 reads the prefix as a heading, an item or a quote, and has no escape for it. (A description escapes a box and a callout line only.) | An editor turns the prefix into that block as you type it, so a paragraph rarely starts with one. |
 | A heading of level 3 | message, description | §13.2 has `# ` and `## ` only; `###` is text. | Only an editor makes one; the agent keeps it whole. |
+| An empty paragraph (an empty line an editor keeps) | message, description | Text separates blocks by blank lines, so an empty one has no spelling. | The agent keeps it as it was while the text around it is unchanged. |
 | A picture or file, a block from a later version | message, description | No spelling (§13.3, "A description as text": "No spelling"). | The agent keeps the block whole and refuses an edit around it. |
 
-Two differences nobody can see are not counted as a change (`documentShape`):
-which runs a line of text is split into, and the marks on a line break.
+Three differences nobody can see are not counted as a change (`documentShape`):
+which runs a line of text is split into, the marks on a line break, and the
+order a run's marks are listed in.
+
+Fixed rather than listed: a description read back over itself gave every list
+item a new id (protocol 0.63.0).

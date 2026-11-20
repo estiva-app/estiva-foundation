@@ -6,8 +6,17 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 
 ## 0.63.0 — 2026-11-20
 
-**Wire behaviour: none written; nothing new read.** Only `/testing` changes.
+**Wire behaviour: none new written; nothing new read.** A block document read
+back from text over its previous version now keeps the ids of the blocks inside
+a list (and any block's children) that it kept before only for the list itself.
 
+- Fixed: `markerTextToBlockDocument(text, previous)` and
+  `descriptionTextToBlockDocument(text, previous)` gave every list item a new
+  id, even in a list that did not change, so a comment anchored to an item came
+  loose whenever the agent edited a description or text was pasted over it. A
+  block that keeps an old block's id now lends its children the old children's
+  ids by the same two passes (identical text, then same place). Found by the
+  test below.
 - `documentArb({ form })` makes up block documents: headings, lists nested up
   to three deep, checklists, callouts, tables, code, links on words, mentions,
   pictures and blocks from a later version, with marks on some words, and

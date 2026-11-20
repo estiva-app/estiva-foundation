@@ -413,14 +413,15 @@ function listArb(form: DocumentForm): fc.Arbitrary<Draft> {
 
 function tableArb(form: DocumentForm): fc.Arbitrary<Draft> {
   return fc.integer({ min: 1, max: 3 }).chain((width) =>
-    fc.array(fc.array(inlineArb(form), { minLength: width, maxLength: width }), { minLength: 2, maxLength: 4 }).map((rows) => ({
+    fc.array(fc.array(fc.oneof({ weight: 5, arbitrary: inlineArb(form) }, { weight: 1, arbitrary: fc.constant<Run[]>([]) }), { minLength: width, maxLength: width }), { minLength: 2, maxLength: 4 }).map((rows) => ({
       type: 'table',
       content: rows.map((cells, r) => ({
         type: 'tableRow',
         content: cells.map((text) => ({
           type: r === 0 ? 'tableHeader' : 'tableCell',
           attrs: { colspan: 1, rowspan: 1 },
-          content: [{ type: 'paragraph', content: text }],
+          // An editor saves an empty cell as a paragraph with no text.
+          content: [text.length ? { type: 'paragraph', content: text } : { type: 'paragraph' }],
         })),
       })),
     })),
@@ -462,6 +463,8 @@ function blockArb(form: DocumentForm): fc.Arbitrary<Draft> {
             attrs: { url: `/media/${SHA}.png`, m: 'image/png', x: SHA, size, ...(alt ? { alt } : {}), ...(filename ? { filename } : {}) },
           })),
       },
+      // An empty line, as Enter twice saves it; text has no spelling for one.
+      { weight: 1, arbitrary: fc.constant({ type: 'paragraph' }) },
       // A block from a later version, which every reader carries whole (§13.3).
       { weight: 1, arbitrary: inlineArb(form).map((content) => ({ type: 'widget', attrs: { app: 'later', n: 1 }, content })) },
     )
@@ -503,7 +506,9 @@ export function documentShape(doc: BlockDocument, options: { ids?: boolean } = {
     if (!Array.isArray(content)) return out
     const runs = content.length > 0 && (content as { type: string }[]).every((n) => n.type === 'text')
     if (!runs) return { ...out, content: (content as Block[]).map(shape) }
-    const split = (content as Run[]).flatMap((r) => r.text.split(/(\n)/).map((text) => (text === '\n' ? run(text) : { ...r, text })))
+    // Marks as a set: an editor lists them in its schema's order, protocol in its own, and both draw the same.
+    const sorted = (r: Run): Run => (r.marks ? { ...r, marks: [...r.marks].sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1)) } : r)
+    const split = (content as Run[]).flatMap((r) => r.text.split(/(\n)/).map((text) => (text === '\n' ? run(text) : sorted({ ...r, text }))))
     return { ...out, content: mergeRuns(split) }
   }
   return doc.content.map(shape)
