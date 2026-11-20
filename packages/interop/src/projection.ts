@@ -3552,6 +3552,8 @@ function buildObject(args: {
 
 /** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
 const DELETED_FIELD = 'deleted'
+/** A file's change (§6.2): what a Delete on a file kept in order is written as, whatever a listing names. */
+const KIND_FILE_CHANGE = 1851
 
 /**
  * An addressable file's actions, each with what its field holds now, however
@@ -6651,7 +6653,9 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
     if (replyTo) return `"${declared.label}" is not a comment, so it cannot reply to one.`
     if (args.prev === undefined) return `"${declared.label}" follows the file's last delete or restore, or its first record: pass its prev.`
     if (!records) return 'That app does not say how its records are written.'
-    const asChange: ManifestAction = { ...declared, emits: { kind: records.changeKind, field: DELETED_FIELD }, input: { type: 'string' } }
+    // A file's change is a `kind:1851` (§6.2): never the kind a listing names, which could be a `kind:5` again or a profile.
+    if (records.changeKind !== KIND_FILE_CHANGE) return `"${declared.label}" is written as a kind ${KIND_FILE_CHANGE} change, which that app does not say it writes.`
+    const asChange: ManifestAction = { ...declared, emits: { kind: KIND_FILE_CHANGE, field: DELETED_FIELD }, input: { type: 'string' } }
     return buildOneActionEvent({
       ...args,
       value: 'true',
