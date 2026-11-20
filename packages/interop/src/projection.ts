@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
+import { BASE_TYPE_OF_KIND, FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -1612,8 +1612,9 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'delete',
       label: 'Delete',
       description:
-        'Ask the relay to delete this file. The relay decides — only its author, or the owner of ' +
-        'an agent that wrote it, may — and its comments stay as separate events.',
+        'Delete this file. Where the relay keeps topics in order it is marked deleted, by anyone in its team, ' +
+        'stays on its lists and can be restored; elsewhere the relay is asked to delete it and decides — only ' +
+        'its author, or the owner of an agent that wrote it, may. Its comments stay as separate events.',
       effect: 'destructive',
       appliesTo: [String(KIND_BARE_FILE)],
       /*
@@ -3551,6 +3552,8 @@ function buildObject(args: {
 
 /** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
 const DELETED_FIELD = 'deleted'
+/** A file's change (§6.2): what a Delete on a file kept in order is written as, whatever a listing names. */
+const KIND_FILE_CHANGE = 1851
 
 /**
  * An addressable file's actions, each with what its field holds now, however
@@ -6549,10 +6552,27 @@ export interface ActionEventArgs {
  */
 export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | string {
   const declared = args.manifest.actions?.find((a) => a.id === args.actionId)
+  if (declared && marksDeleted(declared, args)) return buildOneActionEvent(args)
   if (declared?.emits.listed === true && (declared.emits.kind === KIND_DELETION || isCreationAction(declared))) {
     return `"${declared.label}" is followed by a team command, so it is built with buildActionEvents.`
   }
   return buildOneActionEvent(args)
+}
+
+/**
+ * Whether an older listing's Delete, declared as a `kind:5`, is written as
+ * the file's `deleted` change instead (SPEC §7.3, §6.5): on a file whose type
+ * the relay keeps in order (`args.inOrder`), which refuses a `kind:5` on it.
+ * That change marks the file only — nothing is taken off a team's list — and
+ * a restore is the same field set back to empty (`setDeleted`). A Delete
+ * declared as the `deleted` field is already a change, built as one.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
+ */
+function marksDeleted(declared: ManifestAction, args: Pick<ActionEventArgs, 'inOrder' | 'kind'>): boolean {
+  // By the file's type, not the shape of its id: the relay refuses a `kind:5` on any file of a type it keeps in order.
+  const type = BASE_TYPE_OF_KIND[args.kind]
+  return declared.emits.kind === KIND_DELETION && type !== undefined && (args.inOrder ?? []).includes(type)
 }
 
 /** An action that makes a new object rather than changing one — a form. */
@@ -6587,7 +6607,8 @@ export function buildActionEvents(
   const first = buildOneActionEvent(args)
   if (typeof first === 'string') return first
   const declared = args.manifest.actions!.find((a) => a.id === args.actionId)!
-  if (declared.emits.listed !== true) return [first]
+  // A delete that marks the file takes it off no team's list, so a restore brings back exactly what was there.
+  if (declared.emits.listed !== true || marksDeleted(declared, args)) return [first]
 
   if (declared.emits.kind === KIND_DELETION) {
     if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the teams that list it.`
@@ -6625,6 +6646,21 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   const appliesTo = Array.isArray(declared.appliesTo) ? declared.appliesTo : [declared.appliesTo]
   if (!appliesTo.includes(String(kind))) {
     return `"${declared.label}" does not apply to a kind ${kind}.`
+  }
+
+  // A `kind:5` Delete on a file kept in order: built as its `deleted` change, `true`, whatever the confirm passed (§7.3).
+  if (marksDeleted(declared, args)) {
+    if (replyTo) return `"${declared.label}" is not a comment, so it cannot reply to one.`
+    if (args.prev === undefined) return `"${declared.label}" follows the file's last delete or restore, or its first record: pass its prev.`
+    if (!records) return 'That app does not say how its records are written.'
+    // A file's change is a `kind:1851` (§6.2): never the kind a listing names, which could be a `kind:5` again or a profile.
+    if (records.changeKind !== KIND_FILE_CHANGE) return `"${declared.label}" is written as a kind ${KIND_FILE_CHANGE} change, which that app does not say it writes.`
+    const asChange: ManifestAction = { ...declared, emits: { kind: KIND_FILE_CHANGE, field: DELETED_FIELD }, input: { type: 'string' } }
+    return buildOneActionEvent({
+      ...args,
+      value: 'true',
+      manifest: { ...manifest, actions: (manifest.actions ?? []).map((a) => (a === declared ? asChange : a)) },
+    })
   }
 
   const isCreation = isCreationAction(declared)

@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.64.0 — 2026-11-20
+
+**Wire behaviour: none new written; nothing new read.** Pages and topics get
+the type names the switch is read by.
+
+- Added: `DOCUMENT_TYPE` (`osnova.document`) and `TOPIC_TYPE`
+  (`osnova.topic`) beside `PROJECT_TYPE` and `ISSUE_TYPE`, for
+  `fileFieldsOf(reads, type, optedIn)` and `typeFieldsOptedIn(type, …)`. A tab
+  on a team the relay already keeps pages or topics in order tries them with
+  `?documentFields=on` or `?topicFields=on`, each apart from the others (ALL-3).
+- The id forms (`fileIdFormOf`: a comment's `O`/`o`, a `part`, an `embed`, a
+  team listing) already followed `inOrder` for every base type; rows now pin
+  them for a page and a topic.
+
 ## 0.63.1 — 2026-11-20
 
 **Wire behaviour: none new written; nothing new read.** Block ids read back

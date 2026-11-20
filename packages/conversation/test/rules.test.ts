@@ -161,6 +161,28 @@ describe('writing a comment', () => {
     assert.equal(buildComment(BOB, 0, { about: ISSUE, folder: FOLDER, body: 'x', inOrder: ['osnova.project'] }).tags.some((t) => t[0] === 'O'), false)
   })
 
+  it('once pages and topics are kept in order, a comment on each names it in both forms, each by its own type (ALL-3)', () => {
+    for (const [kind, type] of [['30842', 'osnova.document'], ['30840', 'osnova.topic']]) {
+      const D = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
+      const about = `${kind}:${ALICE}:${D}`
+      const unsigned = buildComment(BOB, 1_700_500_000_042, { about, folder: FOLDER, body: 'hi', inOrder: ['osnova.document', 'osnova.topic'] })
+      assert.deepEqual(unsigned.tags.slice(0, 10), [
+        ['A', about],
+        ['K', kind],
+        ['P', ALICE],
+        ['O', D],
+        ['K', type],
+        ['a', about],
+        ['k', kind],
+        ['o', D],
+        ['k', type],
+        ['p', ALICE],
+      ], type)
+      const before = buildComment(BOB, 0, { about, folder: FOLDER, body: 'x', inOrder: ['osnova.project', 'osnova.issue'] })
+      assert.equal(before.tags.some((t) => t[0] === 'O' || t[0] === 'o'), false, `${type}: by its address alone before its switch`)
+    }
+  })
+
   it('refuses a Folder that is not a lowercase UUID v4 — a 1111 with no valid h is world-readable', () => {
     assert.throws(() => buildComment(BOB, 0, { about: ISSUE, folder: FOLDER.toUpperCase(), body: 'x' }))
     assert.throws(() => buildComment(BOB, 0, { about: ISSUE, folder: '', body: 'x' }))

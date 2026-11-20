@@ -5,8 +5,9 @@
  * A topic lists files from any Folder, one entry per file, by the file's id.
  * An entry is a `kind:1851` change on the topic: `a` and `O` name the topic,
  * `field` is `lists:<d>`, `value` is `true` or `false`, `h` is the topic's
- * Folder, then `ts`, then `["o", <d>]` naming the listed file. The newest
- * entry per topic and file counts (§6.3).
+ * Folder, then `ts`, then — where the relay keeps topics in order — `prev`,
+ * the change it follows (§6.13), then `["o", <d>]` naming the listed file.
+ * The newest entry per topic and file counts (§6.3).
  *
  * `O` is the file the change is about and `o` another file it points at
  * (why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-change-is-about-its-file-as-a-comment-is.md),
@@ -84,10 +85,27 @@ export interface ListHolder {
   folder: string
 }
 
+/**
+ * What a list entry is handed. `prev` is the change it follows (§6.13): the
+ * newest `lists:<d>` change on the topic for that file, or the topic's first
+ * record when the file was never on it — a listed file's `prev.lists` from
+ * {@link topicList}, or `prevsAfterSwitch(query, topic, [listsField(file)])`.
+ * Pass it where the relay keeps topics in order (`fileFieldsOf(reads,
+ * TOPIC_TYPE, …)`), and send through `writeChange` so a stale one is followed
+ * again; leave it out elsewhere, and the entry is written as before. Two
+ * people adding different files never clash: each file is its own field.
+ */
+export interface ListEntryArgs {
+  topic: ListHolder
+  file: string
+  note?: string
+  prev?: string
+}
+
 function entry(
   pubkey: string,
   createdAtMs: number,
-  args: { list: ListHolder; file: string; listed: boolean; note?: string },
+  args: { list: ListHolder; file: string; listed: boolean; note?: string; prev?: string },
 ): UnsignedEvent {
   const holder = ADDRESS.exec(args.list.address)
   if (!holder) throw new Error(`not a file address: ${JSON.stringify(args.list.address)}`)
@@ -96,6 +114,7 @@ function entry(
   // A reader ignores a file on its own list (§6.14): refuse it here rather than publish an entry that shows nothing.
   if (args.file === holder[3]) throw new Error('a file is not on its own list')
   if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) throw new Error(`not epoch milliseconds: ${createdAtMs}`)
+  if (args.prev !== undefined && !/^[0-9a-f]{64}$/.test(args.prev)) throw new Error(`not an event id: ${JSON.stringify(args.prev)}`)
   return {
     pubkey,
     created_at: Math.floor(createdAtMs / 1000),
@@ -107,6 +126,8 @@ function entry(
       ['value', args.listed ? 'true' : 'false'],
       ['h', args.list.folder],
       ['ts', String(createdAtMs)],
+      // Where `order:` and `look:` carry theirs (§6.14).
+      ...(args.prev ? [['prev', args.prev]] : []),
       ['o', args.file],
     ],
     // Empty unless the person wrote a note: each app says "added" and "removed" in its own words (§6.14).
@@ -118,21 +139,13 @@ function entry(
  * Put a file on a topic's list: `[kind:1851 lists:<d> = true]`, signed by
  * whoever adds it. `file` is the listed file's id (its `d`), from any Folder.
  */
-export function planListInTopic(
-  pubkey: string,
-  createdAtMs: number,
-  args: { topic: ListHolder; file: string; note?: string },
-): UnsignedEvent[] {
-  return [entry(pubkey, createdAtMs, { list: args.topic, file: args.file, listed: true, note: args.note })]
+export function planListInTopic(pubkey: string, createdAtMs: number, args: ListEntryArgs): UnsignedEvent[] {
+  return [entry(pubkey, createdAtMs, { list: args.topic, file: args.file, listed: true, note: args.note, prev: args.prev })]
 }
 
 /** Take a file off a topic's list: `[kind:1851 lists:<d> = false]`. {@link planListInTopic} in reverse. */
-export function planRemoveFromTopic(
-  pubkey: string,
-  createdAtMs: number,
-  args: { topic: ListHolder; file: string; note?: string },
-): UnsignedEvent[] {
-  return [entry(pubkey, createdAtMs, { list: args.topic, file: args.file, listed: false, note: args.note })]
+export function planRemoveFromTopic(pubkey: string, createdAtMs: number, args: ListEntryArgs): UnsignedEvent[] {
+  return [entry(pubkey, createdAtMs, { list: args.topic, file: args.file, listed: false, note: args.note, prev: args.prev })]
 }
 
 /** Which topics list a file: every entry naming its id in `o`. Fold with {@link listEntries}. */

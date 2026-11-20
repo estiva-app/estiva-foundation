@@ -277,6 +277,26 @@ describe('planMoveFromFolders', () => {
     assert.deepEqual(shape(before.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['a', KEPT], ['a', CHILD]] }])
   })
 
+  it('names a placed or moved page, and a listed topic, by its id once its type is kept in order, and by its address before (ALL-3)', () => {
+    const ID = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
+    const inOrder = ['osnova.document', 'osnova.topic']
+    const PAGE = `30842:${PUB}:${ID}`
+    const page = { ref: PAGE, address: PAGE }
+    const placed = plan({ file: page, from: [], inOrder })
+    assert.ok(placed.ok)
+    assert.deepEqual(shape(placed.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['o', ID]] }])
+    const moved = plan({ file: page, from: [{ id: A, hasState: true, addresses: [PAGE] }], listings: new Map([[A, [file(PAGE)]]]), inOrder })
+    assert.ok(moved.ok)
+    assert.deepEqual(shape(moved.events), [{ kind: 1852, tags: [['h', B], ['op', 'move'], ['from', A], ['o', ID]] }])
+    const before = plan({ file: page, from: [], inOrder: ['osnova.project', 'osnova.issue'] })
+    assert.ok(before.ok)
+    assert.deepEqual(shape(before.events), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', PAGE]] }], 'by its address before its switch')
+    // A topic changes team by its own move (one action, both lists); its listing is the same command.
+    const TOPIC = `30840:${PUB}:${ID}`
+    assert.deepEqual(shape(planPlaceFile(PUB, MS, { folder: B, address: TOPIC, hasState: true, inOrder })), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['o', ID]] }])
+    assert.deepEqual(shape(planPlaceFile(PUB, MS, { folder: B, address: TOPIC, hasState: true, inOrder: ['osnova.issue'] })), [{ kind: 1852, tags: [['h', B], ['op', 'add'], ['a', TOPIC]] }])
+  })
+
   it('sends one move per source, each naming what that source lists beneath the file', () => {
     const listings = new Map([
       [A, [file(PROJECT), file(CHILD, PROJECT)]],

@@ -171,6 +171,7 @@ export {
 export {
   planListInTopic,
   planRemoveFromTopic,
+  type ListEntryArgs,
   topicsOfFile,
   topicList,
   topicLists,

@@ -495,8 +495,14 @@ describe('a project named by its id once the relay keeps projects in order — S
     assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'add'], ['o', ID]])
   })
 
-  test('a deleted project is taken off its Folder by its id', () => {
-    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: PROJECT_BY_ID, listedIn: [{ id: TEAM, hasState: true }], inOrder: KEPT }))
-    assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'remove'], ['o', ID]])
+  test('an older listing’s kind:5 Delete of a project kept in order is its deleted change, and takes it off no Folder (SPEC §7.3)', () => {
+    const prev = 'd'.repeat(64)
+    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: PROJECT_BY_ID, listedIn: [{ id: TEAM, hasState: true }], inOrder: KEPT, prev }))
+    assert.equal(events.length, 1)
+    assert.equal(events[0].kind, 1851)
+    assert.deepEqual(
+      events[0].tags.filter((t) => ['O', 'field', 'value', 'prev'].includes(t[0])),
+      [['O', ID], ['field', 'deleted'], ['value', 'true'], ['prev', prev]],
+    )
   })
 })
