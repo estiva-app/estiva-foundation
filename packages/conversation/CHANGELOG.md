@@ -12,7 +12,10 @@ about a conversation.
   it, and recognises Peek's long link, `/topic/<kind>:<pubkey>:<d escaped>`, the
   one Peek writes for a file whose id a short link cannot carry. It cut the id
   at its first colon and knew only short links, so a message that showed such a
-  file's block dropped the card while its text still linked the file. No file on
+  file's block dropped the card while its text still linked the file. A link
+  now names one whole identity, never a tail of one: a short link its whole
+  trailing uuid, a long link its whole address. A `d` written as the tail of
+  another file's link no longer keeps its card under that link. No file on
   production has such an id today (census of 20 Nov: every file's id is a
   lowercase uuid), so nothing drawn changes now. Found by the new test that
   makes up links (`test/link.property.test.mjs`, TES-4). Peek, Ship and Leaf
