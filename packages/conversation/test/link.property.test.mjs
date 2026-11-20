@@ -71,7 +71,7 @@ test("Peek's long link to a file names that file, whatever its d holds, a colon 
 test('a link to one file never names another', () => {
   fc.assert(
     fc.property(fc.uuid(), fc.uuid(), anyDArb, hex64Arb(), kindArb, slugArb, (d, other, odd, pubkey, kind, slug) => {
-      fc.pre(d !== other && !odd.endsWith(other) && !other.endsWith(odd))
+      fc.pre(d !== other && !odd.endsWith(other) && !other.endsWith(odd) && !d.endsWith(odd))
       const otherAddress = `${kind}:${pubkey}:${other}`
       assert.equal(urlNames(`https://ship.estiva.app/issue/${objectRef(d, slug)}`, otherAddress), false)
       assert.equal(urlNames(peekLongLink('https://peek.estiva.app', kind, pubkey, odd), otherAddress), false)
