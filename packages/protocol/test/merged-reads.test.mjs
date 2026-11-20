@@ -38,7 +38,7 @@ const EVENTS = [
 ]
 
 /** A relay as measured: each filter answered alone, NIP-01 matching, newest first, runs end to end in filter order. */
-function fakeRelay({ status = 200, text } = {}) {
+function fakeRelay({ status = 200, text, events = EVENTS } = {}) {
   const calls = []
   const fetch = async (_url, init) => {
     const filters = JSON.parse(init.body)
@@ -46,7 +46,7 @@ function fakeRelay({ status = 200, text } = {}) {
     if (status !== 200) return { status, text: async () => text }
     const out = []
     for (const filter of filters) {
-      const matched = EVENTS.filter(
+      const matched = events.filter(
         (e) =>
           (!filter.kinds || filter.kinds.includes(e.kind)) &&
           (!filter.authors || filter.authors.includes(e.pubkey)) &&
@@ -226,6 +226,15 @@ test('a batch with an event two of its reads ask for stays one request, and each
   const merged = await together(merging, reads)
   assert.equal(calls.length, 1)
   assert.deepEqual(merged.map(ids), [['e5'], ['e5', 'e6'], ['e1']])
+})
+
+test('a read asking for no events never takes another read’s last event, even when that is the only cut that fits', async () => {
+  // e21 is the second read's only match and the first read's last: cut by position alone, the first read would lose it.
+  const events = [event(20, 300, 1851, [['a', 'x:2']]), event(21, 200, 1851, [['a', 'x:2'], ['a', 'x:1']])]
+  const reads = [[{ kinds: [1851], '#a': ['x:2'] }], [{ kinds: [1851], '#a': ['x:1'], limit: 0 }]]
+  const { merging } = fakeRelay({ events })
+  const merged = await together(merging, reads)
+  assert.deepEqual(merged.map(ids), [['e20', 'e21'], []])
 })
 
 test('a batch whose answer cannot be cut back for certain is asked again read by read, never guessed', async () => {
