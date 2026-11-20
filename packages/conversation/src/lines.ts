@@ -132,12 +132,43 @@ export function writtenUrlOf(run: Pick<RenderInline, 'text' | 'reference'>, reso
  * address's `d` (§7.2 puts the identity last, `…/<slug>-<d>`), and that `d` is
  * long enough to be one. A `d` comes from somebody's tag, so a short one would
  * otherwise match half the links in a body.
+ *
+ * The `d` is everything after the second colon, colons of its own included
+ * (TES-4). Each link names one whole identity, never a tail of one: a file's
+ * `d` is chosen by whoever publishes it, so a `d` written as the tail of
+ * another file's link would otherwise keep its card under that link.
+ * - A short link, `…/<slug>-<uuid>` or `…/<uuid>`, names the file whose `d`
+ *   is that whole uuid.
+ * - Peek's long link, `/topic/<kind>:<pubkey>:<d escaped>`, for a file whose
+ *   `d` a short link cannot carry, names that whole address and nothing else.
  */
 export function urlNames(url: string, address: string): boolean {
-  const d = address.split(':')[2] ?? ''
+  const d = address.split(':').slice(2).join(':')
   if (d.length < 8) return false
   const path = url.split(/[?#]/)[0].replace(/\/+$/, '')
-  return path.endsWith(`-${d}`) || path.endsWith(`/${d}`)
+  const last = path.slice(path.lastIndexOf('/') + 1)
+  let segment: string
+  try {
+    segment = decodeURIComponent(last)
+  } catch {
+    // A stray `%` names no address.
+    return false
+  }
+  if (LONG_LINK.test(segment)) return sameAddress(segment, address)
+  const uuid = SHORT_LINK.exec(last)?.[1]
+  return uuid !== undefined && uuid.toLowerCase() === d.toLowerCase()
+}
+
+/** Peek's long link's last segment, decoded: a whole address. */
+const LONG_LINK = /^\d{1,6}:[0-9a-f]{64}:/i
+/** A short link's last segment: a uuid, alone or after a slug's dash (SPEC §7.2). */
+const SHORT_LINK = /(?:^|-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+
+/** Two addresses alike but for the case of the pubkey, which a link may write either way. */
+function sameAddress(a: string, b: string): boolean {
+  const [kindA, pubkeyA = '', ...dA] = a.split(':')
+  const [kindB, pubkeyB = '', ...dB] = b.split(':')
+  return kindA === kindB && pubkeyA.toLowerCase() === pubkeyB.toLowerCase() && dA.join(':') === dB.join(':')
 }
 
 const BREAK: RenderInline = { text: '\n', marks: [] }
