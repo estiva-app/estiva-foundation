@@ -846,6 +846,13 @@ function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[
     split by `h` instead.
   */
   if (filters.some((filter) => '#h' in filter)) return null
+  /*
+    Nor a team's state (39000–39003): buzz widens one filter's answer to
+    named-only or system teams when it names them (`#d`, `#t:["system"]`,
+    `#P`), so one event can be in one run and not in another that matches it,
+    and a moved cut can be the only one that fits (review of PR #256).
+  */
+  if (filters.some((filter) => Array.isArray(filter.kinds) && filter.kinds.some((kind) => typeof kind === 'number' && kind >= 39000 && kind <= 39003))) return null
   const matchers = filters.map(matcherOf)
   if (matchers.some((matcher) => matcher === null)) return null
   const n = events.length

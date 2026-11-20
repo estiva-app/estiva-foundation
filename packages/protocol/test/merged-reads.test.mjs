@@ -237,6 +237,19 @@ test('a read asking for no events never takes another read’s last event, even 
   assert.deepEqual(merged.map(ids), [['e20', 'e21'], []])
 })
 
+test('reads of a team’s state are never cut by position: the relay answers them per filter beyond NIP-01', async () => {
+  // e31 names both people; buzz may put it in one read's answer and not the other's, so no cut is trusted.
+  const events = [event(30, 300, 39002, [['p', 'x']]), event(31, 200, 39002, [['p', 'x'], ['p', 'y']])]
+  const reads = [[{ kinds: [39002], '#p': ['x'] }], [{ kinds: [39002], '#p': ['y'] }]]
+  const { calls, merging } = fakeRelay({ events })
+  const merged = await together(merging, reads)
+  assert.deepEqual(
+    calls.map((c) => c.length),
+    [2, 1, 1],
+  )
+  assert.deepEqual(merged.map(ids), [['e30', 'e31'], ['e31']])
+})
+
 test('a batch whose answer cannot be cut back for certain is asked again read by read, never guessed', async () => {
   // A relay that matches differently from NIP-01 on a batch: an event none of the filters asks for.
   const stray = event(9, 999, 1851, [['a', 'x:9']])

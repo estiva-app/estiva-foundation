@@ -14,7 +14,8 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
   spent 69 requests where 57 were measured (SHI-61). Its runs are now cut by
   position, taken only when exactly one cut fits and no run is longer than its
   filter's `limit`. An answer that still cannot be cut is asked again read by
-  read, as before.
+  read, as before. A team's state (39000–39003) is never cut by position,
+  since the relay narrows those per filter, as it does `#h`.
 
 ## 0.65.1 — 2026-11-20
 
