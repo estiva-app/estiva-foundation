@@ -4,6 +4,16 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.65.1 — 2026-11-20
+
+**Wire behaviour: none new written; nothing new read.**
+
+- Fixed: a merge window whose timer never fired held its reads, and every
+  later one, for good. A test file putting its fake clock back while a read
+  waited did it: Ship's CI timed out four reaction tests (SHI-61). A window
+  more than a second past its time now goes out with the next read, which
+  also sends a hidden tab's held reads when the browser has slowed its timers.
+
 ## 0.65.0 — 2026-11-20
 
 **Wire behaviour: none new written; the same reads, fewer requests.** An app

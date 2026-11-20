@@ -192,6 +192,23 @@ test('a read the relay refuses fails alone: the reads sent with it still get the
   }
 })
 
+test('a merge window whose timer was lost goes out with the next read, and both reads are answered', async () => {
+  const { calls, merging } = fakeRelay()
+  // A fake clock put back while a read waits drops its timer, as a test file does in afterEach.
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const first = merging.query([{ kinds: [0], authors: [hex(7)] }])
+  mock.timers.reset()
+  const second = merging.query([{ kinds: [31990], '#k': ['30851'] }])
+  // Bounded: a stalled window fails the assertions below, it does not hang the run.
+  const settled = await Promise.race([
+    Promise.all([first, second]),
+    new Promise((resolve) => setTimeout(() => resolve('stalled'), 200)),
+  ])
+  assert.notEqual(settled, 'stalled')
+  assert.deepEqual(settled.map(ids), [['e1'], ['e3']])
+  assert.ok(calls.length >= 1)
+})
+
 test('reads whose answers could not be told apart go out separately, never guessed', async () => {
   // Same kind, and one author in both: an event of that author would belong to either.
   const reads = [[{ kinds: [0], authors: [hex(7), hex(8)] }], [{ kinds: [0], authors: [hex(7)] }]]
