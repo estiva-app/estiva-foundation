@@ -4,6 +4,25 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.65.0 — 2026-11-20
+
+**Wire behaviour: none new written; the same reads, fewer requests.** An app
+that opts in sends plain reads asked together as one `/query` with several
+filters, which the relay already answers; nothing an app publishes changes.
+
+- Added: `RelayOptions.mergeReadsMs` and `MERGE_READS_MS` (25 ms). With it set,
+  `query` holds a read whose every filter is plain (no `#h`, and one the
+  relay's matches can tell apart) for that long, sends the reads that arrived
+  meanwhile as one request of at most `MAX_FILTERS_PER_QUERY` filters, and
+  hands each read its own events. An identical read still waiting is asked
+  once; one already sent is never shared, so a read after a save sees it. A
+  request refused as a wait (rate-limited, busy) or that never reached the
+  relay fails each of its reads with that answer, so a caller's own wait-out
+  sees the same error as before; any other refusal is asked again read by
+  read, so only the refused read fails. Off by
+  default: an open spent 74–110 of a person's 300 requests a minute, and
+  merging cuts a Ship open by about 20% (SHI-61).
+
 ## 0.64.0 — 2026-11-20
 
 **Wire behaviour: none new written; nothing new read.** Pages and topics get
