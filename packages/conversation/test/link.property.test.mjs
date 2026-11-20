@@ -71,11 +71,34 @@ test("Peek's long link to a file names that file, whatever its d holds, a colon 
 test('a link to one file never names another', () => {
   fc.assert(
     fc.property(fc.uuid(), fc.uuid(), anyDArb, hex64Arb(), kindArb, slugArb, (d, other, odd, pubkey, kind, slug) => {
-      fc.pre(d !== other && !odd.endsWith(other) && !other.endsWith(odd) && !d.endsWith(odd))
+      fc.pre(d !== other && odd !== other)
       const otherAddress = `${kind}:${pubkey}:${other}`
       assert.equal(urlNames(`https://ship.estiva.app/issue/${objectRef(d, slug)}`, otherAddress), false)
       assert.equal(urlNames(peekLongLink('https://peek.estiva.app', kind, pubkey, odd), otherAddress), false)
       assert.equal(urlNames(peekLongLink('https://peek.estiva.app', kind, pubkey, d), `${kind}:${pubkey}:${odd}`), false)
+    }),
+    settings,
+  )
+})
+
+/*
+  Somebody else chooses a file's `d`. One written as the tail of another
+  file's link, or as that link's whole address, must not make the link name
+  their file, or their card would draw under a link that opens the other one.
+*/
+test("a d made to look like another file's link is not named by that link", () => {
+  fc.assert(
+    fc.property(anyDArb, fc.uuid(), hex64Arb(), hex64Arb(), kindArb, slugArb, fc.integer({ min: 1, max: 35 }), (theirD, d, theirs, mine, kind, slug, cut) => {
+      fc.pre(theirs !== mine)
+      const long = peekLongLink('https://peek.estiva.app', kind, theirs, theirD)
+      // Their long link's whole address, escaped or not, as my `d`.
+      assert.equal(urlNames(long, `${kind}:${mine}:${kind}:${theirs}:${encodeURIComponent(theirD)}`), false, long)
+      assert.equal(urlNames(long, `${kind}:${mine}:${kind}:${theirs}:${theirD}`), false, long)
+      // The tail of their short link as my `d`.
+      const short = `https://ship.estiva.app/issue/${objectRef(d, slug)}`
+      const tail = `issue/${objectRef(d, slug)}`.slice(-36 - cut)
+      if (tail !== d) assert.equal(urlNames(short, `${kind}:${mine}:${tail}`), false, `${short} vs ${tail}`)
+      if (d.slice(cut).length >= 8) assert.equal(urlNames(short, `${kind}:${mine}:${d.slice(cut)}`), false, `${short} vs ${d.slice(cut)}`)
     }),
     settings,
   )
