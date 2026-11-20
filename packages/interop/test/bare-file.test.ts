@@ -665,6 +665,17 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       ])
     })
 
+    it('a topic whose d is not an id is marked deleted too, since the relay refuses a kind:5 on any topic kept in order', () => {
+      const built = buildActionEvent({
+        manifest: BARE_MANIFEST, kind: KIND_BARE_FILE, address: TOPIC, objectAuthor: AUTHOR, folder: TEAM,
+        actionId: 'delete', value: '', pubkey: OTHER, createdAtMs: 1_700_000_000_000, inOrder: ['osnova.topic'], prev: ROOT,
+      })
+      assert.notEqual(typeof built, 'string', String(built))
+      const change = built as Exclude<typeof built, string>
+      assert.equal(change.kind, CHANGE_KIND)
+      assert.deepEqual(change.tags.filter((t) => ['field', 'value', 'prev'].includes(t[0])), [['field', 'deleted'], ['value', 'true'], ['prev', ROOT]])
+    })
+
     it('a Delete that names no change it follows is refused before it is sent', () => {
       assert.match(String(del(['osnova.topic'])), /prev/)
     })

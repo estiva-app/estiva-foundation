@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
+import { BASE_TYPE_OF_KIND, FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -1612,8 +1612,9 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'delete',
       label: 'Delete',
       description:
-        'Ask the relay to delete this file. The relay decides — only its author, or the owner of ' +
-        'an agent that wrote it, may — and its comments stay as separate events.',
+        'Delete this file. Where the relay keeps topics in order it is marked deleted, by anyone in its team, ' +
+        'stays on its lists and can be restored; elsewhere the relay is asked to delete it and decides — only ' +
+        'its author, or the owner of an agent that wrote it, may. Its comments stay as separate events.',
       effect: 'destructive',
       appliesTo: [String(KIND_BARE_FILE)],
       /*
@@ -6566,8 +6567,10 @@ export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | s
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
  */
-function marksDeleted(declared: ManifestAction, args: Pick<ActionEventArgs, 'inOrder' | 'address'>): boolean {
-  return declared.emits.kind === KIND_DELETION && fileIdFormOf(args.inOrder ?? [], args.address) !== undefined
+function marksDeleted(declared: ManifestAction, args: Pick<ActionEventArgs, 'inOrder' | 'kind'>): boolean {
+  // By the file's type, not the shape of its id: the relay refuses a `kind:5` on any file of a type it keeps in order.
+  const type = BASE_TYPE_OF_KIND[args.kind]
+  return declared.emits.kind === KIND_DELETION && type !== undefined && (args.inOrder ?? []).includes(type)
 }
 
 /** An action that makes a new object rather than changing one — a form. */
