@@ -32,7 +32,7 @@ import {
   type UnsignedEvent,
 } from '@estiva-app/protocol'
 import { refusalCode } from './folders.js'
-import { folderOf, type QueryFn } from './projection.js'
+import { SUMMARY_FIELD, inTargetFolder, targetFolders, type QueryFn } from './projection.js'
 
 /** The change event every Estiva app writes (SPEC §6.2). */
 const KIND_CHANGE = 1851
@@ -128,9 +128,16 @@ export function filesOf(events: readonly SignedEvent[], options: { withText?: bo
     if (!file) continue
     const O = tagValue(event, 'O')
     if (O !== undefined && O !== tagValue(file.root, 'd')) continue
-    if (tagValue(event, 'h') !== (folderOf(file.root) ?? undefined)) continue
+    // A root that names no team cannot be checked, and §6.2 folds its changes
+    // as before — but never a summary (§6.12) or a delete (§6.5), which need a
+    // team. `projectEvents` reads them the same way, by the same check; this
+    // read dropped every such change, so a renamed bare file listed its first
+    // title (TES-2).
+    const folders = targetFolders(file.root)
+    if (!inTargetFolder(event, folders)) continue
     for (const set of fieldsSetBy(event)) {
       if (set.field === TEXT_FIELD && !options.withText) continue
+      if (!folders && (set.field === SUMMARY_FIELD || set.field === DELETED_FIELD)) continue
       const held = file.fields[set.field]
       if (held && !newer(event, held.event)) continue
       file.fields[set.field] = { ...set, id: event.id, pubkey: event.pubkey, at: changedAt(event), event }

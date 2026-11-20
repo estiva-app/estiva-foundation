@@ -109,16 +109,21 @@ function seenInSharedRead(object) {
   }
 }
 
-test('the list read and the shared read give the same title, status, summary, assignee, parent, archived and deleted', () => {
-  fc.assert(
-    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
-      const list = filesOf(events).sort(byAddress).map(seenInList)
-      const shared = projected(events).map(seenInSharedRead)
-      assert.deepEqual(list, shared)
-    }),
-    settings,
-  )
-})
+// Also on ids with a colon: the shared read cut the id there when it read an
+// archive, so a file archived by a change naming it in `O` read as live (TES-2,
+// found by Ship's comparison with this read).
+for (const [ids, options] of [['', {}], [', on file ids with a colon in them', { idsWithColons: true }]]) {
+  test(`the list read and the shared read give the same title, status, summary, assignee, parent, archived and deleted${ids}`, () => {
+    fc.assert(
+      fc.property(historyArb(options).chain((history) => deliveryArb(history.events)), (events) => {
+        const list = filesOf(events).sort(byAddress).map(seenInList)
+        const shared = projected(events).map(seenInSharedRead)
+        assert.deepEqual(list, shared)
+      }),
+      settings,
+    )
+  })
+}
 
 test('the reads keep a file whose id has a colon in it whole', () => {
   fc.assert(

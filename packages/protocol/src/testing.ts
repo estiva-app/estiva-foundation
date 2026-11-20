@@ -61,6 +61,14 @@ interface RootPlan {
   kind: FileKind
   author: number
   team: number
+  /**
+   * How the first record names its team: `h` (most), Ship's global
+   * `buzz-channel` (SPEC §7.3), or not at all — all three are on the relay
+   * (estiva-ship's fixture: 1 of 184 records each for the last two).
+   */
+  placement: 'h' | 'buzz-channel' | 'none'
+  /** A project titled by upstream's `name` rather than `title` (REW-11); also on the relay. */
+  nameTag: boolean
   colon: boolean
   title: string
   /** A second version of the first record: its offset in seconds (0 = the same second) and its title. */
@@ -94,7 +102,14 @@ export function historyArb(options: HistoryOptions = {}): fc.Arbitrary<History> 
       kind: fc.constant(kind),
       author: fc.nat(peopleCount - 1),
       team: fc.nat(1),
-      colon: options.idsWithColons ? fc.boolean() : fc.constant(false),
+      // `buzz-channel` is a project's placement only (SPEC §7.3).
+      placement: fc.oneof(
+        { weight: 8, arbitrary: fc.constant<RootPlan['placement']>('h') },
+        { weight: 1, arbitrary: fc.constant<RootPlan['placement']>(kind === KIND_PROJECT ? 'buzz-channel' : 'h') },
+        { weight: 1, arbitrary: fc.constant<RootPlan['placement']>('none') },
+      ),
+      nameTag: kind === KIND_PROJECT ? fc.boolean() : fc.constant(false),
+      colon:options.idsWithColons ? fc.boolean() : fc.constant(false),
       title: fc.constantFrom(...TITLES),
       second: fc.option(fc.record({ after: fc.nat(2), title: fc.constantFrom(...TITLES) }), { freq: 4 }),
     })
@@ -148,7 +163,8 @@ function build(p: Plan, ids: string[]): History {
     const address = `${root.kind}:${pubkey}:${d}`
     // An issue is filed under the first project; a project and a document stand alone.
     const parent = root.kind === KIND_ISSUE ? files[0]?.address : undefined
-    const tags = (title: string) => [['d', d], ['title', title], ['h', team], ...(parent ? [['a', parent]] : [])]
+    const placed = root.placement === 'none' ? [] : [[root.placement, team]]
+    const tags = (title: string) => [['d', d], [root.nameTag ? 'name' : 'title', title], ...placed, ...(parent ? [['a', parent]] : [])]
     events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH, kind: root.kind, tags: tags(root.title), content: '', sig: '' })
     if (root.second) {
       events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH + root.second.after, kind: root.kind, tags: tags(root.second.title), content: '', sig: '' })
