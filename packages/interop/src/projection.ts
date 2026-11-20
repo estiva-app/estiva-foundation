@@ -6549,10 +6549,25 @@ export interface ActionEventArgs {
  */
 export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | string {
   const declared = args.manifest.actions?.find((a) => a.id === args.actionId)
+  if (declared && marksDeleted(declared, args)) return buildOneActionEvent(args)
   if (declared?.emits.listed === true && (declared.emits.kind === KIND_DELETION || isCreationAction(declared))) {
     return `"${declared.label}" is followed by a team command, so it is built with buildActionEvents.`
   }
   return buildOneActionEvent(args)
+}
+
+/**
+ * Whether an older listing's Delete, declared as a `kind:5`, is written as
+ * the file's `deleted` change instead (SPEC §7.3, §6.5): on a file whose type
+ * the relay keeps in order (`args.inOrder`), which refuses a `kind:5` on it.
+ * That change marks the file only — nothing is taken off a team's list — and
+ * a restore is the same field set back to empty (`setDeleted`). A Delete
+ * declared as the `deleted` field is already a change, built as one.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
+ */
+function marksDeleted(declared: ManifestAction, args: Pick<ActionEventArgs, 'inOrder' | 'address'>): boolean {
+  return declared.emits.kind === KIND_DELETION && fileIdFormOf(args.inOrder ?? [], args.address) !== undefined
 }
 
 /** An action that makes a new object rather than changing one — a form. */
@@ -6587,7 +6602,8 @@ export function buildActionEvents(
   const first = buildOneActionEvent(args)
   if (typeof first === 'string') return first
   const declared = args.manifest.actions!.find((a) => a.id === args.actionId)!
-  if (declared.emits.listed !== true) return [first]
+  // A delete that marks the file takes it off no team's list, so a restore brings back exactly what was there.
+  if (declared.emits.listed !== true || marksDeleted(declared, args)) return [first]
 
   if (declared.emits.kind === KIND_DELETION) {
     if (!args.listedIn) return `"${declared.label}" unlists what it deletes, and needs the teams that list it.`
@@ -6625,6 +6641,19 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   const appliesTo = Array.isArray(declared.appliesTo) ? declared.appliesTo : [declared.appliesTo]
   if (!appliesTo.includes(String(kind))) {
     return `"${declared.label}" does not apply to a kind ${kind}.`
+  }
+
+  // A `kind:5` Delete on a file kept in order: built as its `deleted` change, `true`, whatever the confirm passed (§7.3).
+  if (marksDeleted(declared, args)) {
+    if (replyTo) return `"${declared.label}" is not a comment, so it cannot reply to one.`
+    if (args.prev === undefined) return `"${declared.label}" follows the file's last delete or restore, or its first record: pass its prev.`
+    if (!records) return 'That app does not say how its records are written.'
+    const asChange: ManifestAction = { ...declared, emits: { kind: records.changeKind, field: DELETED_FIELD }, input: { type: 'string' } }
+    return buildOneActionEvent({
+      ...args,
+      value: 'true',
+      manifest: { ...manifest, actions: (manifest.actions ?? []).map((a) => (a === declared ? asChange : a)) },
+    })
   }
 
   const isCreation = isCreationAction(declared)

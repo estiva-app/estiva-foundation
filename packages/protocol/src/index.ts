@@ -157,6 +157,8 @@ export {
   relayFileReadsOf,
   PROJECT_TYPE,
   ISSUE_TYPE,
+  DOCUMENT_TYPE,
+  TOPIC_TYPE,
   type ProjectFields,
   type FileFieldsSwitch,
   projectFieldsOf,

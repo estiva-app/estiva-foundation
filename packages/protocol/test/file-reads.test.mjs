@@ -129,6 +129,18 @@ test('once the relay keeps issues in order too, issues switch on without any opt
   assert.equal(fileFieldsOf(reads, 'osnova.document', false), undefined, 'a type it does not name stays off')
 })
 
+test('a tab on a fenced team tries pages with ?documentFields=on and topics with ?topicFields=on, each apart', () => {
+  const held = new Map()
+  const storage = { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v), removeItem: (k) => held.delete(k) }
+  assert.equal(typeFieldsOptedIn(protocol.DOCUMENT_TYPE, '?documentFields=on', storage), true)
+  assert.equal(typeFieldsOptedIn(protocol.TOPIC_TYPE, '', storage), false, 'the pages’ word does not switch topics')
+  assert.equal(typeFieldsOptedIn(protocol.TOPIC_TYPE, '?topicFields=on', storage), true)
+  assert.equal(typeFieldsOptedIn(protocol.ISSUE_TYPE, '', storage), false, 'nor issues')
+  const reads = relayFileReadsOf(PROD_18_NOV)
+  assert.equal(fileFieldsOf(reads, protocol.TOPIC_TYPE, false), undefined, 'the relay names projects and issues only')
+  assert.deepEqual(fileFieldsOf(reads, protocol.TOPIC_TYPE, true), { text: true }, 'a topic is not found by its words unless the relay says so')
+})
+
 test('a tab opts in to issues with ?issueFields=on, apart from projects’ ?fields=on', () => {
   const held = new Map()
   const storage = { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v), removeItem: (k) => held.delete(k) }

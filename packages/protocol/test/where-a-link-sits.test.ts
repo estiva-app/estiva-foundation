@@ -246,6 +246,15 @@ describe('C26 — the card replaces the row (§13.6.2)', () => {
     assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(ISSUE, 'compact'), embedTag(ID, 'detailed')])
     assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)).map((e) => e.layout), ['compact', 'detailed'])
   })
+
+  it('once pages are kept in order, a page\'s card is written by its id and still draws under its reference (ALL-3)', () => {
+    const set: Embed[] = [{ value: PAGE, layout: 'detailed' }]
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: ref(PAGE), embeds: set, inOrder: ['osnova.document'] })
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(PAGE.split(':')[2], 'detailed')])
+    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)), [{ value: PAGE, layout: 'detailed' }])
+    const before = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: ref(PAGE), embeds: set, inOrder: ['osnova.issue'] })
+    assert.deepEqual(before.tags.filter((t) => t[0] === 'embed'), [embedTag(PAGE, 'detailed')], 'by its address before its switch')
+  })
 })
 
 describe('C27 — the default card (§13.6.2)', () => {

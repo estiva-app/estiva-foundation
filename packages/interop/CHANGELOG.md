@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.109.0 — 2026-11-20
+
+**Manifest: an older listing's `kind:5` Delete on a file the relay keeps in order is read as SPEC §7.3 says: it writes the file's `deleted` change. Wire: a topic's list entries can name the change they follow.**
+
+- `planListInTopic`, `planRemoveFromTopic` (`ListEntryArgs`) and `planPutBackInTopic` (`listsPrev`) take the change an entry follows and write it as `prev` after `ts`, where `order:` and `look:` carry theirs. Where the relay keeps topics in order (`fileFieldsOf(reads, TOPIC_TYPE, …)`) an app passes it and sends through `writeChange`, which follows a stale one again; elsewhere it leaves it out and the entry is written as before. Two people adding different files never clash: each file is its own field (§6.14). A listed file's arrangement carries its entry's id as `prev.lists`; for a file not on the list, `prevsAfterSwitch(query, topic, [listsField(file)])` answers it, or the topic's first record (ALL-3).
+- `buildActionEvent(s)`: a Delete declared as `kind:5` on a file whose type is in `inOrder` (the built-in topic manifest's Delete; Leaf's) is built as that file's `deleted` change, `true`, after the `prev` passed, and takes the file off no team's list, so a restore (`setDeleted`) brings back exactly what was there (record every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file). Without a `prev` it is refused before anything is sent. Where the type is not kept in order it is the NIP-09 request and the team commands, as before. A Delete declared as the `deleted` field (Ship's) is unchanged.
+
 ## 0.108.1 — 2026-11-20
 
 **Manifest: nothing new. Wire: nothing new written; the shared read keeps an archive on a file whose id has a colon in it, and the list read folds a record that names no team as SPEC §6.2 says.**

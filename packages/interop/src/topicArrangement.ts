@@ -30,6 +30,7 @@ export type FileLook = 'row' | 'card'
 
 const ORDER = 'order:'
 const LOOK = 'look:'
+const LISTS = 'lists:'
 /** The field a file's place on a topic is kept in: `order:<d>`. */
 export const orderField = (file: string): string => `${ORDER}${file}`
 /** The field a file's look on a topic is kept in: `look:<d>`. */
@@ -107,7 +108,16 @@ export interface FileArrangement {
    * on the relay, one a reader skips included (the relay chains them all),
    * or the topic's first record when the field never changed.
    */
-  prev: { order: string; look: string }
+  prev: {
+    order: string
+    look: string
+    /**
+     * Its entry on the list, `lists:<d>`: what taking it off follows where
+     * the relay keeps topics in order (`planRemoveFromTopic`'s `prev`).
+     * Optional only so an arrangement built by hand still type-checks.
+     */
+    lists?: string
+  }
   /** The latest time (ms) among those, so a change is stamped after it. */
   prevAt: number
 }
@@ -166,12 +176,14 @@ export function arrangementHeads(
     const list = tagOf(event, 'a')
     if (!list) continue
     for (const { field } of fieldsSetBy(event)) {
-      if (!isArrangeField(field)) continue
+      const isEntry = field.startsWith(LISTS)
+      if (!isArrangeField(field) && !isEntry) continue
       const heads = out.get(list) ?? { good: new Map(), any: new Map() }
       out.set(list, heads)
       const held = heads.any.get(field)
       if (!held || byOrder(held, event) < 0) heads.any.set(field, event)
-      if (!readsAs(event, field, list, teamOfList(list))) continue
+      // An entry is folded by `listEntries`; here only its head is kept, as the next `prev`.
+      if (isEntry || !readsAs(event, field, list, teamOfList(list))) continue
       const good = heads.good.get(field)
       if (!good || byOrder(good, event) < 0) heads.good.set(field, event)
     }
@@ -193,10 +205,12 @@ export function arrangementOf(heads: Heads | undefined, file: string, listed: Si
   const look = looked ? valueIn(looked, lookField(file)) : undefined
   const orderHead = heads?.any.get(orderField(file))
   const lookHead = heads?.any.get(lookField(file))
+  // The relay chains every entry, one a reader skips included; `listed` is the newest one that counts.
+  const listsHead = heads?.any.get(`${LISTS}${file}`) ?? listed
   return {
     ...(isPlaceKey(key) ? { order: key } : {}),
     ...(look === 'row' || look === 'card' ? { look } : {}),
-    prev: { order: orderHead?.id ?? root.id, look: lookHead?.id ?? root.id },
+    prev: { order: orderHead?.id ?? root.id, look: lookHead?.id ?? root.id, lists: listsHead.id },
     prevAt: Math.max(changedAt(root), orderHead ? changedAt(orderHead) : 0, lookHead ? changedAt(lookHead) : 0),
   }
 }
@@ -322,15 +336,20 @@ export function planLookInTopic(
  * over the list read again, so a refusal plans the move again rather than
  * leaving the file back but last. The move is stamped after the listing, so
  * its place is not older than it.
+ *
+ * `listsPrev`, where the relay keeps topics in order, is the change the
+ * listing follows: the Remove it undoes (the id the relay accepted), not the
+ * file's `prev.lists`, which was read before it.
  */
 export function planPutBackInTopic(
   pubkey: string,
   createdAtMs: number,
-  args: { topic: ArrangeHolder; file: ArrangedFile; after: string | null },
+  args: { topic: ArrangeHolder; file: ArrangedFile; after: string | null; listsPrev?: string },
 ): { relist: UnsignedEvent; move: (files: readonly ArrangedFile[], createdAtMs: number) => UnsignedEvent | null } {
   const listedAt = stamp(createdAtMs, [args.file])
   const holder = ADDRESS.exec(args.topic.address)
   if (!holder) throw new Error(`not a file address: ${JSON.stringify(args.topic.address)}`)
+  if (args.listsPrev !== undefined && !/^[0-9a-f]{64}$/.test(args.listsPrev)) throw new Error(`not an event id: ${JSON.stringify(args.listsPrev)}`)
   const relist: UnsignedEvent = {
     pubkey,
     created_at: Math.floor(listedAt / 1000),
@@ -342,11 +361,12 @@ export function planPutBackInTopic(
       ['value', 'true'],
       ['h', args.topic.folder],
       ['ts', String(listedAt)],
+      ...(args.listsPrev ? [['prev', args.listsPrev]] : []),
       ['o', args.file.file],
     ],
     content: '',
   }
-  const move = (files: readonly ArrangedFile[], ms: number) => {
+  const move =(files: readonly ArrangedFile[], ms: number) => {
     // Back on the list it has no place yet; a list read before the listing landed does not hold it.
     const held = files.find((f) => f.file === args.file.file)
     const back: ArrangedFile = { ...(held ?? args.file), order: undefined, prevAt: Math.max((held ?? args.file).prevAt, listedAt) }

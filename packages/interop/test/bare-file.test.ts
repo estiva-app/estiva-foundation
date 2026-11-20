@@ -626,6 +626,58 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     assert.ok(!request.tags.some((t) => t[0] === 'e'), 'an `e` tag would route the relay to the wrong branch')
   })
 
+  describe('where the relay keeps topics in order (SPEC §7.3, §6.5)', () => {
+    // A topic named by its id: a uuid `d`, so its type's switch applies to it.
+    const ID = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
+    const KEPT_TOPIC = `${KIND_BARE_FILE}:${AUTHOR}:${ID}`
+    const ROOT = 'e'.repeat(64)
+    const del = (inOrder: string[], prev?: string) =>
+      buildActionEvents({
+        manifest: BARE_MANIFEST,
+        kind: KIND_BARE_FILE,
+        address: KEPT_TOPIC,
+        objectAuthor: AUTHOR,
+        folder: TEAM,
+        actionId: 'delete',
+        value: '',
+        pubkey: OTHER,
+        createdAtMs: 1_700_000_000_000,
+        listedIn: [{ id: TEAM, hasState: true }],
+        inOrder,
+        ...(prev ? { prev } : {}),
+      })
+
+    it('Delete marks the topic: its deleted change after the one it follows, by anyone, and it stays on its team', () => {
+      const built = del(['osnova.topic'], ROOT)
+      assert.notEqual(typeof built, 'string', String(built))
+      const events = built as Exclude<typeof built, string>
+      assert.equal(events.length, 1, 'no team command: a delete takes it off no list, so a restore puts back exactly what was there')
+      assert.equal(events[0].kind, CHANGE_KIND, 'never a kind:5, which the relay refuses on a topic kept in order')
+      assert.equal(events[0].pubkey, OTHER)
+      assert.deepEqual(events[0].tags, [
+        ['a', KEPT_TOPIC],
+        ['O', ID],
+        ['field', 'deleted'],
+        ['value', 'true'],
+        ['h', TEAM],
+        ['ts', '1700000000000'],
+        ['prev', ROOT],
+      ])
+    })
+
+    it('a Delete that names no change it follows is refused before it is sent', () => {
+      assert.match(String(del(['osnova.topic'])), /prev/)
+    })
+
+    it('where only pages are kept in order, a topic is still deleted by a NIP-09 request and taken off its team', () => {
+      const built = del(['osnova.document'])
+      assert.notEqual(typeof built, 'string', String(built))
+      const [request, remove] = built as Exclude<typeof built, string>
+      assert.equal(request.kind, 5)
+      assert.ok(remove, 'its team’s listing is removed as before')
+    })
+  })
+
   it('offers no deletion on a kind whose manifest declares none', async () => {
     // Ship's shape: a change action and a comment, and nothing emitting kind:5.
     const ship = event({

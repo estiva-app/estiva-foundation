@@ -146,6 +146,32 @@ describe('the tags a comment earns for its links', () => {
     ], 'another type kept in order changes nothing')
   })
 
+  test('once pages are kept in order, a link to a page’s block names the page by its id too, and its part by the id (ALL-3)', async () => {
+    const LEAF = 'f'.repeat(64)
+    const leaf = {
+      ...manifest,
+      id: '9'.repeat(64),
+      pubkey: LEAF,
+      tags: [
+        ['web', 'https://leaf.estiva.app/o/<bech32>', 'naddr'],
+        ['urls', 'https://leaf.estiva.app/document/<slug>-<d>', '30842'],
+        ['urls', 'https://leaf.estiva.app/document/<slug>-<d>#block-<block>', '30842'],
+      ],
+    }
+    const page = `30842:${OTHER}:${D1}`
+    const links = linkReader({ query: relayOf([leaf, event(30842, OTHER, [['d', D1]])]).query })
+    const body = marker(`https://leaf.estiva.app/document/plan-${D1}#block-b1`)
+    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.document'] }), [
+      ['a', page],
+      ['o', D1],
+      ['part', D1, 'b1'],
+    ])
+    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'] }), [
+      ['a', page],
+      ['part', page, 'b1'],
+    ], 'by its address before its switch')
+  })
+
   test('a d two authors hold, and a d under a kind that is not addressable, name nothing', async () => {
     const links = linkReader({ query: relayOf(issues).query })
     const body = `https://ship.estiva.app/issue/x-${SHARED} https://ship.estiva.app/note/n-${D1}`

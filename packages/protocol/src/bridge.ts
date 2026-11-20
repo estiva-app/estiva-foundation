@@ -349,6 +349,12 @@ export const PROJECT_TYPE = 'osnova.project'
 /** An issue's type, as NIP-11 names it (TYPES.md). */
 export const ISSUE_TYPE = 'osnova.issue'
 
+/** A document's type, as NIP-11 names it (TYPES.md): a Leaf page. */
+export const DOCUMENT_TYPE = 'osnova.document'
+
+/** A topic's type, as NIP-11 names it (TYPES.md). */
+export const TOPIC_TYPE = 'osnova.topic'
+
 /** How an app reads a type once switched: opened with its text, and found by its words where the relay says so. */
 export interface FileFieldsSwitch {
   text: boolean

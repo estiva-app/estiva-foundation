@@ -143,3 +143,17 @@ test('a comment in both forms lists under its file, and one whose A and O disagr
   const conversations = await conversationsOf([{ ref: P, address: P }], relay([manifest, file, both, crossed]))
   assert.deepEqual(conversations[P].map((m) => m.id), [both.id])
 })
+
+test('a comment on a topic lists under it in either form, by its address alone or by its id too (ALL-3)', async () => {
+  const ID = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
+  const T = `30840:${AUTHOR}:${ID}`
+  const topic = event({ kind: 30840, tags: [['d', ID], ['title', 'Launch naming'], ['h', FOLDER]] })
+  const old = event({ kind: 1111, tags: [['A', T], ['K', '30840'], ['P', AUTHOR], ['a', T], ['k', '30840'], ['p', AUTHOR], ['h', FOLDER]], content: 'before the switch' })
+  const both = event({
+    kind: 1111,
+    tags: [['A', T], ['K', '30840'], ['P', AUTHOR], ['O', ID], ['K', 'osnova.topic'], ['a', T], ['k', '30840'], ['o', ID], ['k', 'osnova.topic'], ['p', AUTHOR], ['h', FOLDER]],
+    content: 'after it',
+  })
+  const conversations = await conversationsOf([{ ref: T, address: T }], relay([topic, old, both]))
+  assert.deepEqual(conversations[T].map((m) => m.id).sort(), [old.id, both.id].sort())
+})
