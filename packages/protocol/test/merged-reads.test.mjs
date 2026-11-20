@@ -38,7 +38,7 @@ const EVENTS = [
 ]
 
 /** A relay as measured: each filter answered alone, NIP-01 matching, newest first, runs end to end in filter order. */
-function fakeRelay({ status = 200, text } = {}) {
+function fakeRelay({ status = 200, text, events = EVENTS } = {}) {
   const calls = []
   const fetch = async (_url, init) => {
     const filters = JSON.parse(init.body)
@@ -46,7 +46,7 @@ function fakeRelay({ status = 200, text } = {}) {
     if (status !== 200) return { status, text: async () => text }
     const out = []
     for (const filter of filters) {
-      const matched = EVENTS.filter(
+      const matched = events.filter(
         (e) =>
           (!filter.kinds || filter.kinds.includes(e.kind)) &&
           (!filter.authors || filter.authors.includes(e.pubkey)) &&
@@ -218,11 +218,52 @@ test('reads whose answers could not be told apart go out separately, never guess
   assert.deepEqual(merged.map(ids), [['e1', 'e2'], ['e1']])
 })
 
-test('a batch with an event two of its reads ask for is asked again read by read, with the right answers', async () => {
-  // Disjoint `#a` values, but e5 carries both: the batch's answer cannot be cut for certain.
-  const reads = [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }]]
+test('a batch with an event two of its reads ask for stays one request, and each read gets that event', async () => {
+  // Disjoint `#a` values, but e5 carries both, as a handler carries both `k` tags of Ship's two manifest reads:
+  // no discriminator places it, and it comes back once in each read's run.
+  const reads = [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }], [{ kinds: [0], authors: [hex(7)], limit: 1 }]]
   const { calls, merging } = fakeRelay()
   const merged = await together(merging, reads)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(merged.map(ids), [['e5'], ['e5', 'e6'], ['e1']])
+})
+
+test('a read asking for no events never takes another read’s last event, even when that is the only cut that fits', async () => {
+  // e21 is the second read's only match and the first read's last: cut by position alone, the first read would lose it.
+  const events = [event(20, 300, 1851, [['a', 'x:2']]), event(21, 200, 1851, [['a', 'x:2'], ['a', 'x:1']])]
+  const reads = [[{ kinds: [1851], '#a': ['x:2'] }], [{ kinds: [1851], '#a': ['x:1'], limit: 0 }]]
+  const { merging } = fakeRelay({ events })
+  const merged = await together(merging, reads)
+  assert.deepEqual(merged.map(ids), [['e20', 'e21'], []])
+})
+
+test('reads of a team’s state are never cut by position: the relay answers them per filter beyond NIP-01', async () => {
+  // e31 names both people; buzz may put it in one read's answer and not the other's, so no cut is trusted.
+  const events = [event(30, 300, 39002, [['p', 'x']]), event(31, 200, 39002, [['p', 'x'], ['p', 'y']])]
+  const reads = [[{ kinds: [39002], '#p': ['x'] }], [{ kinds: [39002], '#p': ['y'] }]]
+  const { calls, merging } = fakeRelay({ events })
+  const merged = await together(merging, reads)
+  assert.deepEqual(
+    calls.map((c) => c.length),
+    [2, 1, 1],
+  )
+  assert.deepEqual(merged.map(ids), [['e30', 'e31'], ['e31']])
+})
+
+test('a batch whose answer cannot be cut back for certain is asked again read by read, never guessed', async () => {
+  // A relay that matches differently from NIP-01 on a batch: an event none of the filters asks for.
+  const stray = event(9, 999, 1851, [['a', 'x:9']])
+  const calls = []
+  const fetch = async (_url, init) => {
+    const filters = JSON.parse(init.body)
+    calls.push(filters)
+    const out = filters.flatMap((filter) =>
+      EVENTS.filter((e) => e.kind === filter.kinds[0] && e.tags.some((t) => t[0] === 'a' && filter['#a'].includes(t[1]))),
+    )
+    return { status: 200, text: async () => JSON.stringify(filters.length > 1 ? [stray, ...out] : out) }
+  }
+  const merging = new Relay('https://r', secretKeySigner(SECRET), { fetch, mergeReadsMs: MERGE_READS_MS, busyRetryDelaysMs: [] })
+  const merged = await together(merging, [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }]])
   assert.deepEqual(
     calls.map((c) => c.length),
     [2, 1, 1],
