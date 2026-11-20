@@ -16,6 +16,7 @@ import {
   parseInlineMarks,
   toRenderTree,
   validateBlockDocument,
+  type Block,
   type BlockDocument,
   type InlineMarkSpan,
 } from '../dist/index.js'
@@ -102,6 +103,28 @@ describe('ids carry across an edit — the anchoring guarantee', () => {
   it('does NOT survive a block being moved and edited at once', () => {
     const moved = markerTextToBlockDocument('# Title\n\nsecond\n\nfirst, edited', original)
     assert.ok(!idsOf(original).includes(moved.content[2].id))
+  })
+
+  // Found by the made-up documents on a fresh seed (TES-3, seed 984713138).
+  it('keeps both items’ ids when one of two items with the same words, one in italics, is edited', () => {
+    const list: BlockDocument = {
+      type: 'doc',
+      content: [
+        {
+          type: 'bulletList',
+          id: 'L',
+          content: [
+            { type: 'listItem', id: 'plain', content: [{ type: 'text', text: 'Q&A 2026' }] },
+            { type: 'listItem', id: 'italic', content: [{ type: 'text', text: 'Q&A 2026', marks: [{ type: 'italic' }] }] },
+          ],
+        },
+      ],
+    }
+    const edited = markerTextToBlockDocument('- Q&A 2026 edited\n- *Q&A 2026*', list)
+    assert.deepEqual(
+      (edited.content[0].content as Block[]).map((item) => item.id),
+      ['plain', 'italic'],
+    )
   })
 })
 
