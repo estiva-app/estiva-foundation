@@ -531,6 +531,7 @@ export class RelayBusyError extends Error {
 const BUSY_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000]
 
 declare const setTimeout: (fn: () => void, ms: number) => unknown
+declare const clearTimeout: (handle: unknown) => void
 
 /** One answer from the relay, as {@link retryWhileBusy} reads it. */
 export interface RelayAnswer {
@@ -642,6 +643,9 @@ export interface RelayOptions {
  * trip (130–220 ms measured on production, 20 Nov).
  */
 export const MERGE_READS_MS = 25
+
+/** How far past its time a merge window is taken as lost, and sent with the next read ({@link Relay.merged}). */
+const MERGE_WINDOW_LOST_MS = 1_000
 
 /** A plain read waiting to go out with others ({@link Relay.merged}). */
 interface WaitingRead {
@@ -950,6 +954,8 @@ export class Relay {
   /** Plain reads asked and not yet sent ({@link Relay.merged}). */
   private waiting: WaitingRead[] = []
   private flushTimer: unknown
+  /** When the open window's timer should fire ({@link Relay.merged}). */
+  private flushAt = 0
 
   /** {@link Relay.send} through {@link retryWhileBusy}. */
   private post(path: string, payload: unknown): Promise<RelayAnswer> {
@@ -1032,6 +1038,16 @@ export class Relay {
     // Each caller gets its own array, so one caller sorting or trimming its answer never changes another's.
     const own = (events: SignedEvent[]) => [...events]
     /*
+      A window long past its time had its timer lost (a test's fake clock put
+      back) or slowed (a tab hidden for minutes, where a browser runs a chained
+      timer about once a minute): its reads go out now, rather than wait for a
+      timer that may never come.
+    */
+    if (this.flushTimer !== undefined && Math.abs(Date.now() - this.flushAt) > MERGE_WINDOW_LOST_MS) {
+      clearTimeout(this.flushTimer)
+      this.flushMerged()
+    }
+    /*
       Only a read not yet sent is shared. One already on its way may have left
       before a save, or for the person signed in before this one, and a read
       asked now must see what is true now.
@@ -1046,7 +1062,10 @@ export class Relay {
     })
     // A copy: the request goes out later, and a caller may reuse its filter objects meanwhile.
     this.waiting.push({ key, filters: JSON.parse(key) as Record<string, unknown>[], resolve, reject, answer })
-    this.flushTimer ??= setTimeout(() => this.flushMerged(), this.mergeReadsMs)
+    if (this.flushTimer === undefined) {
+      this.flushAt = Date.now() + this.mergeReadsMs
+      this.flushTimer = setTimeout(() => this.flushMerged(), this.mergeReadsMs)
+    }
     return answer.then(own)
   }
 
