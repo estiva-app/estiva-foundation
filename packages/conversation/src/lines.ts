@@ -132,12 +132,30 @@ export function writtenUrlOf(run: Pick<RenderInline, 'text' | 'reference'>, reso
  * address's `d` (§7.2 puts the identity last, `…/<slug>-<d>`), and that `d` is
  * long enough to be one. A `d` comes from somebody's tag, so a short one would
  * otherwise match half the links in a body.
+ *
+ * The `d` is everything after the second colon, colons of its own included
+ * (TES-4). A file whose `d` a short link cannot carry gets Peek's long link,
+ * `/topic/<kind>:<pubkey>:<d escaped>`, which names the whole address.
  */
 export function urlNames(url: string, address: string): boolean {
-  const d = address.split(':')[2] ?? ''
+  const d = address.split(':').slice(2).join(':')
   if (d.length < 8) return false
   const path = url.split(/[?#]/)[0].replace(/\/+$/, '')
-  return path.endsWith(`-${d}`) || path.endsWith(`/${d}`)
+  if (path.endsWith(`-${d}`) || path.endsWith(`/${d}`)) return true
+  const last = path.slice(path.lastIndexOf('/') + 1)
+  try {
+    return sameAddress(decodeURIComponent(last), address)
+  } catch {
+    // A stray `%` names no address.
+    return false
+  }
+}
+
+/** Two addresses alike but for the case of the pubkey, which a link may write either way. */
+function sameAddress(a: string, b: string): boolean {
+  const [kindA, pubkeyA = '', ...dA] = a.split(':')
+  const [kindB, pubkeyB = '', ...dB] = b.split(':')
+  return kindA === kindB && pubkeyA.toLowerCase() === pubkeyB.toLowerCase() && dA.join(':') === dB.join(':')
 }
 
 const BREAK: RenderInline = { text: '\n', marks: [] }

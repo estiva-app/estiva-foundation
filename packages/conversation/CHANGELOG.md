@@ -6,6 +6,17 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.44.0 — 2026-11-20
+
+- **SPEC §13.6.1:** `urlNames` reads a file's whole id when it has a colon in
+  it, and recognises Peek's long link, `/topic/<kind>:<pubkey>:<d escaped>`, the
+  one Peek writes for a file whose id a short link cannot carry. It cut the id
+  at its first colon and knew only short links, so a message that showed such a
+  file's block dropped the card while its text still linked the file. No file on
+  production has such an id today (census of 20 Nov: every file's id is a
+  lowercase uuid), so nothing drawn changes now. Found by the new test that
+  makes up links (`test/link.property.test.mjs`, TES-4).
+
 ## 0.43.0 — 2026-11-20
 
 - **SPEC §11.8:** `foldMemberships` keeps a file's whole id when it has a colon
