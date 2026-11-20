@@ -42,6 +42,19 @@ jobs:
       # build to be made green — see packages/protocol/CHANGELOG.md.
       - run: npm test -w packages/protocol
 
+      # The rules on made-up documents (`test/*.property.test.ts`) ran above on
+      # the pull request's fixed seed, so a red pull request means that change
+      # broke one. On a merge to main they run again on a fresh seed, printed:
+      # a failure here is a bug that was already in the code. File it with the
+      # seed; never re-run until it passes.
+      - name: Rules on made-up documents, fresh seed
+        if: github.event_name == 'push'
+        working-directory: packages/protocol
+        run: |
+          seed=$((RANDOM * 32768 + RANDOM))
+          echo "fast-check seed $seed. Replay: FC_SEED=$seed FC_RUNS=5000 npm test -w packages/protocol"
+          FC_SEED=$seed FC_RUNS=5000 node --test test/*.property.test.ts
+
       # The emitted specifier is the thing three toolchains disagree about, and
       # it is invisible until a consumer's build fails. `tsc` copies relative
       # specifiers through untouched, so an extensionless one ships broken.

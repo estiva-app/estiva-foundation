@@ -4,6 +4,29 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.63.0 — 2026-11-20
+
+**Wire behaviour: none new written; nothing new read.** A block document read
+back from text over its previous version now keeps the ids of the blocks inside
+a list (and any block's children) that it kept before only for the list itself.
+
+- Fixed: `markerTextToBlockDocument(text, previous)` and
+  `descriptionTextToBlockDocument(text, previous)` gave every list item a new
+  id, even in a list that did not change, so a comment anchored to an item came
+  loose whenever the agent edited a description or text was pasted over it. A
+  block that keeps an old block's id now lends its children the old children's
+  ids by the same two passes (identical text, then same place). Found by the
+  test below.
+- `documentArb({ form })` makes up block documents: headings, lists nested up
+  to three deep, checklists, callouts, tables, code, links on words, mentions,
+  pictures and blocks from a later version, with marks on some words, and
+  words people actually type (accents, emoji, a pipe, a box, a backslash).
+  `form` is `message`, `description` or `editor`, each holding only what that
+  form can carry. `documentShape(doc, { ids })` is a document as a person reads
+  it, for comparing two. A test in this package checks every trip — through a
+  message's text, a description's text, the editor, and the wire — on them;
+  what text cannot carry is listed in `test/document-trips.md`.
+
 ## 0.62.1 — 2026-11-20
 
 **Wire behaviour: none written; nothing new read.** Only `/testing` changes.

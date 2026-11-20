@@ -174,8 +174,37 @@ export function markerTextToBlockDocument(text: string, previous?: BlockDocument
   const description = options.description === true
   // An indented item nests in a message as in a description (§13.2, Miky 2026-10-20).
   const fresh = parseBodySegments(text, { indentedItems: true }).map((seg) => blockFromSegment(seg, description))
-  const old = previous?.content ?? []
   const takenIds = new Set<string>()
+  const mint = () => {
+    let id = newBlockId()
+    while (takenIds.has(id)) id = newBlockId()
+    takenIds.add(id)
+    return id
+  }
+  /*
+    A block that keeps an old block's id lends its children the old one's
+    children's ids by the same two passes, so an item of a list whose other
+    item changed keeps its id too (TES-3: every item used to get a new one, and
+    a comment on it came loose).
+  */
+  const fill = (blocks: Block[], old: Block[]): Block[] => {
+    const matched = lendIds(blocks, old, takenIds)
+    return blocks.map((block, i) => {
+      const was = matched[i]
+      const children = Array.isArray(block.content) && !isInlineRun(block.content) ? (block.content as Block[]) : undefined
+      const oldChildren = was && Array.isArray(was.content) && !isInlineRun(was.content) ? (was.content as Block[]) : []
+      return {
+        ...block,
+        id: was?.id ?? (block.id || mint()),
+        ...(children ? { content: fill(children, oldChildren) } : {}),
+      }
+    })
+  }
+  return { type: 'doc', content: fill(fresh, previous?.content ?? []) }
+}
+
+/** For each fresh block, the old block whose id it keeps, if any — by the rule in this module's header. */
+function lendIds(fresh: readonly Block[], old: readonly Block[], takenIds: Set<string>): (Block | undefined)[] {
   const usedOld = new Set<number>()
 
   // Pass 1 — same type and identical text, wherever it moved to.
@@ -186,48 +215,29 @@ export function markerTextToBlockDocument(text: string, previous?: BlockDocument
     list.push(i)
     byKey.set(keyOf(block), list)
   })
-  const ids: (string | undefined)[] = fresh.map((block) => {
+  const matched: (Block | undefined)[] = fresh.map((block) => {
     const candidates = byKey.get(keyOf(block))
     while (candidates && candidates.length) {
       const i = candidates.shift() as number
-      if (usedOld.has(i)) continue
+      if (usedOld.has(i) || takenIds.has(old[i].id)) continue
       usedOld.add(i)
       takenIds.add(old[i].id)
-      return old[i].id
+      return old[i]
     }
     return undefined
   })
 
   // Pass 2 — same type at the same index, among what is left.
   fresh.forEach((block, i) => {
-    if (ids[i] !== undefined) return
+    if (matched[i] !== undefined) return
     const candidate = old[i]
     if (!candidate || usedOld.has(i) || candidate.type !== block.type || !candidate.id) return
     if (takenIds.has(candidate.id)) return
     usedOld.add(i)
     takenIds.add(candidate.id)
-    ids[i] = candidate.id
+    matched[i] = candidate
   })
-
-  // Pass 3 — a fresh id for everything still unmatched, children included.
-  const mint = () => {
-    let id = newBlockId()
-    while (takenIds.has(id)) id = newBlockId()
-    takenIds.add(id)
-    return id
-  }
-  const fill = (block: Block, id?: string): Block => {
-    const children = Array.isArray(block.content) && !isInlineRun(block.content)
-      ? (block.content as Block[]).map((child) => fill(child))
-      : undefined
-    return {
-      ...block,
-      id: id ?? (block.id || mint()),
-      ...(children ? { content: children } : {}),
-    }
-  }
-
-  return { type: 'doc', content: fresh.map((block, i) => fill(block, ids[i] || undefined)) }
+  return matched
 }
 
 const itemText = (item: Block, description: boolean): string =>

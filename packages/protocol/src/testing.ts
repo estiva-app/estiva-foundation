@@ -15,6 +15,7 @@
  */
 import fc from 'fast-check'
 import type { SignedEvent } from './events.js'
+import type { Block, BlockDocument } from './blocks.js'
 
 export const KIND_PROJECT = 30850
 export const KIND_ISSUE = 30851
@@ -276,6 +277,241 @@ export function runSettings(defaultRuns: number, env: Record<string, string | un
   if (!Number.isSafeInteger(seed)) throw new Error(`FC_SEED is not a whole number: ${env.FC_SEED}`)
   if (!Number.isSafeInteger(runs) || runs < 1) throw new Error(`FC_RUNS is not a positive whole number: ${env.FC_RUNS}`)
   return { seed, numRuns: runs }
+}
+
+/*
+  ---------------------------------------------------------------------------
+  Made-up documents (TES-3): what a person writes in a message, a description
+  or a page, for the rule "a document comes back as it went in".
+  ---------------------------------------------------------------------------
+*/
+
+/**
+ * What a document is written in, which decides what it can hold:
+ * - `message`: a message's text, SPEC §13.2 — headings, lists (indented too),
+ *   quotes, code, rules, bold, italic, underline, code and mentions;
+ * - `description`: a description's text, §13.3 "A description as text" — all of
+ *   that, plus checklists, callouts, links on words and tables;
+ * - `editor`: anything an editor saves — all of that, plus a third heading
+ *   level, pictures and files, and blocks from a later version.
+ */
+export type DocumentForm = 'message' | 'description' | 'editor'
+
+export interface DocumentOptions {
+  /** Default `editor`. */
+  form?: DocumentForm
+  /** At most this many top-level blocks (default 8). */
+  maxBlocks?: number
+}
+
+/** Words people write, the awkward ones among them: accents, emoji, quotes, a colon, a dash, a percent. */
+const WORDS = [
+  'plan', 'Ada', 'ship', 'launch', 'Friday', 'notes', 'v1.2', '2026', 'déjà', 'naïve', 'Zürich', '🚀', 'it’s', "it's",
+  'a-b', 'x:y', 'e.g.', '100%', 'Q&A', '"quoted"', '(aside)', '…', 'ok?', 'yes!', 'café', 'Łódź', '日本',
+]
+/**
+ * What looks like a marker and is meant as text, and text still carries: a box
+ * or a callout line (escaped, §13.3), a pipe in a cell, a backslash, brackets.
+ */
+const AWKWARD = ['[ ]', '[x]', '[!NOTE]', '\\', 'a\\', '|', '<b>', '[a](b)', '---', '~~']
+/**
+ * What looks like a marker and text cannot carry as text, so only an editor's
+ * document holds it here (`test/document-trips.md`): a marker character meant
+ * as a character (it pairs with the next one, or with a real mark's), and a
+ * line that starts with a block's prefix.
+ */
+const EDITOR_ONLY = ['*', '**', '***', '_', '__', '`', 'x*', '\\*', '*not*', '**not**', '__not__', '`not`', '#', '##', '-', '1.', '>']
+const LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('')
+const wordArb = (form: DocumentForm, awkward: boolean) =>
+  fc.oneof(
+    { weight: 4, arbitrary: fc.constantFrom(...WORDS) },
+    { weight: 1, arbitrary: fc.string({ unit: fc.constantFrom(...LETTERS), minLength: 1, maxLength: 8 }) },
+    ...(awkward ? [{ weight: 1, arbitrary: fc.constantFrom(...AWKWARD, ...(form === 'editor' ? EDITOR_ONLY : [])) }] : []),
+  )
+/**
+ * A few words. Marker-like words only where text can carry them: in an
+ * editor's document anywhere, in text only outside a mark or a link (a bold
+ * `*` is `***` in text, which reads as an empty bold — listed in
+ * `test/document-trips.md`).
+ */
+const wordsArb = (form: DocumentForm, max = 5, awkward = true) => fc.array(wordArb(form, awkward), { minLength: 1, maxLength: max }).map((ws) => ws.join(' '))
+
+type Mark = { type: string; attrs?: Record<string, unknown> }
+type Run = { type: 'text'; text: string; marks?: Mark[] }
+
+const BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+/** A mention as text holds it: `nostr:npub1…`, carrying the `reference` mark its reader gives it. */
+const mentionArb: fc.Arbitrary<Run> = fc
+  .string({ unit: fc.constantFrom(...BECH32.split('')), minLength: 58, maxLength: 58 })
+  .map((data) => {
+    const uri = `nostr:npub1${data}`
+    return { type: 'text' as const, text: uri, marks: [{ type: 'reference', attrs: { uri } }] }
+  })
+
+const styleArb: fc.Arbitrary<Mark[]> = fc.oneof(
+  { weight: 3, arbitrary: fc.constant<Mark[]>([]) },
+  {
+    weight: 3,
+    arbitrary: fc
+      .record({ bold: fc.boolean(), italic: fc.boolean(), underline: fc.boolean() })
+      .map((m): Mark[] => (['bold', 'italic', 'underline'] as const).filter((k) => m[k]).map((type) => ({ type }))),
+  },
+  { weight: 1, arbitrary: fc.constant<Mark[]>([{ type: 'code' }]) },
+)
+
+const linkArb: fc.Arbitrary<Mark> = fc
+  .tuple(fc.constantFrom('https://example.com', 'https://peek.estiva.app/o', 'http://a.b', 'mailto:ada'), fc.array(fc.constantFrom('x', 'plan', '2026', 'a-b', 'q?id=1'), { maxLength: 3 }))
+  .map(([base, path]) => ({ type: 'link', attrs: { href: path.length ? `${base}/${path.join('/')}` : base } }))
+
+/** A run of words with marks on some of them, a word apart, as a person formats words. */
+function inlineArb(form: DocumentForm, lines = 1): fc.Arbitrary<Run[]> {
+  const piece: fc.Arbitrary<Run[]> = fc.oneof(
+    { weight: 6, arbitrary: styleArb.chain((marks) => wordsArb(form, 5, form === 'editor' || !marks.length).map((text) => [run(text, marks)])) },
+    { weight: 1, arbitrary: mentionArb.map((m) => [m]) },
+    ...(form === 'message'
+      ? []
+      : [{ weight: 1, arbitrary: fc.tuple(wordsArb(form, 3, form === 'editor'), linkArb, styleArb.filter((s) => !s.some((m) => m.type === 'code'))).map(([text, link, marks]) => [run(text, [...marks, link])]) }]),
+  )
+  const line = fc.array(piece, { minLength: 1, maxLength: 4 }).map((pieces) => pieces.flatMap((p, i) => (i ? [run(' '), ...p] : p)))
+  return fc.array(line, { minLength: 1, maxLength: lines }).map((ls) => mergeRuns(ls.flatMap((l, i) => (i ? [run('\n'), ...l] : l))))
+}
+
+const run = (text: string, marks: Mark[] = []): Run => (marks.length ? { type: 'text', text, marks } : { type: 'text', text })
+
+/** Neighbouring runs with the same marks as one run, and no empty run: the one way to write a run of text. */
+function mergeRuns(runs: readonly Run[]): Run[] {
+  const out: Run[] = []
+  for (const r of runs) {
+    if (!r.text) continue
+    const last = out[out.length - 1]
+    if (last && JSON.stringify(last.marks ?? []) === JSON.stringify(r.marks ?? [])) out[out.length - 1] = { ...last, text: last.text + r.text }
+    else out.push(r)
+  }
+  return out
+}
+
+type Draft = { type: string; attrs?: Record<string, unknown>; content?: Run[] | Draft[] }
+
+const TONES = ['note', 'tip', 'important', 'warning', 'caution']
+const SHA = 'ab'.repeat(32)
+
+function listArb(form: DocumentForm): fc.Arbitrary<Draft> {
+  const item = fc.record({ text: inlineArb(form), indent: fc.nat(2), checked: form === 'message' ? fc.constant(undefined) : fc.option(fc.boolean(), { freq: 2 }) })
+  return fc
+    .tuple(fc.constantFrom('bulletList', 'orderedList'), fc.array(item, { minLength: 1, maxLength: 5 }), fc.option(fc.integer({ min: 2, max: 20 }), { freq: 3 }))
+    .map(([type, items, start]) => {
+      let depth = 0
+      const content = items.map((it, i) => {
+        // An item is at most one deeper than the item above it, as an editor indents.
+        depth = i === 0 ? 0 : Math.min(it.indent, depth + 1)
+        const attrs = { ...(depth ? { indent: depth } : {}), ...(it.checked == null ? {} : { checked: it.checked }) }
+        return { type: 'listItem', ...(Object.keys(attrs).length ? { attrs } : {}), content: it.text }
+      })
+      return { type, ...(type === 'orderedList' && start != null ? { attrs: { start } } : {}), content }
+    })
+}
+
+function tableArb(form: DocumentForm): fc.Arbitrary<Draft> {
+  return fc.integer({ min: 1, max: 3 }).chain((width) =>
+    fc.array(fc.array(fc.oneof({ weight: 5, arbitrary: inlineArb(form) }, { weight: 1, arbitrary: fc.constant<Run[]>([]) }), { minLength: width, maxLength: width }), { minLength: 2, maxLength: 4 }).map((rows) => ({
+      type: 'table',
+      content: rows.map((cells, r) => ({
+        type: 'tableRow',
+        content: cells.map((text) => ({
+          type: r === 0 ? 'tableHeader' : 'tableCell',
+          attrs: { colspan: 1, rowspan: 1 },
+          // An editor saves an empty cell as a paragraph with no text.
+          content: [text.length ? { type: 'paragraph', content: text } : { type: 'paragraph' }],
+        })),
+      })),
+    })),
+  )
+}
+
+function blockArb(form: DocumentForm): fc.Arbitrary<Draft> {
+  const choices: { weight: number; arbitrary: fc.Arbitrary<Draft> }[] = [
+    { weight: 5, arbitrary: inlineArb(form, 2).map((content) => ({ type: 'paragraph', content })) },
+    {
+      weight: 2,
+      arbitrary: fc.tuple(fc.integer({ min: 1, max: form === 'editor' ? 3 : 2 }), inlineArb(form)).map(([level, content]) => ({ type: 'heading', attrs: { level }, content })),
+    },
+    { weight: 4, arbitrary: listArb(form) },
+    {
+      weight: 2,
+      arbitrary: fc
+        .tuple(inlineArb(form, 3), form === 'message' ? fc.constant(null) : fc.option(fc.constantFrom(...TONES), { freq: 2 }))
+        .map(([content, tone]) => ({ type: 'blockquote', ...(tone ? { attrs: { tone } } : {}), content })),
+    },
+    {
+      weight: 1,
+      arbitrary: fc
+        .tuple(fc.option(fc.constantFrom('ts', 'json', 'sh'), { freq: 2 }), fc.array(wordsArb(form), { minLength: 1, maxLength: 3 }))
+        .map(([language, lines]) => ({ type: 'codeBlock', ...(language ? { attrs: { language } } : {}), content: [run(lines.join('\n'))] })),
+    },
+  ]
+  if (form !== 'message') choices.push({ weight: 1, arbitrary: tableArb(form) })
+  // A divider has no spelling in text (`test/document-trips.md`).
+  if (form === 'editor') choices.push({ weight: 1, arbitrary: fc.constant({ type: 'horizontalRule' }) })
+  if (form === 'editor') {
+    choices.push(
+      {
+        weight: 1,
+        arbitrary: fc
+          .record({ alt: fc.option(wordsArb(form, 3), { nil: undefined }), filename: fc.option(fc.constantFrom('shot.png', 'plan.pdf'), { nil: undefined }), size: fc.nat(1_000_000) })
+          .map(({ alt, filename, size }) => ({
+            type: 'attachment',
+            attrs: { url: `/media/${SHA}.png`, m: 'image/png', x: SHA, size, ...(alt ? { alt } : {}), ...(filename ? { filename } : {}) },
+          })),
+      },
+      // An empty line, as Enter twice saves it; text has no spelling for one.
+      { weight: 1, arbitrary: fc.constant({ type: 'paragraph' }) },
+      // A block from a later version, which every reader carries whole (§13.3).
+      { weight: 1, arbitrary: inlineArb(form).map((content) => ({ type: 'widget', attrs: { app: 'later', n: 1 }, content })) },
+    )
+  }
+  return fc.oneof(...choices)
+}
+
+/**
+ * A made-up document of the given form, every block with its own id. The
+ * shapes are what the editor saves and what the text forms read
+ * (`bridge-content.ts`, `description-text.ts`, `editor.ts`), and each is
+ * written the one way a reader writes it, so "the same document" can be
+ * compared exactly — see {@link documentShape}.
+ */
+export function documentArb(options: DocumentOptions = {}): fc.Arbitrary<BlockDocument> {
+  const form = options.form ?? 'editor'
+  return fc.array(blockArb(form), { minLength: 1, maxLength: options.maxBlocks ?? 8 }).map((drafts) => {
+    let n = 0
+    const withIds = (d: Draft): Block => {
+      const id = (++n).toString(16).padStart(12, '0')
+      const children = d.content?.length && d.content[0].type !== 'text' ? (d.content as Draft[]).map(withIds) : undefined
+      return { ...d, id, ...(children ? { content: children } : {}) } as Block
+    }
+    return { type: 'doc', content: drafts.map(withIds) }
+  })
+}
+
+/**
+ * A document as a person reads it, for comparing two: its runs written the one
+ * way ({@link mergeRuns}), and a line break carrying no marks (an editor's
+ * break sits inside the bold run before it, text's does not, and nobody can see
+ * which). Without its block ids unless `ids` — a trip through text carries no
+ * ids, so they are compared only where a trip keeps them.
+ */
+export function documentShape(doc: BlockDocument, options: { ids?: boolean } = {}): unknown {
+  const shape = (block: Block): unknown => {
+    const { id, content, ...rest } = block
+    const out = options.ids ? { id, ...rest } : rest
+    if (!Array.isArray(content)) return out
+    const runs = content.length > 0 && (content as { type: string }[]).every((n) => n.type === 'text')
+    if (!runs) return { ...out, content: (content as Block[]).map(shape) }
+    // Marks as a set: an editor lists them in its schema's order, protocol in its own, and both draw the same.
+    const sorted = (r: Run): Run => (r.marks ? { ...r, marks: [...r.marks].sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1)) } : r)
+    const split = (content as Run[]).flatMap((r) => r.text.split(/(\n)/).map((text) => (text === '\n' ? run(text) : sorted({ ...r, text }))))
+    return { ...out, content: mergeRuns(split) }
+  }
+  return doc.content.map(shape)
 }
 
 function processEnv(): Record<string, string | undefined> {
