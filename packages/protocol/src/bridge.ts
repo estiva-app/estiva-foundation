@@ -626,7 +626,38 @@ export interface RelayOptions {
    * to its error reporter. A throw here never reaches the publish.
    */
   onRefused?: (code: string) => void
+  /**
+   * How long a plain read waits for others to go out with it in one request
+   * ({@link Relay.query}, SHI-61). Off (`0`) unless an app asks: the window is
+   * a timer, and a caller that fakes timers (a test of busy retries) would
+   * wait on it for ever. An app passes {@link MERGE_READS_MS}.
+   */
+  mergeReadsMs?: number
 }
+
+/**
+ * How long a plain read waits for others asked beside it, in milliseconds:
+ * what an app passes as {@link RelayOptions.mergeReadsMs}. Long enough to
+ * catch the reads a screen fires as it draws, short against a relay round
+ * trip (130–220 ms measured on production, 20 Nov).
+ */
+export const MERGE_READS_MS = 25
+
+/** A plain read waiting to go out with others ({@link Relay.merged}). */
+interface WaitingRead {
+  key: string
+  filters: Record<string, unknown>[]
+  resolve: (events: SignedEvent[]) => void
+  reject: (error: unknown) => void
+  answer: Promise<SignedEvent[]>
+}
+
+/**
+ * Whether a filter can share a request with others: plain NIP-01, so its
+ * matches can be told apart ({@link matcherOf}), and no Folder (`#h`), which
+ * the relay answers beyond NIP-01 (see {@link runsByPosition}).
+ */
+const mergeable = (filter: Record<string, unknown>): boolean => !('#h' in filter) && matcherOf(filter) !== null
 
 /**
  * A relay client that signs its own NIP-98 auth.
@@ -910,10 +941,17 @@ export class Relay {
     this.transport = opts.fetch
     this.busyRetryDelaysMs = opts.busyRetryDelaysMs ?? BUSY_RETRY_DELAYS_MS
     this.onRefused = opts.onRefused
+    this.mergeReadsMs = opts.mergeReadsMs ?? 0
   }
 
   private readonly busyRetryDelaysMs: readonly number[]
   private readonly onRefused: ((code: string) => void) | undefined
+  private readonly mergeReadsMs: number
+  /** Plain reads asked and not yet sent ({@link Relay.merged}). */
+  private waiting: WaitingRead[] = []
+  /** Reads sent and not yet answered, by their filters: an identical read joins one. */
+  private readonly inFlight = new Map<string, WaitingRead>()
+  private flushTimer: unknown
 
   /** {@link Relay.send} through {@link retryWhileBusy}. */
   private post(path: string, payload: unknown): Promise<RelayAnswer> {
@@ -969,7 +1007,90 @@ export class Relay {
    * {@link RelayBusyError}.
    */
   async query(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
+    if (this.mergeReadsMs > 0 && filters.length > 0 && filters.every(mergeable)) return this.merged(filters)
     return (await this.queryWithMatches(filters)).events
+  }
+
+  /**
+   * Plain reads asked within {@link RelayOptions.mergeReadsMs} of each other,
+   * sent as one request (SHI-61).
+   *
+   * The relay meters requests, not filters: 300 a minute per person across
+   * every app, and one Ship or Leaf open sent 74–110, most of them small reads
+   * fired side by side, so opening a few tabs in a minute was refused. A batch
+   * answers each filter exactly as it would alone, in filter order
+   * (`queryAll`'s batching rests on the same fact), so a batch whose answer
+   * can be cut back per filter *for certain* ({@link discriminate}) gives every
+   * caller what it would have got alone. One that cannot be is never guessed:
+   * its reads go out one by one, as before. An identical read already waiting
+   * or on its way shares that request.
+   *
+   * No new wire shape: only what the relay accepts today, several filters in
+   * one `POST /query` (Miky, 20 Nov: until copies on the device catch up with
+   * NIP-77, an app reads less this way, not through a request of our own).
+   */
+  private merged(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
+    const key = JSON.stringify(filters)
+    // Each caller gets its own array, so one caller sorting or trimming its answer never changes another's.
+    const own = (events: SignedEvent[]) => [...events]
+    const shared = this.waiting.find((read) => read.key === key) ?? this.inFlight.get(key)
+    if (shared) return shared.answer.then(own)
+    let resolve!: (events: SignedEvent[]) => void
+    let reject!: (error: unknown) => void
+    const answer = new Promise<SignedEvent[]>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    this.waiting.push({ key, filters, resolve, reject, answer })
+    this.flushTimer ??= setTimeout(() => this.flushMerged(), this.mergeReadsMs)
+    return answer.then(own)
+  }
+
+  private flushMerged(): void {
+    this.flushTimer = undefined
+    const reads = this.waiting
+    this.waiting = []
+    // Greedily, in the order asked: a read joins the batch only if the batch can still be cut back for certain.
+    const batches: WaitingRead[][] = []
+    for (const read of reads) {
+      const batch = batches.find(
+        (open) =>
+          open.reduce((n, other) => n + other.filters.length, 0) + read.filters.length <= MAX_FILTERS_PER_QUERY &&
+          discriminate([...open.flatMap((other) => other.filters), ...read.filters]) !== null,
+      )
+      if (batch) batch.push(read)
+      else batches.push([read])
+    }
+    for (const batch of batches) void this.sendMerged(batch)
+  }
+
+  private async sendMerged(batch: WaitingRead[]): Promise<void> {
+    for (const read of batch) this.inFlight.set(read.key, read)
+    try {
+      const filters = batch.flatMap((read) => read.filters)
+      const events = (await this.queryWithMatches(filters)).events
+      const runs = batch.length > 1 ? splitRuns(filters.length, events, discriminate(filters)!) : [events]
+      if (!runs) {
+        /*
+          An event the batch's filters could not place for certain (one carrying
+          two tags that each filter asks for). Asked again one read at a time,
+          the old way, rather than guessed.
+        */
+        await Promise.all(batch.map(async (read) => this.queryWithMatches(read.filters).then((answer) => read.resolve(answer.events), read.reject)))
+        return
+      }
+      let at = 0
+      for (const read of batch) {
+        read.resolve(batch.length > 1 ? runs.slice(at, at + read.filters.length).flat() : events)
+        at += read.filters.length
+      }
+    } catch (error) {
+      // A refused batch fails each of its reads with the relay's answer — never retried one by one, which would
+      // turn "slow down" into more requests (as `batchFirstPages`).
+      for (const read of batch) read.reject(error)
+    } finally {
+      for (const read of batch) if (this.inFlight.get(read.key) === read) this.inFlight.delete(read.key)
+    }
   }
 
   /**
