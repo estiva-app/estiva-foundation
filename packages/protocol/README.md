@@ -143,6 +143,21 @@ property this package can have while it depends on `@noble/*`. `TextEncoder`,
 `TextDecoder` and `URL` are WHATWG universals present in every runtime the suite
 targets, and that is the line.
 
+## Made-up histories for tests: `@estiva-app/protocol/testing`
+
+Tests that try thousands of inputs import one maker of random file histories
+rather than each repo writing its own: `historyArb()` makes projects, issues and
+documents and the changes people made to them (renamed, moved, a status set,
+assigned, archived, deleted, a member added or leaving, by several people, many
+in the same second, some outside the file's team), in the shapes on the relay
+today. `deliveryArb(events)` hands the same events back in any order, some of
+them twice. `runSettings(n)` reads `FC_SEED` and `FC_RUNS`, so a pull request
+runs a fixed seed and a merge to `main` a fresh one, and a printed seed replays
+a failure.
+
+It needs [fast-check](https://fast-check.dev), an optional peer: install it as a
+devDependency where the tests are. The main entry point never imports it.
+
 ## Consumers
 
 Peek, Ship and `estiva-agent` — see [CONSUMERS.md](../../CONSUMERS.md). A

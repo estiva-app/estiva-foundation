@@ -142,7 +142,9 @@ export function foldMemberships(pubkey: string, events: readonly SignedEvent[], 
   }
   const files = new Map<string, Membership>()
   for (const [file, held] of byFile) {
-    const [kind, , d] = file.split(':')
+    // The id is everything after the second colon: a `d` may hold colons of its own (NIP-01).
+    const [kind, , ...rest] = file.split(':')
+    const d = rest.join(':')
     const own = authorOfAddress(file) === pubkey
     // The root the viewer created, when they did — ordered before everything else for the file.
     const root = own ? [{ id: '', pubkey, kind: Number(kind), created_at: floor, tags: [['d', d ?? '']], content: '', sig: '' }] : []

@@ -6,6 +6,17 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.43.0 — 2026-11-20
+
+- **SPEC §11.8:** `foldMemberships` keeps a file's whole id when it has a colon
+  in it (a `d` may, by NIP-01). It cut the id at its first colon, so the root it
+  adds for a file you created named another file, and you were not a member of
+  your own file. Found by the new test that makes up inputs
+  (`test/history.property.test.mjs`): members and memberships are the same in
+  any order and with some events twice, a colon in an id changes nobody's
+  membership, and merging or advancing read state gives the same markers in any
+  order, twice is the same as once, and never moves a marker back.
+
 ## 0.42.0 — 2026-11-13
 
 - **SPEC §11.1, §11.2:** a `reactions:` key never names a thread or a message

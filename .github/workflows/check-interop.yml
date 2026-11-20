@@ -18,10 +18,10 @@ on:
   push:
     branches: [main]
     paths:
-      ['packages/interop/**', 'packages/conversation/**', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/src/testing.ts', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
   pull_request:
     paths:
-      ['packages/interop/**', 'packages/conversation/**', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/src/testing.ts', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
 
 concurrency:
   group: check-interop-${{ github.ref }}
@@ -52,6 +52,19 @@ jobs:
       - run: npm run typecheck -w packages/interop
 
       - run: npm test -w packages/interop
+
+      # The rules on made-up histories (`test/*.property.test.mjs`) ran above on
+      # the pull request's fixed seed, so a red pull request means that change
+      # broke one. On a merge to main they run again on a fresh seed, printed:
+      # a failure here is a bug that was already in the code. File it with the
+      # seed; never re-run until it passes.
+      - name: Rules on made-up histories, fresh seed
+        if: github.event_name == 'push'
+        working-directory: packages/interop
+        run: |
+          seed=$((RANDOM * 32768 + RANDOM))
+          echo "fast-check seed $seed. Replay: FC_SEED=$seed FC_RUNS=5000 npm test -w packages/interop"
+          FC_SEED=$seed FC_RUNS=5000 node --test test/*.property.test.mjs
 
       # The emitted specifier is the thing three toolchains disagree about, and
       # it is invisible until a consumer's build fails. `tsc` copies relative

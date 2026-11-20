@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/protocol",
-  "version": "0.61.0",
+  "version": "0.62.0",
   "description": "The Estiva wire format: Buzz-shaped Nostr event builders, NIP-01 ids, NIP-19 naddr, NIP-98 HTTP auth, and the relay clients. Speaks the protocol; interprets nothing.",
   "license": "MIT",
   "type": "module",
@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
     },
     "./package.json": "./package.json"
   },
@@ -51,9 +55,18 @@
     "@noble/curves": "^1.9.2",
     "@noble/hashes": "^1.8.0"
   },
+  "peerDependencies": {
+    "fast-check": "^4.10.2"
+  },
+  "peerDependenciesMeta": {
+    "fast-check": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@types/node": "^24.13.3",
+    "fast-check": "4.10.2",
     "nostr-tools": "^2.25.0",
-    "typescript": "~5.9.3",
-    "@types/node": "^24.13.3"
+    "typescript": "~5.9.3"
   }
 }
