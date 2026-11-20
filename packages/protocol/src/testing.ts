@@ -102,10 +102,11 @@ export function historyArb(options: HistoryOptions = {}): fc.Arbitrary<History> 
       kind: fc.constant(kind),
       author: fc.nat(peopleCount - 1),
       team: fc.nat(1),
+      // `buzz-channel` is a project's placement only (SPEC §7.3).
       placement: fc.oneof(
-        { weight: 8, arbitrary: fc.constant('h' as const) },
-        { weight: 1, arbitrary: fc.constant('buzz-channel' as const) },
-        { weight: 1, arbitrary: fc.constant('none' as const) },
+        { weight: 8, arbitrary: fc.constant<RootPlan['placement']>('h') },
+        { weight: 1, arbitrary: fc.constant<RootPlan['placement']>(kind === KIND_PROJECT ? 'buzz-channel' : 'h') },
+        { weight: 1, arbitrary: fc.constant<RootPlan['placement']>('none') },
       ),
       nameTag: kind === KIND_PROJECT ? fc.boolean() : fc.constant(false),
       colon:options.idsWithColons ? fc.boolean() : fc.constant(false),

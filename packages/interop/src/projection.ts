@@ -2385,7 +2385,7 @@ type FoldedField = { value: string; format?: ContentFormat; stage?: Stage }
  *
  * Built once per root, and asked once per change.
  */
-function targetFolders(root: SignedEvent | undefined): ReadonlySet<string> | undefined {
+export function targetFolders(root: SignedEvent | undefined): ReadonlySet<string> | undefined {
   if (!root) return undefined
   const folders = new Set(PLACEMENTS.flatMap((name) => root.tags.filter((t) => t[0] === name && t[1]).map((t) => t[1]!)))
   if (root.kind === KIND_CHANNEL_METADATA) {
@@ -2395,7 +2395,7 @@ function targetFolders(root: SignedEvent | undefined): ReadonlySet<string> | und
   return folders.size ? folders : undefined
 }
 
-function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | undefined): boolean {
+export function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | undefined): boolean {
   if (!folders) return true
   // The first `h` with a value, as the relay reads it: an empty `["h"]` ahead
   // of a real one must not make this read a different Folder from the one the

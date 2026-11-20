@@ -11,9 +11,10 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
 - `historyArb()` makes three more shapes of first record that are on the relay
   (estiva-ship's fixture holds one of each among 184): a record that names no
   team, one placed by `buzz-channel` alone (SPEC §7.3), and a project titled by
-  `name` rather than `title` (REW-11). Every repo's tests on it now try them;
-  they found the list read folding no change to a record that names no team,
-  and Ship deleting one (TES-2).
+  `name` rather than `title` (REW-11); `buzz-channel` on projects only. Every
+  repo's tests on it now try them. They found the list read folding no change
+  to a record that names no team (fixed in interop 0.108.1) and Ship's own
+  read deleting one (fixed in estiva-ship's TES-2 pull request, which follows).
 
 ## 0.62.0 — 2026-11-20
 
