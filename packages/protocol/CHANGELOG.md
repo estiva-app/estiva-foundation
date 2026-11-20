@@ -4,6 +4,20 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.63.0 — 2026-11-20
+
+**Wire behaviour: none written; nothing new read.** Only `/testing` changes.
+
+- `documentArb({ form })` makes up block documents: headings, lists nested up
+  to three deep, checklists, callouts, tables, code, links on words, mentions,
+  pictures and blocks from a later version, with marks on some words, and
+  words people actually type (accents, emoji, a pipe, a box, a backslash).
+  `form` is `message`, `description` or `editor`, each holding only what that
+  form can carry. `documentShape(doc, { ids })` is a document as a person reads
+  it, for comparing two. A test in this package checks every trip — through a
+  message's text, a description's text, the editor, and the wire — on them;
+  what text cannot carry is listed in `test/document-trips.md`.
+
 ## 0.62.1 — 2026-11-20
 
 **Wire behaviour: none written; nothing new read.** Only `/testing` changes.
