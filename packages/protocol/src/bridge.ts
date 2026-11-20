@@ -949,8 +949,6 @@ export class Relay {
   private readonly mergeReadsMs: number
   /** Plain reads asked and not yet sent ({@link Relay.merged}). */
   private waiting: WaitingRead[] = []
-  /** Reads sent and not yet answered, by their filters: an identical read joins one. */
-  private readonly inFlight = new Map<string, WaitingRead>()
   private flushTimer: unknown
 
   /** {@link Relay.send} through {@link retryWhileBusy}. */
@@ -1022,8 +1020,8 @@ export class Relay {
    * (`queryAll`'s batching rests on the same fact), so a batch whose answer
    * can be cut back per filter *for certain* ({@link discriminate}) gives every
    * caller what it would have got alone. One that cannot be is never guessed:
-   * its reads go out one by one, as before. An identical read already waiting
-   * or on its way shares that request.
+   * its reads go out one by one, as before. An identical read still waiting
+   * shares its request; one already sent does not.
    *
    * No new wire shape: only what the relay accepts today, several filters in
    * one `POST /query` (Miky, 20 Nov: until copies on the device catch up with
@@ -1033,7 +1031,12 @@ export class Relay {
     const key = JSON.stringify(filters)
     // Each caller gets its own array, so one caller sorting or trimming its answer never changes another's.
     const own = (events: SignedEvent[]) => [...events]
-    const shared = this.waiting.find((read) => read.key === key) ?? this.inFlight.get(key)
+    /*
+      Only a read not yet sent is shared. One already on its way may have left
+      before a save, or for the person signed in before this one, and a read
+      asked now must see what is true now.
+    */
+    const shared = this.waiting.find((read) => read.key === key)
     if (shared) return shared.answer.then(own)
     let resolve!: (events: SignedEvent[]) => void
     let reject!: (error: unknown) => void
@@ -1041,7 +1044,8 @@ export class Relay {
       resolve = res
       reject = rej
     })
-    this.waiting.push({ key, filters, resolve, reject, answer })
+    // A copy: the request goes out later, and a caller may reuse its filter objects meanwhile.
+    this.waiting.push({ key, filters: JSON.parse(key) as Record<string, unknown>[], resolve, reject, answer })
     this.flushTimer ??= setTimeout(() => this.flushMerged(), this.mergeReadsMs)
     return answer.then(own)
   }
@@ -1065,31 +1069,36 @@ export class Relay {
   }
 
   private async sendMerged(batch: WaitingRead[]): Promise<void> {
-    for (const read of batch) this.inFlight.set(read.key, read)
+    // Each read asked on its own, the old way: what a batch that cannot answer for each of them falls back to.
+    const alone = () =>
+      Promise.all(batch.map(async (read) => this.queryWithMatches(read.filters).then((answer) => read.resolve(answer.events), read.reject)))
+    const filters = batch.flatMap((read) => read.filters)
+    let events: SignedEvent[]
     try {
-      const filters = batch.flatMap((read) => read.filters)
-      const events = (await this.queryWithMatches(filters)).events
-      const runs = batch.length > 1 ? splitRuns(filters.length, events, discriminate(filters)!) : [events]
-      if (!runs) {
-        /*
-          An event the batch's filters could not place for certain (one carrying
-          two tags that each filter asks for). Asked again one read at a time,
-          the old way, rather than guessed.
-        */
-        await Promise.all(batch.map(async (read) => this.queryWithMatches(read.filters).then((answer) => read.resolve(answer.events), read.reject)))
-        return
-      }
-      let at = 0
-      for (const read of batch) {
-        read.resolve(batch.length > 1 ? runs.slice(at, at + read.filters.length).flat() : events)
-        at += read.filters.length
-      }
+      events = (await this.queryWithMatches(filters)).events
     } catch (error) {
-      // A refused batch fails each of its reads with the relay's answer — never retried one by one, which would
-      // turn "slow down" into more requests (as `batchFirstPages`).
-      for (const read of batch) read.reject(error)
-    } finally {
-      for (const read of batch) if (this.inFlight.get(read.key) === read) this.inFlight.delete(read.key)
+      /*
+        A wait (the person's minute spent, or the relay busy) or a request that
+        never reached the relay fails each read with that answer: asking again
+        one by one would turn "slow down" into more requests (as
+        `batchFirstPages`). Any other refusal may be one read's alone, so with
+        more than one read each is asked on its own and gets what it would have.
+      */
+      const refusedAsRead = error instanceof Error && error.message.startsWith('query failed:') && !error.message.includes('rate-limited')
+      if (batch.length > 1 && refusedAsRead) await alone()
+      else for (const read of batch) read.reject(error)
+      return
+    }
+    const runs = batch.length > 1 ? splitRuns(filters.length, events, discriminate(filters)!) : [events]
+    if (!runs) {
+      // An event the batch's filters could not place for certain (one carrying two tags that each filter asks for).
+      await alone()
+      return
+    }
+    let at = 0
+    for (const read of batch) {
+      read.resolve(batch.length > 1 ? runs.slice(at, at + read.filters.length).flat() : events)
+      at += read.filters.length
     }
   }
 

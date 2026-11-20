@@ -104,6 +104,94 @@ test('the same read asked twice at once goes out once, and each caller gets its 
   assert.deepEqual(ids(second), ['e4'])
 })
 
+/**
+ * A relay whose every /query answer waits until `answer()` is called, and which
+ * answers the relay's state at that moment: `saved` is in it once a write landed.
+ */
+function heldRelay() {
+  const calls = []
+  const held = []
+  let saved = false
+  const fetch = async (url, init) => {
+    if (url.endsWith('/events')) {
+      saved = true
+      return { status: 200, text: async () => JSON.stringify({ accepted: true, event_id: hex(9) }) }
+    }
+    calls.push(JSON.parse(init.body))
+    const state = saved ? ['e9'] : []
+    await new Promise((resolve) => held.push(resolve))
+    return { status: 200, text: async () => JSON.stringify(state.map((content) => ({ ...event(9, 400, 31990, [['k', '30850']]), content }))) }
+  }
+  const relay = new Relay('https://r', secretKeySigner(SECRET), { fetch, mergeReadsMs: MERGE_READS_MS, busyRetryDelaysMs: [] })
+  /** Wait until `count` reads have reached the relay (signing is async; a bounded wait, so a read that never goes out fails the assertions, not by hanging), then answer them all. */
+  const answer = async (count) => {
+    for (let turn = 0; turn < 200 && calls.length < count; turn++) await new Promise((resolve) => setImmediate(resolve))
+    held.splice(0).forEach((resolve) => resolve())
+  }
+  return { calls, relay, answer }
+}
+
+test('a read asked again after the first was answered goes out again and gets the relay’s new answer', async () => {
+  const read = [{ kinds: [31990], '#k': ['30850'], limit: 20 }]
+  const { calls, relay, answer } = heldRelay()
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const first = relay.query(read)
+    mock.timers.tick(MERGE_READS_MS)
+    await answer(1)
+    assert.deepEqual(ids(await first), [])
+    await relay.publish(event(9, 400, 31990, [['k', '30850']]))
+    const again = relay.query(read)
+    mock.timers.tick(MERGE_READS_MS)
+    await answer(2)
+    assert.deepEqual(ids(await again), ['e9'])
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('a read asked after a save never shares a read sent before it, so the save shows', async () => {
+  const read = [{ kinds: [31990], '#k': ['30850'], limit: 20 }]
+  const { relay, answer, calls } = heldRelay()
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const before = relay.query(read)
+    mock.timers.tick(MERGE_READS_MS)
+    while (calls.length < 1) await new Promise((resolve) => setImmediate(resolve))
+    await relay.publish(event(9, 400, 31990, [['k', '30850']]))
+    const after = relay.query(read)
+    mock.timers.tick(MERGE_READS_MS)
+    await answer(2)
+    assert.deepEqual(ids(await before), [])
+    assert.deepEqual(ids(await after), ['e9'])
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('a read the relay refuses fails alone: the reads sent with it still get their answers', async () => {
+  const calls = []
+  const fetch = async (_url, init) => {
+    const filters = JSON.parse(init.body)
+    calls.push(filters)
+    if (filters.some((f) => f.kinds?.includes(4242))) return { status: 400, text: async () => JSON.stringify({ error: 'invalid: kind 4242 is not allowed' }) }
+    return { status: 200, text: async () => JSON.stringify(EVENTS.filter((e) => e.kind === 0 && filters[0].authors.includes(e.pubkey))) }
+  }
+  const relay = new Relay('https://r', secretKeySigner(SECRET), { fetch, mergeReadsMs: MERGE_READS_MS, busyRetryDelaysMs: [] })
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const answers = [relay.query([{ kinds: [0], authors: [hex(7)] }]), relay.query([{ kinds: [4242], authors: [hex(7)] }])]
+    mock.timers.tick(MERGE_READS_MS)
+    const [good, refused] = await Promise.allSettled(answers)
+    assert.equal(good.status, 'fulfilled')
+    assert.deepEqual(ids(good.value), ['e1'])
+    assert.equal(refused.status, 'rejected')
+    assert.match(String(refused.reason?.message), /kind 4242 is not allowed/)
+  } finally {
+    mock.timers.reset()
+  }
+})
+
 test('reads whose answers could not be told apart go out separately, never guessed', async () => {
   // Same kind, and one author in both: an event of that author would belong to either.
   const reads = [[{ kinds: [0], authors: [hex(7), hex(8)] }], [{ kinds: [0], authors: [hex(7)] }]]
