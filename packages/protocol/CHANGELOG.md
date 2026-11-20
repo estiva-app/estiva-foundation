@@ -14,9 +14,12 @@ filters, which the relay already answers; nothing an app publishes changes.
   `query` holds a read whose every filter is plain (no `#h`, and one the
   relay's matches can tell apart) for that long, sends the reads that arrived
   meanwhile as one request of at most `MAX_FILTERS_PER_QUERY` filters, and
-  hands each read its own events. An identical read waiting or in flight is
-  asked once. A refused request fails each of its reads with the relay's
-  answer, so a caller's own wait-out sees the same error as before. Off by
+  hands each read its own events. An identical read still waiting is asked
+  once; one already sent is never shared, so a read after a save sees it. A
+  request refused as a wait (rate-limited, busy) or that never reached the
+  relay fails each of its reads with that answer, so a caller's own wait-out
+  sees the same error as before; any other refusal is asked again read by
+  read, so only the refused read fails. Off by
   default: an open spent 74–110 of a person's 300 requests a minute, and
   merging cuts a Ship open by about 20% (SHI-61).
 
