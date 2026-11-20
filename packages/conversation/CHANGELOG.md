@@ -15,7 +15,8 @@ about a conversation.
   file's block dropped the card while its text still linked the file. No file on
   production has such an id today (census of 20 Nov: every file's id is a
   lowercase uuid), so nothing drawn changes now. Found by the new test that
-  makes up links (`test/link.property.test.mjs`, TES-4).
+  makes up links (`test/link.property.test.mjs`, TES-4). Peek, Ship and Leaf
+  get it with their next move to this version.
 
 ## 0.43.0 — 2026-11-20
 
