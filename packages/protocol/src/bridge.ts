@@ -901,6 +901,12 @@ function runsByPosition(filters: Record<string, unknown>[], events: SignedEvent[
   return runs.every((run) => run.length <= pageSize) ? runs : null
 }
 
+/** The runs, or `null` when any is longer than its filter's `limit`: no run the relay sent. */
+function withinLimits(filters: Record<string, unknown>[], runs: SignedEvent[][] | null): SignedEvent[][] | null {
+  if (!runs) return null
+  return runs.every((run, i) => typeof filters[i].limit !== 'number' || run.length <= (filters[i].limit as number)) ? runs : null
+}
+
 /** The batched response split into one run per filter, or `null` if any event is unclaimed. */
 function splitRuns(
   count: number,
@@ -1108,9 +1114,22 @@ export class Relay {
       else for (const read of batch) read.reject(error)
       return
     }
-    const runs = batch.length > 1 ? splitRuns(filters.length, events, discriminate(filters)!) : [events]
+    /*
+      An event two of the batch's filters match (a handler carrying both `k`
+      tags two reads ask for) comes back once in each run, and no
+      discriminator can place it. The runs can still be cut by position, taken
+      only when exactly one cut fits and no run is longer than its filter
+      asked for. Without this, every such batch was asked again read by read:
+      one request more than not merging at all (Ship's issue open on
+      production, 20 Nov, two batches of five, 69 requests against 57 measured
+      before the deploy).
+    */
+    const runs =
+      batch.length > 1
+        ? (splitRuns(filters.length, events, discriminate(filters)!) ?? withinLimits(filters, runsByPosition(filters, events, Infinity)))
+        : [events]
     if (!runs) {
-      // An event the batch's filters could not place for certain (one carrying two tags that each filter asks for).
+      // An answer the batch's filters cannot be cut back into for certain: never guessed.
       await alone()
       return
     }

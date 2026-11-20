@@ -218,11 +218,30 @@ test('reads whose answers could not be told apart go out separately, never guess
   assert.deepEqual(merged.map(ids), [['e1', 'e2'], ['e1']])
 })
 
-test('a batch with an event two of its reads ask for is asked again read by read, with the right answers', async () => {
-  // Disjoint `#a` values, but e5 carries both: the batch's answer cannot be cut for certain.
-  const reads = [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }]]
+test('a batch with an event two of its reads ask for stays one request, and each read gets that event', async () => {
+  // Disjoint `#a` values, but e5 carries both, as a handler carries both `k` tags of Ship's two manifest reads:
+  // no discriminator places it, and it comes back once in each read's run.
+  const reads = [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }], [{ kinds: [0], authors: [hex(7)], limit: 1 }]]
   const { calls, merging } = fakeRelay()
   const merged = await together(merging, reads)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(merged.map(ids), [['e5'], ['e5', 'e6'], ['e1']])
+})
+
+test('a batch whose answer cannot be cut back for certain is asked again read by read, never guessed', async () => {
+  // A relay that matches differently from NIP-01 on a batch: an event none of the filters asks for.
+  const stray = event(9, 999, 1851, [['a', 'x:9']])
+  const calls = []
+  const fetch = async (_url, init) => {
+    const filters = JSON.parse(init.body)
+    calls.push(filters)
+    const out = filters.flatMap((filter) =>
+      EVENTS.filter((e) => e.kind === filter.kinds[0] && e.tags.some((t) => t[0] === 'a' && filter['#a'].includes(t[1]))),
+    )
+    return { status: 200, text: async () => JSON.stringify(filters.length > 1 ? [stray, ...out] : out) }
+  }
+  const merging = new Relay('https://r', secretKeySigner(SECRET), { fetch, mergeReadsMs: MERGE_READS_MS, busyRetryDelaysMs: [] })
+  const merged = await together(merging, [[{ kinds: [1851], '#a': ['x:1'] }], [{ kinds: [1851], '#a': ['x:2'] }]])
   assert.deepEqual(
     calls.map((c) => c.length),
     [2, 1, 1],

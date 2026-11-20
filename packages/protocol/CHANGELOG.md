@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.65.2 — 2026-11-20
+
+**Wire behaviour: none new written; nothing new read.**
+
+- Fixed: a merged batch with an event two of its reads ask for (a handler
+  carrying both `k` tags of two manifest reads) was asked again read by read,
+  one request more than not merging at all. Ship's issue open on production
+  spent 69 requests where 57 were measured (SHI-61). Its runs are now cut by
+  position, taken only when exactly one cut fits and no run is longer than its
+  filter's `limit`. An answer that still cannot be cut is asked again read by
+  read, as before.
+
 ## 0.65.1 — 2026-11-20
 
 **Wire behaviour: none new written; nothing new read.**
