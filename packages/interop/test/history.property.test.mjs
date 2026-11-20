@@ -129,3 +129,17 @@ test('the reads keep a file whose id has a colon in it whole', () => {
     settings,
   )
 })
+
+// The shared read cut the id at its colon when it read an archive, so a file
+// archived by a change naming it in `O` read as live (TES-2, found by Ship's
+// comparison with this read).
+test('the list read and the shared read agree on every field of a file whose id has a colon in it', () => {
+  fc.assert(
+    fc.property(historyArb({ idsWithColons: true }).chain((history) => deliveryArb(history.events)), (events) => {
+      const list = filesOf(events).sort(byAddress).map(seenInList)
+      const shared = projected(events).map(seenInSharedRead)
+      assert.deepEqual(list, shared)
+    }),
+    settings,
+  )
+})

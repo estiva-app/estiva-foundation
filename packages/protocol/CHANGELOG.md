@@ -4,6 +4,17 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.62.1 — 2026-11-20
+
+**Wire behaviour: none written; nothing new read.** Only `/testing` changes.
+
+- `historyArb()` makes three more shapes of first record that are on the relay
+  (estiva-ship's fixture holds one of each among 184): a record that names no
+  team, one placed by `buzz-channel` alone (SPEC §7.3), and a project titled by
+  `name` rather than `title` (REW-11). Every repo's tests on it now try them;
+  they found the list read folding no change to a record that names no team,
+  and Ship deleting one (TES-2).
+
 ## 0.62.0 — 2026-11-20
 
 **Wire behaviour: none written; nothing new read.** Nothing an app publishes

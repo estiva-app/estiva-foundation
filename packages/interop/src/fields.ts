@@ -128,9 +128,15 @@ export function filesOf(events: readonly SignedEvent[], options: { withText?: bo
     if (!file) continue
     const O = tagValue(event, 'O')
     if (O !== undefined && O !== tagValue(file.root, 'd')) continue
-    if (tagValue(event, 'h') !== (folderOf(file.root) ?? undefined)) continue
+    // A root that names no team cannot be checked, and §6.2 folds its changes
+    // as before — but never a summary (§6.12) or a delete (§6.5), which need a
+    // team. `projectEvents` reads them the same way; this read dropped every
+    // such change, so a renamed bare file listed its first title (TES-2).
+    const home = folderOf(file.root) ?? undefined
+    if (home !== undefined && tagValue(event, 'h') !== home) continue
     for (const set of fieldsSetBy(event)) {
       if (set.field === TEXT_FIELD && !options.withText) continue
+      if (home === undefined && (set.field === 'summary' || set.field === DELETED_FIELD)) continue
       const held = file.fields[set.field]
       if (held && !newer(event, held.event)) continue
       file.fields[set.field] = { ...set, id: event.id, pubkey: event.pubkey, at: changedAt(event), event }

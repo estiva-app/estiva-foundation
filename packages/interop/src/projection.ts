@@ -2595,7 +2595,10 @@ function archiveOf(
   root: SignedEvent | undefined,
   folderAdmins?: ReadonlySet<string>,
 ): Archive | undefined {
-  const [kind, , identifier] = address.split(':')
+  // The `d` is everything after the pubkey: an id may hold a colon, and cutting
+  // it there dropped every archive whose `O` named the whole id (TES-2).
+  const [kind, , ...rest] = address.split(':')
+  const identifier = rest.join(':')
   if (Number(kind) === KIND_CHANNEL) {
     if (!folderAdmins?.size) return undefined
     changes = changes.filter((change) => tagValue(change, 'h') === identifier && folderAdmins.has(change.pubkey))

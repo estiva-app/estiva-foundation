@@ -6,6 +6,13 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.108.1 — 2026-11-20
+
+**Manifest: nothing new. Wire: nothing new written; the shared read keeps an archive on a file whose id has a colon in it, and the list read folds a record that names no team as SPEC §6.2 says.**
+
+- `filesOf` dropped every change to a first record that names no team, so such a file (a bare record published before its `h` was required) listed its first title in Leaf and the agent while Ship and `projectEvents` showed it renamed. It now folds them as §6.2 says and `projectEvents` does, except a summary (§6.12) and a delete (§6.5), which need a team. Found when protocol 0.62.1's history maker began making such records.
+- `projectEvents` (and every read through `archiveOf`) cut a file's address at the colon in its id, so an `archived` change naming the file in `O` (SPEC §6.2) was taken for a change about another file and dropped: the file read as live in Peek, Leaf and the agent while Ship and the list read showed it archived. Found by Ship's new comparison of its own read with this one (TES-2); `test/history.property.test.mjs` now checks the list read and the shared read agree on every field of such a file too. Today's apps mint plain UUIDs, so no file on the relay is known to have hit it.
+
 ## 0.108.0 — 2026-11-20
 
 **Manifest: nothing new. Wire: nothing new written; the list read takes the same version of a first record as the shared read.**
