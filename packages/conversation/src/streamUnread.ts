@@ -147,7 +147,7 @@ export function foldMemberships(pubkey: string, events: readonly SignedEvent[], 
     const d = rest.join(':')
     const own = authorOfAddress(file) === pubkey
     // The root the viewer created, when they did — ordered before everything else for the file.
-    const root = own ? [{ id: '', pubkey, kind: Number(kind), created_at: floor, tags: [['d', d ?? '']], content: '', sig: '' }] : []
+    const root = own ? [{ id: '', pubkey, kind: Number(kind), created_at: floor, tags: [['d', d]], content: '', sig: '' }] : []
     files.set(file, membershipOf(file, pubkey, [...root, ...held]))
   }
   return { files, mentioned, floor }

@@ -175,7 +175,11 @@ function build(p: Plan, ids: string[]): History {
     tags.push(['h', change.inOwnTeam ? file.team : p.teams.find((t) => t !== file.team)!])
     if (fields.length === 1) tags.push(['field', fields[0][0]], ['value', fields[0][1]])
     else for (const [f, v] of fields) tags.push(['set', f, v])
-    for (const [f, v] of fields) if (f === 'assignee' && v) tags.push(['p', v])
+    // A change names the person it is about in `p`, as membership's filters find it (§11.8).
+    for (const [f, v] of fields) {
+      if (f === 'assignee' && v) tags.push(['p', v])
+      else if (f.startsWith('member:')) tags.push(['p', f.slice('member:'.length)])
+    }
     if (change.ts === 'untrusted') tags.push(['ts', String((created_at + 7) * 1000)])
     else if (change.ts !== null) tags.push(['ts', String(created_at * 1000 + change.ts)])
     events.push({ id: id(), pubkey, created_at, kind: KIND_CHANGE, tags, content: '', sig: '' })
