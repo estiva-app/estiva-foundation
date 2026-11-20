@@ -134,6 +134,7 @@ describe('the change writer — §6.2', () => {
     assert.deepEqual(built.tags, [
       ['a', ADDRESS],
       ['O', D],
+      ['K', 'osnova.project'],
       ['field', 'status'],
       ['value', 'in_progress'],
       ['h', FOLDER],
@@ -380,6 +381,7 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     assert.deepEqual(built.tags, [
       ['a', ADDRESS],
       ['O', D],
+      ['K', 'osnova.project'],
       ['h', FOLDER],
       ['ts', String(T0 + 1)],
       ['set', 'status', 'done', root.id],
@@ -417,7 +419,7 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     withA.tags.splice(withA.tags.findIndex((t) => t[0] === 'stage'), 0, ['A', `${PROJECT}:${OWNER}:parent`])
     const built = combineChanges([withP, withA])
     assert.ok(typeof built !== 'string')
-    assert.deepEqual(built.tags.slice(6).map((t) => t[0]), ['A', 'p', 'stage'])
+    assert.deepEqual(built.tags.slice(7).map((t) => t[0]), ['A', 'p', 'stage'])
   })
 
   it('both land from one copy: QA-1 renamed it meanwhile, so the whole change is sent again with title after QA-1\'s and stands', async () => {

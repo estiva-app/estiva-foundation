@@ -340,7 +340,10 @@ describe('the level change, the teams list and the reads', () => {
     const e = buildLevelChange(BOB, (T0 + 1) * 1000 + 250, { place: TOPIC, folder: TEAM, level: 'all' })
     assert.equal(e.kind, 1851)
     assert.equal(e.pubkey, BOB)
-    assert.deepEqual(e.tags, [['a', TOPIC], ['O', D], ['field', `follow:${BOB}`], ['value', 'all'], ['h', TEAM], ['ts', String((T0 + 1) * 1000 + 250)], ['p', BOB]])
+    assert.deepEqual(e.tags, [['a', TOPIC], ['O', D], ['K', 'osnova.topic'], ['field', `follow:${BOB}`], ['value', 'all'], ['h', TEAM], ['ts', String((T0 + 1) * 1000 + 250)], ['p', BOB]])
+    // A team's own chat is not a file: its level change says no type (SPEC §6.2).
+    const onChat = buildLevelChange(BOB, (T0 + 1) * 1000, { place: CHAT, folder: TEAM, level: 'all' })
+    assert.equal(onChat.tags.some((t) => t[0] === 'K'), false)
     assert.throws(() => buildLevelChange(BOB, 0, { place: TOPIC, folder: TEAM, level: 'none' as 'all' }))
     assert.throws(() => buildLevelChange(BOB.toUpperCase(), 0, { place: TOPIC, folder: TEAM, level: 'all' }))
   })
@@ -424,7 +427,7 @@ describe('§11.8 Add and the switch (TEA-6)', () => {
     const after = (T0 + 20) * 1000 + 1
     assert.equal(add.pubkey, CAROL)
     assert.equal(add.created_at, T0 + 20)
-    assert.deepEqual(add.tags, [['a', TOPIC], ['O', D], ['field', `member:${BOB}`], ['value', 'true'], ['h', TEAM], ['ts', String(after)], ['prev', leave.id], ['p', BOB]])
+    assert.deepEqual(add.tags, [['a', TOPIC], ['O', D], ['K', 'osnova.topic'], ['field', `member:${BOB}`], ['value', 'true'], ['h', TEAM], ['ts', String(after)], ['prev', leave.id], ['p', BOB]])
     assert.equal(following(BOB, { events: [...events, signed(add)] }).in, true)
     const onTime = buildPlaceAdd(CAROL, (T0 + 90) * 1000, { place: topicPlace, folder: TEAM, person: BOB, events })
     assert.deepEqual(onTime.tags.find((t) => t[0] === 'ts'), ['ts', String((T0 + 90) * 1000)])

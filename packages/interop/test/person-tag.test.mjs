@@ -76,6 +76,7 @@ describe('a change that names a person', () => {
     assert.deepEqual(event.tags, [
       ['a', I1],
       ['O', I1.split(':')[2]],
+      ['K', 'osnova.issue'],
       ['field', 'assignee'],
       ['value', PERSON],
       ['h', FOLDER],

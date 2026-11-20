@@ -424,7 +424,7 @@ export async function writeChange(args: WriteChangeArgs): Promise<WriteChangeRes
 }
 
 /** The tags of a one-field change that belong to its field, and so go after the `set` tags. */
-const FIELD_OWN = new Set(['a', 'O', 'field', 'value', 'h', 'ts', 'prev', 'stage', CONTENT_FORMAT_TAG])
+const FIELD_OWN = new Set(['a', 'O', 'K', 'field', 'value', 'h', 'ts', 'prev', 'stage', CONTENT_FORMAT_TAG])
 
 /** §6.2's order for the tags after the `set` tags; anything else after them. */
 const AFTER_SETS = ['A', 'o', 'imeta', 'p']
@@ -452,6 +452,9 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
   const folder = tagValue(first, 'h')
   if (!file || !folder) return 'A change names its file and its team.'
   if (!id) return `${file} has no id, and a change setting several fields names its file by it.`
+  // The file's type (§6.2), as the one-field changes say it.
+  const type = tagValue(first, 'K')
+  if (changes.some((change) => tagValue(change, 'K') !== type)) return 'A change setting several fields says one type for its file.'
   const sets: string[][] = []
   const rest: string[][] = []
   const stages: string[][] = []
@@ -482,6 +485,7 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
     tags: [
       ['a', file],
       ['O', id],
+      ...(type ? [['K', type]] : []),
       ['h', folder],
       ['ts', String(ms)],
       ...sets,

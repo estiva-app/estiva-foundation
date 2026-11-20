@@ -118,7 +118,7 @@ describe('adding to and taking off a topic kept in order — §6.13, §6.14', ()
     for (const sent of relay.published) {
       assert.deepEqual(
         sent.tags.map((t) => t[0]),
-        ['a', 'O', 'field', 'value', 'h', 'ts', 'prev', 'o'],
+        ['a', 'O', 'K', 'field', 'value', 'h', 'ts', 'prev', 'o'],
         '§6.14’s tags, with prev after ts as order: and look: carry it',
       )
       assert.equal(tag(sent, 'prev'), relay.topicRoot.id)
@@ -172,7 +172,7 @@ describe('where topics are not kept in order', () => {
     const [entry] = planListInTopic(QA1, MS, { topic: holder, file: PAGE })
     assert.deepEqual(
       entry.tags.map((t) => t[0]),
-      ['a', 'O', 'field', 'value', 'h', 'ts', 'o'],
+      ['a', 'O', 'K', 'field', 'value', 'h', 'ts', 'o'],
     )
   })
 })

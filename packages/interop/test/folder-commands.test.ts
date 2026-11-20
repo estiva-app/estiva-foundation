@@ -89,6 +89,12 @@ describe('planArchiveFolder', () => {
     assert.deepEqual(change.tags.find(([t]) => t === 'h'), ['h', A])
     assert.equal(change.content, 'Done')
   })
+
+  it('says no type: a team is not a file, so its archive carries no K (SPEC §6.2)', () => {
+    const channel = `39000:${'c'.repeat(64)}:${A}`
+    const [change] = planArchiveFolder(PUB, MS, { folder: A, channel, archived: true })
+    assert.deepEqual(change.tags.slice(0, 3).map(([t]) => t), ['a', 'O', 'field'])
+  })
 })
 
 describe('planPlaceFile and planUnlistFile', () => {

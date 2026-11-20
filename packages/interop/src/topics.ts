@@ -26,7 +26,7 @@
  * nobody to the file (§11.8).
  */
 import { encodeNpub, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { RELAY_PAGE_CEILING } from '@estiva-app/protocol'
+import { RELAY_PAGE_CEILING, changeTypeTags } from '@estiva-app/protocol'
 import {
   byOrder,
   candidateFilesOf,
@@ -122,6 +122,7 @@ function entry(
     tags: [
       ['a', args.list.address],
       ['O', holder[3]],
+      ...changeTypeTags(args.list.address),
       ['field', listsField(args.file)],
       ['value', args.listed ? 'true' : 'false'],
       ['h', args.list.folder],

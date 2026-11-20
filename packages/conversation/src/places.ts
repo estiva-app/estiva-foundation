@@ -24,7 +24,7 @@
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-team-has-members-and-followers-and-a-place-is-followed-at-a-level.md
  */
-import { fileIdOf, KIND, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import { changeTypeTags, fileIdOf, KIND, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { APPDATA_TAG, FOLLOW_FIELD_PREFIX, buildMembershipChange, memberOfField } from './membership.js'
 import { byOrder } from './order.js'
@@ -1027,6 +1027,8 @@ export function buildLevelChange(
     tags: [
       ['a', args.place],
       ...(id !== undefined ? [['O', id]] : []),
+      // Its place's type (§6.2): a topic's; none on a team's own chat.
+      ...changeTypeTags(args.place),
       ['field', field],
       ['value', args.level],
       ['h', args.folder],

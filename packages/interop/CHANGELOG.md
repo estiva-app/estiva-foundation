@@ -6,6 +6,21 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.110.0 — 2026-11-20
+
+**Manifest: nothing new declared or read. Wire: every change this package builds for a file now says the file's type, `["K", <type>]` after its `O` (SPEC §6.2), so an app can ask for a person's changes to some types with `#K`.**
+
+- `buildActionEvent`/`buildActionEvents` (and so `writeChange`), a topic's
+  list entries (`planListInTopic`, `planRemoveFromTopic`) and its arrangement
+  (`planMoveInTopic`, `planLookInTopic`, `planPutBackInTopic`) write the tag;
+  `combineChanges` carries it from the one-field changes into the several-field
+  form, after `O`, and refuses changes that say different types.
+- A change to a named-type file (`kind:30852`) takes its type in the new
+  `ActionEventArgs.type`, and is refused as a string without it: the relay
+  refuses a change that says the wrong type.
+- `planArchiveFolder`'s change is on a team's own address and says no type.
+- Needs `@estiva-app/protocol` 0.66.0.
+
 ## 0.109.0 — 2026-11-20
 
 **Manifest: an older listing's `kind:5` Delete on a file the relay keeps in order is read as SPEC §7.3 says: it writes the file's `deleted` change. Wire: a topic's list entries can name the change they follow.**

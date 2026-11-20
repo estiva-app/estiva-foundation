@@ -82,6 +82,7 @@ describe('an entry on the wire', () => {
     assert.deepEqual(event.tags, [
       ['a', TOPIC],
       ['O', TOPIC_D],
+      ['K', 'osnova.topic'],
       ['field', `lists:${PROJECT_D}`],
       ['value', 'true'],
       ['h', FOLDER],

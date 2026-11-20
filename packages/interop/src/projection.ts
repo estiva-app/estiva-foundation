@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { BASE_TYPE_OF_KIND, FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, fileIdFormOf } from '@estiva-app/protocol'
+import { BASE_TYPE_OF_KIND, FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, changeTypeTags, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -6461,6 +6461,12 @@ export interface ActionEventArgs {
   kind: number
   /** Address of the object being acted on. */
   address: string
+  /**
+   * The type of a named-type file (`kind:30852`), the `k` of its first
+   * record: a change to one says it in `K` (§6.2), and its address does not
+   * carry it. Not needed for the four base kinds.
+   */
+  type?: string
   /** Author of the object — needed for NIP-22's `P`/`p` tags. */
   objectAuthor: string
   folder: string
@@ -6777,10 +6783,20 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   const fileId = records.targetTag === 'a' ? identifierOf(address) : undefined
   // A comment names its file by its id too once its type is kept in order (§6.4, "A comment in both forms").
   const byId = fileIdFormOf(args.inOrder ?? [], address)
+  // The type of the file a change is about (§6.2): none for a team's own address.
+  let typeTags: string[][] = []
+  if (declared.emits.field && records.targetTag === 'a') {
+    try {
+      typeTags = changeTypeTags(address, args.type)
+    } catch (error) {
+      return `"${declared.label}" cannot be written: ${(error as Error).message}.`
+    }
+  }
   const tags: string[][] = declared.emits.field
     ? [
         [records.targetTag, address],
         ...(fileId !== undefined ? [['O', fileId]] : []),
+        ...typeTags,
         [records.fieldTag, declared.emits.field],
         [records.valueTag, value],
         ['h', folder],

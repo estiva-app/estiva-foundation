@@ -58,6 +58,7 @@ describe('C28 — a mention in a file’s text', () => {
     assert.deepEqual(adds[0].tags, [
       ['a', ISSUE],
       ['O', ISSUE.split(':')[2]],
+      ['K', 'osnova.issue'],
       ['field', `member:${BOB}`],
       ['value', 'true'],
       ['h', FOLDER],
