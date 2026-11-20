@@ -63,6 +63,17 @@ function textOf(block: Block): string {
 */
 const keyOf = (block: Block) => `${block.type}\u0000${textOf(block)}`
 
+/** A block's text with each run's marks, and its attrs: the same words in italics are not the same block. */
+function exactKeyOf(block: Block): string {
+  const runs = (content: Block['content']): unknown =>
+    !Array.isArray(content)
+      ? null
+      : isInlineRun(content)
+        ? content.map((n) => [n.text, (n.marks ?? []).map((m) => JSON.stringify(m)).sort()])
+        : (content as Block[]).map((child) => [child.type, child.attrs ?? null, runs(child.content)])
+  return `${block.type}\u0000${JSON.stringify([block.attrs ?? null, runs(block.content)])}`
+}
+
 /**
  * How a description's text spells what §13.2 has no marker for (RIC-19):
  * a checklist item as `- [ ] ` / `- [x] `, GFM's task list, and a callout as a
@@ -207,25 +218,35 @@ export function markerTextToBlockDocument(text: string, previous?: BlockDocument
 function lendIds(fresh: readonly Block[], old: readonly Block[], takenIds: Set<string>): (Block | undefined)[] {
   const usedOld = new Set<number>()
 
-  // Pass 1 — same type and identical text, wherever it moved to.
-  const byKey = new Map<string, number[]>()
-  old.forEach((block, i) => {
-    if (!block.id) return
-    const list = byKey.get(keyOf(block)) ?? []
-    list.push(i)
-    byKey.set(keyOf(block), list)
-  })
-  const matched: (Block | undefined)[] = fresh.map((block) => {
-    const candidates = byKey.get(keyOf(block))
-    while (candidates && candidates.length) {
-      const i = candidates.shift() as number
-      if (usedOld.has(i) || takenIds.has(old[i].id)) continue
-      usedOld.add(i)
-      takenIds.add(old[i].id)
-      return old[i]
-    }
-    return undefined
-  })
+  /*
+    Pass 1 — same type and identical text, wherever it moved to: first the same
+    text with the same marks, then the same words however they are marked (an
+    editor and text can mark a space differently). Exact first, or of two items
+    reading the same words, one in italics, an edit of the plain one would hand
+    its id to the italic one (TES-3, found on a fresh seed).
+  */
+  const matched: (Block | undefined)[] = fresh.map(() => undefined)
+  for (const key of [exactKeyOf, keyOf]) {
+    const byKey = new Map<string, number[]>()
+    old.forEach((block, i) => {
+      if (!block.id || usedOld.has(i)) return
+      const list = byKey.get(key(block)) ?? []
+      list.push(i)
+      byKey.set(key(block), list)
+    })
+    fresh.forEach((block, f) => {
+      if (matched[f]) return
+      const candidates = byKey.get(key(block))
+      while (candidates && candidates.length) {
+        const i = candidates.shift() as number
+        if (usedOld.has(i) || takenIds.has(old[i].id)) continue
+        usedOld.add(i)
+        takenIds.add(old[i].id)
+        matched[f] = old[i]
+        return
+      }
+    })
+  }
 
   // Pass 2 — same type at the same index, among what is left.
   fresh.forEach((block, i) => {

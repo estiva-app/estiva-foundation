@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.63.1 — 2026-11-20
+
+**Wire behaviour: none new written; nothing new read.** Block ids read back
+from text are matched more exactly.
+
+- Fixed: of two blocks reading the same words, one marked differently (two
+  list items "Q&A 2026", one in italics), editing the plain one as text handed
+  its id to the other and gave it a new one, so a comment on either could move
+  or come loose. Matching by identical text now tries the same text with the
+  same marks first, then the same words. Found by the made-up documents on
+  their first fresh seed on `main` (984713138).
+
 ## 0.63.0 — 2026-11-20
 
 **Wire behaviour: none new written; nothing new read.** A block document read
