@@ -113,7 +113,11 @@ export function filesOf(events: readonly SignedEvent[], options: { withText?: bo
     if (event.kind === KIND_CHANGE || tagValue(event, 'd') === undefined) continue
     const address = addressOfRoot(event)
     const held = roots.get(address)
-    if (!held || event.created_at > held.created_at) roots.set(address, event)
+    // Two versions of one record: the later `created_at`, then the lower id (§6.3, NIP-01), so
+    // the file is the same whichever version arrived first, and the same as `projectEvents` reads.
+    if (!held || event.created_at > held.created_at || (event.created_at === held.created_at && event.id < held.id)) {
+      roots.set(address, event)
+    }
   }
   const files = new Map<string, FileFields>()
   for (const [address, root] of roots) files.set(address, { root, address, fields: {}, events: [root] })

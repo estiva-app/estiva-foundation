@@ -4,6 +4,21 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.62.0 — 2026-11-20
+
+**Wire behaviour: none written; nothing new read.** Nothing an app publishes
+changes; the main entry point is unchanged.
+
+- A second entry point, `@estiva-app/protocol/testing`, for tests that try
+  thousands of inputs: `historyArb()` makes up histories of projects, issues
+  and documents (two versions of a first record, changes of one field or
+  several, with and without a trusted `ts`, many in the same second, some from
+  outside the file's team or about another file, members joining and leaving,
+  comments), `deliveryArb(events)` hands them back in any order with some
+  twice, and `runSettings(n)` reads `FC_SEED` and `FC_RUNS`. It needs
+  `fast-check`, now an optional peer dependency; the main entry point never
+  imports it. Shapes from estiva-ship `conformance/fold-fixture.json`.
+
 ## 0.61.0 — 2026-11-18
 
 **Wire behaviour: none written; nothing new read** (PROD-5; record

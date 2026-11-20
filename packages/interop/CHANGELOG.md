@@ -6,6 +6,12 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.108.0 — 2026-11-20
+
+**Manifest: nothing new. Wire: nothing new written; the list read takes the same version of a first record as the shared read.**
+
+- `filesOf`, holding two versions of one first record written in the same second, now keeps the lower id (SPEC §6.3, NIP-01), as `projectEvents` already did. It kept whichever arrived first, so the same events in another order listed a different title, and the list read and the shared read could name the same file differently. Found by the new test that makes up thousands of histories (`test/history.property.test.mjs`): any order, some delivered twice, gives the same files, and both reads give the same title, status, summary, assignee, parent, archived and deleted.
+
 ## 0.107.0 — 2026-11-19
 
 **Manifest: nothing new. Wire: nothing new written; a Folder read can ask the list read for some file kinds only** (ISS-6).
