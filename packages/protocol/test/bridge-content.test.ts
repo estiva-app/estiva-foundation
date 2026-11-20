@@ -105,6 +105,19 @@ describe('ids carry across an edit — the anchoring guarantee', () => {
     assert.ok(!idsOf(original).includes(moved.content[2].id))
   })
 
+  it('keeps the id of a moved block whose marks an editor saved differently from how text reads them', () => {
+    // An editor bolds "Extend " with its space; text reads `**Extend** now` with the space outside.
+    const saved: BlockDocument = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', id: 'intro', content: [{ type: 'text', text: 'intro' }] },
+        { type: 'paragraph', id: 'extend', content: [{ type: 'text', text: 'Extend ', marks: [{ type: 'bold' }] }, { type: 'text', text: 'now' }] },
+      ],
+    }
+    const moved = markerTextToBlockDocument('**Extend** now\n\nintro', saved)
+    assert.deepEqual(idsOf(moved), ['extend', 'intro'])
+  })
+
   // Found by the made-up documents on a fresh seed (TES-3, seed 984713138).
   it('keeps both items’ ids when one of two items with the same words, one in italics, is edited', () => {
     const list: BlockDocument = {
