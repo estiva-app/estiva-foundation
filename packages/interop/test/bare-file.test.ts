@@ -679,11 +679,11 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     it('a listing that names another kind for its changes cannot turn Delete into that kind: it is refused', () => {
       for (const changeKind of [5, 0]) {
         const manifest = { ...BARE_MANIFEST, records: { ...BARE_MANIFEST.records!, changeKind } }
-        const built = buildActionEvent({
-          manifest, kind: KIND_BARE_FILE, address: KEPT_TOPIC, objectAuthor: AUTHOR, folder: TEAM,
+        const built = buildActionEvents({
+          manifest, kind: KIND_BARE_FILE, address: KEPT_TOPIC, objectAuthor: AUTHOR, folder: TEAM, listedIn: [],
           actionId: 'delete', value: '', pubkey: OTHER, createdAtMs: 1_700_000_000_000, inOrder: ['osnova.topic'], prev: ROOT,
         })
-        assert.equal(typeof built, 'string', `changeKind ${changeKind} built ${JSON.stringify(built)}`)
+        assert.match(String(built), /kind 1851 change/, `changeKind ${changeKind} built ${JSON.stringify(built)}`)
       }
     })
 
