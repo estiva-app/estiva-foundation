@@ -168,8 +168,9 @@ test("the history leaves out a change signed in another team than the file's", (
     }),
     settings,
   )
-  // The rule is only shown by histories that hold such a change.
-  assert.ok(held > settings.numRuns / 10, `only ${held} of ${settings.numRuns} histories held a change signed in another team`)
+  // The rule is only shown by histories that hold such a change. A short run
+  // (FC_RUNS, replaying one seed) may hold none, and that is not a failure.
+  if (settings.numRuns >= 100) assert.ok(held > settings.numRuns / 10, `only ${held} of ${settings.numRuns} histories held a change signed in another team`)
 })
 
 test("the last line of each field in a file's history is the field's current change, with its value, who set it, when and its stage", () => {
@@ -220,7 +221,7 @@ test('the shared read gives a status as stored beside its label, the same value 
     }),
     settings,
   )
-  assert.ok(labels > 0, 'no history set a status the list names')
+  if (settings.numRuns >= 100) assert.ok(labels > 0, 'no history set a status the list names')
 })
 
 test('the reads keep a file whose id has a colon in it whole', () => {

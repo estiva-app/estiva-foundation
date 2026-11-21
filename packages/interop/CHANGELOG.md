@@ -23,7 +23,10 @@ manifests already published still mean what they meant.
 - `CurrentField` (from `filesOf`, `listFiles`, `openFile`) gains `stage`: what
   the value means when the change that set it says.
 - A slot read through a vocabulary gains `stored`, the value as stored
-  (`in_progress`) beside its label (`value`, "In Progress").
+  (`in_progress`) beside its label (`value`, "In Progress"). It is a new key
+  on those slots: an app that copies a slot and replaces only `value` (an
+  optimistic status change) must set `stored` too, and a whole-slot comparison
+  in a test sees it.
 
 ## 0.110.0 — 2026-11-20
 

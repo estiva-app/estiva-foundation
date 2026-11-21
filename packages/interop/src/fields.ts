@@ -187,6 +187,10 @@ function countedSets(event: SignedEvent, root: SignedEvent): { field: string; va
  * a file that names no team, and a change to a file whose record is not among
  * the events.
  *
+ * A membership line (`member:<key>`) is listed as written, as the fields hold
+ * it: somebody else's `false` on a person's membership is not a leave
+ * (§11.8), and the caller that words the line leaves it out.
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-keeps-every-change-for-good.md
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
  */
