@@ -6788,8 +6788,9 @@ function buildOneActionEvent(args: ActionEventArgs): UnsignedActionEvent | strin
   if (declared.emits.field && records.targetTag === 'a') {
     try {
       typeTags = changeTypeTags(address, args.type)
-    } catch (error) {
-      return `"${declared.label}" cannot be written: ${(error as Error).message}.`
+    } catch {
+      // A named-type file (`30852`) whose type the caller did not pass: its first record's `k` (`ActionEventArgs.type`).
+      return `"${declared.label}" was not saved: this file's type is not known.`
     }
   }
   const tags: string[][] = declared.emits.field

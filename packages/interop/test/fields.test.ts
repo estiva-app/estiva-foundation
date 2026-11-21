@@ -391,6 +391,18 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     assert.equal(built.created_at, Math.floor((T0 + 1) / 1000))
   })
 
+  it('says its file\'s type once after O when only some of its one-field changes say it, and refuses two different types', () => {
+    // A writer not yet saying the type builds one field; the shared builder, which says it, builds the other.
+    const without = change(AGENT, 'title', 'Launch 2', root.id, T0 + 1)
+    without.tags = without.tags.filter((t) => t[0] !== 'K')
+    const built = combineChanges([without, change(AGENT, 'status', 'done', root.id, T0 + 1)])
+    assert.ok(typeof built !== 'string')
+    assert.deepEqual(built.tags.slice(0, 4).map((t) => t.slice(0, 2)), [['a', ADDRESS], ['O', D], ['K', 'osnova.project'], ['h', FOLDER]])
+    const other = change(AGENT, 'title', 'Launch 2', root.id, T0 + 1)
+    other.tags = other.tags.map((t) => (t[0] === 'K' ? ['K', 'osnova.issue'] : t))
+    assert.match(String(combineChanges([other, change(AGENT, 'status', 'done', root.id, T0 + 1)])), /one type/)
+  })
+
   it('keeps the text\'s content-format beside its set, and names a field once', () => {
     const built = combineChanges([change(AGENT, 'title', 'x', root.id, T0), change(AGENT, 'description', blocks(p('b1', 'one')), root.id, T0)])
     assert.ok(typeof built !== 'string')

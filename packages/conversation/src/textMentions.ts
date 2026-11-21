@@ -114,10 +114,10 @@ export function newlyNamedPeople(saved: FileText, editedFrom: FileText | null): 
 export function mentionAddsFor(
   writer: string,
   createdAtMs: number,
-  args: { file: string; folder: string; saved: FileText; editedFrom: FileText | null },
+  args: { file: string; folder: string; saved: FileText; editedFrom: FileText | null; /** A named-type file's type, the `k` of its first record (§6.2). */ type?: string },
 ): UnsignedEvent[] {
   return newlyNamedPeople(args.saved, args.editedFrom)
     .filter((person) => person !== writer)
     .slice(0, MAX_MENTIONED_PEOPLE)
-    .map((person) => buildMembershipChange(writer, createdAtMs, { file: args.file, folder: args.folder, person, member: true }))
+    .map((person) => buildMembershipChange(writer, createdAtMs, { file: args.file, folder: args.folder, person, member: true, ...(args.type !== undefined ? { type: args.type } : {}) }))
 }

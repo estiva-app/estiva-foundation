@@ -453,8 +453,10 @@ export function combineChanges(changes: readonly UnsignedEvent[]): UnsignedEvent
   if (!file || !folder) return 'A change names its file and its team.'
   if (!id) return `${file} has no id, and a change setting several fields names its file by it.`
   // The file's type (§6.2), as the one-field changes say it.
-  const type = tagValue(first, 'K')
-  if (changes.some((change) => tagValue(change, 'K') !== type)) return 'A change setting several fields says one type for its file.'
+  // A one-field change from a writer that does not say it yet carries none: only two different types are refused.
+  const types = [...new Set(changes.map((change) => tagValue(change, 'K')).filter((t): t is string => !!t))]
+  if (types.length > 1) return 'A change setting several fields says one type for its file.'
+  const [type] = types
   const sets: string[][] = []
   const rest: string[][] = []
   const stages: string[][] = []
