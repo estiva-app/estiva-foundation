@@ -7,7 +7,11 @@
  * records (sometimes two versions of one), the changes people made to them
  * (`kind:1851`, one field or several, with or without a trusted `ts`, some in
  * the same second, some by people outside the file's team) and comments on
- * them. The shapes are the ones on the relay today (estiva-ship
+ * them. A first record may be created with a summary, a description (in a tag
+ * or as its content), a key and a lead (a project) or a ref (an issue). A
+ * change may set any of those too; a summary may hold line breaks and runs of
+ * spaces; a status is one of its type's own list, one nobody defined, or the
+ * other type's word, and may carry its stage (§6.2). The shapes are the ones on the relay today (estiva-ship
  * `conformance/fold-fixture.json`, 20 Nov 2026), so every repo's tests share
  * one idea of what a history can be.
  *
@@ -53,7 +57,23 @@ const HEX = '0123456789abcdef'.split('')
 /** A 64-character lowercase hex string: an event id or a pubkey. */
 export const hex64Arb = (): fc.Arbitrary<string> => fc.string({ unit: fc.constantFrom(...HEX), minLength: 64, maxLength: 64 })
 
-const STATUSES = ['todo', 'in_progress', 'done', 'cancelled']
+/** Each tracked type's own list (Ship's manifest, §7.4): a project's words are not an issue's. */
+const ISSUE_STATUSES = ['todo', 'in_progress', 'done', 'cancelled']
+const PROJECT_STATUSES = ['planned', 'in_progress', 'completed', 'cancelled']
+/** Statuses nobody defined: in no list, and so shown by their id (§6.2). One holds a space and capitals. */
+const UNDEFINED_STATUSES = ['blocked', 'In Review']
+/**
+ * What a status change may say its status means (§6.2's `["stage", "status", …]`):
+ * the four stages, whichever the list gives the status, and a word that is no
+ * stage, which a reader ignores.
+ */
+const STAGES = ['open', 'started', 'done', 'dropped', 'paused'] as const
+/** Summaries as people paste them: line breaks, runs of spaces, a tab, space at either end, nothing but space. */
+const SUMMARIES = ['', 'Summary', 'First line\nsecond line', '  Spaces   in a row  ', 'A tab\tand a\r\nWindows break', ' \n ']
+const TEXTS = ['', 'A description', 'First paragraph\n\nSecond paragraph', '  ']
+const KEYS = ['MOV', 'PEE', '']
+const REFS = ['MOV-1', 'PEE-8', '']
+const BLOCKS_FORMAT = 'estiva-blocks-1'
 const TITLES = ['Payments', 'Billing', 'Renamed', 'Untitled', 'Launch plan', '']
 
 type FileKind = typeof KIND_PROJECT | typeof KIND_ISSUE | typeof KIND_DOCUMENT
@@ -72,6 +92,13 @@ interface RootPlan {
   nameTag: boolean
   colon: boolean
   title: string
+  /**
+   * What the first record is created with beside its title, as Ship's and
+   * Peek's creation write it (§6.1, §7.2): each a number picking the value, or
+   * `null` for no tag. `text` is a `description` tag, or the `content`;
+   * `label` is a project's `key` or an issue's `ref`; `lead` is a project's.
+   */
+  seed: { summary: number | null; text: number | null; textIn: 'tag' | 'content'; label: number | null; lead: number | null }
   /** A second version of the first record: its offset in seconds (0 = the same second) and its title. */
   second: { after: number; title: string } | null
 }
@@ -84,13 +111,15 @@ interface ChangePlan {
   /** `null` for no `ts`; a millisecond within the second; or `'untrusted'`, a `ts` from another second. */
   ts: number | 'untrusted' | null
   sets: { field: (typeof FIELDS)[number]; value: number }[]
+  /** The stage a status change carries (§6.2), or `null` for none: most changes on the relay predate it. */
+  stage: (typeof STAGES)[number] | null
   /** Carry the file's id in `O` (as writers since §6.2 do), or the id of another file, or none. */
   O: 'own' | 'other' | 'none'
   /** Filed in the file's own team, or in another one (which a reader must not fold). */
   inOwnTeam: boolean
 }
 
-const FIELDS = ['title', 'status', 'summary', 'assignee', 'archived', 'deleted', 'project', 'member'] as const
+const FIELDS = ['title', 'status', 'summary', 'assignee', 'archived', 'deleted', 'project', 'member', 'description', 'key', 'lead', 'ref'] as const
 
 /**
  * A made-up history of a few projects, issues and documents and the changes
@@ -112,6 +141,13 @@ export function historyArb(options: HistoryOptions = {}): fc.Arbitrary<History> 
       nameTag: kind === KIND_PROJECT ? fc.boolean() : fc.constant(false),
       colon:options.idsWithColons ? fc.boolean() : fc.constant(false),
       title: fc.constantFrom(...TITLES),
+      seed: fc.record({
+        summary: fc.option(fc.nat(SUMMARIES.length - 1), { freq: 3 }),
+        text: fc.option(fc.nat(TEXTS.length - 1), { freq: 3 }),
+        textIn: fc.constantFrom<'tag' | 'content'>('tag', 'content'),
+        label: fc.option(fc.nat(KEYS.length - 1), { freq: 3 }),
+        lead: fc.option(fc.nat(peopleCount - 1), { freq: 3 }),
+      }),
       second: fc.option(fc.record({ after: fc.nat(2), title: fc.constantFrom(...TITLES) }), { freq: 4 }),
     })
   const changeArb: fc.Arbitrary<ChangePlan> = fc.record({
@@ -119,7 +155,9 @@ export function historyArb(options: HistoryOptions = {}): fc.Arbitrary<History> 
     author: fc.nat(peopleCount - 1),
     at: fc.nat(4),
     ts: fc.oneof(fc.constant(null), fc.constantFrom(0, 500, 999), fc.constant('untrusted' as const)),
-    sets: fc.array(fc.record({ field: fc.constantFrom(...FIELDS), value: fc.nat(7) }), { minLength: 1, maxLength: 2 }),
+    // A status three times as often as any other field: it has the most to say (its list, its stage).
+    sets: fc.array(fc.record({ field: fc.constantFrom(...FIELDS, 'status' as const, 'status' as const), value: fc.nat(7) }), { minLength: 1, maxLength: 2 }),
+    stage: fc.option(fc.constantFrom(...STAGES), { freq: 2 }),
     O: fc.constantFrom('own', 'own', 'none', 'other'),
     inOwnTeam: fc.oneof({ weight: 9, arbitrary: fc.constant(true) }, { weight: 1, arbitrary: fc.constant(false) }),
   })
@@ -165,10 +203,23 @@ function build(p: Plan, ids: string[]): History {
     // An issue is filed under the first project; a project and a document stand alone.
     const parent = root.kind === KIND_ISSUE ? files[0]?.address : undefined
     const placed = root.placement === 'none' ? [] : [[root.placement, team]]
-    const tags = (title: string) => [['d', d], [root.nameTag ? 'name' : 'title', title], ...placed, ...(parent ? [['a', parent]] : [])]
-    events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH, kind: root.kind, tags: tags(root.title), content: '', sig: '' })
+    // What it was created with. A second version carries the same: an app republishing its record keeps them.
+    const { seed } = root
+    const text = seed.text === null ? undefined : TEXTS[seed.text]
+    const seeded: string[][] = []
+    if (text !== undefined && seed.textIn === 'tag') seeded.push(['description', text])
+    if (seed.summary !== null) seeded.push(['summary', SUMMARIES[seed.summary]])
+    if (root.kind === KIND_PROJECT) {
+      if (seed.lead !== null) seeded.push(['lead', p.people[seed.lead]], ['p', p.people[seed.lead]])
+      if (seed.label !== null) seeded.push(['key', KEYS[seed.label]])
+    } else if (root.kind === KIND_ISSUE && seed.label !== null) {
+      seeded.push(['ref', REFS[seed.label]])
+    }
+    const content = text !== undefined && seed.textIn === 'content' ? text : ''
+    const tags = (title: string) => [['d', d], [root.nameTag ? 'name' : 'title', title], ...placed, ...(parent ? [['a', parent]] : []), ...seeded]
+    events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH, kind: root.kind, tags: tags(root.title), content, sig: '' })
     if (root.second) {
-      events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH + root.second.after, kind: root.kind, tags: tags(root.second.title), content: '', sig: '' })
+      events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH + root.second.after, kind: root.kind, tags: tags(root.second.title), content, sig: '' })
     }
     files.push({ address, d, kind: root.kind, team, author: pubkey })
   })
@@ -181,6 +232,8 @@ function build(p: Plan, ids: string[]): History {
     const set = change.sets
       .map(({ field, value }) => setting(field, value, file, p.people, projects))
       .filter((s): s is [string, string] => s !== undefined)
+    // The text in the block format says so on its change (§13.3); the number that picked the text picks this too.
+    const blocks = change.sets.some(({ field, value }) => field === 'description' && value >= TEXTS.length)
     // One field a change sets at most once; a several-field change never names a member (§11.8).
     const unique = [...new Map(set.map((s) => [s[0], s])).values()]
     const fields = unique.length > 1 ? unique.filter(([f]) => !f.startsWith('member:')) : unique
@@ -199,6 +252,9 @@ function build(p: Plan, ids: string[]): History {
     }
     if (change.ts === 'untrusted') tags.push(['ts', String((created_at + 7) * 1000)])
     else if (change.ts !== null) tags.push(['ts', String(created_at * 1000 + change.ts)])
+    if (blocks && fields.some(([f]) => f === 'description')) tags.push(['content-format', BLOCKS_FORMAT])
+    // A status change says what its status means, last (§6.2, C32); a cleared status has no stage to say.
+    if (change.stage !== null && fields.some(([f, v]) => f === 'status' && v !== '')) tags.push(['stage', 'status', change.stage])
     events.push({ id: id(), pubkey, created_at, kind: KIND_CHANGE, tags, content: '', sig: '' })
   }
 
@@ -228,10 +284,23 @@ function setting(
   switch (field) {
     case 'title':
       return ['title', TITLES[n % TITLES.length]]
-    case 'status':
-      return file.kind === KIND_DOCUMENT ? undefined : ['status', STATUSES[n % STATUSES.length]]
+    case 'status': {
+      if (file.kind === KIND_DOCUMENT) return undefined
+      const own = file.kind === KIND_PROJECT ? PROJECT_STATUSES : ISSUE_STATUSES
+      const other = file.kind === KIND_PROJECT ? ISSUE_STATUSES : PROJECT_STATUSES
+      // Its own list most of the time; then one nobody defined, and the other type's first word.
+      return ['status', n < 4 ? own[n] : n < 6 ? UNDEFINED_STATUSES[n - 4] : n === 6 ? other[0] : own[1]]
+    }
     case 'summary':
-      return ['summary', n % 3 === 0 ? '' : `Summary ${n}`]
+      return ['summary', SUMMARIES[n % SUMMARIES.length]]
+    case 'description':
+      return ['description', TEXTS[n % TEXTS.length]]
+    case 'key':
+      return file.kind !== KIND_PROJECT ? undefined : ['key', KEYS[n % KEYS.length]]
+    case 'lead':
+      return file.kind !== KIND_PROJECT ? undefined : ['lead', n % 4 === 3 ? '' : people[n % people.length]]
+    case 'ref':
+      return file.kind !== KIND_ISSUE ? undefined : ['ref', REFS[n % REFS.length]]
     case 'assignee':
       return file.kind !== KIND_ISSUE ? undefined : ['assignee', n % 4 === 3 ? '' : people[n % people.length]]
     case 'archived':
