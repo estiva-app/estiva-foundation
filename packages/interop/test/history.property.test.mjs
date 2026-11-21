@@ -16,7 +16,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fc from 'fast-check'
 import { deliveryArb, historyArb, runSettings } from '@estiva-app/protocol/testing'
-import { filesOf, projectEvents } from '../dist/index.js'
+import { filesOf, historyOf, projectEvents } from '../dist/index.js'
 
 // 1,000 histories a rule: about 0.3 s each, 1.5 s for the file (measured 20 Nov 2026).
 const settings = runSettings(1000)
@@ -124,6 +124,104 @@ for (const [ids, options] of [['', {}], [', on file ids with a colon in them', {
     )
   })
 }
+
+/** A file's history as a person would read it down a panel: each line's change, field, value, who and when. */
+function lines(events) {
+  return historyOf(events).map((line) => ({
+    file: line.address,
+    change: line.id,
+    field: line.field,
+    value: line.value,
+    by: line.pubkey,
+    at: line.at,
+    stage: line.stage ?? '',
+    format: line.format ?? '',
+  }))
+}
+
+test('the history (historyOf) lists the same changes in the same order for the same events in any order, some delivered twice', () => {
+  fc.assert(
+    fc.property(historyAndTwoDeliveries(), ([history, first, second]) => {
+      assert.deepEqual(lines(first), lines(second))
+      assert.deepEqual(lines(first), lines(history.events))
+    }),
+    settings,
+  )
+})
+
+const tagOf = (event, name) => event.tags.find((t) => t[0] === name && t[1])?.[1]
+
+test("the history leaves out a change signed in another team than the file's", () => {
+  let held = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const teamsOf = new Map(
+        filesOf(events).map((file) => [file.address, file.root.tags.filter((t) => (t[0] === 'h' || t[0] === 'buzz-channel') && t[1]).map((t) => t[1])]),
+      )
+      const elsewhere = events.filter((e) => {
+        const teams = e.kind === 1851 ? teamsOf.get(tagOf(e, 'a')) : undefined
+        return teams?.length && !teams.includes(tagOf(e, 'h'))
+      })
+      if (elsewhere.length) held++
+      const listed = new Set(historyOf(events).map((line) => line.id))
+      for (const change of elsewhere) assert.equal(listed.has(change.id), false, `listed a change signed in ${tagOf(change, 'h')}`)
+    }),
+    settings,
+  )
+  // The rule is only shown by histories that hold such a change.
+  assert.ok(held > settings.numRuns / 10, `only ${held} of ${settings.numRuns} histories held a change signed in another team`)
+})
+
+test("the last line of each field in a file's history is the field's current change, with its value, who set it, when and its stage", () => {
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const last = new Map()
+      for (const line of historyOf(events)) {
+        last.set(`${line.address} ${line.field}`, { value: line.value, change: line.id, by: line.pubkey, at: line.at, stage: line.stage ?? '', format: line.format ?? '' })
+      }
+      const current = new Map(
+        filesOf(events, { withText: true }).flatMap((file) =>
+          Object.entries(file.fields).map(([field, f]) => [
+            `${file.address} ${field}`,
+            { value: f.value, change: f.id, by: f.pubkey, at: f.at, stage: f.stage ?? '', format: f.format ?? '' },
+          ]),
+        ),
+      )
+      assert.deepEqual([...last].sort(), [...current].sort())
+    }),
+    settings,
+  )
+})
+
+test('the shared read gives a status as stored beside its label, the same value the list read gives', () => {
+  const labelled = {
+    ...resolved,
+    manifest: {
+      ...MANIFEST,
+      vocabularies: { status: [{ value: 'in_progress', label: 'In Progress', colour: 'blue' }] },
+      projections: Object.fromEntries(
+        Object.entries(MANIFEST.projections).map(([kind, p]) => [kind, { ...p, slots: { ...p.slots, status: { fold: 'status', map: 'status' } } }]),
+      ),
+    },
+  }
+  let labels = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const list = new Map(filesOf(events).map((file) => [file.address, file.fields.status?.value]))
+      for (const object of projectEvents(events, () => labelled)) {
+        const status = object.slots.status
+        if (!status) continue
+        assert.equal(status.stored, list.get(object.address))
+        if (status.stored === 'in_progress') {
+          assert.equal(status.value, 'In Progress')
+          labels++
+        }
+      }
+    }),
+    settings,
+  )
+  assert.ok(labels > 0, 'no history set a status the list names')
+})
 
 test('the reads keep a file whose id has a colon in it whole', () => {
   fc.assert(

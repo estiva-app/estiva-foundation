@@ -6,6 +6,25 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.111.0 — 2026-11-21
+
+**Manifest: nothing new declared or read. Wire: nothing. A file's history, and what each field's value means, from the shared read (MOV-2).**
+
+- `historyOf(events)` gives every change to the files the events hold, oldest
+  first (SPEC §6.3), one `FileChange` per field a change sets: the file, the
+  change's id, who made it, when, the field, its value as stored, its format,
+  its stage and its note. The same answer in any order of delivery and when a
+  change arrives twice. It lists what `filesOf` counts and nothing else: not a
+  change signed in another team than the file's, one whose `O` names another
+  file, a summary or a delete on a file that names no team, or a change to a
+  file whose record is not among the events (Miky, 21 Nov, on the issue). It
+  reads nothing: a caller that wants all of a file's history asks for all of
+  its changes, which opening a file still never does.
+- `CurrentField` (from `filesOf`, `listFiles`, `openFile`) gains `stage`: what
+  the value means when the change that set it says.
+- A slot read through a vocabulary gains `stored`, the value as stored
+  (`in_progress`) beside its label (`value`, "In Progress").
+
 ## 0.110.0 — 2026-11-20
 
 **Manifest: nothing new declared or read. Wire: every change this package builds for a file now says the file's type, `["K", <type>]` after its `O` (SPEC §6.2), so an app can ask for a person's changes to some types with `#K`.**
