@@ -4,6 +4,33 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.67.0 — 2026-11-21
+
+**Wire behaviour: none new written; nothing new read.** Test code only
+(`@estiva-app/protocol/testing`).
+
+- `historyArb()` makes four more shapes of history, so a test that compares
+  two reads of a project or an issue is judged on them (MOV-1):
+  - a summary with line breaks, a tab, runs of spaces, space at either end, or
+    nothing but space, on the first record and by a change;
+  - a status from the file's own list (a project's is `planned`, `in_progress`,
+    `completed`, `cancelled`; before, a project got an issue's words), a status
+    nobody defined (`blocked`, `In Review`), and the other type's first word;
+  - a status change that carries its stage, `["stage", "status", …]` last
+    (§6.2): any of the four stages, whatever the list gives that status, or a
+    word that is no stage;
+  - a description, as marker text or as a block document with its
+    `content-format`, set by a change, alone or with another field, or held by
+    an older first record (§6.1: in a `description` tag or its content; a
+    document's in its content only);
+  - a project's key and lead and an issue's ref, on the first record and set
+    by a change. A change that sets a lead names the person in `p` (§11.8).
+- Some of these are shapes SPEC allows and no app has written yet (a status
+  nobody defined, a stage word that is no stage); the file's header says which.
+- A status is picked three times as often as any other field. The same seed
+  gives different histories than 0.65: a test that pinned a counterexample by
+  its seed and path replays another one.
+
 ## 0.66.0 — 2026-11-20
 
 **Wire behaviour: nothing written by this package; it gains the rule its writers use. A change to a file says its file's type in `K` (SPEC §6.2).**
