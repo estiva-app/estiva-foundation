@@ -19,10 +19,14 @@ nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — i
   - a status change that carries its stage, `["stage", "status", …]` last
     (§6.2): any of the four stages, whatever the list gives that status, or a
     word that is no stage;
-  - a description (marker text or the block format, in a `description` tag or
-    as the first record's content), a project's key and lead, and an issue's
-    ref, each on the first record and set by a change, alone or with another
-    field.
+  - a description, as marker text or as a block document with its
+    `content-format`, set by a change, alone or with another field, or held by
+    an older first record (§6.1: in a `description` tag or its content; a
+    document's in its content only);
+  - a project's key and lead and an issue's ref, on the first record and set
+    by a change. A change that sets a lead names the person in `p` (§11.8).
+- Some of these are shapes SPEC allows and no app has written yet (a status
+  nobody defined, a stage word that is no stage); the file's header says which.
 - A status is picked three times as often as any other field. The same seed
   gives different histories than 0.65: a test that pinned a counterexample by
   its seed and path replays another one.

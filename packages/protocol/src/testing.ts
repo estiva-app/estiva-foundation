@@ -11,9 +11,13 @@
  * or as its content), a key and a lead (a project) or a ref (an issue). A
  * change may set any of those too; a summary may hold line breaks and runs of
  * spaces; a status is one of its type's own list, one nobody defined, or the
- * other type's word, and may carry its stage (§6.2). The shapes are the ones on the relay today (estiva-ship
- * `conformance/fold-fixture.json`, 20 Nov 2026), so every repo's tests share
- * one idea of what a history can be.
+ * other type's word, and may carry its stage (§6.2).
+ *
+ * Most shapes are ones on the relay today (estiva-ship
+ * `conformance/fold-fixture.json`, 20 Nov 2026). A few are ones SPEC allows
+ * and no app has written yet, and a reader must still agree on: a status
+ * nobody defined, a stage word that is no stage, a `ts` from another second.
+ * Every repo's tests share one idea of what a history can be.
  *
  * One maker, many repos: Ship, Peek and Leaf import it rather than copy it.
  */
@@ -71,6 +75,14 @@ const STAGES = ['open', 'started', 'done', 'dropped', 'paused'] as const
 /** Summaries as people paste them: line breaks, runs of spaces, a tab, space at either end, nothing but space. */
 const SUMMARIES = ['', 'Summary', 'First line\nsecond line', '  Spaces   in a row  ', 'A tab\tand a\r\nWindows break', ' \n ']
 const TEXTS = ['', 'A description', 'First paragraph\n\nSecond paragraph', '  ']
+/** The same in the block format (§13.3): an empty document, and one paragraph. Their change or record says so in `content-format`. */
+const BLOCK_TEXTS = [
+  JSON.stringify({ type: 'doc', content: [] }),
+  JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', id: 'b1', content: [{ type: 'text', text: 'A description' }] }] }),
+]
+/** A description by the number that picked it: marker text for the first four, a block document after. */
+const textFor = (n: number): string => (n % 8 < TEXTS.length ? TEXTS[n % 8] : BLOCK_TEXTS[n % BLOCK_TEXTS.length])
+const inBlocks = (text: string): boolean => BLOCK_TEXTS.includes(text)
 const KEYS = ['MOV', 'PEE', '']
 const REFS = ['MOV-1', 'PEE-8', '']
 const BLOCKS_FORMAT = 'estiva-blocks-1'
@@ -143,7 +155,7 @@ export function historyArb(options: HistoryOptions = {}): fc.Arbitrary<History> 
       title: fc.constantFrom(...TITLES),
       seed: fc.record({
         summary: fc.option(fc.nat(SUMMARIES.length - 1), { freq: 3 }),
-        text: fc.option(fc.nat(TEXTS.length - 1), { freq: 3 }),
+        text: fc.option(fc.nat(7), { freq: 3 }),
         textIn: fc.constantFrom<'tag' | 'content'>('tag', 'content'),
         label: fc.option(fc.nat(KEYS.length - 1), { freq: 3 }),
         lead: fc.option(fc.nat(peopleCount - 1), { freq: 3 }),
@@ -205,9 +217,16 @@ function build(p: Plan, ids: string[]): History {
     const placed = root.placement === 'none' ? [] : [[root.placement, team]]
     // What it was created with. A second version carries the same: an app republishing its record keeps them.
     const { seed } = root
-    const text = seed.text === null ? undefined : TEXTS[seed.text]
+    const text = seed.text === null ? undefined : textFor(seed.text)
     const seeded: string[][] = []
-    if (text !== undefined && seed.textIn === 'tag') seeded.push(['description', text])
+    // Older first records hold their text (§6.1): a project's in a `description` tag, an issue's in
+    // its content, or in the tag when another app's launcher filed it (Ship reads both, tag first,
+    // as `textOf` does); a document's in its content only. A file made since 18 Nov 2026 has none,
+    // and its text is its first change: a history with no seeded text and a description change.
+    const textInTag = root.kind !== KIND_DOCUMENT && seed.textIn === 'tag'
+    if (text !== undefined && textInTag) seeded.push(['description', text])
+    // A record created with a block document says so, as Ship's creation does (§13.3).
+    if (text !== undefined && inBlocks(text)) seeded.push(['content-format', BLOCKS_FORMAT])
     if (seed.summary !== null) seeded.push(['summary', SUMMARIES[seed.summary]])
     if (root.kind === KIND_PROJECT) {
       if (seed.lead !== null) seeded.push(['lead', p.people[seed.lead]], ['p', p.people[seed.lead]])
@@ -215,7 +234,7 @@ function build(p: Plan, ids: string[]): History {
     } else if (root.kind === KIND_ISSUE && seed.label !== null) {
       seeded.push(['ref', REFS[seed.label]])
     }
-    const content = text !== undefined && seed.textIn === 'content' ? text : ''
+    const content = text !== undefined && !textInTag ? text : ''
     const tags = (title: string) => [['d', d], [root.nameTag ? 'name' : 'title', title], ...placed, ...(parent ? [['a', parent]] : []), ...seeded]
     events.push({ id: id(), pubkey, created_at: HISTORY_EPOCH, kind: root.kind, tags: tags(root.title), content, sig: '' })
     if (root.second) {
@@ -232,8 +251,6 @@ function build(p: Plan, ids: string[]): History {
     const set = change.sets
       .map(({ field, value }) => setting(field, value, file, p.people, projects))
       .filter((s): s is [string, string] => s !== undefined)
-    // The text in the block format says so on its change (§13.3); the number that picked the text picks this too.
-    const blocks = change.sets.some(({ field, value }) => field === 'description' && value >= TEXTS.length)
     // One field a change sets at most once; a several-field change never names a member (§11.8).
     const unique = [...new Map(set.map((s) => [s[0], s])).values()]
     const fields = unique.length > 1 ? unique.filter(([f]) => !f.startsWith('member:')) : unique
@@ -247,14 +264,15 @@ function build(p: Plan, ids: string[]): History {
     else for (const [f, v] of fields) tags.push(['set', f, v])
     // A change names the person it is about in `p`, as membership's filters find it (§11.8).
     for (const [f, v] of fields) {
-      if (f === 'assignee' && v) tags.push(['p', v])
+      if ((f === 'assignee' || f === 'lead') && v) tags.push(['p', v])
       else if (f.startsWith('member:')) tags.push(['p', f.slice('member:'.length)])
     }
     if (change.ts === 'untrusted') tags.push(['ts', String((created_at + 7) * 1000)])
     else if (change.ts !== null) tags.push(['ts', String(created_at * 1000 + change.ts)])
-    if (blocks && fields.some(([f]) => f === 'description')) tags.push(['content-format', BLOCKS_FORMAT])
-    // A status change says what its status means, last (§6.2, C32); a cleared status has no stage to say.
-    if (change.stage !== null && fields.some(([f, v]) => f === 'status' && v !== '')) tags.push(['stage', 'status', change.stage])
+    // A description in the block format says so on its change (§13.3).
+    if (fields.some(([f, v]) => f === 'description' && inBlocks(v))) tags.push(['content-format', BLOCKS_FORMAT])
+    // A status change says what its status means, last (§6.2, C32).
+    if (change.stage !== null && fields.some(([f]) => f === 'status')) tags.push(['stage', 'status', change.stage])
     events.push({ id: id(), pubkey, created_at, kind: KIND_CHANGE, tags, content: '', sig: '' })
   }
 
@@ -294,7 +312,7 @@ function setting(
     case 'summary':
       return ['summary', SUMMARIES[n % SUMMARIES.length]]
     case 'description':
-      return ['description', TEXTS[n % TEXTS.length]]
+      return ['description', textFor(n)]
     case 'key':
       return file.kind !== KIND_PROJECT ? undefined : ['key', KEYS[n % KEYS.length]]
     case 'lead':
