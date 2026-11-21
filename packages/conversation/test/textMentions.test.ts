@@ -50,6 +50,12 @@ const leave = (person: string, at: number) =>
 const bobIsMember = (events: SignedEvent[]) => membershipOf(ISSUE, BOB, events).member
 
 describe('C28 — a mention in a file’s text', () => {
+  it('a save of a named-type file that newly names Bob writes his Add saying the type it is handed', () => {
+    const invoice = `30852:${ALICE}:d68a8c78-5ec7-4652-b236-89ab57ac5b1e`
+    const adds = mentionAddsFor(ALICE, (T0 + 10) * 1000, { file: invoice, folder: FOLDER, saved: text(BOB), editedFrom: text(), type: 'acme.invoice' })
+    assert.deepEqual(adds[0].tags.slice(0, 3), [['a', invoice], ['O', 'd68a8c78-5ec7-4652-b236-89ab57ac5b1e'], ['K', 'acme.invoice']])
+  })
+
   it('a save that newly names Bob writes one Add for him, signed by the writer, with his p', () => {
     const adds = mentionAddsFor(ALICE, (T0 + 10) * 1000, { file: ISSUE, folder: FOLDER, saved: text(BOB), editedFrom: text() })
     assert.equal(adds.length, 1)
@@ -58,6 +64,7 @@ describe('C28 — a mention in a file’s text', () => {
     assert.deepEqual(adds[0].tags, [
       ['a', ISSUE],
       ['O', ISSUE.split(':')[2]],
+      ['K', 'osnova.issue'],
       ['field', `member:${BOB}`],
       ['value', 'true'],
       ['h', FOLDER],

@@ -6,6 +6,15 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.45.0 — 2026-11-20
+
+- **SPEC §6.2:** a membership change (`buildMembershipChange`, and so
+  `buildPlaceAdd`, `switchWrites` and `mentionAddsFor`) and a level change
+  (`buildLevelChange`) on a file say the file's type, `["K", <type>]` after
+  `O`. One on a team's own chat (`39000:`) says none: a team is not a file.
+  `buildMembershipChange` takes `type` for a named-type file. Nothing is read
+  differently. Needs `@estiva-app/protocol` 0.66.0.
+
 ## 0.44.0 — 2026-11-20
 
 - **SPEC §13.6.1:** `urlNames` reads a file's whole id when it has a colon in

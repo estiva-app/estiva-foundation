@@ -134,6 +134,7 @@ describe('the change writer — §6.2', () => {
     assert.deepEqual(built.tags, [
       ['a', ADDRESS],
       ['O', D],
+      ['K', 'osnova.project'],
       ['field', 'status'],
       ['value', 'in_progress'],
       ['h', FOLDER],
@@ -380,6 +381,7 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     assert.deepEqual(built.tags, [
       ['a', ADDRESS],
       ['O', D],
+      ['K', 'osnova.project'],
       ['h', FOLDER],
       ['ts', String(T0 + 1)],
       ['set', 'status', 'done', root.id],
@@ -387,6 +389,18 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
       ['stage', 'status', 'done'],
     ])
     assert.equal(built.created_at, Math.floor((T0 + 1) / 1000))
+  })
+
+  it('says its file\'s type once after O when only some of its one-field changes say it, and refuses two different types', () => {
+    // A writer not yet saying the type builds one field; the shared builder, which says it, builds the other.
+    const without = change(AGENT, 'title', 'Launch 2', root.id, T0 + 1)
+    without.tags = without.tags.filter((t) => t[0] !== 'K')
+    const built = combineChanges([without, change(AGENT, 'status', 'done', root.id, T0 + 1)])
+    assert.ok(typeof built !== 'string')
+    assert.deepEqual(built.tags.slice(0, 4).map((t) => t.slice(0, 2)), [['a', ADDRESS], ['O', D], ['K', 'osnova.project'], ['h', FOLDER]])
+    const other = change(AGENT, 'title', 'Launch 2', root.id, T0 + 1)
+    other.tags = other.tags.map((t) => (t[0] === 'K' ? ['K', 'osnova.issue'] : t))
+    assert.match(String(combineChanges([other, change(AGENT, 'status', 'done', root.id, T0 + 1)])), /one type/)
   })
 
   it('keeps the text\'s content-format beside its set, and names a field once', () => {
@@ -417,7 +431,7 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     withA.tags.splice(withA.tags.findIndex((t) => t[0] === 'stage'), 0, ['A', `${PROJECT}:${OWNER}:parent`])
     const built = combineChanges([withP, withA])
     assert.ok(typeof built !== 'string')
-    assert.deepEqual(built.tags.slice(6).map((t) => t[0]), ['A', 'p', 'stage'])
+    assert.deepEqual(built.tags.slice(7).map((t) => t[0]), ['A', 'p', 'stage'])
   })
 
   it('both land from one copy: QA-1 renamed it meanwhile, so the whole change is sent again with title after QA-1\'s and stands', async () => {

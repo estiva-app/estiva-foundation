@@ -27,7 +27,7 @@
  * Muting is private and separate (§11.8 *Muting is private*): see
  * {@link parseMutedBlob}.
  */
-import { fileIdOf, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import { changeTypeTags, fileIdOf, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { FILE_ADDRESS as ADDRESS, FOLDER_ID, KIND_APP_DATA, KIND_CHANGE, KIND_COMMENT, KIND_MESSAGE } from './kinds.js'
 import { byOrder } from './order.js'
 import { anchorsOf, isAbout, isCommentOn, peopleNamedInBody } from './strength.js'
@@ -273,7 +273,7 @@ export function candidateFilesOf(event: Pick<SignedEvent, 'kind' | 'tags'>): str
 export function buildMembershipChange(
   pubkey: string,
   createdAtMs: number,
-  args: { file: string; folder: string; person: string; member: boolean; note?: string; prev?: string },
+  args: { file: string; folder: string; person: string; member: boolean; note?: string; prev?: string; /** A named-type file's type, the `k` of its first record (§6.2). */ type?: string },
 ): UnsignedEvent {
   const note = args.note ?? (!args.member ? 'Leave' : args.person === pubkey ? 'Join' : 'Add')
   if (!ADDRESS.test(args.file)) throw new Error(`not a file address: ${JSON.stringify(args.file)}`)
@@ -288,6 +288,8 @@ export function buildMembershipChange(
       ['a', args.file],
       // The file the change is about, by its id (§6.2, §11.8): the same file, so additive for every reader.
       ...(fileIdOf(args.file) !== undefined ? [['O', fileIdOf(args.file)!]] : []),
+      // Its file's type (§6.2); none on a team's own chat, which is not a file.
+      ...changeTypeTags(args.file, args.type),
       ['field', memberField(args.person)],
       ['value', args.member ? 'true' : 'false'],
       ['h', args.folder],

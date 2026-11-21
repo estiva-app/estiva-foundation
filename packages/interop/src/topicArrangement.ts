@@ -19,7 +19,7 @@
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/each-file-on-a-topic-keeps-its-own-place-and-look.md
  */
-import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { changeTypeTags, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
 import { byOrder } from '@estiva-app/conversation'
 import { changedAt, combineChanges, conflictOf, fieldsSetBy } from './fields.js'
 
@@ -246,6 +246,7 @@ function fieldChange(pubkey: string, createdAtMs: number, topic: ArrangeHolder, 
     tags: [
       ['a', topic.address],
       ['O', holder[3]],
+      ...changeTypeTags(topic.address),
       ['field', field],
       ['value', value],
       ['h', topic.folder],
@@ -357,6 +358,7 @@ export function planPutBackInTopic(
     tags: [
       ['a', args.topic.address],
       ['O', holder[3]],
+      ...changeTypeTags(args.topic.address),
       ['field', `lists:${args.file.file}`],
       ['value', 'true'],
       ['h', args.topic.folder],

@@ -85,3 +85,40 @@ export function fileIdFormOf(inOrder: readonly string[], address: string): FileI
   const type = BASE_TYPE_OF_KIND[Number(address.slice(0, address.indexOf(':')))]
   return id !== undefined && type !== undefined && inOrder.includes(type) ? { id, type } : undefined
 }
+
+/**
+ * The type a change to the file at `address` says in its `K` (SPEC §6.2), by
+ * name: the kind's own for the four base kinds, and `named` — the `k` of its
+ * first record, which a writer reads with the file's `h` — for a `30852`,
+ * whose address does not carry it. Undefined for an address that is not a
+ * file's, a team's own (`39000:`) among them: such a change carries no `K`.
+ *
+ * Throws for a `30852` given no type, and for a base kind given another
+ * type's name: the relay refuses a change whose `K` is not its file's type,
+ * so a writer that cannot say it does not write.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-change-says-the-type-of-its-file.md
+ */
+export function changeTypeOf(address: string, named?: string): string | undefined {
+  const kind = Number(address.slice(0, address.indexOf(':')))
+  const base = BASE_TYPE_OF_KIND[kind]
+  if (base !== undefined) {
+    if (named !== undefined && named !== base) throw new Error(`a kind ${kind} is ${base}, not ${JSON.stringify(named)}`)
+    return base
+  }
+  if (!FILE_KINDS.includes(kind)) return undefined
+  if (named === undefined || named === '' || Object.values(BASE_TYPE_OF_KIND).includes(named)) {
+    throw new Error(`a change to a kind ${kind} file says its type, the k of its first record: got ${JSON.stringify(named)}`)
+  }
+  return named
+}
+
+/**
+ * The `K` tag of a change to the file at `address`, to spread after its `O`
+ * (after its `a` when it has none): one tag, or none for an address that is
+ * not a file's ({@link changeTypeOf}).
+ */
+export function changeTypeTags(address: string, named?: string): string[][] {
+  const type = changeTypeOf(address, named)
+  return type !== undefined ? [['K', type]] : []
+}

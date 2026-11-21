@@ -4,6 +4,18 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.66.0 — 2026-11-20
+
+**Wire behaviour: nothing written by this package; it gains the rule its writers use. A change to a file says its file's type in `K` (SPEC §6.2).**
+
+- Added: `changeTypeOf(address, named?)` and `changeTypeTags(address, named?)`:
+  the type a `kind:1851` says for the file it changes, by name, and the `K`
+  tag to spread after its `O`. The four base kinds give their own type; a
+  `30852` is handed the `k` of its first record and is not built without it;
+  a team's own address (`39000:`) and any kind that is no file's give none.
+  Records a-change-says-the-type-of-its-file and
+  the-relay-refuses-a-change-that-says-the-wrong-type.
+
 ## 0.65.2 — 2026-11-20
 
 **Wire behaviour: none new written; nothing new read.**

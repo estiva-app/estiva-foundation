@@ -234,7 +234,7 @@ describe('movedBy — the field that moves a child (SPEC §7.2)', () => {
   test('the move itself is the declared change, built from the declaration', () => {
     const built = buildActionEvent(args('move-issue', { value: P2 }))
     // The new parent again, as `A`, where a relay indexes it (SPEC §7.2, FOL-45).
-    assert.deepEqual(built.tags, [['a', I1], ['O', I1.split(':')[2]], ['field', 'project'], ['value', P2], ['h', TEAM], ['ts', String(NOW)], ['A', P2]])
+    assert.deepEqual(built.tags, [['a', I1], ['O', I1.split(':')[2]], ['K', 'osnova.issue'], ['field', 'project'], ['value', P2], ['h', TEAM], ['ts', String(NOW)], ['A', P2]])
   })
 
   test('a move to no parent names none, and no other change carries the new-parent tag', () => {
@@ -376,6 +376,7 @@ describe('format — a field whose value is prose (SPEC §7.3, RIC-13)', () => {
     assert.deepEqual(built.tags, [
       ['a', I1],
       ['O', I1.split(':')[2]],
+      ['K', 'osnova.issue'],
       ['field', 'description'],
       ['value', doc],
       ['h', TEAM],
