@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeEventId, serializeBlockDocument, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { buildActionEvent, changedAt, combineChanges, fieldsSetBy, isSwitchRefusal, listFiles, openFile, prevsAfterSwitch, textOf, writeChange, writeChanges, type QueryFn } from '../dist/index.js'
+import { buildActionEvent, changedAt, combineChanges, fieldsSetBy, filesOf, historyOf, isSwitchRefusal, listFiles, openFile, prevsAfterSwitch, textOf, writeChange, writeChanges, type QueryFn } from '../dist/index.js'
 
 const OWNER = 'a'.repeat(64)
 const AGENT = 'c'.repeat(64)
@@ -162,6 +162,47 @@ describe('reading files by their fields — §6.13', () => {
   const oldTitle = sign(change(OWNER, 'title', 'Launch, first', root.id, T0 + 500))
   const text = sign(change(QA1, 'description', blocks(p('b1', 'the plan')), root.id, T0 + 2000))
   const stray = sign({ ...change(QA1, 'title', 'From another Folder', root.id, T0 + 3000), tags: change(QA1, 'title', 'x', root.id, T0 + 3000).tags.map((t) => (t[0] === 'h' ? ['h', ELSEWHERE] : t)) })
+
+  it("a file's history lists every change that counts, oldest first, with who made it and when, and once when it arrives twice", () => {
+    const status = sign(change(OWNER, 'status', 'done', root.id, T0 + 4000))
+    const aimedElsewhere = sign({ ...change(QA1, 'title', 'Aimed at another file', root.id, T0 + 5000), tags: change(QA1, 'title', 'x', root.id, T0 + 5000).tags.map((t) => (t[0] === 'O' ? ['O', 'another-file'] : t)) })
+    assert.equal(tag(aimedElsewhere, 'O'), 'another-file', 'the change names its file in O')
+    const lines = historyOf([status, stray, text, aimedElsewhere, title, root, oldTitle, { ...title }])
+    assert.deepEqual(
+      lines.map((l) => [l.field, l.id, l.pubkey, l.at, l.stage]),
+      [
+        ['title', oldTitle.id, OWNER, T0 + 500, undefined],
+        ['title', title.id, QA1, T0 + 1000, undefined],
+        ['description', text.id, QA1, T0 + 2000, undefined],
+        ['status', status.id, OWNER, T0 + 4000, 'done'],
+      ],
+      'not the change signed in another team, nor the one aimed at another file',
+    )
+    assert.deepEqual(lines.map((l) => l.address), [ADDRESS, ADDRESS, ADDRESS, ADDRESS])
+    assert.equal(lines[1].value, 'Launch, renamed')
+    assert.equal(lines[2].format, 'estiva-blocks-1', 'a text save says how it is written')
+  })
+
+  it('a change that sets several fields is one line of the history for each, with the change id', () => {
+    const both = combineChanges([change(QA1, 'title', 'Launch, again', root.id, T0 + 6000), change(QA1, 'status', 'in_progress', root.id, T0 + 6000)])
+    if (typeof both === 'string') throw new Error(both)
+    const signed = sign(both)
+    assert.deepEqual(
+      historyOf([root, signed]).map((l) => [l.field, l.value, l.id]),
+      [['title', 'Launch, again', signed.id], ['status', 'in_progress', signed.id]],
+    )
+  })
+
+  it("a field read from a list says what its status means when the change that set it says", () => {
+    // The writer says the stage of the option it picked: `["stage", "status", "done"]` (§6.2).
+    const staged = sign(change(OWNER, 'status', 'done', root.id, T0 + 4000))
+    assert.deepEqual(staged.tags.at(-1), ['stage', 'status', 'done'])
+    const [file] = filesOf([root, staged])
+    assert.equal(file.fields.status.stage, 'done')
+    const unstaged = change(QA1, 'status', 'in_progress', staged.id, T0 + 9000)
+    const later = sign({ ...unstaged, tags: unstaged.tags.filter((t) => t[0] !== 'stage') })
+    assert.equal(filesOf([root, staged, later])[0].fields.status.stage, undefined, 'a later change with no stage leaves none')
+  })
 
   it('a list asks the relay for newest fields and draws each file from its current changes, never its text', async () => {
     const asked: Record<string, unknown>[] = []

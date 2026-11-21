@@ -2891,6 +2891,13 @@ export function pickWidget<T extends string>(
 export interface ResolvedSlot {
   label?: string
   value: string
+  /**
+   * The value as stored, on a slot read through a vocabulary: `in_progress`
+   * where {@link value} is its label, "In Progress". What an app decides on
+   * (a filter, a picker's current option), and what a change would write back.
+   * Absent on a slot no vocabulary maps, where `value` is already the stored one.
+   */
+  stored?: string
   /** Set when the value came from a vocabulary — the consumer picks the colour. */
   colour?: string
   /** True when the value is a pubkey and should be shown as a person. */
@@ -3118,6 +3125,7 @@ function resolveSlot(
   return {
     label: spec.label,
     value,
+    ...(spec.map ? { stored: raw } : {}),
     colour,
     isPubkey: spec.as === 'pubkey',
     field,

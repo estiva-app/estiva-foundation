@@ -32,7 +32,7 @@ import {
   type UnsignedEvent,
 } from '@estiva-app/protocol'
 import { refusalCode } from './folders.js'
-import { SUMMARY_FIELD, inTargetFolder, targetFolders, type QueryFn } from './projection.js'
+import { SUMMARY_FIELD, inTargetFolder, stageTagOf, targetFolders, type QueryFn, type Stage } from './projection.js'
 
 /** The change event every Estiva app writes (SPEC §6.2). */
 const KIND_CHANGE = 1851
@@ -51,6 +51,38 @@ export interface CurrentField {
   pubkey: string
   /** When, in ms: `ts` where it agrees with `created_at` to the second (§6.2), else `created_at`. */
   at: number
+  /**
+   * What the value means, when its change says: the change's
+   * `["stage", <field>, …]` (§6.2), never on a cleared value. Read from the
+   * change the value came from, so a later change with none leaves none.
+   */
+  stage?: Stage
+  event: SignedEvent
+}
+
+/**
+ * One line of a file's history: one field, set by one change. A change that
+ * sets several fields (§6.2's `set`) is one line each, in the order it names
+ * them, all with its id.
+ */
+export interface FileChange {
+  /** The file changed, `<kind>:<pubkey>:<d>`. */
+  address: string
+  /** The change's id. */
+  id: string
+  /** Who made it. */
+  pubkey: string
+  /** When, in ms, as {@link CurrentField.at}. */
+  at: number
+  field: string
+  /** The value as stored: a status by its id, a person by their key, a text whole. */
+  value: string
+  /** The value's `content-format`, for the text; absent for marker text. */
+  format?: string
+  /** What the value means, when the change says, as {@link CurrentField.stage}. */
+  stage?: Stage
+  /** The note the change carries in its content; mostly empty. */
+  note: string
   event: SignedEvent
 }
 
@@ -97,17 +129,8 @@ export function fieldsSetBy(event: { tags: string[][] }): { field: string; value
 
 const addressOfRoot = (root: SignedEvent) => `${root.kind}:${root.pubkey}:${tagValue(root, 'd') ?? ''}`
 
-/**
- * Each file the events hold, by its first record and the current change of each
- * of its fields.
- *
- * A change counts only where §6.2 says a reader folds it: its `a` names the
- * file, its `O` (if any) is the file's id, and its `h` is the file's home. The
- * text counts only when `withText`: a list never takes the text from a change
- * that set several fields, since a later text-only change may have replaced it
- * (§6.13).
- */
-export function filesOf(events: readonly SignedEvent[], options: { withText?: boolean } = {}): FileFields[] {
+/** Each file's first record among the events, by its address. */
+function rootsOf(events: readonly SignedEvent[]): Map<string, SignedEvent> {
   const roots = new Map<string, SignedEvent>()
   for (const event of events) {
     if (event.kind === KIND_CHANGE || tagValue(event, 'd') === undefined) continue
@@ -119,25 +142,101 @@ export function filesOf(events: readonly SignedEvent[], options: { withText?: bo
       roots.set(address, event)
     }
   }
+  return roots
+}
+
+/**
+ * The fields a change sets on the file `root` is the record of, where §6.2
+ * says a reader counts it; none where it does not. One rule for a file's
+ * current fields ({@link filesOf}) and its history ({@link historyOf}), so the
+ * history never lists a change that set nothing.
+ */
+function countedSets(event: SignedEvent, root: SignedEvent): { field: string; value: string; format?: string; stage?: Stage }[] {
+  const O = tagValue(event, 'O')
+  if (O !== undefined && O !== tagValue(root, 'd')) return []
+  // A root that names no team cannot be checked, and §6.2 folds its changes
+  // as before — but never a summary (§6.12) or a delete (§6.5), which need a
+  // team. `projectEvents` reads them the same way, by the same check; this
+  // read dropped every such change, so a renamed bare file listed its first
+  // title (TES-2).
+  const folders = targetFolders(root)
+  if (!inTargetFolder(event, folders)) return []
+  return fieldsSetBy(event)
+    .filter((set) => folders || (set.field !== SUMMARY_FIELD && set.field !== DELETED_FIELD))
+    .map((set) => {
+      // The stage is the change's own word for this field, and a cleared value has none (§6.2).
+      const stage = set.value === '' ? undefined : stageTagOf(event, set.field)
+      return stage ? { ...set, stage } : set
+    })
+}
+
+/**
+ * The history of each file the events hold: every change a reader counts
+ * (§6.2, as {@link filesOf} counts it), oldest first by §6.3, one line per
+ * field a change sets. The same answer in whatever order the events arrive,
+ * and when one arrives twice.
+ *
+ * It is a history of the changes it is given: a caller that wants all of a
+ * file's history reads all of its changes (`{ kinds: [1851], "#a": [address] }`),
+ * which opening a file never does. Given a list read's answer it is each
+ * field's current change and no more. A file's first record is not a line:
+ * what it was created with is on `root`.
+ *
+ * Left out, as the fields leave them out: a change signed in another team
+ * than the file's, one whose `O` names another file, a summary or a delete on
+ * a file that names no team, and a change to a file whose record is not among
+ * the events.
+ *
+ * A membership line (`member:<key>`) is listed as written, as the fields hold
+ * it: somebody else's `false` on a person's membership is not a leave
+ * (§11.8), and the caller that words the line leaves it out.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-keeps-every-change-for-good.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
+ */
+export function historyOf(events: readonly SignedEvent[]): FileChange[] {
+  const roots = rootsOf(events)
+  const counted = new Map<string, SignedEvent>()
+  for (const event of events) {
+    if (event.kind !== KIND_CHANGE || counted.has(event.id)) continue
+    if (roots.has(tagValue(event, 'a') ?? '')) counted.set(event.id, event)
+  }
+  return [...counted.values()]
+    .sort((a, b) => (a.id === b.id ? 0 : newer(a, b) ? 1 : -1))
+    .flatMap((event) => {
+      const address = tagValue(event, 'a')!
+      return countedSets(event, roots.get(address)!).map((set) => ({
+        address,
+        id: event.id,
+        pubkey: event.pubkey,
+        at: changedAt(event),
+        ...set,
+        note: event.content,
+        event,
+      }))
+    })
+}
+
+/**
+ * Each file the events hold, by its first record and the current change of each
+ * of its fields.
+ *
+ * A change counts only where §6.2 says a reader folds it: its `a` names the
+ * file, its `O` (if any) is the file's id, and its `h` is the file's home. The
+ * text counts only when `withText`: a list never takes the text from a change
+ * that set several fields, since a later text-only change may have replaced it
+ * (§6.13).
+ */
+export function filesOf(events: readonly SignedEvent[], options: { withText?: boolean } = {}): FileFields[] {
   const files = new Map<string, FileFields>()
-  for (const [address, root] of roots) files.set(address, { root, address, fields: {}, events: [root] })
+  for (const [address, root] of rootsOf(events)) files.set(address, { root, address, fields: {}, events: [root] })
 
   for (const event of events) {
     if (event.kind !== KIND_CHANGE) continue
     const file = files.get(tagValue(event, 'a') ?? '')
     if (!file) continue
-    const O = tagValue(event, 'O')
-    if (O !== undefined && O !== tagValue(file.root, 'd')) continue
-    // A root that names no team cannot be checked, and §6.2 folds its changes
-    // as before — but never a summary (§6.12) or a delete (§6.5), which need a
-    // team. `projectEvents` reads them the same way, by the same check; this
-    // read dropped every such change, so a renamed bare file listed its first
-    // title (TES-2).
-    const folders = targetFolders(file.root)
-    if (!inTargetFolder(event, folders)) continue
-    for (const set of fieldsSetBy(event)) {
+    for (const set of countedSets(event, file.root)) {
       if (set.field === TEXT_FIELD && !options.withText) continue
-      if (!folders && (set.field === SUMMARY_FIELD || set.field === DELETED_FIELD)) continue
       const held = file.fields[set.field]
       if (held && !newer(event, held.event)) continue
       file.fields[set.field] = { ...set, id: event.id, pubkey: event.pubkey, at: changedAt(event), event }
