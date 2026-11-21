@@ -150,7 +150,7 @@ rather than each repo writing its own: `historyArb()` makes projects, issues and
 documents and the changes people made to them (renamed, moved, a status set,
 assigned, archived, deleted, a member added or leaving, by several people, many
 in the same second, some outside the file's team), in the shapes on the relay
-today. Since 0.66.0 a history also sets a description, a key, a lead and a ref,
+today. Since 0.67.0 a history also sets a description, a key, a lead and a ref,
 on the first record and by a change; a summary may hold line breaks and runs of
 spaces; and a status may be one nobody defined, one from a project's own list,
 or one that carries its stage. `deliveryArb(events)` hands the same events back in any order, some of
