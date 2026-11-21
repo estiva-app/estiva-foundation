@@ -280,6 +280,8 @@ describe('Undo of Remove', () => {
     const without = await read([...start, moved, look, off])
     const undo = planPutBackInTopic(QA1, MS + 12_000, { topic: holder, file: gone, after: 'f-a' })
     assert.equal(tag(undo.relist, 'field'), 'lists:f-d')
+    // The relist names the topic by address, id and type, in that order (§6.2): the relay refuses one that does not say its type right.
+    assert.deepEqual(undo.relist.tags.slice(0, 3), [['a', TOPIC], ['O', TOPIC_D], ['K', 'osnova.topic']])
     const relisted = signed(undo.relist)
     // Sent as the app sends it: the move planned over the list read after the listing.
     const back = signed(undo.move(await read([...start, moved, look, off, relisted]), MS + 12_000)!)
