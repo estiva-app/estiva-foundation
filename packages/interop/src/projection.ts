@@ -4085,7 +4085,7 @@ export async function resolveForeignObject(
   ])
   const answered = [...read, ...opened]
   const followUp = childChangeFilters(plan, answered)
-  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+  const childChanges = followUp.length ? await readChildChanges(followUp, query) : []
   const childOwners = await childOwnersOf(plan, answered, childChanges, query, cache)
   const assembled = assembleObject(plan, answered, childChanges, childOwners, options.archivedChildren)
   if (assembled.object.unreachable) return assembled.object
@@ -4226,7 +4226,7 @@ export async function resolveForeignObjects(
     followed.add(plan.address)
     followUp.push(...childChangeFilters(plan, events))
   }
-  const childChanges = followUp.length ? await queryChunked(followUp, query) : []
+  const childChanges = followUp.length ? await readChildChanges(followUp, query) : []
   const ownerLists = await Promise.all(plans.map(({ plan }) => childOwnersOf(plan, events, childChanges, query, cache)))
 
   const assembled = plans.map(({ reference, plan }, i) => ({
@@ -5269,6 +5269,12 @@ interface ObjectPlan {
   filters: Record<string, unknown>[]
   /** Read by the open read ({@link ArchiveReadOptions.openRead}), so `filters` holds neither its root nor its changes. */
   opened: boolean
+  /**
+   * Its children's kind is read by the open read too: {@link childChangeFilters} asks the list read for each child's
+   * first record and current changes, never its every change, and a child that read leaves out (deleted, or not the
+   * reader's) is not drawn (ALL-10).
+   */
+  childrenOpened: boolean
   /** Its root and every change, as read before the open read: for a file that read does not answer. */
   history: Record<string, unknown>[]
   openUrl?: string
@@ -5325,7 +5331,8 @@ function planObject(
     ...(childFilter ? [childFilter.filter] : []),
     ...(childFilter?.movedIn ? [childFilter.movedIn] : []),
   ]
-  return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, opened, history, openUrl }
+  const childrenOpened = !!childFilter && !!openRead?.includes(childFilter.kind) && FILE_KINDS.includes(childFilter.kind)
+  return { naddr, pointer, address, resolved, projection, records, commentKinds, childFilter, filters, opened, childrenOpened, history, openUrl }
 }
 
 /**
@@ -5483,6 +5490,7 @@ function assembleObject(
     childChanges,
     childOwners,
     archivedChildren,
+    childrenListed: plan.childrenOpened,
   })
 
   return { object, ...(children ? { children } : {}) }
@@ -5792,6 +5800,8 @@ function childrenFrom(args: {
   childOwners?: Set<string>
   /** Keep a child archived itself, marked, rather than drop it — {@link ArchiveReadOptions}' `archivedChildren`. */
   archivedChildren?: boolean
+  /** `childChanges` is the children's list read ({@link ObjectPlan.childrenOpened}): a child it left out is not drawn. */
+  childrenListed?: boolean
 }): ForeignObject[] | undefined {
   const {
     events,
@@ -5802,6 +5812,7 @@ function childrenFrom(args: {
     childChanges = [],
     childOwners = new Set(),
     archivedChildren = false,
+    childrenListed = false,
   } = args
   if (childFilter === undefined) return undefined
   if (childFilter === null) return []
@@ -5823,7 +5834,7 @@ function childrenFrom(args: {
     if (!current || event.created_at > current.created_at) movedInRoots.set(address, event)
   }
 
-  return [...created, ...[...movedInRoots.values()].sort(byOrder)].flatMap((event) => {
+  const drawn = [...created, ...[...movedInRoots.values()].sort(byOrder)].flatMap((event) => {
     const address = childAddressOf(event)
     /*
       The child's own fold — MAN-7. Until this, a card's children were built
@@ -5847,6 +5858,8 @@ function childrenFrom(args: {
         parent, so only a folded value that names it keeps it: the tag is how
         it was found, not proof that it is still here.
     */
+    // Read by the list read, which leaves out a deleted child and one that is not the reader's: not drawn, rather than drawn from its first record.
+    if (childrenListed && !childChanges.some((e) => e.kind === childFilter.kind && childAddressOf(e) === address)) return []
     const folded = address ? foldOf(childChanges, address, manifest, event) : {}
     if (movedBy && folded[movedBy] && folded[movedBy].value !== childFilter.parent) return []
     if (address && movedIn.has(address) && folded[movedBy!]?.value !== childFilter.parent) return []
@@ -5870,6 +5883,8 @@ function childrenFrom(args: {
       }),
     ]
   })
+  // The list read carries no text: a child's text is not read, so its next text change names none (as the Folder read's children).
+  return childrenListed ? textUnread(drawn) : drawn
 }
 
 /**
@@ -5969,6 +5984,13 @@ function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<s
   // yet. They are read here with the changes, in the same POST, and folded the same.
   const movedIn = movedInAddressesOf(answered, childFilter, records).filter((address) => !created.includes(address))
   const addresses = [...new Set([...created, ...movedIn])]
+  /*
+    Where the relay keeps the children's kind in order, each child is read as it is now: its first record and each
+    field's current change, by the list read, and never its every change (ALL-10: a page's sub-pages cost Miky every
+    save they ever had, a project's issues every change). The first record also brings a moved-in child's root.
+    why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
+  */
+  if (plan.childrenOpened) return listReadFilters(addresses.flatMap((address) => addressPointerOf(address) ?? []))
   const roots = new Map<string, string[]>()
   for (const address of movedIn) {
     // A `d` may itself hold ':' — everything after the pubkey is the identifier.
@@ -5979,6 +6001,20 @@ function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<s
     ...(addresses.length ? archiveFilters(addresses, [records], CHILD_CHANGE_GROUP) : []),
     ...[...roots].map(([pubkey, identifiers]) => ({ kinds: [childFilter.kind], authors: [pubkey], '#d': identifiers, limit: identifiers.length })),
   ]
+}
+
+/**
+ * `filters` answered, the list reads apart from the plain ones: a relay refuses a request that mixes the two
+ * ({@link openedEvents}).
+ */
+async function readChildChanges(filters: readonly Record<string, unknown>[], query: QueryFn): Promise<SignedEvent[]> {
+  const listed = filters.filter((filter) => 'fields' in filter)
+  const plain = filters.filter((filter) => !('fields' in filter))
+  const [a, b] = await Promise.all([
+    listed.length ? queryChunked(listed, query) : [],
+    plain.length ? queryChunked(plain, query) : [],
+  ])
+  return [...a, ...b]
 }
 
 /** Addresses per filter when reading a card's children's changes — see {@link childChangeFilters}. */
