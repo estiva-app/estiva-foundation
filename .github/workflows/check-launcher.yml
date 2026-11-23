@@ -1,0 +1,50 @@
+name: check launcher
+
+# The ⌘K box (KIN-4). It builds on protocol, conversation and interop, so a
+# change to any of them runs this too: a path filter that left them out is how
+# a break in one package goes green in its own check and red in the next.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      ['packages/launcher/**', 'packages/interop/**', 'packages/conversation/**', 'packages/protocol/**', '.github/workflows/check-launcher.yml', 'tsconfig.base.json']
+  pull_request:
+    paths:
+      ['packages/launcher/**', 'packages/interop/**', 'packages/conversation/**', 'packages/protocol/**', '.github/workflows/check-launcher.yml', 'tsconfig.base.json']
+
+concurrency:
+  group: check-launcher-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/launcher
+
+      - run: npm run typecheck -w packages/launcher
+
+      - run: npm test -w packages/launcher
+
+      - name: Emitted relative imports carry a .js extension
+        run: |
+          BAD=$(grep -rhoE "from '\\.[^']*'" packages/launcher/dist/*.js | grep -v "\\.js'$" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Extensionless relative import in the emitted output — Node will not resolve it: $BAD"
+            exit 1
+          fi
+
+      - name: The box imports nothing from an app
+        run: |
+          BAD=$(grep -rnE "from '(@/|\\.\\./\\.\\./)" packages/launcher/src || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::The launcher reaches outside the package. What only an app knows comes in through its host (ADR 0002 §10): $BAD"
+            exit 1
+          fi

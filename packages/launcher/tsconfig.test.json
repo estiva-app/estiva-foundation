@@ -1,0 +1,16 @@
+{
+  "$comment": [
+    "Typecheck-only, for `test/`. NOT used to build the package: Vitest strips",
+    "types rather than checking them, so without this pass the tests would be",
+    "checked by nothing."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
