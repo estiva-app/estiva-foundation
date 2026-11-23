@@ -284,3 +284,29 @@ test('a shared read that remembers gives, once more events arrive, the same file
   )
   if (settings.numRuns >= 100) assert.ok(reused > 0, 'no read handed back a file it had kept')
 })
+
+test('the changes the shared read counted for a file are the lines of its history, each with its time and stage', () => {
+  let lines = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (delivered) => {
+      // The history lists a change delivered twice once; the shared read counts what it is handed.
+      const events = [...new Map(delivered.map((event) => [event.id, event])).values()]
+      // Not the format: the history names it on the text alone, a counted change on every field its event sets.
+      const line = ({ id, field, value, at, stage }) => JSON.stringify([id, field, value, at, stage ?? null])
+      const history = new Map()
+      for (const change of historyOf(events)) history.set(change.address, [...(history.get(change.address) ?? []), line(change)])
+      for (const object of projectEvents(events, manifestFor, { changes: true })) {
+        const counted = object.changes.map((change) => line({ ...change, id: change.event.id, at: change.ms }))
+        lines += counted.length
+        assert.deepEqual(counted.sort(), (history.get(object.address) ?? []).sort())
+      }
+      // Asked for, they change nothing else about a file.
+      assert.deepEqual(
+        projectEvents(events, manifestFor, { changes: true }).map(({ changes, ...rest }) => rest).sort(byAddress),
+        projected(events),
+      )
+    }),
+    settings,
+  )
+  if (settings.numRuns >= 100) assert.ok(lines > 0, 'no history set a field')
+})

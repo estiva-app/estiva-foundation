@@ -2394,12 +2394,17 @@ type FoldedField = { value: string; format?: ContentFormat; stage?: Stage }
  */
 export function targetFolders(root: SignedEvent | undefined): ReadonlySet<string> | undefined {
   if (!root) return undefined
-  const folders = new Set(PLACEMENTS.flatMap((name) => root.tags.filter((t) => t[0] === name && t[1]).map((t) => t[1]!)))
+  // Asked once for every file of a workspace's read: no lists built on the way.
+  let folders: Set<string> | undefined
+  const tags = root.tags
+  for (const name of PLACEMENTS) {
+    for (let i = 0; i < tags.length; i++) if (tags[i][0] === name && tags[i][1]) (folders ??= new Set()).add(tags[i][1])
+  }
   if (root.kind === KIND_CHANNEL_METADATA) {
     const own = tagValue(root, 'd')
-    if (own) folders.add(own)
+    if (own) (folders ??= new Set()).add(own)
   }
-  return folders.size ? folders : undefined
+  return folders
 }
 
 export function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string> | undefined): boolean {
@@ -2418,40 +2423,214 @@ export function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string>
  * `undefined` only where the root genuinely is not at hand, and the newest
  * version where several are.
  */
-function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
+function foldChanges(changes: readonly SignedEvent[], rule: RecordsRule, root: SignedEvent | undefined) {
+  return foldSaid(
+    changes.map((change) => sayOf(change, rule.targetTag, rule.fieldTag, rule.valueTag)),
+    root,
+  )
+}
+
+/**
+ * What one event says, read in one walk of its tags. Each is the first tag of
+ * its name, as `tagValue` reads it. A workspace's fold reads thousands of
+ * changes, and a walk per question was most of its time.
+ */
+interface Said {
+  event: SignedEvent
+  /** Its `d`: set on a record. */
+  d: string | undefined
+  /** The file it is about: its first target tag. */
+  target: string | undefined
+  /** The Folder it was signed in: the first `h` with a value, as `inTargetFolder` and the relay read it. */
+  h: string | undefined
+  O: string | undefined
+  field: string | undefined
+  value: string | undefined
+  /** Whether a `set` of its sets a field (SPEC §6.2), as `settingsOf` reads one. */
+  sets: boolean
+  /** Its first `ts`, as written; {@link msOf} says whether a reader trusts it. */
+  ts: string | undefined
+  /** Its first `content-format`, as written; {@link formatOf} names it. */
+  format: string | undefined
+  /** Whether it carries a `stage` tag at all: most changes carry none, and {@link stageTagOf} is not asked. */
+  staged: boolean
+}
+
+/** `orderingMs` of an event whose first `ts` tag holds `ts`: the same answer, without walking its tags again. */
+function msOf(ts: string | undefined, createdAt: number): number {
+  if (ts === undefined || !/^\d+$/.test(ts)) return createdAt * 1000
+  const ms = Number(ts)
+  return Number.isSafeInteger(ms) && Math.floor(ms / 1000) === createdAt ? ms : createdAt * 1000
+}
+
+/** `contentFormatOf` of an event whose first `content-format` tag holds `declared`. */
+function formatOf(declared: string | undefined): ContentFormat {
+  if (declared === undefined || declared === '') return 'marker'
+  return declared === BLOCK_DOCUMENT_FORMAT ? 'blocks' : 'unknown'
+}
+
+function sayOf(event: SignedEvent, targetTag: string, fieldTag: string, valueTag: string): Said {
+  const tags = event.tags
+  let d: string | undefined
+  let target: string | undefined
+  let h: string | undefined
+  let O: string | undefined
+  let field: string | undefined
+  let value: string | undefined
+  let hasD = false
+  let hasTarget = false
+  let hasO = false
+  let hasField = false
+  let hasValue = false
+  let sets = false
+  let ts: string | undefined
+  let format: string | undefined
+  let hasTs = false
+  let hasFormat = false
+  let staged = false
+  for (let i = 0; i < tags.length; i++) {
+    const t = tags[i]
+    const name = t[0]
+    // By length first: most tags are none of these, and one number says so.
+    switch (name.length) {
+      case 1:
+        if (name === 'h') {
+          if (h === undefined && t[1]) h = t[1]
+        } else if (name === 'd') {
+          if (!hasD) {
+            hasD = true
+            d = t[1]
+          }
+        } else if (name === 'O') {
+          if (!hasO) {
+            hasO = true
+            O = t[1]
+          }
+        }
+        break
+      case 2:
+        if (name === 'ts' && !hasTs) {
+          hasTs = true
+          ts = t[1]
+        }
+        break
+      case 3:
+        if (name === 'set' && t[1] && typeof t[2] === 'string') sets = true
+        break
+      case 5:
+        if (name === 'stage') staged = true
+        break
+      case 14:
+        if (name === CONTENT_FORMAT_TAG && !hasFormat) {
+          hasFormat = true
+          format = t[1]
+        }
+        break
+    }
+    // Not `else`: a rule names its own target, field and value tags.
+    if (name === targetTag && !hasTarget) {
+      hasTarget = true
+      target = t[1]
+    }
+    if (name === fieldTag && !hasField) {
+      hasField = true
+      field = t[1]
+    }
+    if (name === valueTag && !hasValue) {
+      hasValue = true
+      value = t[1]
+    }
+  }
+  return { event, d, target, h, O, field, value, sets, ts, format, staged }
+}
+
+/** {@link foldChanges}, over changes already read by {@link sayOf} under the file's rule. */
+function foldSaid(
+  said: readonly Said[],
+  root: SignedEvent | undefined,
+  /**
+   * {@link projectEvents}' bulk read: changes of another `kind` are skipped
+   * here, not filtered out beforehand; `archive` is filled with the file's own
+   * archive change as {@link archiveOf} picks it; and `lines`, when given,
+   * with every field a counted change set, in the order handed in.
+   */
+  also?: { kind: number; archive: ArchiveWinner; lines?: ObjectChange[] },
+) {
   const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat; id: string; stage?: Stage }> = {}
   const folders = targetFolders(root)
   const id = root && tagValue(root, 'd')
+  const archive = also?.archive
+  const lines = also?.lines
   // Each field's winner is the last change to set it in §6.3's order. Found by
   // comparing, not by sorting every change first: most changes are not a
   // winner, and a workspace's fold sorts and builds a value for each otherwise.
-  const winners = new Map<string, { change: SignedEvent; value: string; ms: number; firstMs: number; firstId: string }>()
-  for (const change of changes) {
-    if (!inTargetFolder(change, folders)) continue
+  const winners = new Map<string, { change: SignedEvent; one: Said; value: string; ms: number; firstMs: number; firstId: string }>()
+  const set = (one: Said, ms: number, field: string, value: string) => {
+    const change = one.event
+    const held = winners.get(field)
+    // Later wins; the same instant goes to the higher id, and a change that
+    // sets one field twice to its last word, as a sorted replay gives it.
+    if (!held) {
+      winners.set(field, { change, one, value, ms, firstMs: ms, firstId: change.id })
+      return
+    }
+    // When the field was first set, for the order below.
+    if (ms < held.firstMs || (ms === held.firstMs && change.id < held.firstId)) {
+      held.firstMs = ms
+      held.firstId = change.id
+    }
+    if (held.ms > ms || (held.ms === ms && held.change.id > change.id)) return
+    held.change = change
+    held.one = one
+    held.value = value
+    held.ms = ms
+  }
+  // The stage is the change's own word for the field, and a cleared value has none (SPEC §6.2).
+  const stageOn = (one: Said, field: string, value: string) => (one.staged && value !== '' ? stageTagOf(one.event, field) : undefined)
+  // A summary and a delete count only on a file that names a Folder (below).
+  const line = (one: Said, ms: number, field: string, value: string) => {
+    if (!folders && (field === SUMMARY_FIELD || field === DELETED_FIELD)) return
+    lines!.push({ event: one.event, field, value, ms, format: formatOf(one.format), stage: stageOn(one, field, value), folder: one.h, about: one.O })
+  }
+  for (const one of said) {
+    const change = one.event
+    if (also && change.kind !== also.kind) continue
+    const { h, O, field, value } = one
+    if (folders && (h === undefined || !folders.has(h))) continue
     // A change whose `O` is not its `a`'s file is about neither (SPEC §6.2).
-    const O = tagValue(change, 'O')
     if (O !== undefined && id !== undefined && O !== id) continue
-    let ms: number | undefined
-    for (const { field, value } of settingsOf(change, rule)) {
-      const held = winners.get(field)
-      ms ??= orderingMs(change)
-      // Later wins; the same instant goes to the higher id, and a change that
-      // sets one field twice to its last word, as a sorted replay gives it.
-      if (!held) {
-        winners.set(field, { change, value, ms, firstMs: ms, firstId: change.id })
-        continue
+    // What it sets, as `settingsOf` reads it: one field per `set` when it
+    // carries any, else its field and value tags; a partial change sets nothing.
+    let archived: string | undefined
+    let ms: number
+    if (one.sets) {
+      ms = msOf(one.ts, change.created_at)
+      const tags = change.tags
+      for (let i = 0; i < tags.length; i++) {
+        const t = tags[i]
+        if (t[0] !== 'set' || !t[1] || typeof t[2] !== 'string') continue
+        set(one, ms, t[1], t[2])
+        if (lines) line(one, ms, t[1], t[2])
+        // The archive read takes a change's first word on it (`archiveOf`).
+        if (archived === undefined && t[1] === ARCHIVED_FIELD) archived = t[2]
       }
-      // When the field was first set, for the order below.
-      if (ms < held.firstMs || (ms === held.firstMs && change.id < held.firstId)) [held.firstMs, held.firstId] = [ms, change.id]
-      if (held.ms > ms || (held.ms === ms && held.change.id > change.id)) continue
-      held.change = change
-      held.value = value
-      held.ms = ms
+    } else if (field && value !== undefined) {
+      ms = msOf(one.ts, change.created_at)
+      set(one, ms, field, value)
+      if (lines) line(one, ms, field, value)
+      if (field === ARCHIVED_FIELD) archived = value
+    } else continue
+    if (!archive || archived === undefined) continue
+    // The last in §6.3's order, as `byOrder` puts them.
+    if (!archive.change || archive.ms < ms || (archive.ms === ms && archive.change.id < change.id)) {
+      archive.change = change
+      archive.value = archived
+      archive.ms = ms
     }
   }
   // Listed in the order the fields were first set, as the sorted replay listed them.
   const inOrder = [...winners].sort(([, a], [, b]) => a.firstMs - b.firstMs || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0))
-  for (const [field, { change, value }] of inOrder) {
+  for (const [field, { change, one, value }] of inOrder) {
       // A summary is new, so it takes neither of §6.2's exceptions: a change the
       // reader cannot check against the root's Folder is not read (SPEC §6.12).
       if (field === SUMMARY_FIELD && !folders) continue
@@ -2465,15 +2644,10 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
       // The stage travels with the winning change too (SPEC §6.2): the one
       // naming this field, on a value that is not cleared. A later change with
       // none leaves none, never the older change's.
-      const stage = value === '' ? undefined : stageTagOf(change, field)
-      fields[field] = {
-        value,
-        by: change.pubkey,
-        at: change.created_at,
-        format: contentFormatOf(change),
-        id: change.id,
-        ...(stage ? { stage } : {}),
-      }
+      const stage = stageOn(one, field, value)
+      const held: (typeof fields)[string] = { value, by: change.pubkey, at: change.created_at, format: formatOf(one.format), id: change.id }
+      if (stage) held.stage = stage
+      fields[field] = held
   }
   return fields
 }
@@ -2650,6 +2824,18 @@ function archiveOf(
     if (!set) continue
     if (!last || byOrder(last, change) < 0) [last, archived] = [change, set.value]
   }
+  return archiveFrom(last, archived)
+}
+
+/** A file's own archive change as a fold found it: the last to set `archived`, and what it set. */
+interface ArchiveWinner {
+  change?: SignedEvent
+  value?: string
+  ms: number
+}
+
+/** The archive a file's last `archived` change leaves: one only when it set `true`. */
+function archiveFrom(last: SignedEvent | undefined, archived: string | undefined): Archive | undefined {
   if (!last || archived !== 'true') return undefined
   const note = last.content.trim()
   return {
@@ -3040,7 +3226,11 @@ function rawSlotValue(
   // reassigning it from here.
   if (spec.fold) {
     const change = folded[spec.fold]
-    if (change) return { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined, ...(change.stage ? { stage: change.stage } : {}) }
+    if (change) {
+      const held: RawSlotValue = { value: change.value, format: isBody ? (change.format ?? 'marker') : undefined }
+      if (change.stage) held.stage = change.stage
+      return held
+    }
     /*
       Nobody has changed this field, so the object's own creation value stands.
       §7.2 rule 2 covers seeding from a tag; `field: "content"` seeds from the
@@ -3154,20 +3344,16 @@ function resolveSlot(
   }
   const field = spec.fold ?? (Array.isArray(spec.tag) ? spec.tag[0] : spec.tag)
   const stage = name === STATUS_SLOT ? stageOf(root.kind, field, spec, manifest, raw, value, source.stage) : undefined
-  return {
-    label: spec.label,
-    value,
-    ...(spec.map ? { stored: raw } : {}),
-    colour,
-    isPubkey: spec.as === 'pubkey',
-    field,
-    ...(stage ? { stage } : {}),
-    // Present only on a slot that can carry a body. Absent is the honest shape
-    // for a title read from a tag — and it keeps the key out of every existing
-    // consumer's deep comparisons, which is not the reason but is a real cost
-    // avoided: `format: undefined` is an own property to `deepStrictEqual`.
-    ...(source.format ? { format: source.format } : {}),
-  }
+  // Set one by one, not spread in: a workspace's read builds thousands of these.
+  const slot: ResolvedSlot = { label: spec.label, value, colour, isPubkey: spec.as === 'pubkey', field }
+  if (spec.map) slot.stored = raw
+  if (stage) slot.stage = stage
+  // Present only on a slot that can carry a body. Absent is the honest shape
+  // for a title read from a tag — and it keeps the key out of every existing
+  // consumer's deep comparisons, which is not the reason but is a real cost
+  // avoided: `format: undefined` is an own property to `deepStrictEqual`.
+  if (source.format) slot.format = source.format
+  return slot
 }
 
 /*
@@ -3245,10 +3431,12 @@ function resolveSlots(
   root: SignedEvent,
   folded: Record<string, FoldedField>,
   manifest: Manifest,
+  /** The slots to resolve, the built-in subtitle among them; a bulk read works them out once per kind. */
+  declared: [string, SlotSpec | SlotSpec[]][] = Object.entries(withDefaultSubtitle(projection.slots, root.kind)),
 ): { slots: Record<string, ResolvedSlot>; meta: ResolvedSlot[] } {
   const slots: Record<string, ResolvedSlot> = {}
   const meta: ResolvedSlot[] = []
-  for (const [name, spec] of Object.entries(withDefaultSubtitle(projection.slots, root.kind))) {
+  for (const [name, spec] of declared) {
     if (Array.isArray(spec)) {
       for (const one of spec) {
         // An array spec collects into `meta`, so the name it was declared under
@@ -3525,6 +3713,15 @@ export interface ForeignObject {
    * text), which no change holds.
    */
   record?: SignedEvent
+  /**
+   * Every field a change set on this file that the fold counted, in the order
+   * the changes were handed in; set by {@link ProjectEventsOptions.changes}.
+   * Left out, as the fold leaves them out: a change signed in another Folder
+   * than the file's, one whose `O` names another file, a partial one, and a
+   * summary or a delete on a file that names no Folder. Empty for a kind whose
+   * app declares no changes, and for a Folder.
+   */
+  changes?: ObjectChange[]
 }
 
 /** One field's current change, on {@link ForeignObject.fields}. */
@@ -3561,6 +3758,36 @@ export interface ProjectEventsOptions {
    * next read hands them out again; kept by the record, and gone with it.
    */
   remember?: boolean
+  /**
+   * Give each object its {@link ForeignObject.changes}: every field a change
+   * set on it that the fold counted. For an app that lists what happened to
+   * its files: the read has walked every change already, so the app does not
+   * walk them again.
+   */
+  changes?: boolean
+}
+
+/**
+ * One field one change set on a file, as the fold counted it
+ * ({@link ProjectEventsOptions.changes}). A change setting several fields
+ * (§6.2's `set`) is one of these each, in the order it names them.
+ */
+export interface ObjectChange {
+  /** The change, as signed. */
+  event: SignedEvent
+  field: string
+  /** The value as stored. */
+  value: string
+  /** When, in ms, by §6.3's order: the change's `ts` where a reader trusts it, else its `created_at`. */
+  ms: number
+  /** The change's `content-format`, as `contentFormatOf` names it. */
+  format: ContentFormat
+  /** What the value means, when the change says (SPEC §6.2); none on a cleared value. */
+  stage: Stage | undefined
+  /** The Folder it was signed in: its first `h` with a value. */
+  folder: string | undefined
+  /** The file its `O` names, where it carries one. */
+  about: string | undefined
 }
 
 /**
@@ -3605,49 +3832,81 @@ function buildObject(args: {
   archived?: Archive
   /** {@link ProjectEventsOptions}; absent for every other caller. */
   only?: ProjectEventsOptions
+  /** {@link projectEvents}' own, one per kind for the whole read; absent for every other caller. */
+  shape?: KindShape
+  /** The object's address, where the caller already built it. */
+  address?: string
+  /** {@link ForeignObject.changes}, where the caller asked for them. */
+  changes?: ObjectChange[]
 }): ForeignObject {
   const { root, pointer, manifest, projection, folded } = args
+  const shape = args.shape ?? kindShapeOf(manifest, projection, pointer.kind)
   const bare = !!args.only?.bare
   const naddr = bare ? undefined : encodeNaddr(pointer)
-  const { slots, meta } = resolveSlots(projection, root, folded, manifest)
-  const objectAddress = pointerToAddress(pointer)
+  const { slots, meta } = resolveSlots(projection, root, folded, manifest, shape.slots)
+  const objectAddress = args.address ?? pointerToAddress(pointer)
+  // One pass over the fold for everything read off every field.
   // A list read's text placeholder keeps its empty id: the text's `prev` is unknown there, not the first record.
-  const prevs = Object.fromEntries(Object.entries(folded).flatMap(([field, f]) => (f.id !== undefined ? [[field, f.id]] : [])))
+  let prevs: Record<string, string> | undefined
+  // The fold itself, where it is a fold of changes: a list read's text placeholder has no change to name.
+  const fields: Record<string, ObjectField> | undefined = args.only?.fields ? {} : undefined
+  let changedAt = root.created_at
+  let newestAt = root.created_at
+  let changedBy = root.pubkey
+  for (const field in folded) {
+    const f = folded[field]
+    if (f.id !== undefined) (prevs ??= {})[field] = f.id
+    if (fields && f.id && f.by !== undefined && f.at !== undefined) fields[field] = f as ObjectField
+    const at = f.at ?? 0
+    if (at > changedAt) changedAt = at
+    // The newest change's signer; of two in the same second, the first listed.
+    if (f.by && at > newestAt) {
+      newestAt = at
+      changedBy = f.by
+    }
+  }
   const deleted = folded[DELETED_FIELD]
-  return {
+  // What every object carries; the rest is set below only where it applies, one
+  // by one and not spread in: a workspace's read builds a thousand of these.
+  const object: ForeignObject = {
     // An addressable object's `ref` is its address: stable across the author
     // replacing the event, which the event id is not.
     ref: objectAddress,
     address: objectAddress,
-    ...(naddr === undefined ? {} : { naddr }),
     eventId: root.id,
     kind: pointer.kind,
     widget: projection.widget,
     appName: manifest.name,
-    ...nounOf(projection),
     slots,
     meta,
     comments: args.comments ?? [],
-    listsChildren: listsChildrenOf(projection, manifest),
-    parentRef: parentRefOf(manifest, pointer.kind, root, folded),
-    ...parentFieldsOf(manifest, pointer.kind),
+    listsChildren: shape.listsChildren,
+    parentRef: parentRefOf(manifest, pointer.kind, root, folded, shape.parent),
     folder: writeFolderOf(root),
     scopedTo: tagValue(root, 'h'),
-    // Substituted here rather than in the component: `<bech32>` is a NIP-89
-    // detail, and the widget's job is to draw a link, not to know the spec.
-    ...(naddr === undefined ? {} : { openUrl: args.webTemplate?.replace('<bech32>', naddr) }),
     actions: bare ? [] : actionsOfFile(manifest, projection, root, folded),
     viaRecommendation: args.viaRecommendation,
-    ...(args.archived ? { archived: args.archived } : {}),
-    changedAt: changedAtOf(root, folded),
-    changedBy: changedByOf(root, folded),
-    ...(Object.keys(prevs).length ? { prevs } : {}),
-    ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
-    // The fold itself, where it is a fold of changes: a list read's text placeholder has no change to name.
-    ...(args.only?.fields
-      ? { record: root, fields: Object.fromEntries(Object.entries(folded).filter(([, f]) => f.id && f.by !== undefined && f.at !== undefined)) as Record<string, ObjectField> }
-      : {}),
+    changedAt,
+    changedBy,
   }
+  if (naddr !== undefined) {
+    object.naddr = naddr
+    // Substituted here rather than in the component: `<bech32>` is a NIP-89
+    // detail, and the widget's job is to draw a link, not to know the spec.
+    object.openUrl = args.webTemplate?.replace('<bech32>', naddr)
+  }
+  if (shape.noun.noun !== undefined) object.noun = shape.noun.noun
+  if (shape.parentFields.parentField !== undefined) object.parentField = shape.parentFields.parentField
+  if (shape.parentFields.parentKind !== undefined) object.parentKind = shape.parentFields.parentKind
+  if (args.archived) object.archived = args.archived
+  if (prevs) object.prevs = prevs
+  if (deleted?.value === 'true' && deleted.by) object.deleted = { by: deleted.by, at: deleted.at ?? root.created_at }
+  if (fields) {
+    object.record = root
+    object.fields = fields
+  }
+  if (args.changes) object.changes = args.changes
+  return object
 }
 
 /** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
@@ -4047,9 +4306,14 @@ export function projectEvents(
   manifestFor: (pointer: AddressPointer) => ResolvedManifest | undefined,
   options: ProjectEventsOptions = {},
 ): ForeignObject[] {
-  const roots = new Map<string, { root: SignedEvent; pointer: AddressPointer; resolved: ResolvedManifest }>()
+  const roots = new Map<string, { root: SignedEvent; pointer: AddressPointer; resolved: ResolvedManifest; said?: Said[] }>()
+  // Every event is walked once, here, by SPEC §7.1's tag names: the names every
+  // app's changes carry today. A rule with names of its own is read as before.
+  const about: Said[] = []
   for (const event of events) {
-    const identifier = tagValue(event, 'd')
+    const one = sayOf(event, COMMON_RULE.targetTag, COMMON_RULE.fieldTag, COMMON_RULE.valueTag)
+    if (one.target !== undefined) about.push(one)
+    const identifier = one.d
     if (identifier === undefined) continue
     const pointer: AddressPointer = { kind: event.kind, pubkey: event.pubkey, identifier, relays: [] }
     const resolved = manifestFor(pointer)
@@ -4060,7 +4324,12 @@ export function projectEvents(
       roots.set(address, { root: event, pointer, resolved })
     }
   }
+  for (const one of about) {
+    const file = roots.get(one.target!)
+    if (file) (file.said ??= []).push(one)
+  }
 
+  // For a rule with tag names of its own, and a kind with no rule at all.
   // Each helper still applies its own kind and target test to what it is
   // handed; grouping by target once only narrows what it has to look at.
   const grouped = new Map<string, Map<string, SignedEvent[]>>()
@@ -4079,11 +4348,31 @@ export function projectEvents(
     return byAddress
   }
 
-  return [...roots].map(([address, { root, pointer, resolved }]) => {
+  // What a manifest says of a kind is the same for every file of it: worked out
+  // once here, for this read alone, so a manifest changed between reads is read anew.
+  const shapes = new Map<Manifest, Map<number, KindShape>>()
+  const shapeOf = (manifest: Manifest, kind: number) => {
+    let byKind = shapes.get(manifest)
+    if (!byKind) shapes.set(manifest, (byKind = new Map()))
+    let shape = byKind.get(kind)
+    if (!shape) byKind.set(kind, (shape = kindShapeOf(manifest, manifest.projections![String(kind)], kind)))
+    return shape
+  }
+
+  return [...roots].map(([address, { root, pointer, resolved, said }]) => {
     const { manifest } = resolved
+    // An app that declares its changes folds and archives by the one rule, over
+    // the one list: a single walk gives both. A Folder's archive is its admins'
+    // alone, and an app with no changes archives by SPEC's rule: `archiveOf`.
+    const records = root.kind === KIND_CHANNEL ? undefined : manifest.records
     const archiveRule = archiveRuleOf(manifest)
-    const changes = byTarget(foldRuleOf(manifest).targetTag).get(address) ?? NO_EVENTS
-    const archiveChanges = byTarget(archiveRule.targetTag).get(address) ?? NO_EVENTS
+    const changes = records ? NO_EVENTS : (byTarget(foldRuleOf(manifest).targetTag).get(address) ?? NO_EVENTS)
+    const archiveChanges = records ? NO_EVENTS : (byTarget(archiveRule.targetTag).get(address) ?? NO_EVENTS)
+    const mine: readonly Said[] = !records
+      ? NO_SAID
+      : records.targetTag === COMMON_RULE.targetTag && records.fieldTag === COMMON_RULE.fieldTag && records.valueTag === COMMON_RULE.valueTag
+        ? (said ?? NO_SAID)
+        : (byTarget(records.targetTag).get(address) ?? NO_EVENTS).map((event) => sayOf(event, records.targetTag, records.fieldTag, records.valueTag))
     // A file whose record, changes and manifest are the ones last read is the
     // object last built: a live update changes one file, and the rest of the
     // workspace is not folded and resolved again for it.
@@ -4095,36 +4384,74 @@ export function projectEvents(
       held.webTemplate === resolved.webTemplate &&
       !held.bare === !options.bare &&
       !held.fields === !options.fields &&
+      !held.lines === !options.changes &&
+      sameSaid(held.said, mine) &&
       sameEvents(held.changes, changes) &&
       sameEvents(held.archiveChanges, archiveChanges)
     ) {
       return held.object
     }
+    const archive: ArchiveWinner = { ms: 0 }
+    const lines: ObjectChange[] | undefined = options.changes ? [] : undefined
     const object = buildObject({
       root,
       pointer,
       manifest,
       projection: manifest.projections![String(root.kind)],
-      folded: foldOf(changes, address, manifest, root),
+      folded: records ? foldSaid(mine, root, { kind: records.changeKind, archive, lines }) : foldOf(changes, address, manifest, root),
       viaRecommendation: resolved.viaRecommendation,
       webTemplate: resolved.webTemplate,
-      archived: archiveOf(archiveChanges, address, archiveRule, root),
+      archived: records ? archiveFrom(archive.change, archive.value) : archiveOf(archiveChanges, address, archiveRule, root),
       only: options,
+      shape: shapeOf(manifest, root.kind),
+      address,
+      changes: lines,
     })
     if (!options.remember) return object
     // Handed out again on the next read, so it must not be written to.
     Object.freeze(object)
-    builtFrom.set(root, { manifest, viaRecommendation: resolved.viaRecommendation, webTemplate: resolved.webTemplate, bare: options.bare, fields: options.fields, changes, archiveChanges, object })
+    builtFrom.set(root, {
+      manifest,
+      viaRecommendation: resolved.viaRecommendation,
+      webTemplate: resolved.webTemplate,
+      bare: options.bare,
+      fields: options.fields,
+      lines: options.changes,
+      // The events alone: what the walk read of each is not kept past this read.
+      said: mine.map((one) => one.event),
+      changes,
+      archiveChanges,
+      object,
+    })
     return object
   })
 }
 
+/** SPEC §7.1's names for a change's tags, which {@link projectEvents} walks every event by. */
+const COMMON_RULE = { targetTag: 'a', fieldTag: 'field', valueTag: 'value' } as const
 const NO_EVENTS: SignedEvent[] = []
+const NO_SAID: readonly Said[] = []
 const sameEvents = (a: readonly SignedEvent[], b: readonly SignedEvent[]) => a === b || (a.length === b.length && a.every((event, i) => event === b[i]))
+const sameSaid = (a: readonly SignedEvent[], b: readonly Said[]) => {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i].event) return false
+  return true
+}
 /** What {@link projectEvents} last built from a record, kept by the record itself and gone when it is. */
 const builtFrom = new WeakMap<
   SignedEvent,
-  { manifest: Manifest; viaRecommendation: boolean; webTemplate?: string; bare?: boolean; fields?: boolean; changes: readonly SignedEvent[]; archiveChanges: readonly SignedEvent[]; object: ForeignObject }
+  {
+    manifest: Manifest
+    viaRecommendation: boolean
+    webTemplate?: string
+    bare?: boolean
+    fields?: boolean
+    lines?: boolean
+    said: readonly SignedEvent[]
+    changes: readonly SignedEvent[]
+    archiveChanges: readonly SignedEvent[]
+    object: ForeignObject
+  }
 >()
 
 /**
@@ -5221,6 +5548,8 @@ function parentRefOf(
   kind: number,
   root: SignedEvent,
   folded: Record<string, { value: string }> = {},
+  /** What the manifest says of this kind's parent; a bulk read works it out once for every file of the kind. */
+  shape: ParentShape = parentShapeOf(manifest, kind),
 ): string | undefined {
   /*
     A bare file names its own parent — one `a` tag, any kind — and that is the
@@ -5232,7 +5561,7 @@ function parentRefOf(
     Re-parenting is a change to the declared `movedBy` field, seeded by the
     root tag — `parent` on a bare file, `project` on a Ship issue (SPEC §7.2).
   */
-  const movedBy = movedByOf(manifest, kind)
+  const { movedBy, own } = shape
   if (movedBy) {
     // A folded empty value is a move to the top, not an absence: falling back
     // to the root tag would put the file straight back under the parent it
@@ -5241,15 +5570,33 @@ function parentRefOf(
     // this object can sit under, so it is a move to nowhere rather than a ref a
     // consumer might try to fetch.
     const moved = folded[movedBy.field]
-    if (moved) {
-      const prefix = movedBy.parentKind === undefined ? /^\d+:[0-9a-f]{64}:/ : new RegExp(`^${movedBy.parentKind}:[0-9a-f]{64}:`)
-      return prefix.test(moved.value) ? moved.value : undefined
-    }
+    if (moved) return shape.moved!.test(moved.value) ? moved.value : undefined
   }
-  const own = ownParentTagOf(manifest, kind)
   if (own) {
-    return root.tags.find((t) => t[0] === own && t[1] && /^\d+:[0-9a-f]{64}:/.test(t[1]))?.[1]
+    return root.tags.find((t) => t[0] === own && t[1] && ANY_ADDRESS.test(t[1]))?.[1]
   }
+  for (const { via, prefix } of shape.lists) {
+    const found = root.tags.find((t) => t[0] === via && t[1] && t[1].startsWith(prefix))?.[1]
+    if (found) return found
+  }
+  return undefined
+}
+
+const ANY_ADDRESS = /^\d+:[0-9a-f]{64}:/
+
+/** What a manifest says of where a `kind` file sits: read off its projections, the same for every file of the kind. */
+interface ParentShape {
+  movedBy: ReturnType<typeof movedByOf>
+  /** What a move's value must look like to name a parent; set with `movedBy`. */
+  moved?: RegExp
+  own: string | undefined
+  /** Each list declaring `kind` as its children: the tag on a child that names the parent, and how its address starts. */
+  lists: { via: string; prefix: string }[]
+}
+
+function parentShapeOf(manifest: Manifest, kind: number): ParentShape {
+  const movedBy = movedByOf(manifest, kind)
+  const lists: ParentShape['lists'] = []
   for (const [parentKind, projection] of Object.entries(manifest.projections ?? {})) {
     const children = declaredChildSpec(projection as { slots: Record<string, SlotSpec | SlotSpec[]> })
     if (!children || children.kind !== kind) continue
@@ -5259,13 +5606,33 @@ function parentRefOf(
       kind of guess this module refuses elsewhere — so it stays absent.
     */
     if (children.match === 'identifier') continue
-    const found = root.tags
-      .filter((t) => t[0] === children.via && t[1])
-      .map((t) => t[1])
-      .find((value) => value.startsWith(`${parentKind}:`))
-    if (found) return found
+    lists.push({ via: children.via, prefix: `${parentKind}:` })
   }
-  return undefined
+  return {
+    movedBy,
+    ...(movedBy ? { moved: movedBy.parentKind === undefined ? ANY_ADDRESS : new RegExp(`^${movedBy.parentKind}:[0-9a-f]{64}:`) } : {}),
+    own: ownParentTagOf(manifest, kind),
+    lists,
+  }
+}
+
+/** What a manifest says of every file of one kind, worked out once per bulk read and not once per file. */
+interface KindShape {
+  slots: [string, SlotSpec | SlotSpec[]][]
+  parent: ParentShape
+  parentFields: ReturnType<typeof parentFieldsOf>
+  listsChildren: boolean
+  noun: { noun?: string }
+}
+
+function kindShapeOf(manifest: Manifest, projection: Projection, kind: number): KindShape {
+  return {
+    slots: Object.entries(withDefaultSubtitle(projection.slots, kind)),
+    parent: parentShapeOf(manifest, kind),
+    parentFields: parentFieldsOf(manifest, kind),
+    listsChildren: listsChildrenOf(projection, manifest),
+    noun: nounOf(projection),
+  }
 }
 
 /**
