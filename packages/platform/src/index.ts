@@ -97,7 +97,11 @@ export {
 } from './event-snapshot.js'
 export {
   createErrorReporter,
+  createHeardFailures,
+  FAILURE_REASONS,
+  failureReasonOf,
   FAILURES,
+  HEARD_FOR_MS,
   readFrames,
   scrubMessage,
   type ErrorEventTarget,
@@ -105,6 +109,7 @@ export {
   type ErrorReporter,
   type ErrorReporterOptions,
   type Failure,
+  type FailureReason,
   type FetchLike,
   type ReportAction,
   type ReportFrame,

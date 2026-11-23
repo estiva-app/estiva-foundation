@@ -1,5 +1,27 @@
 # @estiva-app/platform
 
+## 0.12.0
+
+A failure report says why (Miky, 23 Nov). Sentry filed every "Could not load"
+in an app under one error, so nine reports after the per-minute fixes could
+not be told from the limit without reading two servers' logs; none was it.
+
+- `FAILURE_REASONS` and `FailureReason`: `told-to-wait` (the relay's
+  per-minute limit), `id-told-to-wait` (Estiva ID's own limit), `relay-busy`,
+  `signed-out`, `not-reached`, `no-access`, `other`. Estiva ID keeps the same
+  list and files each reason of a failure as its own error.
+- `reporter.failure(what, reason?)`, and the reporter's `reason` option for a
+  screen that holds only "it failed". The body's `reason` is sent only for a
+  failure and only from the list; a failure nothing was heard for carries
+  none and stays in the error it was in. Once per name and reason per screen.
+- `failureReasonOf(error, status?, from?)` reads the reason from what a
+  request threw or answered (its `name`, its status, the relay's prefix); the
+  wording is never sent. `from: 'id'` is for Estiva ID's answers: its 429 is
+  `id-told-to-wait`, never the relay's limit.
+- `createHeardFailures()`: the app's transport calls `heard(reason)` on each
+  failed request, and `recent()` is the latest one within `HEARD_FOR_MS`
+  (15 s), for the `reason` option.
+
 ## 0.11.0
 
 The page-open timer counts a new tab's sign-in pass, and Peek's saved picture

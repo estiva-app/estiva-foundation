@@ -61,6 +61,83 @@ export const FAILURES = [
 ] as const
 export type Failure = (typeof FAILURES)[number]
 
+/**
+ * Why a failure the app showed happened: the only words a failure's `reason`
+ * may be. Estiva ID keeps the same list, and Sentry files each reason of a
+ * failure as its own error, so "the relay said wait" is told apart from "the
+ * sign-in had lapsed" without reading two servers' logs (23 Nov: nine "Could
+ * not load" reports after the per-minute fixes, none of them the limit).
+ * - `told-to-wait`: the relay's per-minute limit (`rate-limited: quota exceeded`);
+ * - `id-told-to-wait`: Estiva ID's own limit on signing or decrypting (429);
+ * - `relay-busy`: the relay too busy to answer, through protocol's quiet retries;
+ * - `signed-out`: the sign-in had lapsed (a 401, or no token to sign with);
+ * - `not-reached`: the request never got an answer (offline, cut, timed out);
+ * - `no-access`: the relay refused the read as not this person's to make;
+ * - `other`: a failed request that is none of these.
+ * A failure nothing was heard for carries no reason.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/error-reports-go-to-hosted-sentry-built-from-an-allowed-list.md
+ */
+export const FAILURE_REASONS = [
+  'told-to-wait',
+  'id-told-to-wait',
+  'relay-busy',
+  'signed-out',
+  'not-reached',
+  'no-access',
+  'other',
+] as const
+export type FailureReason = (typeof FAILURE_REASONS)[number]
+
+/**
+ * The reason a request failed, read from what it threw or answered: the
+ * error's `name` and `status` and the relay's own prefix, never its wording
+ * sent on. `status` is for a caller that holds an HTTP answer and no error;
+ * `from` says whose answer it is, since both servers answer 429 and only the
+ * relay's is the per-minute limit. A 429 that is neither Estiva ID's nor in
+ * the relay's words is `other`.
+ */
+export function failureReasonOf(error: unknown, status?: number, from: 'relay' | 'id' = 'relay'): FailureReason {
+  const name = error instanceof Error ? error.name : ''
+  const text = (error instanceof Error ? error.message : typeof error === 'string' ? error : '').toLowerCase()
+  const code = status ?? (error as { status?: unknown; httpStatus?: unknown } | null)?.status ?? (error as { httpStatus?: unknown } | null)?.httpStatus
+  // Estiva ID's refusals first: its limit is not the relay's, and its 401 is a lapsed sign-in.
+  if (name === 'SignerTokenExpired' || code === 401 || text.includes('not signed in')) return 'signed-out'
+  const notReached =
+    name === 'AbortError' || name === 'TimeoutError' || (name === 'TypeError' && /fetch|network|load failed/.test(text))
+  if (name === 'SignRefused' || from === 'id') return code === 429 ? 'id-told-to-wait' : notReached ? 'not-reached' : 'other'
+  if (text.includes('rate-limited') || text.includes('quota exceeded')) return 'told-to-wait'
+  if (name === 'RelayBusyError' || code === 502 || code === 503 || text.includes('the relay is busy')) return 'relay-busy'
+  if (code === 403 || /^(query failed: )?(restricted|auth-required|blocked):/.test(text)) return 'no-access'
+  if (notReached) return 'not-reached'
+  return 'other'
+}
+
+/** How long a failed request explains a failure shown after it. */
+export const HEARD_FOR_MS = 15_000
+
+/**
+ * What the app's requests last heard, for a failure drawn a moment later by a
+ * screen that holds only "it failed": the transport calls `heard` with each
+ * failed request's reason, and the reporter's `reason` option reads `recent`.
+ * The latest one within {@link HEARD_FOR_MS} wins; older, nothing.
+ */
+export function createHeardFailures(options: { now?: () => number; holdMs?: number } = {}) {
+  const now = options.now ?? (() => Date.now())
+  const holdMs = options.holdMs ?? HEARD_FOR_MS
+  let last: { reason: FailureReason; at: number } | undefined
+  return {
+    /** A request failed for `reason` (a name outside the list is `other`). Never throws. */
+    heard(reason: FailureReason): void {
+      last = { reason: (FAILURE_REASONS as readonly string[]).includes(reason) ? reason : 'other', at: now() }
+    },
+    /** The latest reason still fresh, or nothing. */
+    recent(): FailureReason | undefined {
+      return last && now() - last.at <= holdMs ? last.reason : undefined
+    },
+  }
+}
+
 /** A refusal's code as the relay client reads it (`archived`, `busy`, `blocked`, `http-500`): letters, digits and dashes. */
 const CODE = /^[a-z][a-z0-9-]{0,39}$/
 
@@ -78,6 +155,8 @@ export interface ErrorReportBody {
   error: { type: string; message: string; frames: ReportFrame[] }
   /** A failure's name from {@link FAILURES}, or a refusal's code; absent on a crash. */
   named?: string
+  /** Why a failure happened, from {@link FAILURE_REASONS}; only on a failure, and absent when nothing was heard. */
+  reason?: FailureReason
   screen: string
   trail: Array<ReportStep & { at: number }>
 }
@@ -107,6 +186,13 @@ export interface ErrorReporterOptions {
    * Default 10.
    */
   maxHandledPerTab?: number
+  /**
+   * Why the failure being reported happened, when the caller of `failure`
+   * did not say: what the app's requests last heard
+   * (`createHeardFailures().recent`). A value outside {@link FAILURE_REASONS}
+   * is not sent.
+   */
+  reason?: () => FailureReason | undefined
   /** Defaults to the global `fetch`. */
   fetch?: FetchLike
   now?: () => number
@@ -129,10 +215,11 @@ export interface ErrorReporter {
   report(error: unknown, how?: 'error' | 'unhandled-rejection' | 'boundary'): void
   /**
    * Report that the app told the person something failed, by what failed
-   * (a name outside {@link FAILURES} is sent as `unnamed`). Once per name per
-   * tab. Never throws.
+   * (a name outside {@link FAILURES} is sent as `unnamed`), and why when that
+   * is known: `reason`, or else what the `reason` option answers. Once per
+   * name and reason per screen per tab. Never throws.
    */
-  failure(what: Failure): void
+  failure(what: Failure, reason?: FailureReason): void
   /**
    * Report a write the relay refused, by its code as the relay client reads it
    * (protocol's `refusalCodeOf`), never its sentence; a code of any other shape
@@ -320,11 +407,15 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
    * name per screen per tab, so the same broad name met on another screen is a
    * second report, and a relay busy a hundred times on one screen is one.
    */
-  function reportHandled(how: 'failure' | 'refused', named: string): void {
+  function reportHandled(how: 'failure' | 'refused', named: string, why?: unknown): void {
     try {
       if (now() - signedOutAt < SIGNED_OUT_RETRY_MS) return
       const screen = listed(options.screen())
-      const kind = `${how}|${named}|${screen}`
+      // Only a failure has a reason, and only one from the list: anything else is not sent.
+      const inList = (value: unknown): FailureReason | undefined =>
+        (FAILURE_REASONS as readonly unknown[]).includes(value) ? (value as FailureReason) : undefined
+      const reason = how === 'failure' ? (inList(why) ?? inList(options.reason?.())) : undefined
+      const kind = `${how}|${named}|${screen}${reason ? `|${reason}` : ''}`
       if (handled.has(kind) || handled.size >= maxHandledPerTab) return
       handled.add(kind)
       const body: ErrorReportBody = {
@@ -332,6 +423,7 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
         how,
         error: { type: how === 'refused' ? 'WriteRefused' : 'Failure', message: named, frames: [] },
         named,
+        ...(reason ? { reason } : {}),
         screen,
         trail: [...trail],
       }
@@ -387,8 +479,8 @@ export function createErrorReporter(options: ErrorReporterOptions): ErrorReporte
 
   return {
     report,
-    failure(what) {
-      reportHandled('failure', (FAILURES as readonly string[]).includes(what) ? what : 'unnamed')
+    failure(what, reason) {
+      reportHandled('failure', (FAILURES as readonly string[]).includes(what) ? what : 'unnamed', reason)
     },
     refused(code) {
       step({ action: 'write-refused' })
