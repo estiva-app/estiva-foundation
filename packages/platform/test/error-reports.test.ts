@@ -305,9 +305,15 @@ test('the same failure on one screen is reported once per reason, so a second ca
 
 test('the reason of a failed request is read from what it threw or answered', () => {
   const named = (name: string, message: string, extra: object = {}) => Object.assign(new Error(message), { name }, extra)
+  // Estiva ID answers 429 too (its limit on decrypting): never the relay's per-minute limit.
+  assert.equal(failureReasonOf('{"error":"rate_limited"}', 429, 'id'), 'id-told-to-wait')
+  assert.equal(failureReasonOf(undefined, 401, 'id'), 'signed-out')
+  assert.equal(failureReasonOf(named('TypeError', 'Failed to fetch'), undefined, 'id'), 'not-reached')
   const cases: Array<[unknown, number | undefined, string]> = [
     [new Error('query failed: rate-limited: quota exceeded; retry in 8s'), undefined, 'told-to-wait'],
     ['{"error":"rate-limited: quota exceeded; retry in 29s"}', 429, 'told-to-wait'],
+    // A 429 in nobody's words is not counted as the relay's limit.
+    ['Too many requests', 429, 'other'],
     [named('RelayBusyError', 'the relay is busy, try again in a moment', { httpStatus: 503 }), undefined, 'relay-busy'],
     [undefined, 502, 'relay-busy'],
     [named('SignerTokenExpired', 'The signing token has expired'), undefined, 'signed-out'],

@@ -14,9 +14,10 @@ not be told from the limit without reading two servers' logs; none was it.
   screen that holds only "it failed". The body's `reason` is sent only for a
   failure and only from the list; a failure nothing was heard for carries
   none and stays in the error it was in. Once per name and reason per screen.
-- `failureReasonOf(error, status?)` reads the reason from what a request
-  threw or answered (its `name`, its status, the relay's prefix); the wording
-  is never sent.
+- `failureReasonOf(error, status?, from?)` reads the reason from what a
+  request threw or answered (its `name`, its status, the relay's prefix); the
+  wording is never sent. `from: 'id'` is for Estiva ID's answers: its 429 is
+  `id-told-to-wait`, never the relay's limit.
 - `createHeardFailures()`: the app's transport calls `heard(reason)` on each
   failed request, and `recent()` is the latest one within `HEARD_FOR_MS`
   (15 s), for the `reason` option.

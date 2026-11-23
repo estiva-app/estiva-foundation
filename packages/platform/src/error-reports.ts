@@ -92,20 +92,24 @@ export type FailureReason = (typeof FAILURE_REASONS)[number]
 /**
  * The reason a request failed, read from what it threw or answered: the
  * error's `name` and `status` and the relay's own prefix, never its wording
- * sent on. `status` is for a caller that holds an HTTP answer and no error.
+ * sent on. `status` is for a caller that holds an HTTP answer and no error;
+ * `from` says whose answer it is, since both servers answer 429 and only the
+ * relay's is the per-minute limit. A 429 that is neither Estiva ID's nor in
+ * the relay's words is `other`.
  */
-export function failureReasonOf(error: unknown, status?: number): FailureReason {
+export function failureReasonOf(error: unknown, status?: number, from: 'relay' | 'id' = 'relay'): FailureReason {
   const name = error instanceof Error ? error.name : ''
   const text = (error instanceof Error ? error.message : typeof error === 'string' ? error : '').toLowerCase()
   const code = status ?? (error as { status?: unknown; httpStatus?: unknown } | null)?.status ?? (error as { httpStatus?: unknown } | null)?.httpStatus
   // Estiva ID's refusals first: its limit is not the relay's, and its 401 is a lapsed sign-in.
   if (name === 'SignerTokenExpired' || code === 401 || text.includes('not signed in')) return 'signed-out'
-  if (name === 'SignRefused') return code === 429 ? 'id-told-to-wait' : 'other'
+  const notReached =
+    name === 'AbortError' || name === 'TimeoutError' || (name === 'TypeError' && /fetch|network|load failed/.test(text))
+  if (name === 'SignRefused' || from === 'id') return code === 429 ? 'id-told-to-wait' : notReached ? 'not-reached' : 'other'
   if (text.includes('rate-limited') || text.includes('quota exceeded')) return 'told-to-wait'
   if (name === 'RelayBusyError' || code === 502 || code === 503 || text.includes('the relay is busy')) return 'relay-busy'
-  if (code === 429) return 'told-to-wait'
   if (code === 403 || /^(query failed: )?(restricted|auth-required|blocked):/.test(text)) return 'no-access'
-  if (name === 'AbortError' || name === 'TimeoutError' || (name === 'TypeError' && /fetch|network|load failed/.test(text))) return 'not-reached'
+  if (notReached) return 'not-reached'
   return 'other'
 }
 
