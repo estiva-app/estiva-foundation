@@ -1664,3 +1664,4 @@ unchanged and a test can inject a transport.
 The fold, and anything that interprets events. `foldFolder` stays in Ship,
 `foldResolution` and the projection stay in Peek, and each app keeps its own
 conformance fixture. See the README on the line this package does not cross.
+
