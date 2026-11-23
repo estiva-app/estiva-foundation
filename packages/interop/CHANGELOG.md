@@ -6,6 +6,19 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.114.0 — 2026-11-23
+
+**Manifest: nothing new declared or read. Wire: a read only — a card's children are read by the list read where their kind is opened (ALL-10).**
+
+- `resolveForeignObject` and `resolveForeignObjects` with `openRead` naming
+  the children's kind read each child (a page's sub-pages, a project's issues,
+  a topic's files under a bare file) as its first record and each field's
+  current change (SPEC §6.13), never every change it ever had. A child that
+  read leaves out — deleted, or not the reader's — is not drawn, as a list
+  hides a deleted file (§6.5). Without `openRead` for that kind, nothing
+  changes. On production, as Miky, a cold Peek open asked for every change of
+  each sub-page and of 85 topics' and pages' children this way: 24 MB.
+
 ## 0.113.0 — 2026-11-23
 
 **Manifest: nothing new declared or read. Wire: a read only — `readTopics` can read the topics themselves by the list read (ALL-6).**

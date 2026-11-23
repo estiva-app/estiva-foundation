@@ -184,6 +184,71 @@ describe('opening a file by the open read (ALO-6)', () => {
   })
 })
 
+describe("a page's sub-pages, when the relay keeps pages in order (ALL-10)", () => {
+  // A page app whose page lists its sub-pages by their roots' `a`, moved by `parent` (SPEC §6.7), as Leaf's does.
+  const PAGE = 30842
+  const pages = event({
+    kind: 31990,
+    tags: [['d', 'pages'], ['k', String(PAGE)]],
+    content: JSON.stringify({
+      name: 'Pages',
+      records: { changeKind: 1851, targetTag: 'a', fieldTag: 'field', valueTag: 'value', order: ['ts', 'created_at', 'id'], rule: 'last-write-wins-per-field' },
+      projections: {
+        [PAGE]: {
+          widget: 'card',
+          slots: {
+            title: { fold: 'title', tag: 'title' },
+            list: { children: { kind: PAGE, via: 'a', limit: 200, movedBy: 'parent', anyParent: true } },
+          },
+        },
+      },
+    }),
+  })
+  const page = (d, title, parent) =>
+    event({ kind: PAGE, tags: [['d', d], ['title', title], ['h', TEAM], ...(parent ? [['a', addressOf(parent)]] : [])] })
+  const weekly = page('weekly', 'Weekly Plans')
+  const elsewhere = page('elsewhere', 'Elsewhere')
+  const renamed = page('w-renamed', 'Week 1', weekly)
+  const gone = page('w-gone', 'Week 2', weekly)
+  const movedIn = page('w-moved', 'Week 3', elsewhere)
+  const events = [
+    pages,
+    weekly,
+    elsewhere,
+    renamed,
+    gone,
+    movedIn,
+    // Many saves of a sub-page's text: what a read of every change downloads.
+    ...Array.from({ length: 20 }, (_, i) => change(renamed, 'description', `Save ${i} `.repeat(200))),
+    change(renamed, 'title', 'Week 1, renamed'),
+    change(gone, 'deleted', 'true', OTHER),
+    event({ kind: 1851, tags: [['a', addressOf(movedIn)], ['field', 'parent'], ['value', addressOf(weekly)], ['A', addressOf(weekly)], ['h', TEAM]] }),
+  ]
+  const titles = (object) => (object.children ?? []).map((child) => child.slots.title?.value).sort()
+
+  test('opened by fields, its sub-pages draw their current titles and none of their changes is read by `#a`', async () => {
+    const relay = opening(events)
+    const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople, 0, undefined, { openRead: [PAGE] })
+    assert.deepEqual(relay.changesByA(), [], 'no sub-page change is read by `#a`')
+    assert.deepEqual(titles(object), ['Week 1, renamed', 'Week 3'], 'the deleted one is left out, the moved-in one is there')
+  })
+
+  test('in a set of cards too, by one list read for the sub-pages', async () => {
+    const relay = opening(events)
+    const objects = await resolveForeignObjects([addressOf(weekly)], relay.query, noPeople, undefined, { openRead: [PAGE] })
+    assert.deepEqual(relay.changesByA(), [])
+    assert.deepEqual(titles(objects[addressOf(weekly)]), ['Week 1, renamed', 'Week 3'])
+  })
+
+  test('without the open read, the same sub-pages, each read whole', async () => {
+    const relay = opening(events)
+    const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople)
+    // A deleted sub-page is still drawn by this older read; it goes with it (ALL-8).
+    assert.deepEqual(titles(object).filter((title) => title !== 'Week 2'), ['Week 1, renamed', 'Week 3'])
+    assert.ok(relay.changesByA().includes(addressOf(renamed)), 'the plain read still reads every change')
+  })
+})
+
 describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", () => {
   const launch = plan('d-launch', 'Launch')
   const gone = plan('d-gone', 'Gone')
