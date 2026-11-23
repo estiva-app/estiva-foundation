@@ -257,6 +257,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
 
   const { creatableUnder, applyAction, resolveObject } = host.manifests
   const { startConversationInDm } = host
+  const canSendToDm = !!startConversationInDm
 
   /*
     PEE-3's targets: the objects this conversation already refers to, resolved
@@ -374,9 +375,10 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
             const converted = launcherActionFrom(creation.action, { parentNoun: creation.parentNoun, submitLabel: creation.action.label })
             if (!converted) continue
             // A Folder's built-in new file is Peek's Create topic (INT-12); a conversation knows its DMs (REC-1).
-            const action = asLauncherCreation(creation, converted)
+            // A DM is somewhere to write only in an app that can send to one: elsewhere it is neither marked nor offered.
+            const action = asLauncherCreation(canSendToDm ? creation : { action: creation.action }, converted)
             actions.push(action)
-            parents[action.id] = creation.parents
+            parents[action.id] = canSendToDm ? creation.parents : creation.parents.filter((p) => !creation.dms?.includes(p.value))
           }
           setLive((l) => ({ ...l, [app.id]: { state: 'ready', actions, parents } }))
         })
@@ -386,7 +388,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
           setLive((l) => ({ ...l, [app.id]: { state: 'failed' } }))
         })
     },
-    [readKinds],
+    [readKinds, canSendToDm],
   )
   useEffect(() => {
     if (level.kind === 'app') readLive(level.app)
@@ -706,7 +708,8 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
       return
     }
     // DMs only, also for a prefilled draft: Peek has no screen for a Folder's own chat (parked, Miky 2026-10-17, REC-1 2726532e).
-    if (action.id === 'start-a-conversation' && !action.dmParents?.includes(parent)) {
+    // And only where the app can send to a DM: without that, a DM would go on as a Folder's conversation, which a DM never takes (SPEC §3.2).
+    if (action.id === 'start-a-conversation' && !(startConversationInDm && action.dmParents?.includes(parent))) {
       setSubmitError({ text: 'Start a conversation in one of your DMs.' })
       return
     }
@@ -794,11 +797,12 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
       are told when it has something unread — a `kind:1851` each, by the
       membership seam. The creator already is one, by creating it.
     */
-    if (members.length > 0 && result.created && host.addMember) {
+    if (members.length > 0 && result.created) {
       const folder = parent.split(':')[2] ?? ''
       const refused: string[] = []
       for (const person of members) {
-        const added = await host.addMember(result.created, folder, person)
+        // An app that cannot add a member says so by name, as a refusal does: the people were chosen and are not in.
+        const added = host.addMember ? await host.addMember(result.created, folder, person) : false
         if (added !== true) refused.push((people ?? []).find((p) => p.id === person)?.name ?? `${person.slice(0, 8)}…`)
       }
       if (refused.length > 0) {

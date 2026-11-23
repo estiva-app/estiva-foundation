@@ -18,7 +18,8 @@ import type { LauncherModel } from './promptApi.js'
  * **Build it in a component, from the app's own hooks, on every render.** Its
  * members are values and callbacks, read at the moment they are used. The
  * three members named `use…` are hooks the launcher calls itself, because what
- * they are asked depends on what is typed: pass the same function every time.
+ * they are asked depends on what is typed: pass the same function every time,
+ * and an optional one either always or never while the box is mounted.
  *
  * A member marked optional is something not every app has (a message search, a
  * composer, DMs). Without it the launcher draws nothing for it; it never
@@ -105,9 +106,9 @@ export interface LauncherHost {
   currentFolder?: () => string | undefined
   /** Why nothing can be created under this parent, or null: a retired topic's channel in Peek. */
   parentRefusal?: (address: string) => string | null
-  /** A conversation started in a DM is the app's own message, not a Folder's action (Peek). */
+  /** A conversation started in a DM is the app's own message, not a Folder's action (Peek). Without it no DM is offered and nothing is sent to one. */
   startConversationInDm?: (args: { channel: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
-  /** Make a person a member of a file just created; true, or why not. */
+  /** Make a person a member of a file just created; true, or why not. Without it the people chosen are named as not added. */
   addMember?: (file: string, folder: string, person: string) => Promise<true | string>
   /** Something was created: the lists on screen read again. */
   afterCreate?: () => void
