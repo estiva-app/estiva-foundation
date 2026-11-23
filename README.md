@@ -183,3 +183,4 @@ npx verdaccio@6 --listen 4873
 then publish and install with `--registry http://localhost:4873`. That exercises
 the client, the tarball, resolution and the upgrade — everything except npm's
 auth and org permissions.
+
