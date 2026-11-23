@@ -101,6 +101,7 @@ export {
   type People,
   type ForeignObject,
   type ObjectField,
+  type ObjectChange,
   type ProjectEventsOptions,
   type FolderProject,
   type FolderContents,
