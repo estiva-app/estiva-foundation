@@ -310,3 +310,55 @@ test('the changes the shared read counted for a file are the lines of its histor
   )
   if (settings.numRuns >= 100) assert.ok(lines > 0, 'no history set a field')
 })
+
+test('who changed a file last is the same in whatever order its changes arrive, when two people changed it in the same second', () => {
+  const [ANA, BEN] = ['1'.repeat(64), '2'.repeat(64)]
+  const at = 1763000000
+  const address = `30850:${BEN}:payments`
+  const change = (id, pubkey, created_at, tags) => ({ id: id.repeat(64), pubkey, kind: 1851, created_at, content: '', sig: '', tags: [['a', address], ['h', 'team'], ...tags] })
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: at, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  // One change sets the status, then the title. A second later Ben sets the
+  // status again and Ana the title: the status was set first, so its change is
+  // the one a reader names (the first listed of two in the same second).
+  const both = change('a', BEN, at, [['set', 'status', 'todo'], ['set', 'title', 'Payments']])
+  const status = change('b', BEN, at + 1, [['field', 'status'], ['value', 'doing']])
+  const title = change('c', ANA, at + 1, [['field', 'title'], ['value', 'Pay']])
+  for (const changes of [[both, status, title], [both, title, status], [status, both, title], [status, title, both], [title, both, status], [title, status, both]]) {
+    const [file] = projectEvents([record, ...changes], manifestFor)
+    assert.equal(file.changedBy, BEN, `arriving as ${changes.map((c) => c.id[0]).join(', ')}`)
+  }
+})
+
+test('an event with an empty tag is read past, and the file beside it is still read', () => {
+  const BEN = '2'.repeat(64)
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: 1763000000, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  const odd = { id: 'e'.repeat(64), pubkey: BEN, kind: 1851, created_at: 1763000001, content: '', sig: '', tags: [[], ['a', `30850:${BEN}:payments`], ['h', 'team'], ['field', 'title'], ['value', 'Pay']] }
+  const [file] = projectEvents([record, odd], manifestFor)
+  assert.equal(file.slots.title.value, 'Pay')
+})
+
+test("an event of another kind that names a file and carries a change's tags changes nothing about the file", () => {
+  const BEN = '2'.repeat(64)
+  const address = `30850:${BEN}:payments`
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: 1763000000, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  const notAChange = (id, tags) => ({ id: id.repeat(64), pubkey: BEN, kind: 1111, created_at: 1763000005, content: '', sig: '', tags: [['a', address], ['h', 'team'], ...tags] })
+  const events = [record, notAChange('a', [['field', 'title'], ['value', 'Renamed']]), notAChange('b', [['set', 'archived', 'true'], ['set', 'title', 'Renamed too']])]
+  const [file] = projectEvents(events, manifestFor, { changes: true })
+  assert.equal(file.slots.title.value, 'Payments')
+  assert.equal(file.archived, undefined)
+  assert.deepEqual(file.changes, [])
+})
+
+test('a shared read that remembers answers each way of asking with what was asked for, not with what the last read was given', () => {
+  const ways = [{}, { changes: true }, { fields: true }, { bare: true }, { bare: true, fields: true, changes: true }]
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), fc.constantFrom(...ways), fc.constantFrom(...ways), (events, first, second) => {
+      projectEvents(events, manifestFor, { ...first, remember: true })
+      const remembered = projectEvents(events, manifestFor, { ...second, remember: true }).sort(byAddress)
+      // A fresh read of copies: nothing remembered can answer for it.
+      const afresh = projectEvents(structuredClone(events), manifestFor, second).sort(byAddress)
+      assert.deepEqual(remembered, afresh)
+    }),
+    settings,
+  )
+})

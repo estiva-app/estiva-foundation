@@ -2491,6 +2491,8 @@ function sayOf(event: SignedEvent, targetTag: string, fieldTag: string, valueTag
   for (let i = 0; i < tags.length; i++) {
     const t = tags[i]
     const name = t[0]
+    // An empty tag names nothing, and must not stop the whole read.
+    if (typeof name !== 'string') continue
     // By length first: most tags are none of these, and one number says so.
     switch (name.length) {
       case 1:
@@ -2564,20 +2566,22 @@ function foldSaid(
   // Each field's winner is the last change to set it in §6.3's order. Found by
   // comparing, not by sorting every change first: most changes are not a
   // winner, and a workspace's fold sorts and builds a value for each otherwise.
-  const winners = new Map<string, { change: SignedEvent; one: Said; value: string; ms: number; firstMs: number; firstId: string }>()
-  const set = (one: Said, ms: number, field: string, value: string) => {
+  const winners = new Map<string, { change: SignedEvent; one: Said; value: string; ms: number; firstMs: number; firstId: string; firstNth: number }>()
+  // `nth`: which of the change's settings this is, counted from 0.
+  const set = (one: Said, ms: number, field: string, value: string, nth: number) => {
     const change = one.event
     const held = winners.get(field)
     // Later wins; the same instant goes to the higher id, and a change that
     // sets one field twice to its last word, as a sorted replay gives it.
     if (!held) {
-      winners.set(field, { change, one, value, ms, firstMs: ms, firstId: change.id })
+      winners.set(field, { change, one, value, ms, firstMs: ms, firstId: change.id, firstNth: nth })
       return
     }
-    // When the field was first set, for the order below.
+    // When the field was first set, and where in that change, for the order below.
     if (ms < held.firstMs || (ms === held.firstMs && change.id < held.firstId)) {
       held.firstMs = ms
       held.firstId = change.id
+      held.firstNth = nth
     }
     if (held.ms > ms || (held.ms === ms && held.change.id > change.id)) return
     held.change = change
@@ -2606,17 +2610,18 @@ function foldSaid(
     if (one.sets) {
       ms = msOf(one.ts, change.created_at)
       const tags = change.tags
+      let nth = 0
       for (let i = 0; i < tags.length; i++) {
         const t = tags[i]
         if (t[0] !== 'set' || !t[1] || typeof t[2] !== 'string') continue
-        set(one, ms, t[1], t[2])
+        set(one, ms, t[1], t[2], nth++)
         if (lines) line(one, ms, t[1], t[2])
         // The archive read takes a change's first word on it (`archiveOf`).
         if (archived === undefined && t[1] === ARCHIVED_FIELD) archived = t[2]
       }
     } else if (field && value !== undefined) {
       ms = msOf(one.ts, change.created_at)
-      set(one, ms, field, value)
+      set(one, ms, field, value, 0)
       if (lines) line(one, ms, field, value)
       if (field === ARCHIVED_FIELD) archived = value
     } else continue
@@ -2628,8 +2633,13 @@ function foldSaid(
       archive.ms = ms
     }
   }
-  // Listed in the order the fields were first set, as the sorted replay listed them.
-  const inOrder = [...winners].sort(([, a], [, b]) => a.firstMs - b.firstMs || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0))
+  // Listed in the order the fields were first set, as the sorted replay listed
+  // them: two fields first set by one change, in the order that change names
+  // them, whatever order the changes arrived in. The order decides who changed
+  // a file last when two people's changes share a second (`buildObject`).
+  const inOrder = [...winners].sort(
+    ([, a], [, b]) => a.firstMs - b.firstMs || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : a.firstNth - b.firstNth),
+  )
   for (const [field, { change, one, value }] of inOrder) {
       // A summary is new, so it takes neither of §6.2's exceptions: a change the
       // reader cannot check against the root's Folder is not read (SPEC §6.12).
@@ -3756,6 +3766,8 @@ export interface ProjectEventsOptions {
    * workspace again on every live update: one file changed, so one file is
    * folded and resolved, not a thousand. The objects are frozen, since the
    * next read hands them out again; kept by the record, and gone with it.
+   * Only the object itself is frozen: its slots, fields and changes are the
+   * same ones next time too, so a reader sorts or changes a copy, never them.
    */
   remember?: boolean
   /**
