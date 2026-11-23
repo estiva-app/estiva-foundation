@@ -6,6 +6,35 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.112.0 — 2026-11-23
+
+**Manifest: nothing new declared or read. Wire: nothing. The bulk read is close to twice as fast, and can hand back the changes it counted (0dcf212c, for MOV-3).**
+
+- `projectEvents` gives the same objects from the same events in a little
+  over half the time, measured on a workspace of 1,350 files and 11,657
+  changes read for the first time. It walks each event's tags once (it walked a change
+  four or five times: for its target, its Folder, its `O`, its fields, its
+  time), reads a file's archive from the same pass as its fields, and works
+  out what a manifest says of a kind once per read, not once per file.
+- New options, all off unless asked for:
+  - `bare` leaves out `naddr`, `openUrl` and `actions` (`[]`), for a reader
+    that lists its own app's files and acts on them itself.
+  - `fields` gives each object `fields` (each field's current change: value,
+    id, who, when, format, stage) and `record` (its first record as signed).
+  - `remember` hands back the same frozen object for a file whose record,
+    changes and manifest are the very ones read last time, so a live update
+    folds one file and not the workspace.
+  - `changes` gives each object `changes`: one `ObjectChange` per field a
+    counted change set (the event, field, value, its time in ms by §6.3, its
+    format, its stage, the Folder it was signed in, the file its `O` names), in
+    the order the events were handed in. Left out, as the fold leaves them
+    out: a change signed in another Folder than the file's, one whose `O`
+    names another file, a partial one, and a summary or a delete on a file
+    that names no Folder. An app that lists what happened to its files reads
+    them here and does not walk every change a second time.
+- Nothing a caller reads changed. An object's keys may come in another order
+  than before; a test that compares one as JSON text, not by its fields, sees it.
+
 ## 0.111.0 — 2026-11-21
 
 **Manifest: nothing new declared or read. Wire: nothing. A file's history, and what each field's value means, from the shared read (MOV-2).**

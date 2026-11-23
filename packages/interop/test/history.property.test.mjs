@@ -233,3 +233,132 @@ test('the reads keep a file whose id has a colon in it whole', () => {
     settings,
   )
 })
+
+/** For each file, each field a change set: its value, that change, who made it, the second, and its stage. */
+const whoSetWhat = (files) => Object.fromEntries(files.map(([address, fields]) => [address, Object.fromEntries(Object.entries(fields).sort())]))
+
+test('the shared read asked for fields names, for each field, the same value, change, person, second and stage as the list read', () => {
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const list = filesOf(events, { withText: true }).map((file) => [
+        file.address,
+        Object.fromEntries(Object.entries(file.fields).map(([field, f]) => [field, { value: f.value, change: f.id, by: f.pubkey, at: Math.floor(f.at / 1000), stage: f.stage ?? '' }])),
+      ])
+      const shared = projectEvents(events, manifestFor, { fields: true }).map((object) => [
+        object.address,
+        Object.fromEntries(Object.entries(object.fields).map(([field, f]) => [field, { value: f.value, change: f.id, by: f.by, at: f.at, stage: f.stage ?? '' }])),
+      ])
+      assert.deepEqual(whoSetWhat(shared), whoSetWhat(list))
+    }),
+    settings,
+  )
+})
+
+test('the shared read asked to leave out links and actions gives the same files, each without its link, its address to open and its actions', () => {
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const whole = projected(events).map(({ naddr, openUrl, actions, ...rest }) => rest)
+      const bare = projectEvents(events, manifestFor, { bare: true }).sort(byAddress)
+      for (const object of bare) {
+        assert.equal('naddr' in object, false)
+        assert.equal('openUrl' in object, false)
+        assert.deepEqual(object.actions, [])
+      }
+      assert.deepEqual(bare.map(({ actions, ...rest }) => rest), whole)
+    }),
+    settings,
+  )
+})
+
+test('a shared read that remembers gives, once more events arrive, the same files as a read of them all afresh', () => {
+  let reused = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => fc.tuple(deliveryArb(history.events), fc.nat())), ([events, cut]) => {
+      const earlier = events.slice(0, cut % (events.length + 1))
+      const before = projectEvents(earlier, manifestFor, { fields: true, remember: true })
+      const remembered = projectEvents(events, manifestFor, { fields: true, remember: true })
+      if (remembered.some((object) => before.includes(object))) reused++
+      assert.deepEqual(remembered.sort(byAddress), projectEvents(events, manifestFor, { fields: true }).sort(byAddress))
+    }),
+    settings,
+  )
+  if (settings.numRuns >= 100) assert.ok(reused > 0, 'no read handed back a file it had kept')
+})
+
+test('the changes the shared read counted for a file are the lines of its history, each with its time and stage', () => {
+  let lines = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (delivered) => {
+      // The history lists a change delivered twice once; the shared read counts what it is handed.
+      const events = [...new Map(delivered.map((event) => [event.id, event])).values()]
+      // Not the format: the history names it on the text alone, a counted change on every field its event sets.
+      const line = ({ id, field, value, at, stage }) => JSON.stringify([id, field, value, at, stage ?? null])
+      const history = new Map()
+      for (const change of historyOf(events)) history.set(change.address, [...(history.get(change.address) ?? []), line(change)])
+      for (const object of projectEvents(events, manifestFor, { changes: true })) {
+        const counted = object.changes.map((change) => line({ ...change, id: change.event.id, at: change.ms }))
+        lines += counted.length
+        assert.deepEqual(counted.sort(), (history.get(object.address) ?? []).sort())
+      }
+      // Asked for, they change nothing else about a file.
+      assert.deepEqual(
+        projectEvents(events, manifestFor, { changes: true }).map(({ changes, ...rest }) => rest).sort(byAddress),
+        projected(events),
+      )
+    }),
+    settings,
+  )
+  if (settings.numRuns >= 100) assert.ok(lines > 0, 'no history set a field')
+})
+
+test('who changed a file last is the same in whatever order its changes arrive, when two people changed it in the same second', () => {
+  const [ANA, BEN] = ['1'.repeat(64), '2'.repeat(64)]
+  const at = 1763000000
+  const address = `30850:${BEN}:payments`
+  const change = (id, pubkey, created_at, tags) => ({ id: id.repeat(64), pubkey, kind: 1851, created_at, content: '', sig: '', tags: [['a', address], ['h', 'team'], ...tags] })
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: at, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  // One change sets the status, then the title. A second later Ben sets the
+  // status again and Ana the title: the status was set first, so its change is
+  // the one a reader names (the first listed of two in the same second).
+  const both = change('a', BEN, at, [['set', 'status', 'todo'], ['set', 'title', 'Payments']])
+  const status = change('b', BEN, at + 1, [['field', 'status'], ['value', 'doing']])
+  const title = change('c', ANA, at + 1, [['field', 'title'], ['value', 'Pay']])
+  for (const changes of [[both, status, title], [both, title, status], [status, both, title], [status, title, both], [title, both, status], [title, status, both]]) {
+    const [file] = projectEvents([record, ...changes], manifestFor)
+    assert.equal(file.changedBy, BEN, `arriving as ${changes.map((c) => c.id[0]).join(', ')}`)
+  }
+})
+
+test('an event with an empty tag is read past, and the file beside it is still read', () => {
+  const BEN = '2'.repeat(64)
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: 1763000000, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  const odd = { id: 'e'.repeat(64), pubkey: BEN, kind: 1851, created_at: 1763000001, content: '', sig: '', tags: [[], ['a', `30850:${BEN}:payments`], ['h', 'team'], ['field', 'title'], ['value', 'Pay']] }
+  const [file] = projectEvents([record, odd], manifestFor)
+  assert.equal(file.slots.title.value, 'Pay')
+})
+
+test("an event of another kind that names a file and carries a change's tags changes nothing about the file", () => {
+  const BEN = '2'.repeat(64)
+  const address = `30850:${BEN}:payments`
+  const record = { id: '0'.repeat(64), pubkey: BEN, kind: 30850, created_at: 1763000000, content: '', sig: '', tags: [['d', 'payments'], ['title', 'Payments'], ['h', 'team']] }
+  const notAChange = (id, tags) => ({ id: id.repeat(64), pubkey: BEN, kind: 1111, created_at: 1763000005, content: '', sig: '', tags: [['a', address], ['h', 'team'], ...tags] })
+  const events = [record, notAChange('a', [['field', 'title'], ['value', 'Renamed']]), notAChange('b', [['set', 'archived', 'true'], ['set', 'title', 'Renamed too']])]
+  const [file] = projectEvents(events, manifestFor, { changes: true })
+  assert.equal(file.slots.title.value, 'Payments')
+  assert.equal(file.archived, undefined)
+  assert.deepEqual(file.changes, [])
+})
+
+test('a shared read that remembers answers each way of asking with what was asked for, not with what the last read was given', () => {
+  const ways = [{}, { changes: true }, { fields: true }, { bare: true }, { bare: true, fields: true, changes: true }]
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), fc.constantFrom(...ways), fc.constantFrom(...ways), (events, first, second) => {
+      projectEvents(events, manifestFor, { ...first, remember: true })
+      const remembered = projectEvents(events, manifestFor, { ...second, remember: true }).sort(byAddress)
+      // A fresh read of copies: nothing remembered can answer for it.
+      const afresh = projectEvents(structuredClone(events), manifestFor, second).sort(byAddress)
+      assert.deepEqual(remembered, afresh)
+    }),
+    settings,
+  )
+})
