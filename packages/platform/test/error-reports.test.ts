@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createErrorReporter, scrubMessage, type ErrorReporterOptions } from '../dist/index.js'
+import { createErrorReporter, createHeardFailures, failureReasonOf, scrubMessage, type ErrorReporterOptions } from '../dist/index.js'
 
 const ORIGIN = 'https://peek.estiva.app'
 const PLANTED_MESSAGE = 'plantedmessage quarterly numbers'
@@ -250,6 +250,79 @@ test('a failure named outside the list, such as the message the person saw, is s
   assert.equal(requests.length, 1)
   assert.ok(!requests[0]!.body.includes(PLANTED_TITLE))
   assert.equal(JSON.parse(requests[0]!.body).named, 'unnamed')
+})
+
+test('a failure says why when the app’s requests heard a reason just before, and only a reason from the list', async () => {
+  let clock = 1_700_000_000_000
+  const heard = createHeardFailures({ now: () => clock })
+  const { reporter, requests } = harness({ now: () => clock, reason: heard.recent })
+  // The relay's own words, as a read throws them: the reason is read from them and they are not sent.
+  heard.heard(failureReasonOf(new Error('query failed: rate-limited: quota exceeded; retry in 12s')))
+  reporter.failure('not-loaded')
+  await flush()
+  assert.equal(requests.length, 1)
+  const body = JSON.parse(requests[0]!.body)
+  assert.equal(body.named, 'not-loaded')
+  assert.equal(body.reason, 'told-to-wait')
+  assert.ok(!requests[0]!.body.includes('quota'))
+
+  // A reason the caller gives wins over what was heard; one outside the list is never sent.
+  reporter.failure('not-saved', 'signed-out')
+  reporter.failure('not-sent', `because of ${PLANTED_TITLE}` as never)
+  await flush()
+  assert.equal(JSON.parse(requests[1]!.body).reason, 'signed-out')
+  assert.equal(JSON.parse(requests[2]!.body).reason, 'told-to-wait')
+  assert.ok(!requests[2]!.body.includes(PLANTED_TITLE))
+})
+
+test('a failure shown long after the last failed request carries no reason, and a refusal never does', async () => {
+  let clock = 1_700_000_000_000
+  const heard = createHeardFailures({ now: () => clock })
+  const { reporter, requests } = harness({ now: () => clock, reason: heard.recent })
+  heard.heard('relay-busy')
+  clock += 16_000
+  reporter.failure('not-loaded')
+  heard.heard('relay-busy')
+  reporter.refused('archived')
+  await flush()
+  assert.equal(requests.length, 2)
+  assert.ok(!('reason' in JSON.parse(requests[0]!.body)))
+  assert.ok(!('reason' in JSON.parse(requests[1]!.body)))
+})
+
+test('the same failure on one screen is reported once per reason, so a second cause is not hidden by the first', async () => {
+  const { reporter, requests } = harness()
+  reporter.failure('not-loaded', 'told-to-wait')
+  reporter.failure('not-loaded', 'told-to-wait')
+  reporter.failure('not-loaded', 'signed-out')
+  reporter.failure('not-loaded')
+  await flush()
+  assert.deepEqual(
+    requests.map((request) => JSON.parse(request.body).reason),
+    ['told-to-wait', 'signed-out', undefined],
+  )
+})
+
+test('the reason of a failed request is read from what it threw or answered', () => {
+  const named = (name: string, message: string, extra: object = {}) => Object.assign(new Error(message), { name }, extra)
+  const cases: Array<[unknown, number | undefined, string]> = [
+    [new Error('query failed: rate-limited: quota exceeded; retry in 8s'), undefined, 'told-to-wait'],
+    ['{"error":"rate-limited: quota exceeded; retry in 29s"}', 429, 'told-to-wait'],
+    [named('RelayBusyError', 'the relay is busy, try again in a moment', { httpStatus: 503 }), undefined, 'relay-busy'],
+    [undefined, 502, 'relay-busy'],
+    [named('SignerTokenExpired', 'The signing token has expired'), undefined, 'signed-out'],
+    [undefined, 401, 'signed-out'],
+    [named('SignRefused', 'Estiva ID refused to sign kind:27235 — rate_limited', { status: 429 }), undefined, 'id-told-to-wait'],
+    [named('SignRefused', 'Estiva ID refused to sign kind:1 — not allowed', { status: 422 }), undefined, 'other'],
+    [named('TypeError', 'Failed to fetch'), undefined, 'not-reached'],
+    [named('AbortError', 'The operation was aborted.'), undefined, 'not-reached'],
+    [new Error('query failed: restricted: not a member of this folder'), undefined, 'no-access'],
+    [new Error('query failed: not a times answer'), undefined, 'other'],
+    [named('TypeError', 'Cannot read properties of undefined'), undefined, 'other'],
+  ]
+  for (const [error, status, reason] of cases) {
+    assert.equal(failureReasonOf(error, status), reason, `${error instanceof Error ? `${error.name}: ${error.message}` : error} (${status ?? 'no status'})`)
+  }
 })
 
 test('a refused write is sent by its code, records the step, and a code of any other shape goes as uncoded', async () => {
