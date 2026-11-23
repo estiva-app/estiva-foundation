@@ -76,9 +76,26 @@ function relay(events: SignedEvent[]) {
     }
     return true
   }
+  /** The list read (§6.13): each matching first record, and the newest change of each of its fields. */
+  const listed = (filter: Filter) =>
+    events
+      .filter((e) => e.kind !== 1851 && matches(e, filter))
+      .flatMap((root) => {
+        const address = `${root.kind}:${root.pubkey}:${root.tags.find((t) => t[0] === 'd')?.[1]}`
+        const newest = new Map<string, SignedEvent>()
+        for (const e of events.filter((c) => c.kind === 1851 && c.tags.find((t) => t[0] === 'a')?.[1] === address).sort((a, b) => a.created_at - b.created_at)) {
+          newest.set(e.tags.find((t) => t[0] === 'field')?.[1] ?? '', e)
+        }
+        return [root, ...newest.values()]
+      })
   const query = async (filters: Record<string, unknown>[]) => {
     asked.push(...(filters as Filter[]))
-    return events.filter((e) => filters.some((f) => matches(e, f as Filter)))
+    const out = new Set<SignedEvent>()
+    for (const f of filters as Filter[]) {
+      if (f.fields) listed(f).forEach((e) => out.add(e))
+      else events.filter((e) => matches(e, f)).forEach((e) => out.add(e))
+    }
+    return [...out]
   }
   return { query, asked }
 }
@@ -119,6 +136,24 @@ describe('readTopics — every topic the viewer can read, once', () => {
     assert.equal(by.get(alpha.address)!.object.archived, undefined)
     assert.ok(by.get(foxtrot.address)!.object.archived)
     assert.equal(by.get(hotel.address)!.object.archived?.with, golf.address)
+  })
+
+  it('where topics are kept in order, reads each topic by its current fields and asks for no topic’s every change (ALL-6)', async () => {
+    const everyChange = (asked: Filter[]) =>
+      asked.filter((f) => f.kinds?.includes(1851) && !f.fields && !f['#p'] && ((f['#a'] as string[] | undefined) ?? []).some((a) => a.startsWith('30840:')))
+    const before = relay(world)
+    const whole = await readTopics(before.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true })
+    // The control: without the option, each topic's every change is still asked for.
+    assert.ok(everyChange(before.asked).length > 0)
+    const after = relay(world)
+    const listedRead = await readTopics(after.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true, topicsListRead: true })
+    assert.deepEqual(everyChange(after.asked), [])
+    // The same topics either way: title, archive (with a parent too) and whose they are.
+    const drawn = (read: typeof whole) =>
+      read.topics.map((t) => [t.object.address, t.object.slots.title?.value, t.object.archived?.with ?? !!t.object.archived, t.yours]).sort()
+    assert.deepEqual(drawn(listedRead), drawn(whole))
+    const listed = after.asked.filter((f) => f.fields && f.kinds?.includes(30840)).flatMap((f) => (f['#d'] as string[] | undefined) ?? [])
+    assert.deepEqual([...new Set(listed)].sort(), topics.map((t) => t.address.split(':')[2]).sort())
   })
 
   it('says whose a topic is by the shared fold: made it, chose a level or was added, and never by writing in it', async () => {
