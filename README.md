@@ -48,7 +48,9 @@ build`, Ship is a 40-line esbuild script, the agent runs `tsx` directly:
 - **Extend `tsconfig.base.json`** — ES2022, `types: []`, no `lib: dom`. A
   published `.d.ts` must not reach for an ambient global; Peek sets
   `types: ["vite/client"]` and Ship sets `types: ["node"]`, so anything needing
-  either compiles in one repo and fails in the other.
+  either compiles in one repo and fails in the other. **One exception:**
+  `@estiva-app/launcher` is a component (the ⌘K box, KIN-4), so it adds `dom`
+  and `jsx` over the base. Only the browser apps install it.
 - **Write relative imports with a `.js` extension.** `tsc` copies the specifier
   through untouched. CI checks the emitted output.
 - **Carry `publishConfig: { access: "public" }`.** Scoped packages default to

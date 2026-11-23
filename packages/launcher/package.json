@@ -1,0 +1,78 @@
+{
+  "name": "@estiva-app/launcher",
+  "version": "0.1.0",
+  "description": "The ⌘K box every Estiva app mounts: a name finds anything, a sentence asks about what is open, and the box suggests what to do with it. Each app hands it a host: where the person is, the people, the relay's search and the manifest runtime.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/estiva-app/estiva-foundation.git",
+    "directory": "packages/launcher"
+  },
+  "keywords": [
+    "command-palette",
+    "launcher",
+    "estiva"
+  ],
+  "scripts": {
+    "prebuild": "npm run build --workspace @estiva-app/protocol --workspace @estiva-app/conversation --workspace @estiva-app/interop",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && vitest run",
+    "typecheck": "npm run build && tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@estiva-app/conversation": ">=0.45.0",
+    "@estiva-app/interop": ">=0.110.0",
+    "@estiva-app/protocol": ">=0.66.0",
+    "@estiva-app/ui": ">=0.127.0",
+    "@tabler/icons-react": "^3.41.1",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@estiva-app/conversation": ">=0.45.0",
+    "@estiva-app/interop": ">=0.110.0",
+    "@estiva-app/protocol": ">=0.66.0",
+    "@estiva-app/ui": "^0.127.0",
+    "@tabler/icons-react": "^3.41.1",
+    "@testing-library/react": "^16.3.2",
+    "@tiptap/core": "^3.22.1",
+    "@tiptap/extension-code-block-lowlight": "^3.22.1",
+    "@tiptap/extension-mention": "^3.22.1",
+    "@tiptap/extension-table": "^3.22.1",
+    "@tiptap/pm": "^3.22.1",
+    "@tiptap/react": "^3.22.1",
+    "@tiptap/starter-kit": "^3.22.1",
+    "@tiptap/suggestion": "^3.22.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.5"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$comment": [
+    "The one package here that draws (KIN-4), so it is the one that adds `dom` and",
+    "`jsx` to the shared base. Its consumers are the browser apps (Peek, Leaf,",
+    "Ship), which all carry both; the agent, which runs under Node, never installs",
+    "it. Everything else in the base still holds: built ESM, `.js` on relative",
+    "imports, no `types: node`."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}
