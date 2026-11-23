@@ -18,10 +18,10 @@ on:
   push:
     branches: [main]
     paths:
-      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/src/testing.ts', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/**','.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
   pull_request:
     paths:
-      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/src/testing.ts', '.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
+      ['packages/interop/**', 'packages/conversation/**', 'packages/protocol/**','.github/workflows/check-interop.yml', 'tsconfig.base.json', 'tsconfig.base.test.json']
 
 concurrency:
   group: check-interop-${{ github.ref }}
