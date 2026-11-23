@@ -6,6 +6,17 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.113.0 — 2026-11-23
+
+**Manifest: nothing new declared or read. Wire: a read only — `readTopics` can read the topics themselves by the list read (ALL-6).**
+
+- `readTopics(query, me, { topicsListRead: true })` reads each topic as its
+  first record and each field's current change (SPEC §6.13), where topics are
+  kept in order, instead of every change each topic ever had. A topic's text
+  is not read; the Topics page and Add to topic draw none. Without the option,
+  nothing changes. On production, a cold Ship open as QA-1 asked for every
+  change of each of 84 topics this way.
+
 ## 0.112.0 — 2026-11-23
 
 **Manifest: nothing new declared or read. Wire: nothing. The bulk read is close to twice as fast, and can hand back the changes it counted (0dcf212c, for MOV-3).**

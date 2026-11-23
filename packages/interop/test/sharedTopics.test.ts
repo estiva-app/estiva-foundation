@@ -121,6 +121,20 @@ describe('readTopics — every topic the viewer can read, once', () => {
     assert.equal(by.get(hotel.address)!.object.archived?.with, golf.address)
   })
 
+  it('where topics are kept in order, reads each topic by its current fields and asks for no topic’s every change (ALL-6)', async () => {
+    const everyChange = (asked: Filter[]) =>
+      asked.filter((f) => f.kinds?.includes(1851) && !f.fields && !f['#p'] && ((f['#a'] as string[] | undefined) ?? []).some((a) => a.startsWith('30840:')))
+    const before = relay(world)
+    await readTopics(before.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true })
+    // The control: without the option, each topic's every change is still asked for.
+    assert.ok(everyChange(before.asked).length > 0)
+    const after = relay(world)
+    await readTopics(after.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true, topicsListRead: true })
+    assert.deepEqual(everyChange(after.asked), [])
+    const listed = after.asked.filter((f) => f.fields && f.kinds?.includes(30840)).flatMap((f) => (f['#d'] as string[] | undefined) ?? [])
+    assert.deepEqual([...new Set(listed)].sort(), topics.map((t) => t.address.split(':')[2]).sort())
+  })
+
   it('says whose a topic is by the shared fold: made it, chose a level or was added, and never by writing in it', async () => {
     const read = await readTopics(relay(world).query, ME, { nowSeconds: NOW })
     const yours = read.topics.filter((t) => t.yours).map((t) => t.object.slots.title?.value).sort()
