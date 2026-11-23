@@ -3476,6 +3476,44 @@ export interface ForeignObject {
    * the notice that says so and its Restore.
    */
   deleted?: { by: string; at: number }
+  /**
+   * Each field a change set, as the object's slots were read from it: the
+   * value as stored, the change's id, who made it, when in seconds, the
+   * value's format and, where the change says, its stage (SPEC §6.2). Only
+   * from {@link projectEvents} asked for `fields`: an app that shows who set a
+   * field reads it here, from the fold that gave the slots, and not from a
+   * second pass over the same changes.
+   *
+   * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
+   */
+  fields?: Record<string, ObjectField>
+}
+
+/** One field's current change, on {@link ForeignObject.fields}. */
+export interface ObjectField {
+  /** The value as stored: a status by its id, a person by their key, a text whole. */
+  value: string
+  /** The change's id: the field's next `prev`. */
+  id: string
+  /** Who set it. */
+  by: string
+  /** When, in seconds (the change's `created_at`). */
+  at: number
+  format: ContentFormat
+  stage?: Stage
+}
+
+/** What {@link projectEvents} leaves out or adds for a reader that only shows files. */
+export interface ProjectEventsOptions {
+  /**
+   * Leave out what acting on a file needs and showing it does not: `naddr`,
+   * `openUrl` and `actions` (which is `[]`). Encoding a link and resolving the
+   * actions is close to half the work on a workspace of a thousand files, and
+   * a reader that draws a list from its own app's files uses neither.
+   */
+  bare?: boolean
+  /** Give each object its {@link ForeignObject.fields}. */
+  fields?: boolean
 }
 
 /**
@@ -3518,9 +3556,12 @@ function buildObject(args: {
   webTemplate?: string
   comments?: ForeignObject['comments']
   archived?: Archive
+  /** {@link ProjectEventsOptions}; absent for every other caller. */
+  only?: ProjectEventsOptions
 }): ForeignObject {
   const { root, pointer, manifest, projection, folded } = args
-  const naddr = encodeNaddr(pointer)
+  const bare = !!args.only?.bare
+  const naddr = bare ? undefined : encodeNaddr(pointer)
   const { slots, meta } = resolveSlots(projection, root, folded, manifest)
   const objectAddress = pointerToAddress(pointer)
   // A list read's text placeholder keeps its empty id: the text's `prev` is unknown there, not the first record.
@@ -3531,7 +3572,7 @@ function buildObject(args: {
     // replacing the event, which the event id is not.
     ref: objectAddress,
     address: objectAddress,
-    naddr,
+    ...(naddr === undefined ? {} : { naddr }),
     eventId: root.id,
     kind: pointer.kind,
     widget: projection.widget,
@@ -3547,14 +3588,18 @@ function buildObject(args: {
     scopedTo: tagValue(root, 'h'),
     // Substituted here rather than in the component: `<bech32>` is a NIP-89
     // detail, and the widget's job is to draw a link, not to know the spec.
-    openUrl: args.webTemplate?.replace('<bech32>', naddr),
-    actions: actionsOfFile(manifest, projection, root, folded),
+    ...(naddr === undefined ? {} : { openUrl: args.webTemplate?.replace('<bech32>', naddr) }),
+    actions: bare ? [] : actionsOfFile(manifest, projection, root, folded),
     viaRecommendation: args.viaRecommendation,
     ...(args.archived ? { archived: args.archived } : {}),
     changedAt: changedAtOf(root, folded),
     changedBy: changedByOf(root, folded),
     ...(Object.keys(prevs).length ? { prevs } : {}),
     ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
+    // The fold itself, where it is a fold of changes: a list read's text placeholder has no change to name.
+    ...(args.only?.fields
+      ? { fields: Object.fromEntries(Object.entries(folded).filter(([, f]) => f.id && f.by !== undefined && f.at !== undefined)) as Record<string, ObjectField> }
+      : {}),
   }
 }
 
@@ -3953,6 +3998,7 @@ export function projectEvents(
    * not an object here.
    */
   manifestFor: (pointer: AddressPointer) => ResolvedManifest | undefined,
+  options: ProjectEventsOptions = {},
 ): ForeignObject[] {
   const roots = new Map<string, { root: SignedEvent; pointer: AddressPointer; resolved: ResolvedManifest }>()
   for (const event of events) {
@@ -3998,6 +4044,7 @@ export function projectEvents(
       viaRecommendation: resolved.viaRecommendation,
       webTemplate: resolved.webTemplate,
       archived: archiveOf(byTarget(archiveRule.targetTag).get(address) ?? [], address, archiveRule, root),
+      only: options,
     })
   })
 }
