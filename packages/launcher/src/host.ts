@@ -113,6 +113,23 @@ export interface LauncherHost {
   /** Something was created: the lists on screen read again. */
   afterCreate?: () => void
 
+  /**
+   * Whether this app may sign an event of this kind (its allowed kinds in Estiva ID). An action whose event it may not
+   * sign is never offered: Leaf does not offer Ship's Create issue (KIN-5). Without it, every declared action is offered,
+   * as in Peek.
+   */
+  maySign?: (kind: number) => boolean
+  /**
+   * The app's own actions that are no manifest's yet, offered beside the declared ones: Leaf's New document, which opens
+   * Leaf's own dialog (KIN-5; KIN-9 puts it in Leaf's manifest).
+   */
+  ownActions?: readonly LauncherOwnAction[]
+  /**
+   * What an answer about what is open can be turned into, in this app: a comment on the passage it cites first, a block
+   * in the page (Leaf). Offered under the answer, after the composer's row where the app has a composer.
+   */
+  answerActions?: (answer: LauncherAnswer) => readonly LauncherAnswerAction[]
+
   /** Report a failure the person was shown. A hook. */
   useReportFailure: (failure: LauncherFailure | undefined) => void
 }
@@ -139,6 +156,37 @@ export interface LauncherWords {
   reading: string
   /** The row that fetches the model: "Download the on-device model to ask about conversations". */
   downloadModel: string
+  /** What one part of what is open is called, when it is not a message: "passage" on a page. Default "message". */
+  part?: { one: string; many: string }
+}
+
+/** An action of the app's own, offered among the declared ones. */
+export interface LauncherOwnAction {
+  id: string
+  label: string
+  /** The second line: where it acts, "In Launch team". */
+  description?: string
+  icon?: ReactNode
+  /** Do it. The box closes. */
+  run: () => void
+}
+
+/** An answer about what is open, as an answer action receives it. */
+export interface LauncherAnswer {
+  /** The answer's words, its citation marks taken out. */
+  text: string
+  /** The parts it cites, in the order it first cites them. */
+  cited: readonly LauncherMessage[]
+}
+
+/** Something an answer can be turned into. */
+export interface LauncherAnswerAction {
+  id: string
+  label: string
+  description?: string
+  icon?: ReactNode
+  /** Do it: true when it was done and the box can close, false when it could not be (the box says so and stays). */
+  run: () => boolean | Promise<boolean>
 }
 
 export interface LauncherPerson {
@@ -181,21 +229,42 @@ export interface LauncherMessage {
   conversationId?: string
   /** Replies it has that were not read. */
   repliesNotRead?: number
+  /** Where it sits, said on its citation in place of the time: "In the page", "Comment on the whole document". */
+  where?: string
+  /** A comment whose thread was resolved: the answer is told so. */
+  resolved?: boolean
 }
 
 /**
  * What the person was doing when they opened the box, captured by the app at
  * that keystroke or click.
  *
- * It is still a conversation's shape, because Peek is the one app that mounts
- * the box so far (KIN-4). Leaf's page and Ship's issue arrive with their own
- * tickets, which may widen it.
+ * What is open is a conversation (Peek) or a page (Leaf's page, a Ship issue or
+ * project drawn in Leaf; KIN-5). A page's parts are its blocks, in order, and
+ * then every comment on it, resolved ones marked (Miky, KIN-5 kickoff).
  */
 export interface LauncherContext {
   /** The composer an insert would land in. Present when the app has one open. */
   composer?: { label?: string }
-  /** What is open: its messages, oldest first, and the files it refers to. */
+  /** What is open: its parts, in order, and the files it refers to. */
+  open?: LauncherOpen
+  /** Peek's shape before KIN-5: the same as `open` with `kind: 'conversation'`. */
   conversation?: { references: readonly string[]; messages: readonly LauncherMessage[] }
+}
+
+/** What is open, and what an ask about it reads. */
+export interface LauncherOpen {
+  kind: 'conversation' | 'page'
+  /** Its name, which the prompt gives the model: a page's title. */
+  title?: string
+  references: readonly string[]
+  /** Its parts: a conversation's messages, oldest first; a page's blocks, then its comments. */
+  messages: readonly LauncherMessage[]
+}
+
+/** What is open, from either shape. */
+export function openOf(context: LauncherContext): LauncherOpen | undefined {
+  return context.open ?? (context.conversation ? { kind: 'conversation', ...context.conversation } : undefined)
 }
 
 export interface LauncherApply {

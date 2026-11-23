@@ -1,4 +1,4 @@
-import type { LauncherMessage as ConversationMessage } from './host.js'
+import type { LauncherMessage as ConversationMessage, LauncherOpen } from './host.js'
 import { THREAD_CONTEXT_CHARS } from './prefill.js'
 
 /**
@@ -152,7 +152,28 @@ export function selectMessages(
  * asked a question it has no material for will otherwise answer it anyway, and
  * that is the failure mode citations exist to catch.
  */
-export function answerInstruction(question: string, chosen: readonly NumberedMessage[]): string {
+export function answerInstruction(question: string, chosen: readonly NumberedMessage[], open?: Pick<LauncherOpen, 'kind' | 'title'>): string {
+  if (open?.kind === 'page') {
+    /*
+      A page (KIN-5): its text, then the comments on it, resolved ones marked so a settled point is not read as open
+      (Miky, KIN-5 kickoff: the answer reads the text and every comment). A part with no author is the page's own text.
+    */
+    const material = chosen
+      .map(({ n, message }) =>
+        message.author ? `[${n}] Comment by ${message.author}${message.resolved ? ' (resolved)' : ''}: ${message.body}` : `[${n}] ${message.body}`,
+      )
+      .join('\n')
+    return [
+      `Here are numbered parts of a team's page${open.title ? ` called "${open.title}"` : ''}: passages of its text, and comments on it.`,
+      '',
+      material,
+      '',
+      `Answer this question using only those parts: ${question}`,
+      'After each statement, cite the parts it came from like [1] or [2][3].',
+      'If the parts do not answer the question, say so instead of guessing.',
+      'Reply with the answer only — no preamble and nothing about being an assistant.',
+    ].join('\n')
+  }
   const material = chosen
     .map(({ n, message }) => `[${n}] ${message.author}: ${message.body}`)
     .join('\n')

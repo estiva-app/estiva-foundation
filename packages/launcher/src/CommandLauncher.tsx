@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconDownload, IconEraser, IconPencil, IconRefresh, IconWriting, IconCornerDownLeft } from '@tabler/icons-react'
+import { IconAlignLeft, IconDownload, IconEraser, IconPencil, IconRefresh, IconWriting, IconCornerDownLeft } from '@tabler/icons-react'
 import { Avatar, KindIcon, CommandPalette, CommandPaletteAnswer, type CommandPaletteChip, CommandPaletteForm, type CommandPaletteGroup, CommandPaletteQuote, type CommandPaletteRow, CommandPaletteSearch, CommandPaletteWorking, FieldLine, isApplePlatform, isPlainClick, useToast } from '@estiva-app/ui'
 import { ActionFormFields } from './ActionFormFields.js'
 import { applyPrefill, draftValues, missingFields, seedDraft, type FormDraft } from './formDraft.js'
@@ -22,7 +22,7 @@ import {
   type CreatableKindRead,
 } from './liveAction.js'
 import type { LauncherAction, LauncherApp, VocabOption } from './launcherActions.js'
-import type { LauncherContext, LauncherFailure as Failure, LauncherHost, LauncherMessageRow, LauncherPerson as Person } from './host.js'
+import { openOf, type LauncherContext, type LauncherFailure as Failure, type LauncherHost, type LauncherMessageRow, type LauncherOpen, type LauncherPerson as Person } from './host.js'
 
 /**
  * The launcher (Cmd/Ctrl+K anywhere, or the top bar's search field): the
@@ -98,7 +98,7 @@ interface AskAnswer {
 type LiveRead =
   | { state: 'loading' }
   /** `parents` by action id: Ship's issue goes under a project, its project in a Folder (MAN-8). */
-  | { state: 'ready'; actions: LauncherAction[]; parents: Record<string, VocabOption[]> }
+  | { state: 'ready'; actions: LauncherAction[]; parents: Record<string, VocabOption[]>; withheld?: number }
   | { state: 'none' }
   | { state: 'failed' }
 
@@ -142,7 +142,7 @@ export interface CommandLauncherProps {
 const icon = (Glyph: typeof IconPencil) => <Glyph size={16} stroke={1.5} />
 
 /** Just the prose of what is open, oldest first: what goes in a prompt. */
-const bodies = (conversation: LauncherContext['conversation']): string[] => (conversation?.messages ?? []).map((m) => m.body)
+const bodies = (opened: LauncherOpen | undefined): string[] => (opened?.messages ?? []).map((m) => m.body)
 
 /** Where the app has no message search: nothing typed, nothing found, nothing asked. */
 const NO_MESSAGES: { state: MessageSearchState; rows: readonly LauncherMessageRow[]; unroutable: number } = { state: { kind: 'idle' }, rows: [], unroutable: 0 }
@@ -151,7 +151,7 @@ const useNoMessageSearch = () => NO_MESSAGES
 /** The footer's "where": the composer the launcher was opened over, in words. */
 function whereFrom(context: LauncherContext, words: LauncherHost['words']): string {
   const label = context.composer?.label
-  if (!label) return context.conversation ? words.inOpen : words.anywhere
+  if (!label) return openOf(context) ? words.inOpen : words.anywhere
   if (label.startsWith('Reply to ')) return `In a reply to ${label.slice('Reply to '.length)}`
   return `In ${label}`
 }
@@ -169,7 +169,7 @@ function initialStack(apps: readonly LauncherApp[], appId?: string, actionId?: s
 const formKey = (level: Extract<Level, { kind: 'form' }>) =>
   `${level.action.target ?? level.app?.id ?? ''}:${level.action.id}`
 
-export function CommandLauncher({ host, context: opened, onClose, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
+export function CommandLauncher({ host, context: openedHere, onClose, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
   /*
     What the app hands over, under the names this file has always used for
     them. Read on every render, so each is as fresh as the app's own hooks.
@@ -186,6 +186,8 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
   /** A stored body as one line of words — markdown and a heading's marker gone. */
   const asWords = host.plain
   const { words } = host
+  /** What one part of what is open is called: a message, or a page's passage (KIN-5). */
+  const part = words.part ?? { one: 'message', many: 'messages' }
   const { canPrefill, downloadModel, hasPromptApi, prefillAvailability, promptForObject, promptForText } = host.model
 
   const [stack, setStack] = useState<Frame[]>(() => initialStack(LAUNCHER_APPS, initialAppId, initialActionId))
@@ -213,11 +215,11 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
   const [sentFrom, setSentFrom] = useState<{ context: LauncherContext; path: string; pathname: string } | null>(null)
   const [draft, setDraft] = useState<string | null | false>(null)
   const [answer, setAnswer] = useState<AskAnswer | null | false>(null)
-  const context = request && sentFrom ? sentFrom.context : opened
+  const context = request && sentFrom ? sentFrom.context : openedHere
   /** Send, or drop (`null`), a request. What the last one brought goes with it at once, so an old answer is never read as the new one's. */
   const send = (next: { intent: Intent; text: string } | null) => {
     // Asking again from the same sentence keeps where it was first asked.
-    if (next && (!request || !sentFrom)) setSentFrom({ context: opened, path: here, pathname })
+    if (next && (!request || !sentFrom)) setSentFrom({ context: openedHere, path: here, pathname })
     setDraft(null)
     setAnswer(null)
     setRequest(next)
@@ -267,7 +269,8 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
     row for an object nobody can act on is a row that cannot succeed.
   */
   const [targets, setTargets] = useState<{ address: string; label: string; actions: ResolvedAction[] }[]>([])
-  const conversationRefs = context.conversation?.references
+  const opened = openOf(context)
+  const conversationRefs = opened?.references
   useEffect(() => {
     if (!conversationRefs?.length) return
     let cancelled = false
@@ -317,6 +320,11 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
   */
   const [live, setLive] = useState<Record<string, LiveRead>>({})
   const asked = useRef(new Set<string>())
+  /** Read when the manifests' actions arrive, so a new function each render reads nothing again. */
+  const maySign = useRef(host.maySign)
+  useEffect(() => {
+    maySign.current = host.maySign
+  })
   /*
     One read per parent kind, shared by every app — MAN-8. An app's creations
     are no longer all on its own kind: Ship's `add-project` is on a Folder,
@@ -369,8 +377,17 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
             return
           }
           const actions: LauncherAction[] = []
+          let withheld = 0
           const parents: Record<string, VocabOption[]> = {}
           for (const creation of found) {
+            // Never an action whose event this app may not sign: Leaf offers no Create issue (KIN-5).
+            // A resolved action does not say its kind: the registry's entry for it does, and one it does not know is
+            // not offered where the app says what it may sign.
+            const emitted = app.actions.find((a) => a.id === creation.action.id)?.emits?.kind
+            if (maySign.current && (typeof emitted !== 'number' || !maySign.current(emitted))) {
+              withheld++
+              continue
+            }
             // The noun of the kind it goes on — the app's own for its own kind (INT-9), "Folder" on a Folder.
             const converted = launcherActionFrom(creation.action, { parentNoun: creation.parentNoun, submitLabel: creation.action.label })
             if (!converted) continue
@@ -380,7 +397,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
             actions.push(action)
             parents[action.id] = canSendToDm ? creation.parents : creation.parents.filter((p) => !creation.dms?.includes(p.value))
           }
-          setLive((l) => ({ ...l, [app.id]: { state: 'ready', actions, parents } }))
+          setLive((l) => ({ ...l, [app.id]: { state: 'ready', actions, parents, withheld } }))
         })
         .catch((error: unknown) => {
           // A read that fails must produce a sentence, not silence.
@@ -435,12 +452,14 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
     })
   }, [download])
 
-  const hasThread = (context.conversation?.messages?.length ?? 0) > 0
+  const hasThread = (opened?.messages?.length ?? 0) > 0
 
   // ── Ask and Draft ───────────────────────────────────────────────────────────
 
   /** A cited message the thread has not loaded — see the source row. */
   const [unreachable, setUnreachable] = useState<string | null>(null)
+  /** An answer action that could not be done, by its label: said under the answer, which stays. */
+  const [actionFailed, setActionFailed] = useState<string | null>(null)
   /** Why Enter could not ask, said once under the prompt until the words change. */
   const [cannotAsk, setCannotAsk] = useState<string | null>(null)
 
@@ -448,15 +467,16 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
     setDraft(null)
     setAnswer(null)
     setUnreachable(null)
+    setActionFailed(null)
     if (!request) return
-    const messages = context.conversation?.messages ?? []
+    const messages = opened?.messages ?? []
     if (messages.length === 0) return
     let cancelled = false
 
     void (async () => {
       if (request.intent === 'draft') {
         // A draft is written from the thread as a whole: the brief is what to say.
-        const conversation = threadContext(bodies(context.conversation))
+        const conversation = threadContext(bodies(opened))
         if (!conversation) return
         const written = await promptForText(draftInstruction(conversation, request.text))
         if (!cancelled) setDraft(written ?? false)
@@ -469,7 +489,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
         be chosen from or ignored but never invented.
       */
       const selection = selectMessages(request.text, messages)
-      const raw = await promptForText(answerInstruction(request.text, selection.chosen))
+      const raw = await promptForText(answerInstruction(request.text, selection.chosen, opened))
       if (cancelled) return
       if (!raw) {
         setAnswer(false)
@@ -491,7 +511,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request, bodies(context.conversation).join('\u0000')])
+  }, [request, bodies(opened).join('\u0000')])
 
   /** Go into Draft with what was typed on the first level as the brief (R8: leaving keeps it). */
   const openDraft = () => {
@@ -508,7 +528,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
   const ask = () => {
     const text = query.trim()
     // An open conversation with nothing in it yet is not "no conversation": say which it is.
-    if (!hasThread) return setCannotAsk(context.conversation ? words.nothingYet : words.nothingOpen)
+    if (!hasThread) return setCannotAsk(opened ? words.nothingYet : words.nothingOpen)
     if (modelDownloadable) return setCannotAsk('Download the on-device model below to ask.')
     // Not yet answered (the first moments after opening) is not a no: the ask is tried, and says so if nothing comes back.
     // A browser with no Prompt API answers 'unavailable' too, which counts as ready above; it is asked here outright.
@@ -616,7 +636,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
   const sentence = formLevel?.sentence
   useEffect(() => {
     if (!formLevel || !prefillFor) return
-    const conversation = threadContext(bodies(context.conversation))
+    const conversation = threadContext(bodies(opened))
     if (!conversation && !sentence) return
     const built = formSchema(formLevel.action.fields, formLevel.app?.vocabularies ?? {})
     if (!built) return
@@ -633,7 +653,7 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillFor, sentence, bodies(context.conversation).join('\u0000')])
+  }, [prefillFor, sentence, bodies(opened).join('\u0000')])
 
   const parentOptionsFor = (form: Extract<Level, { kind: 'form' }>): Record<string, VocabOption[]> => {
     const out: Record<string, VocabOption[]> = {}
@@ -936,7 +956,21 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
     reply, where there is a conversation, a composer for it to go to and a
     model to write it. Enter asks until an arrow lights one of these.
   */
+  /** The app's own actions (`host.ownActions`: Leaf's New document), as rows; choosing one does it and closes the box. */
+  const ownRows = (prefix: string): CommandPaletteRow[] =>
+    (host.ownActions ?? []).map((action) => ({
+      id: `${prefix}-own-${action.id}`,
+      label: action.label,
+      ...(action.description ? { description: action.description } : {}),
+      icon: action.icon ?? icon(IconPencil),
+      onSelect: () => {
+        action.run()
+        onClose()
+      },
+    }))
+
   const suggestedRows = (typed: string): CommandPaletteRow[] => [
+    ...ownRows('suggested'),
     ...probeable(LAUNCHER_APPS).flatMap((app) =>
       liveActions(app).map((action) => ({
         id: `suggested-${app.id}-${action.id}`,
@@ -990,15 +1024,15 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
         conversation). Empty while its manifest is read, so the group is simply
         not drawn yet.
       */
-      const hostGroups = HOST_APPS.map((app) => ({
-        label: 'Actions',
-        rows: liveActions(app).map((action) => ({
+      const hostRows = HOST_APPS.flatMap((app) =>
+        liveActions(app).map((action) => ({
           id: `host-${app.id}-${action.id}`,
           label: action.label,
           icon: icon(IconPencil),
           onSelect: () => push({ kind: 'form', action, app }),
         })),
-      }))
+      )
+      const hostGroups = [{ label: 'Actions', rows: [...ownRows('host'), ...hostRows] }]
       return {
         groups: [
           // No Ask, Draft or Make rows: you ask by writing a sentence (Miky, 20 November 2026).
@@ -1024,7 +1058,9 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
     )
     const peopleHits = matchPeople(people ?? [], query).map((p) => personRow(p))
     // An app's action by its name: "add" finds "Add issue · Ship", and Enter opens its form (C4).
-    const actionHits = probeable(LAUNCHER_APPS).flatMap((app) =>
+    const actionHits = [
+      ...ownRows('action').filter((row) => launcherMatch(row.label, query)),
+      ...probeable(LAUNCHER_APPS).flatMap((app) =>
       liveActions(app)
         .filter((a) => launcherMatch(a.label, query))
         .map((action) => ({
@@ -1035,7 +1071,8 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
           // The host is not somewhere to go into (INT-13), so going back from its form is the first level.
           onSelect: () => (app.isHost ? push({ kind: 'form', action, app }) : push({ kind: 'app', app }, { kind: 'form', action, app })),
         })),
-    )
+      ),
+    ]
 
     /*
       Which hits have somewhere to open, and what each row says, is the app's
@@ -1107,7 +1144,9 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
         : read?.state === 'failed'
           ? `Could not read ${app.label}’s manifest — its actions are unavailable.`
           : actions.length === 0
-            ? `${app.label} has not published anything to create here yet.`
+            ? read?.state === 'ready' && read.withheld
+              ? `What ${app.label} creates is made in ${app.label}, not here.`
+              : `${app.label} has not published anything to create here yet.`
             : `${app.label} has no action called “${query.trim()}”.`,
     }
   }
@@ -1156,14 +1195,19 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
               [
                 changed ? 'You changed the question. Press Enter to ask again.' : null,
                 answer.byRecency
-                  ? 'Nothing here matched the question, so the most recent messages were read instead.'
+                  ? `Nothing here matched the question, so the last ${part.many} were read instead.`
                   : answer.omitted > 0
-                    ? `${answer.omitted} earlier ${answer.omitted === 1 ? 'message' : 'messages'} did not fit and ${answer.omitted === 1 ? 'was' : 'were'} not read.`
+                    ? `${answer.omitted} ${answer.omitted === 1 ? part.one : part.many} did not fit and ${answer.omitted === 1 ? 'was' : 'were'} not read.`
                     : null,
                 answer.repliesNotRead > 0
                   ? `${answer.repliesNotRead} ${answer.repliesNotRead === 1 ? 'reply was' : 'replies were'} not read — open a conversation to ask about its replies.`
                   : null,
-                unreachable ? 'That message is not loaded in the thread — scroll up to load earlier messages.' : null,
+                unreachable
+                  ? opened?.kind === 'page'
+                    ? `That ${part.one} could not be shown on the page.`
+                    : 'That message is not loaded in the thread — scroll up to load earlier messages.'
+                  : null,
+                actionFailed ? `${actionFailed} did not work. The answer is still here.` : null,
               ]
                 .filter(Boolean)
                 .join(' ') || undefined
@@ -1178,8 +1222,9 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
           ? answer.sources.map(({ n, message }) => ({
               id: `source-${message.id}`,
               label: asWords(message.body),
-              description: `[${n}] ${message.author} · ${message.timestamp}`,
-              leading: <Avatar name={message.author} size={24} />,
+              // A part of a page's own text has no author: it says where it is, with the text's mark (KIN-5).
+              description: `[${n}] ${[message.author, message.where ?? message.timestamp].filter(Boolean).join(' · ')}`,
+              ...(message.author ? { leading: <Avatar name={message.author} size={24} /> } : { icon: icon(IconAlignLeft) }),
               onSelect: () => {
                 // Shown first, closed second: a cited message can sit above the loaded window, and the app says so.
                 if (host.showSource(message)) onClose()
@@ -1199,6 +1244,21 @@ export function CommandLauncher({ host, context: opened, onClose, open = true, o
               },
             ]
           : []
+      // What the app can turn the answer into: a comment, a block in the page (Leaf; Miky, KIN-5 kickoff).
+      if (answer && request && host.answerActions) {
+        const turnedInto = { text: answer.text.replace(/\s*\[\d+\]/g, ''), cited: answer.sources.map((s) => s.message) }
+        for (const action of host.answerActions(turnedInto)) {
+          next.push({
+            id: `answer-${action.id}`,
+            label: action.label,
+            ...(action.description ? { description: action.description } : {}),
+            ...(action.icon ? { icon: action.icon } : {}),
+            onSelect: () => {
+              void Promise.resolve(action.run()).then((done) => (done ? onClose() : setActionFailed(action.label)))
+            },
+          })
+        }
+      }
       return {
         body,
         groups: [
