@@ -63,13 +63,18 @@ const { launcher, toggle, searchStatus, searchStatusLabel } = useKeptLauncher(ca
 the device. A host that passes another model is making a decision about where a
 work thread is sent, which is a decision record, not a code change.
 
-## Still shaped like a conversation
+## What is open: a conversation or a page
 
-What is open reaches the box as a conversation: messages, oldest first, and the
-files they refer to. That is Peek's shape, kept as it was so that moving the
-box changed nothing a person sees. Leaf's page and Ship's issue arrive with
-their own tickets (KIN-5, KIN-6), and each may widen `LauncherContext` and the
-words that still say "message".
+What is open reaches the box as `context.open`: a conversation (Peek's
+messages, oldest first) or a page (Leaf's passages, then every comment on it,
+resolved ones marked; KIN-5), with the files it refers to. Peek still hands
+over `context.conversation`, which reads the same. Ship's issue (KIN-6) is a
+page too.
+
+An app with no composer turns an answer into what it has (`answerActions`:
+Leaf's Draft a comment and Insert into the page), offers its own actions
+(`ownActions`), and says which kinds it may sign (`maySign`), so the box never
+offers an action it could not send.
 
 ## Why this package draws, when the others here may not
 
