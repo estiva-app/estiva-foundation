@@ -1185,7 +1185,13 @@ function resolveActions(
  */
 export const KIND_CHANNEL_METADATA = 39000
 
-const tagValue = (e: SignedEvent, name: string) => e.tags.find((t) => t[0] === name)?.[1]
+// A plain loop, not `find`: a fold asks this of every change several times, and
+// a workspace is folded again on every live update.
+function tagValue(e: SignedEvent, name: string): string | undefined {
+  const tags = e.tags
+  for (let i = 0; i < tags.length; i++) if (tags[i][0] === name) return tags[i][1]
+  return undefined
+}
 
 /**
  * Which Folder an object belongs to — both spellings, in one place.
@@ -2401,8 +2407,9 @@ export function inTargetFolder(change: SignedEvent, folders: ReadonlySet<string>
   // The first `h` with a value, as the relay reads it: an empty `["h"]` ahead
   // of a real one must not make this read a different Folder from the one the
   // relay checked the signer against.
-  const own = change.tags.find((t) => t[0] === 'h' && t[1])?.[1]
-  return own !== undefined && folders.has(own)
+  const tags = change.tags
+  for (let i = 0; i < tags.length; i++) if (tags[i][0] === 'h' && tags[i][1]) return folders.has(tags[i][1])
+  return false
 }
 
 /**
@@ -2415,11 +2422,36 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
   const fields: Record<string, { value: string; by: string; at: number; format: ContentFormat; id: string; stage?: Stage }> = {}
   const folders = targetFolders(root)
   const id = root && tagValue(root, 'd')
-  for (const change of [...changes].filter((c) => inTargetFolder(c, folders)).sort(byOrder)) {
+  // Each field's winner is the last change to set it in §6.3's order. Found by
+  // comparing, not by sorting every change first: most changes are not a
+  // winner, and a workspace's fold sorts and builds a value for each otherwise.
+  const winners = new Map<string, { change: SignedEvent; value: string; ms: number; firstMs: number; firstId: string }>()
+  for (const change of changes) {
+    if (!inTargetFolder(change, folders)) continue
     // A change whose `O` is not its `a`'s file is about neither (SPEC §6.2).
     const O = tagValue(change, 'O')
     if (O !== undefined && id !== undefined && O !== id) continue
+    let ms: number | undefined
     for (const { field, value } of settingsOf(change, rule)) {
+      const held = winners.get(field)
+      ms ??= orderingMs(change)
+      // Later wins; the same instant goes to the higher id, and a change that
+      // sets one field twice to its last word, as a sorted replay gives it.
+      if (!held) {
+        winners.set(field, { change, value, ms, firstMs: ms, firstId: change.id })
+        continue
+      }
+      // When the field was first set, for the order below.
+      if (ms < held.firstMs || (ms === held.firstMs && change.id < held.firstId)) [held.firstMs, held.firstId] = [ms, change.id]
+      if (held.ms > ms || (held.ms === ms && held.change.id > change.id)) continue
+      held.change = change
+      held.value = value
+      held.ms = ms
+    }
+  }
+  // Listed in the order the fields were first set, as the sorted replay listed them.
+  const inOrder = [...winners].sort(([, a], [, b]) => a.firstMs - b.firstMs || (a.firstId < b.firstId ? -1 : a.firstId > b.firstId ? 1 : 0))
+  for (const [field, { change, value }] of inOrder) {
       // A summary is new, so it takes neither of §6.2's exceptions: a change the
       // reader cannot check against the root's Folder is not read (SPEC §6.12).
       if (field === SUMMARY_FIELD && !folders) continue
@@ -2442,7 +2474,6 @@ function foldChanges(changes: SignedEvent[], rule: RecordsRule, root: SignedEven
         id: change.id,
         ...(stage ? { stage } : {}),
       }
-    }
   }
   return fields
 }
@@ -2486,8 +2517,9 @@ export function stageTagFor(
  * else its field and value tags. A partial change sets nothing.
  */
 function settingsOf(change: SignedEvent, rule: RecordsRule): { field: string; value: string }[] {
-  const sets = change.tags.filter((t) => t[0] === 'set' && t[1] && typeof t[2] === 'string')
-  if (sets.length) return sets.map((t) => ({ field: t[1], value: t[2] }))
+  let sets: { field: string; value: string }[] | undefined
+  for (const t of change.tags) if (t[0] === 'set' && t[1] && typeof t[2] === 'string') (sets ??= []).push({ field: t[1], value: t[2] })
+  if (sets) return sets
   const field = tagValue(change, rule.fieldTag)
   const value = tagValue(change, rule.valueTag)
   return field && value !== undefined ? [{ field, value }] : []
@@ -3487,6 +3519,12 @@ export interface ForeignObject {
    * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
    */
   fields?: Record<string, ObjectField>
+  /**
+   * The file's first record as signed, beside {@link fields}: who made the
+   * file and when, and what it was created with ({@link textOf} reads its
+   * text), which no change holds.
+   */
+  record?: SignedEvent
 }
 
 /** One field's current change, on {@link ForeignObject.fields}. */
@@ -3512,8 +3550,17 @@ export interface ProjectEventsOptions {
    * a reader that draws a list from its own app's files uses neither.
    */
   bare?: boolean
-  /** Give each object its {@link ForeignObject.fields}. */
+  /** Give each object its {@link ForeignObject.fields} and its {@link ForeignObject.record}. */
   fields?: boolean
+  /**
+   * Keep each file's object and hand the same one back while its record, its
+   * changes and its manifest are the very ones read last time (the same signed
+   * event objects, the same manifest object). For an app that reads its whole
+   * workspace again on every live update: one file changed, so one file is
+   * folded and resolved, not a thousand. The objects are frozen, since the
+   * next read hands them out again; kept by the record, and gone with it.
+   */
+  remember?: boolean
 }
 
 /**
@@ -3598,7 +3645,7 @@ function buildObject(args: {
     ...(deleted?.value === 'true' && deleted.by ? { deleted: { by: deleted.by, at: deleted.at ?? root.created_at } } : {}),
     // The fold itself, where it is a fold of changes: a list read's text placeholder has no change to name.
     ...(args.only?.fields
-      ? { fields: Object.fromEntries(Object.entries(folded).filter(([, f]) => f.id && f.by !== undefined && f.at !== undefined)) as Record<string, ObjectField> }
+      ? { record: root, fields: Object.fromEntries(Object.entries(folded).filter(([, f]) => f.id && f.by !== undefined && f.at !== undefined)) as Record<string, ObjectField> }
       : {}),
   }
 }
@@ -4035,19 +4082,50 @@ export function projectEvents(
   return [...roots].map(([address, { root, pointer, resolved }]) => {
     const { manifest } = resolved
     const archiveRule = archiveRuleOf(manifest)
-    return buildObject({
+    const changes = byTarget(foldRuleOf(manifest).targetTag).get(address) ?? NO_EVENTS
+    const archiveChanges = byTarget(archiveRule.targetTag).get(address) ?? NO_EVENTS
+    // A file whose record, changes and manifest are the ones last read is the
+    // object last built: a live update changes one file, and the rest of the
+    // workspace is not folded and resolved again for it.
+    const held = options.remember ? builtFrom.get(root) : undefined
+    if (
+      held &&
+      held.manifest === manifest &&
+      held.viaRecommendation === resolved.viaRecommendation &&
+      held.webTemplate === resolved.webTemplate &&
+      !held.bare === !options.bare &&
+      !held.fields === !options.fields &&
+      sameEvents(held.changes, changes) &&
+      sameEvents(held.archiveChanges, archiveChanges)
+    ) {
+      return held.object
+    }
+    const object = buildObject({
       root,
       pointer,
       manifest,
       projection: manifest.projections![String(root.kind)],
-      folded: foldOf(byTarget(foldRuleOf(manifest).targetTag).get(address) ?? [], address, manifest, root),
+      folded: foldOf(changes, address, manifest, root),
       viaRecommendation: resolved.viaRecommendation,
       webTemplate: resolved.webTemplate,
-      archived: archiveOf(byTarget(archiveRule.targetTag).get(address) ?? [], address, archiveRule, root),
+      archived: archiveOf(archiveChanges, address, archiveRule, root),
       only: options,
     })
+    if (!options.remember) return object
+    // Handed out again on the next read, so it must not be written to.
+    Object.freeze(object)
+    builtFrom.set(root, { manifest, viaRecommendation: resolved.viaRecommendation, webTemplate: resolved.webTemplate, bare: options.bare, fields: options.fields, changes, archiveChanges, object })
+    return object
   })
 }
+
+const NO_EVENTS: SignedEvent[] = []
+const sameEvents = (a: readonly SignedEvent[], b: readonly SignedEvent[]) => a === b || (a.length === b.length && a.every((event, i) => event === b[i]))
+/** What {@link projectEvents} last built from a record, kept by the record itself and gone when it is. */
+const builtFrom = new WeakMap<
+  SignedEvent,
+  { manifest: Manifest; viaRecommendation: boolean; webTemplate?: string; bare?: boolean; fields?: boolean; changes: readonly SignedEvent[]; archiveChanges: readonly SignedEvent[]; object: ForeignObject }
+>()
 
 /**
  * The objects at a set of addresses, as their roots and changes alone draw

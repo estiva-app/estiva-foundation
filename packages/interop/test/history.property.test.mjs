@@ -233,3 +233,54 @@ test('the reads keep a file whose id has a colon in it whole', () => {
     settings,
   )
 })
+
+/** For each file, each field a change set: its value, that change, who made it, the second, and its stage. */
+const whoSetWhat = (files) => Object.fromEntries(files.map(([address, fields]) => [address, Object.fromEntries(Object.entries(fields).sort())]))
+
+test('the shared read asked for fields names, for each field, the same value, change, person, second and stage as the list read', () => {
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const list = filesOf(events, { withText: true }).map((file) => [
+        file.address,
+        Object.fromEntries(Object.entries(file.fields).map(([field, f]) => [field, { value: f.value, change: f.id, by: f.pubkey, at: Math.floor(f.at / 1000), stage: f.stage ?? '' }])),
+      ])
+      const shared = projectEvents(events, manifestFor, { fields: true }).map((object) => [
+        object.address,
+        Object.fromEntries(Object.entries(object.fields).map(([field, f]) => [field, { value: f.value, change: f.id, by: f.by, at: f.at, stage: f.stage ?? '' }])),
+      ])
+      assert.deepEqual(whoSetWhat(shared), whoSetWhat(list))
+    }),
+    settings,
+  )
+})
+
+test('the shared read asked to leave out links and actions gives the same files, each without its link, its address to open and its actions', () => {
+  fc.assert(
+    fc.property(historyArb().chain((history) => deliveryArb(history.events)), (events) => {
+      const whole = projected(events).map(({ naddr, openUrl, actions, ...rest }) => rest)
+      const bare = projectEvents(events, manifestFor, { bare: true }).sort(byAddress)
+      for (const object of bare) {
+        assert.equal('naddr' in object, false)
+        assert.equal('openUrl' in object, false)
+        assert.deepEqual(object.actions, [])
+      }
+      assert.deepEqual(bare.map(({ actions, ...rest }) => rest), whole)
+    }),
+    settings,
+  )
+})
+
+test('a shared read that remembers gives, once more events arrive, the same files as a read of them all afresh', () => {
+  let reused = 0
+  fc.assert(
+    fc.property(historyArb().chain((history) => fc.tuple(deliveryArb(history.events), fc.nat())), ([events, cut]) => {
+      const earlier = events.slice(0, cut % (events.length + 1))
+      const before = projectEvents(earlier, manifestFor, { fields: true, remember: true })
+      const remembered = projectEvents(events, manifestFor, { fields: true, remember: true })
+      if (remembered.some((object) => before.includes(object))) reused++
+      assert.deepEqual(remembered.sort(byAddress), projectEvents(events, manifestFor, { fields: true }).sort(byAddress))
+    }),
+    settings,
+  )
+  if (settings.numRuns >= 100) assert.ok(reused > 0, 'no read handed back a file it had kept')
+})
