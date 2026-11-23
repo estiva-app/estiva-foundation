@@ -231,6 +231,8 @@ describe("a page's sub-pages, when the relay keeps pages in order (ALL-10)", () 
     const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople, 0, undefined, { openRead: [PAGE] })
     assert.deepEqual(relay.changesByA(), [], 'no sub-page change is read by `#a`')
     assert.deepEqual(titles(object), ['Week 1, renamed', 'Week 3'], 'the deleted one is left out, the moved-in one is there')
+    // Its text was not read, so a text change from the card names no `prev` it never saw.
+    assert.deepEqual(object.children.map((child) => child.prevs?.description), ['', ''])
   })
 
   test('in a set of cards too, by one list read for the sub-pages', async () => {

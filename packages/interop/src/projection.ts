@@ -5834,7 +5834,7 @@ function childrenFrom(args: {
     if (!current || event.created_at > current.created_at) movedInRoots.set(address, event)
   }
 
-  return [...created, ...[...movedInRoots.values()].sort(byOrder)].flatMap((event) => {
+  const drawn = [...created, ...[...movedInRoots.values()].sort(byOrder)].flatMap((event) => {
     const address = childAddressOf(event)
     /*
       The child's own fold — MAN-7. Until this, a card's children were built
@@ -5883,6 +5883,8 @@ function childrenFrom(args: {
       }),
     ]
   })
+  // The list read carries no text: a child's text is not read, so its next text change names none (as the Folder read's children).
+  return childrenListed ? textUnread(drawn) : drawn
 }
 
 /**
