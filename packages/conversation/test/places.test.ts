@@ -378,6 +378,8 @@ describe('the level change, the teams list and the reads', () => {
     assert.deepEqual(placeListing(topicPlace, facts(narrow)), placeListing(topicPlace, facts(read())))
     assert.deepEqual(brief(following(BOB, facts(narrow))), brief(following(BOB, facts(read()))))
     assert.deepEqual(brief(following(CAROL, facts(narrow))), brief(following(CAROL, facts(read()))))
+    // Keys in another form are no list of people: every change, not the reader's alone.
+    assert.deepEqual(placeListing(topicPlace, facts(read([ALICE.toUpperCase(), 'npub1xyz']))), placeListing(topicPlace, facts(read())))
   })
 })
 

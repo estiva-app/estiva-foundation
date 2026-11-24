@@ -492,10 +492,11 @@ export async function readTopicActivity(
    * change counts only when it puts a file on (its value `true`), which the
    * times read does not carry, so those changes alone are read, by id; one
    * that took a file off, newer than what already counts, sends the read to
-   * the change it follows (`prev`), the entry that put the file on. A removal
-   * written before the topic was kept in order names none: the topic's few
-   * changes just before it are read instead, by `until`. Never every change
-   * the topic had (18d151fb).
+   * the change it follows (`prev`), back to the entry that put the file on. A
+   * removal written before the topic was kept in order names none: the
+   * topic's changes just before it are read instead, a page at a time by
+   * `until`, as far back as the plain read went. Never every change the topic
+   * had (18d151fb).
    */
   async function readOwnByTimes(read: TimesFn): Promise<void> {
     const mine = topics.filter((topic) => ownByTimes(topic.address))
@@ -532,15 +533,34 @@ export async function readTopicActivity(
       }
     }
     const prevOf = (event: SignedEvent) => event.tags.find((tag) => tag[0] === 'prev')?.[1]
-    const added = await byId(removals.flatMap(({ event }) => prevOf(event) ?? []))
+    const isEntry = (e: SignedEvent, topic: string, file: string) =>
+      entryOn(e, topic) && fieldsOf(e).some(({ field }) => field === `${LISTS}${file}`)
+    // Removals are rare (one per file taken off since the newest activity): each is walked on its own.
     for (const { event, topic, file } of removals) {
-      const prev = prevOf(event)
-      const before = prev
-        ? added.filter((e) => e.id === prev)
-        : (await query([{ kinds: [KIND_CHANGE], '#a': [topic], until: event.created_at, limit: OLD_REMOVAL_PAGE }])).filter((e) =>
-            fieldsOf(e).some(({ field }) => field === `${LISTS}${file}`),
-          )
-      for (const add of before) if (add.id !== event.id && entryOn(add, topic) && countsAsActivity(add, topic)) bump(topic, add.created_at)
+      let at = event
+      for (let step = 0; step < MAX_ROUNDS; step++) {
+        const prev = prevOf(at)
+        if (prev) {
+          const [before] = (await byId([prev])).filter((e) => isEntry(e, topic, file))
+          if (!before) break
+          if (countsAsActivity(before, topic)) {
+            bump(topic, before.created_at)
+            break
+          }
+          // A removal after a removal: the add is further back.
+          at = before
+          continue
+        }
+        // Written before the topic was kept in order: the topic's changes just before it, a page at a time.
+        const page = await query([{ kinds: [KIND_CHANGE], '#a': [topic], until: at.created_at, limit: OLD_REMOVAL_PAGE }])
+        const add = page.filter((e) => e.id !== at.id && isEntry(e, topic, file) && countsAsActivity(e, topic)).sort((a, b) => b.created_at - a.created_at)[0]
+        if (add) bump(topic, add.created_at)
+        if (add || page.length < OLD_REMOVAL_PAGE) break
+        const oldest = page.reduce((a, b) => (b.created_at < a.created_at ? b : a))
+        // A second holding a whole page: asking again would repeat it.
+        if (oldest.created_at === at.created_at) break
+        at = oldest
+      }
     }
   }
 
@@ -698,8 +718,8 @@ async function timesUnder(read: TimesFn, parents: readonly string[]): Promise<Fi
 
 /**
  * A current change as the times read answers it, shaped as the change {@link countsAsActivity} judges: its field names
- * as `set` tags with no value. The rule reads a value only for `lists:` on the topic itself, whose changes are still
- * read whole.
+ * as `set` tags with no value. The rule reads a value only for `lists:` on the topic itself, whose changes are read by
+ * id instead (`readOwnByTimes`).
  */
 function changeOf(file: string, change: FileTimes['changes'][number]): SignedEvent {
   return {

@@ -494,6 +494,19 @@ describe('with the relay\'s times read, the same topics come in the same order',
       const off = change(WIDGETS, 'lists:new-d', 'false', T0 + 66)
       return [message(ONBOARDING, T0 + 50), add, { ...off, tags: [...off.tags, ['prev', add.id]] }]
     })()],
+    ['putting a file on the topic, then taking it off twice, each following the one before', (() => {
+      const add = change(WIDGETS, 'lists:new-d', 'true', T0 + 55)
+      const off = change(WIDGETS, 'lists:new-d', 'false', T0 + 60)
+      const offAgain = change(WIDGETS, 'lists:new-d', 'false', T0 + 66)
+      const off1 = { ...off, tags: [...off.tags, ['prev', add.id]] }
+      return [message(ONBOARDING, T0 + 50), add, off1, { ...offAgain, tags: [...offAgain.tags, ['prev', off1.id]] }]
+    })()],
+    ['putting a file on the topic, then 25 renames, then taking it off before the topic was kept in order', [
+      message(ONBOARDING, T0 + 50),
+      change(WIDGETS, 'lists:new-d', 'true', T0 + 55),
+      ...Array.from({ length: 25 }, (_, i) => change(WIDGETS, 'title', `Widgets ${i}`, T0 + 56 + i)),
+      change(WIDGETS, 'lists:new-d', 'false', T0 + 90),
+    ]],
     ['a file put on the topic and still on, then a rename of the topic', [
       message(ONBOARDING, T0 + 50),
       change(WIDGETS, 'lists:new-d', 'true', T0 + 58),

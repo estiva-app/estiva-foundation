@@ -546,7 +546,9 @@ export function placeFilters(place: Place, person: string, people?: readonly str
   if (!FOLDER_ID.test(place.team)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(place.team)}`)
   const [kind, author, d] = [Number(place.address.split(':')[0]), place.address.split(':')[1], dOf(place.address)]
   const id = fileIdOf(place.address)
-  const named = people?.length ? { '#p': [...new Set([person, ...people.filter((p) => PUBKEY.test(p))])].sort() } : {}
+  // No key that reads as one (another form, a typo): every change, rather than a list of the reader alone.
+  const keys = (people ?? []).filter((p) => PUBKEY.test(p))
+  const named = keys.length ? { '#p': [...new Set([person, ...keys])].sort() } : {}
   return [
     { kinds: [KIND_CHANGE], '#a': [place.address], ...named },
     ...(kind === KIND_TEAM ? [] : [{ kinds: [kind], authors: [author], '#d': [d] }]),

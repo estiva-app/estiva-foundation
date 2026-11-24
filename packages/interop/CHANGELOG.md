@@ -15,9 +15,10 @@ manifests already published still mean what they meant.
   change but a `lists:` one is judged by its field names. A `lists:` change
   counts only when it puts a file on, so those alone are read by id; a removal
   newer than what already counts is followed to the change it names as `prev`,
-  the entry that put the file on (a removal written before the topic was kept
-  in order, with no `prev`, reads the topic's 20 changes before it). Topics
-  come in the same order. Without `times`, nothing changes.
+  back to the entry that put the file on (a removal written before the topic
+  was kept in order, with no `prev`, reads the topic's changes before it a
+  page at a time). Topics come in the same order. Without `times`, nothing
+  changes.
 - `topicList` and `readTopics` with the list read ask again about a skipped
   list entry (a newest change with the wrong `o`) only up to that change
   (`until`): the list read already answered what is newer.

@@ -15,8 +15,9 @@ about a conversation.
   [a-membership-change-names-the-person-it-is-about](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-membership-change-names-the-person-it-is-about.md)
   sets: every membership and level change, and none of the place's renames,
   listed files, looks or order. `followingOf` and `placeListing` answer the
-  same from it. Without `people`, every change, as before. On production, as
-  Miky, Ship's Topics read 258 old topic changes this way and others (18d151fb).
+  same from it. Without `people`, or with none that is a key, every change, as
+  before. On production, as Miky, this read was part of the 258 old topic
+  changes a cold Ship open read; interop 0.115.0 removes the rest (18d151fb).
 
 ## 0.45.0 — 2026-11-20
 
