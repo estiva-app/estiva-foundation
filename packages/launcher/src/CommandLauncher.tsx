@@ -144,7 +144,8 @@ const icon = (Glyph: typeof IconPencil) => <Glyph size={16} stroke={1.5} />
 /** What the guess reads for an app's declared action: the catalogue's words for that id, never the manifest's (KIN-7). */
 const guessWording = (app: LauncherApp, actionId: string): string => {
   const own = app.actions.find((action) => action.id === actionId)
-  return own?.guessAs ?? own?.label ?? actionId.replace(/-/g, ' ')
+  // An id the catalogue does not know was written by whoever published the manifest: none of its words reach the model.
+  return own?.guessAs ?? own?.label ?? `Another action in ${app.label}`
 }
 /** The typing pause after which the guess is asked (KIN-7): short, because Edge takes ~1.4 s to answer and the order should settle within about two seconds. */
 const GUESS_PAUSE_MS = 150
@@ -993,10 +994,10 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     }))
 
   /** The Suggested rows in their usual order, each with what the on-device guess reads for it (KIN-7). */
-  const suggestedEntries = (typed: string): { row: CommandPaletteRow; wording: string }[] => {
+  const suggestedEntries = (typed: string): { row: CommandPaletteRow; wording: string; name?: string }[] => {
     const own = host.ownActions ?? []
     return [
-      ...ownRows('suggested').map((row, at) => ({ row, wording: own[at]?.guessAs ?? row.label })),
+      ...ownRows('suggested').map((row, at) => ({ row, wording: own[at]?.guessAs ?? row.label, ...(own[at] ? { name: own[at].id } : {}) })),
       ...probeable(LAUNCHER_APPS).flatMap((app) =>
         liveActions(app).map((action) => ({
           row: {
@@ -1009,6 +1010,8 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
           // Only words this package wrote: a live row's label comes from a manifest on the relay, and whoever wrote
           // that could word it to win every sentence, or to fail the check and switch the guess off.
           wording: guessWording(app, action.id),
+          // The model's label for it, only where this package wrote the id: a relay-written one is `option-<n>` (KIN-7).
+          ...(app.actions.some((known) => known.id === action.id) ? { name: action.id } : {}),
         })),
       ),
       ...(hasThread && modelReady && context.composer
@@ -1024,6 +1027,7 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
                 onSelect: openDraft,
               },
               wording: 'Draft a reply to the conversation that is open',
+              name: 'draft-reply',
             },
           ]
         : []),
@@ -1045,7 +1049,11 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     the pointer or an arrow key, the order holds until they type again: a row
     must not change under the hand reaching for it.
   */
-  const guessOptions: GuessOption[] = suggestedEntries('').map((entry) => ({ id: entry.row.id, wording: entry.wording }))
+  const guessOptions: GuessOption[] = suggestedEntries('').map((entry) => ({
+    id: entry.row.id,
+    wording: entry.wording,
+    ...(entry.name ? { name: entry.name } : {}),
+  }))
   const guessKey = JSON.stringify(guessOptions)
   guessOptionsRef.current = guessOptions
   const [guessFirst, setGuessFirst] = useState<string | null>(null)

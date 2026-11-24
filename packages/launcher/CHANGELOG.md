@@ -13,7 +13,11 @@ production (KIN-7).** No host has to change.
 - The model reads each action's own name (`new-project`), never the row's id
   (`suggested-own-new-project`): with the ids, that question scored higher.
 - The catalogue's Create issue and Create project read as Ship's own words, so
-  Peek's "create a project…" scores 0.90 in Edge, not 0.797.
+  Peek's "create a project…" scores 0.90 in Edge, not 0.797. Leaf's ⌘K reads
+  the same words once it offers those two actions.
+- Only names this package or the host wrote reach the model: an action only a
+  manifest on the relay declares is `option-<n>`, read as "Another action in
+  <app>". `GuessOption.name` carries the name.
 
 ## 0.3.2 — 2026-11-24
 

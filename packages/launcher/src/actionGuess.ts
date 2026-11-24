@@ -35,6 +35,8 @@
 export interface GuessOption {
   id: string
   wording: string
+  /** The label the model reads ("new-project"), only where this package or the host wrote it; else `option-<n>`. */
+  name?: string
 }
 
 /** The answer of one decision: the option the model chose and how sure it is. */
@@ -89,11 +91,14 @@ const api = (): DecisionModelApi | undefined => (globalThis as { DecisionModel?:
 /**
  * The label the model reads for each row: the action's own name ("new-project"), never the row's id
  * ("suggested-own-new-project"). The model reads labels too: on production Edge with the row ids, the check failed
- * (24 Nov). A name taken twice, or one that looks hidden, becomes `option-<n>`.
+ * (24 Nov). A row with no name (an action only a manifest on the relay declares), a name taken twice, or one
+ * that is not a plain name becomes `option-<n>`.
  */
 export function labelsFor(options: readonly GuessOption[]): string[] {
-  const plain = options.map((o) => o.id.replace(/^suggested-[a-z0-9]+-/, ''))
-  return plain.map((label, i) => (label.startsWith('x-') || plain.indexOf(label) !== i || plain.lastIndexOf(label) !== i ? `option-${i + 1}` : label))
+  const names = options.map((o) => o.name ?? '')
+  const plain = (name: string, i: number) =>
+    /^[a-z][a-z0-9-]{0,39}$/.test(name) && !name.startsWith('x-') && !name.startsWith('option-') && names.indexOf(name) === i && names.lastIndexOf(name) === i
+  return names.map((name, i) => (plain(name, i) ? name : `option-${i + 1}`))
 }
 
 export function schemaFor(options: readonly GuessOption[]): DecisionSchema {
