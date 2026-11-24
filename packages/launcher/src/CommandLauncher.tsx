@@ -1526,39 +1526,32 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     if (prompting) {
       const { groups, pending, body } = promptFace()
       return (
-        // The pointer or an arrow holds the guessed order until the next key (KIN-7); `contents` draws no box.
-        <div className="contents" onPointerMoveCapture={holdGuess} onKeyDownCapture={holdGuessOnArrow}>
-          <CommandPaletteSearch
-            query={query}
-            onQueryChange={setQuery}
-            placeholder={placeholder}
-            groups={groups}
-            pending={pending}
-            about={about}
-            prompt={{ onSubmit: ask, submitWord: 'ask' }}
-          >
-            {body}
-          </CommandPaletteSearch>
-        </div>
-      )
-    }
-
-    const { groups, pending, notes, empty } = firstLevel()
-    return (
-      // The same wrapper as the prompt's, so the third word (and deleting it) keeps the very same field: a different
-      // tree here remounts it, and the person typing loses the field mid-word (KIN-7, found by Peek's suite).
-      <div className="contents" onPointerMoveCapture={holdGuess} onKeyDownCapture={holdGuessOnArrow}>
         <CommandPaletteSearch
           query={query}
           onQueryChange={setQuery}
           placeholder={placeholder}
           groups={groups}
           pending={pending}
-          notes={notes}
-          empty={empty}
           about={about}
-        />
-      </div>
+          prompt={{ onSubmit: ask, submitWord: 'ask' }}
+        >
+          {body}
+        </CommandPaletteSearch>
+      )
+    }
+
+    const { groups, pending, notes, empty } = firstLevel()
+    return (
+      <CommandPaletteSearch
+        query={query}
+        onQueryChange={setQuery}
+        placeholder={placeholder}
+        groups={groups}
+        pending={pending}
+        notes={notes}
+        empty={empty}
+        about={about}
+      />
     )
   })()
 
@@ -1572,7 +1565,14 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
       // The footer says what Escape will do: the box comes back with what it holds (KIN-2).
       escWord={holds && onHide ? 'hide' : 'close'}
     >
-      {content}
+      {/*
+        The pointer or an arrow holds the guessed order until the next key (KIN-7); `contents` draws no box. One wrapper
+        around every face, never one per face: a face drawn in a different tree remounts the field, and the person
+        typing loses it mid-word (the third word, deleting it, Draft and back; found by Peek's suite on 0.3.0).
+      */}
+      <div className="contents" onPointerMoveCapture={holdGuess} onKeyDownCapture={holdGuessOnArrow}>
+        {content}
+      </div>
     </CommandPalette>
   )
 }

@@ -228,6 +228,18 @@ describe('the field is never swapped under the person typing', () => {
     await type('launch plan')
     expect(field()).toBe(before)
   })
+
+  it('keeps the same field, with the sentence, when the prompt goes into Draft a reply', async () => {
+    const { field, type } = await mount(TWO_ACTIONS, { ...IN_A_CONVERSATION, composer: { label: 'Reply' } })
+    await type('tell them friday works')
+    const before = field()
+    before.focus()
+    fireEvent.click(screen.getAllByRole('option').find((o) => o.textContent?.includes('Draft a reply'))!)
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(field()).toBe(before)
+    expect(field().value).toBe('tell them friday works')
+    expect(document.activeElement).toBe(before)
+  })
 })
 
 describe('one suggested action has nothing to be put first', () => {
