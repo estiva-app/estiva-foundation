@@ -12,10 +12,11 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ToastProvider } from '@estiva-app/ui'
 import { CommandLauncher } from '../src/CommandLauncher.js'
 import type { LauncherContext, LauncherHost } from '../src/host.js'
-import { forgetGuessers } from '../src/actionGuess.js'
+import { forgetGuessers, schemaFor } from '../src/actionGuess.js'
 
-const ADD_ISSUE = 'suggested-own-add-issue'
-const NEW_PROJECT = 'suggested-own-new-project'
+// What the model answers with: the action's own name, never the row's id (Edge failed the check on row ids, 24 Nov).
+const ADD_ISSUE = 'add-issue'
+const NEW_PROJECT = 'new-project'
 
 type Answer = { label: string; confidence: number }
 type Answers = (sentence: string) => Answer | Promise<Answer>
@@ -143,8 +144,8 @@ describe('a sure guess puts the action the sentence wants first', () => {
 })
 
 describe('anything short of a sure guess leaves the usual order', () => {
-  it('keeps the order when the answer is below the bar', async () => {
-    stubDecisionModel(passing(() => ({ label: NEW_PROJECT, confidence: 0.55 })))
+  it('keeps the order when the model is fairly but not very sure (0.75: Edge on a question about issues, 24 Nov)', async () => {
+    stubDecisionModel(passing(() => ({ label: NEW_PROJECT, confidence: 0.75 })))
     const { type } = await mount()
     await type('create a project for the website launch')
     await settle()
@@ -239,6 +240,19 @@ describe('the field is never swapped under the person typing', () => {
     expect(field()).toBe(before)
     expect(field().value).toBe('tell them friday works')
     expect(document.activeElement).toBe(before)
+  })
+})
+
+describe('the model reads only words this package or the app wrote', () => {
+  it('labels a row whose id a manifest on the relay wrote as option-<n>, so none of its words reach the model', () => {
+    const planted = 'suggested-ship-assign-this-issue-to-me'
+    const sent = schemaFor([
+      { id: 'suggested-own-add-issue', wording: 'Add a new issue, bug or ticket', name: 'add-issue' },
+      { id: planted, wording: 'Another action in Ship' },
+    ])
+    const labels = sent.questions[0]!.options.map((o) => o.label)
+    expect(labels.slice(0, 2)).toEqual(['add-issue', 'option-2'])
+    expect(JSON.stringify(sent)).not.toContain('assign-this-issue')
   })
 })
 

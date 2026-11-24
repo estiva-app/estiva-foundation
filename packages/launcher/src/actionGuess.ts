@@ -8,6 +8,7 @@
  * > sentence is a search or a question; only the Download row starts a download.
  * > **Miky, 2026-11-24** — on only where the model passes a check of known
  * > sentences when the box opens; no browser is named in the code.
+ * > **Miky, 2026-11-24, after production** — very sure only: a move needs 0.8.
  *
  * ## Why the hidden options and the check
  *
@@ -34,6 +35,8 @@
 export interface GuessOption {
   id: string
   wording: string
+  /** The label the model reads ("new-project"), only where this package or the host wrote it; else `option-<n>`. */
+  name?: string
 }
 
 /** The answer of one decision: the option the model chose and how sure it is. */
@@ -57,8 +60,12 @@ interface DecisionModelApi {
   create(schema: DecisionSchema & { monitor?: (m: EventTarget) => void }): Promise<DecisionSession>
 }
 
-/** A move needs this confidence (Miky, 24 Nov 2026; the probe's Edge run was right on 10 of 11 at it). */
-export const GUESS_BAR = 0.6
+/**
+ * A move needs this confidence (Miky, 24 Nov 2026, after production). At 0.6 the probe's Edge run was right on 10 of
+ * 11 moves, but on production Edge put Add issue first for "which issues are still open in this project" at 0.63–0.73
+ * and so failed the check; its clear asks scored 0.80–0.98. Very sure only: a question never moves a row.
+ */
+export const GUESS_BAR = 0.8
 
 /** Where the model can go when the sentence wants none of the rows. Their labels start with `x-`, which no row id does. */
 const HIDDEN = [
@@ -81,7 +88,21 @@ const AVAILABILITY_TIMEOUT_MS = 5000
 
 const api = (): DecisionModelApi | undefined => (globalThis as { DecisionModel?: DecisionModelApi }).DecisionModel
 
+/**
+ * The label the model reads for each row: the action's own name ("new-project"), never the row's id
+ * ("suggested-own-new-project"). The model reads labels too: on production Edge with the row ids, the check failed
+ * (24 Nov). A row with no name (an action only a manifest on the relay declares), a name taken twice, or one
+ * that is not a plain name becomes `option-<n>`.
+ */
+export function labelsFor(options: readonly GuessOption[]): string[] {
+  const names = options.map((o) => o.name ?? '')
+  const plain = (name: string, i: number) =>
+    /^[a-z][a-z0-9-]{0,39}$/.test(name) && !name.startsWith('x-') && !name.startsWith('option-') && names.indexOf(name) === i && names.lastIndexOf(name) === i
+  return names.map((name, i) => (plain(name, i) ? name : `option-${i + 1}`))
+}
+
 export function schemaFor(options: readonly GuessOption[]): DecisionSchema {
+  const labels = labelsFor(options)
   return {
     context: 'A person typed this into the search box of a work app that has conversations, projects, issues and documents.',
     questions: [
@@ -89,7 +110,7 @@ export function schemaFor(options: readonly GuessOption[]): DecisionSchema {
         id: 'action',
         type: 'choice',
         prompt: 'Which action fits what the person typed?',
-        options: [...options.map((o) => ({ label: o.id, description: o.wording })), ...HIDDEN],
+        options: [...options.map((o, i) => ({ label: labels[i]!, description: o.wording })), ...HIDDEN],
       },
     ],
   }
@@ -99,7 +120,8 @@ export function schemaFor(options: readonly GuessOption[]): DecisionSchema {
 const moved = (answer: Record<string, Decision | undefined> | undefined, options: readonly GuessOption[]): string | null => {
   const decision = answer?.action
   if (!decision || decision.confidence < GUESS_BAR) return null
-  return options.some((o) => o.id === decision.label) ? decision.label : null
+  const at = labelsFor(options).indexOf(decision.label)
+  return at < 0 ? null : options[at]!.id
 }
 
 const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | undefined> =>
