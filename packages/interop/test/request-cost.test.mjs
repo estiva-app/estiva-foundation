@@ -446,6 +446,17 @@ test('an app published after the sweep was read is found for its kind at once, n
   assert.equal(resolved?.address, `31990:${APP}:meetings`)
 })
 
+test('a kind no manifest claims is asked for once, not once per author whose file is of it', async () => {
+  const relay = countingRelay([manifest, object])
+  const cache = createProjectionCache()
+  for (const pubkey of [AUTHOR, OTHER, 'e'.repeat(64)]) {
+    assert.equal(await resolveManifest({ kind: 40002, pubkey, identifier: 'x', relays: [] }, relay.query, cache), null)
+  }
+
+  const asked = relay.calls.filter((filters) => filters.some((f) => f['#k']?.includes('40002'))).length
+  assert.equal(asked, 1, `the kind is asked once, got ${asked}`)
+})
+
 test('a sweep that answers no manifest is asked again, not believed for the session', async () => {
   const relay = countingRelay([object])
   const cache = createProjectionCache()
