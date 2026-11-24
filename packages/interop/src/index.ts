@@ -344,3 +344,9 @@ export {
   type UrlPattern,
   type MatchedObjectUrl,
 } from './objectUrl.js'
+/**
+ * The writing half: a file's link, the same in every app (LIN-2). Every link
+ * {@link filePathOf} writes reads back through {@link matchObjectUrl} as the
+ * same file on every app's host.
+ */
+export { fileLinkWordsOf, filePathOf, fileUrlOf, type FileLinkWords, type LinkManifest } from './fileLink.js'

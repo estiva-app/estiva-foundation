@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.116.0 — 2026-11-24
+
+**Manifest: nothing new declared; `urls` and `k` are now also read to write a
+file's link. Wire: none — no reads of its own.** (LIN-2.) Needs
+`@estiva-app/protocol` 0.68.0.
+
+- `fileLinkWordsOf(manifests)`, `filePathOf(address, words, title?)` and
+  `fileUrlOf(address, words, origin, title?)` write a file's link the same way
+  for every app: `/<word>/<slug>-<d>`; `/o/<naddr>` when the kind has no word
+  (always for a `30852`); `null` for a kind that is not a file's or a `d` that
+  is not a random (version 4) lowercase uuid, which no file can have.
+- The word is the kind's owner's (SPEC §7.7 rule 1), the owner being the one
+  SPEC picks for the kind's noun: the newest manifest whose `k` claims the kind
+  and projects it (§6.11), and for a topic (`30840`) the newest manifest
+  declaring the `conversation` aspect with an `naddr` `web` template (§7.8).
+  The author's `kind:31989` is not read for it. Another manifest's word for the
+  kind is ignored; a word that would not read back through `matchObjectUrl` as
+  the same file and kind on every declared host (another manifest declares it
+  for a different kind) gives `/o/<naddr>` instead.
+- Every link it writes reads back as the same file: tried on 2,000 made-up ids,
+  titles, hosts and stranger manifests a rule (`test/link.property.test.mjs`),
+  the property tests Peek ran on its own copy.
+
 ## 0.115.0 — 2026-11-24
 
 **Manifest: nothing new declared or read. Wire: reads only — a topic's own changes are no longer read whole to order topics (18d151fb).**

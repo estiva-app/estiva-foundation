@@ -120,8 +120,8 @@ export function eventIdFromRef(ref: string): string | null {
  *
  * `web` is outbound (given an object, build a link); this is inbound (given a
  * link, recover the object). Usually the same strings, separate fields because
- * they answer different questions — and because an app that changes its routes
- * still has to read the links it published under the old ones.
+ * they answer different questions. The outbound half for a file's own link is
+ * `fileLink.ts`, which writes only what this reads back.
  */
 export interface UrlPattern {
   /** e.g. `https://ship.estiva.app/issue/<slug>-<d>` */

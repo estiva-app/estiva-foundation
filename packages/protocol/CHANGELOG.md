@@ -4,6 +4,24 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.68.0 — 2026-11-24
+
+**Wire behaviour: nothing new written; a file with an odd id is no longer
+built, and an odd id no longer reads as a file's id.** (LIN-2; SPEC §6.1,
+record `a-files-id-is-a-random-uuid-the-same-rule-as-a-teams-id`.)
+
+- `buildBareFile` and `buildDocument` throw for a `fileId` that is not a
+  random (version 4) lowercase uuid, before any event exists. The relay has
+  refused such a file as `invalid: bad-file-id:` since 24 Nov (relay 330cd4f),
+  so a caller that passed one already had its save refused; now it learns
+  before signing. Pass `crypto.randomUUID()`.
+- `isFileId` and `fileIdOf` (and so `fileKeyOf`, `sameFile`, `fileIdFormOf`)
+  take only a version 4 lowercase uuid as a file's id; a `d` of another uuid
+  version is read as an address's `d`, as any other text is. On 24 Nov every
+  live file and team on production had a v4 id, so no live read changes.
+- The `bare-file` wire vector's `d` was re-recorded from `f1` to a v4 uuid,
+  since the builder refuses `f1`; its shape and tag order are unchanged.
+
 ## 0.67.0 — 2026-11-21
 
 **Wire behaviour: none new written; nothing new read.** Test code only

@@ -64,7 +64,7 @@ const rebuild = {
   'resolution-reopened': () => P.buildResolution(PUB, MS, { channelUuid: CH, targetEventId: EV1, action: 'reopened' }),
   relayAuth: () => P.buildUnsignedRelayAuthEvent({ pubkey: '', relayUrl: 'wss://estiva.estiva.app/some/path', challenge: 'chal-123', nowMs: MS }),
   'bare-file': () =>
-    P.buildBareFile(PUB, MS, { fileId: 'f1', title: 'Spec', channelUuid: CH, parent: `30850:${PUB}:p1`, document: { type: 'doc', content: [{ type: 'paragraph', id: 'b1', content: [{ type: 'text', text: 'Ship Friday.' }] }] } }),
+    P.buildBareFile(PUB, MS, { fileId: 'e3b5c1a7-4f2d-4c8e-9a61-7d0f2b9c5e48', title: 'Spec', channelUuid: CH, parent: `30850:${PUB}:p1`, document: { type: 'doc', content: [{ type: 'paragraph', id: 'b1', content: [{ type: 'text', text: 'Ship Friday.' }] }] } }),
   highlight: () =>
     P.buildHighlight(PUB, MS, { content: 'an excerpt', channelUuid: CH, sourceEventId: EV1, sourceUrl: 'https://x/y', attribution: [PUB2.toUpperCase()], labels: [{ namespace: 'nfb.highlight', value: 'insight' }] }),
   'nip98-auth-no-body': () => P.buildUnsignedAuthEvent({ pubkey: PUB, url: 'https://estiva.estiva.app/query/', method: 'post', nowMs: MS, nonce: 'deadbeef' }),
