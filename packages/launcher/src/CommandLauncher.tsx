@@ -141,6 +141,11 @@ export interface CommandLauncherProps {
 }
 
 const icon = (Glyph: typeof IconPencil) => <Glyph size={16} stroke={1.5} />
+/** What the guess reads for an app's declared action: the catalogue's words for that id, never the manifest's (KIN-7). */
+const guessWording = (app: LauncherApp, actionId: string): string => {
+  const own = app.actions.find((action) => action.id === actionId)
+  return own?.guessAs ?? own?.label ?? actionId.replace(/-/g, ' ')
+}
 /** The typing pause after which the guess is asked (KIN-7): short, because Edge takes ~1.4 s to answer and the order should settle within about two seconds. */
 const GUESS_PAUSE_MS = 150
 
@@ -456,7 +461,10 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     if (typeof download === 'number') return
     setDownload(0)
     // The guess's model, where the browser has it to fetch: the same row, the same click (KIN-7).
-    const guessFetch = guessDownloadable ? downloadGuessModel(guessOptionsRef.current) : Promise.resolve(true)
+    // Its progress shows on the row only when the answers' model is not also coming (that one reports its own).
+    const guessFetch = guessDownloadable
+      ? downloadGuessModel(guessOptionsRef.current, modelDownloadable ? undefined : (fraction) => setDownload(Math.round(fraction * 100)))
+      : Promise.resolve(true)
     const answerFetch = modelDownloadable ? downloadModel((fraction) => setDownload(Math.round(fraction * 100))) : Promise.resolve(true)
     void Promise.all([answerFetch, guessFetch]).then(([ok, guessOk]) => {
       // No cancellation guard: the fetch belongs to the browser and outlives the launcher.
@@ -935,8 +943,9 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
 
   /** Under a prompt, where the model could run but is not here yet: the offer to fetch it (INT-10). Never a nag: only a prompt shows it. */
   const downloadRows = (): CommandPaletteRow[] => {
-    // Answers need a conversation to be about; the guess's model is offered under any prompt (KIN-7).
-    if (hasThread ? modelDownloadable || guessDownloadable : guessDownloadable) {
+    // Only where the row has always been, with a conversation to ask about; the same click also fetches the
+    // guess's model (KIN-7). The guess alone never adds the row: it would offer gigabytes for an order.
+    if (hasThread && (modelDownloadable || guessDownloadable)) {
       const label =
         download === 'failed'
           ? 'This browser refused the model — asking is unavailable here'
@@ -997,7 +1006,9 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
             leading: <span className="flex size-8 items-center justify-center">{appMark(app, 16)}</span>,
             onSelect: () => setStack((s) => [...s, { level: { kind: 'form', action, app, sentence: typed }, query: '' }]),
           },
-          wording: action.guessAs ?? action.label,
+          // Only words this package wrote: a live row's label comes from a manifest on the relay, and whoever wrote
+          // that could word it to win every sentence, or to fail the check and switch the guess off.
+          wording: guessWording(app, action.id),
         })),
       ),
       ...(hasThread && modelReady && context.composer
@@ -1042,6 +1053,11 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
   useEffect(() => {
     let cancelled = false
     const options = JSON.parse(guessKey) as GuessOption[]
+    // One row has nothing to be put first: no guess, and no model to offer for it (Leaf's New document alone).
+    if (options.length < 2) {
+      setGuessDownloadable(false)
+      return
+    }
     void guessAvailability(options).then((said) => !cancelled && setGuessDownloadable(said === 'downloadable' || said === 'downloading'))
     void guesserFor(options)
     return () => {
@@ -1060,7 +1076,9 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
       void guesserFor(JSON.parse(guessKey) as GuessOption[])
         .then((guess) => (guess ? guess(sentence) : null))
         .then((first) => {
-          if (!cancelled && !guessHeld.current) setGuessFirst(first)
+          if (cancelled || guessHeld.current) return
+          guessedFor.current = sentence
+          setGuessFirst(first)
         })
     }, GUESS_PAUSE_MS)
     return () => {
@@ -1068,12 +1086,19 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
       clearTimeout(timer)
     }
   }, [prompting, query, guessKey])
+  /** The sentence the order on screen was guessed for: a hold never freezes an earlier sentence's guess. */
+  const guessedFor = useRef('')
   const holdGuess = useCallback(() => {
+    if (guessHeld.current) return
     guessHeld.current = true
-  }, [])
-  const holdGuessOnArrow = useCallback((event: React.KeyboardEvent) => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') guessHeld.current = true
-  }, [])
+    if (guessedFor.current !== query.trim()) setGuessFirst(null)
+  }, [query])
+  const holdGuessOnArrow = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') holdGuess()
+    },
+    [holdGuess],
+  )
 
   const firstLevel = (): { groups: CommandPaletteGroup[]; pending?: string; notes: string[]; empty?: string } => {
     const typed = query.trim()

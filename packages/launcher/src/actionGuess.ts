@@ -171,11 +171,18 @@ async function makeGuesser(options: readonly GuessOption[]): Promise<Guesser | n
  * says it can be downloaded. Called only from that row's click, which is the
  * gesture `create()` needs.
  */
-export async function downloadGuessModel(options: readonly GuessOption[]): Promise<boolean> {
+export async function downloadGuessModel(options: readonly GuessOption[], onProgress?: (fraction: number) => void): Promise<boolean> {
   const model = api()
   if (!model) return false
   try {
-    const session = await model.create(schemaFor(options))
+    const session = await model.create({
+      ...schemaFor(options),
+      monitor: (m) =>
+        m.addEventListener('downloadprogress', (event) => {
+          const { loaded, total } = event as unknown as { loaded: number; total?: number }
+          onProgress?.(total ? loaded / total : loaded)
+        }),
+    })
     session.destroy?.()
     guessers.delete(JSON.stringify(options))
     return true

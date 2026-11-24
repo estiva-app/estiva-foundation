@@ -17,8 +17,11 @@ a host that sets `guessAs` gives the model better words than the label.
 - Once the pointer moves or an arrow key is pressed, the order holds until the
   next key. An answer for a sentence since changed is dropped.
 - Typing never starts a download: a session is made only where `availability()`
-  says `'available'`. The Download row also fetches the guess's model, and shows
-  under any prompt when only that one is missing.
+  says `'available'`. The Download row, where it has always shown (a
+  conversation is open), also fetches the guess's model; the guess alone never
+  adds the row, and one Suggested row asks the browser nothing.
+- The model reads only this package's words for an action (`guessAs`, else the
+  catalogue label), never a manifest's label from the relay.
 - `LauncherOwnAction.guessAs` and `LauncherAction.guessAs`: what the model reads
   for an action, never drawn.
 
