@@ -1905,7 +1905,19 @@ const newestFirst = (a: SignedEvent, b: SignedEvent) => b.created_at - a.created
 async function claimsFor(kind: string, query: QueryFn, cache?: ProjectionCache): Promise<SignedEvent[]> {
   if (cache) {
     const all = await handlerSweepOf(KIND_HANDLER_INFORMATION, HANDLER_SWEEP_LIMIT, query, cache)
-    if (all.complete) return all.events.filter((e) => e.tags.some((t) => t[0] === 'k' && t[1] === kind)).sort(newestFirst).slice(0, 20)
+    if (all.complete) {
+      const claims = all.events.filter((e) => e.tags.some((t) => t[0] === 'k' && t[1] === kind)).sort(newestFirst).slice(0, 20)
+      if (claims.length > 0) return claims
+      // No manifest in the sweep claims the kind: an app published since the sweep was read (the cache keeps it an
+      // hour in Peek) is found by asking for the kind, as before the sweep, rather than an hour later. Once per kind,
+      // not per author whose file is of it.
+      const asked = await throughCache(cache, `claims:${kind}`, async (): Promise<HandlerSweep> => ({
+        sweep: true,
+        events: await query([{ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }]),
+        complete: true,
+      }))
+      return [...(asked as HandlerSweep).events]
+    }
   }
   return query([{ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }])
 }

@@ -427,6 +427,36 @@ test('a sweep that comes back full is not taken for every manifest: the claim is
   assert.ok(relay.calls.some(claimsKind), 'a sweep at its limit may have left the claim out, so it is asked')
 })
 
+test('an app published after the sweep was read is found for its kind at once, not when the sweep is read again', async () => {
+  // A new app shipped while a tab is open: its files would show as nothing known for the cache's life (an hour in Peek).
+  const events = [manifest, object]
+  const relay = countingRelay(events)
+  const cache = createProjectionCache()
+  assert.ok(await resolveManifest(POINTER, relay.query, cache))
+  events.push(
+    event({
+      kind: 31990,
+      pubkey: APP,
+      tags: [['d', 'meetings'], ['k', '40001']],
+      content: JSON.stringify({ name: 'Meetings', projections: { 40001: { widget: 'card', slots: { title: { tag: 'title' } } } } }),
+    }),
+  )
+  const resolved = await resolveManifest({ kind: 40001, pubkey: AUTHOR, identifier: 'm1', relays: [] }, relay.query, cache)
+
+  assert.equal(resolved?.address, `31990:${APP}:meetings`)
+})
+
+test('a kind no manifest claims is asked for once, not once per author whose file is of it', async () => {
+  const relay = countingRelay([manifest, object])
+  const cache = createProjectionCache()
+  for (const pubkey of [AUTHOR, OTHER, 'e'.repeat(64)]) {
+    assert.equal(await resolveManifest({ kind: 40002, pubkey, identifier: 'x', relays: [] }, relay.query, cache), null)
+  }
+
+  const asked = relay.calls.filter((filters) => filters.some((f) => f['#k']?.includes('40002'))).length
+  assert.equal(asked, 1, `the kind is asked once, got ${asked}`)
+})
+
 test('a sweep that answers no manifest is asked again, not believed for the session', async () => {
   const relay = countingRelay([object])
   const cache = createProjectionCache()
