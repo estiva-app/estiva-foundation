@@ -159,6 +159,11 @@ describe("whose word a file's link takes", () => {
     assert.equal(path(30850, [clash, ...PRODUCTION]), `/project/${D}`)
   })
 
+  it("keeps the word when a stranger declares it with no kind, since that shape still finds the file by its id", () => {
+    const kindless: Manifest = { pubkey: STRANGER, created_at: 1_790_000_000, content: '{}', tags: [['web', 'https://x.example/o/<bech32>', 'naddr'], ['urls', 'https://x.example/issue/<slug>-<d>']] }
+    assert.equal(path(30851, [kindless, ...PRODUCTION]), `/issue/${D}`)
+  })
+
   it('never writes a reserved or malformed word', () => {
     for (const word of ['o', 'app', 'Issue', '9lives', 'is_sue']) {
       const owner: Manifest = { ...ship, tags: [['k', '30851'], ['web', 'https://ship.estiva.app/o/<bech32>', 'naddr'], ['urls', `https://ship.estiva.app/${word}/<slug>-<d>`, '30851']], content: JSON.stringify({ projections: { 30851: {} } }) }

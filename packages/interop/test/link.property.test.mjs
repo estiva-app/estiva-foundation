@@ -148,7 +148,7 @@ test('a link to a thread names the comment, inside the file it is on', () => {
 
 test('a link to one block, written by blockUrlOf, reads back as that file and block', () => {
   fc.assert(
-    fc.property(dArb, titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
+    fc.property(fc.uuid({ version: 4 }), titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
       const url = blockUrlOf(PATTERNS, { kind, d, title, block })
       assert.ok(url)
       const match = matchObjectUrl(url, PATTERNS)
@@ -170,10 +170,11 @@ const anyDArb = fc.oneof(
   fc.uuid(),
 )
 
-test('blockUrlOf writes a link for any d only when that link reads back as the same d', () => {
+test('blockUrlOf writes a link only for a file id, and that link reads back as the same d', () => {
   fc.assert(
-    fc.property(anyDArb, titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
+    fc.property(fc.oneof(anyDArb, fc.uuid({ version: [1, 7] })), titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
       const url = blockUrlOf(PATTERNS, { kind, d, title, block })
+      assert.equal(url !== undefined, isFileId(d), JSON.stringify(d))
       if (url === undefined) return
       assert.equal(matchObjectUrl(url, PATTERNS)?.identifier, d, url)
     }),

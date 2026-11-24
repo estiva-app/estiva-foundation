@@ -34,6 +34,7 @@
  * be one some app declares; only the slug is decoration. `matchObjectUrl`
  * implements the corrected rule.
  */
+import { isFileId } from '@estiva-app/protocol'
 
 /**
  * A v4 uuid at the very end of a ref.
@@ -401,7 +402,9 @@ export function blockUrlOf(
 ): string | undefined {
   // A `d` that is not a clean identifier would be spliced into the path raw
   // (`../settings`), and `matchObjectUrl` could never read the link back.
-  if (identifierFromRef(target.d) !== target.d || !BLOCK_ID.test(target.block)) return undefined
+  // And only a file's id (a v4 lowercase uuid, SPEC §6.1): `filePathOf` writes
+  // no link for any other, and no file can have one.
+  if (!isFileId(target.d) || identifierFromRef(target.d) !== target.d || !BLOCK_ID.test(target.block)) return undefined
   for (const { pattern, kind } of patterns) {
     if (kind !== target.kind) continue
     const hashAt = pattern.indexOf('#')

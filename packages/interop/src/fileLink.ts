@@ -131,15 +131,19 @@ function ownersWord(owner: LinkManifest, kind: number): string | undefined {
 }
 
 /**
- * Whether `/<word>/<d>` reads back as a file of `kind`, and of no other kind,
- * on every declared host. The reader ignores the slug and the `d`'s value
+ * Whether `/<word>/<d>` reads back as this file on every declared host: as a
+ * file of `kind`, or with the kinds left open, and never of another kind. The reader ignores the slug and the `d`'s value
  * (any uuid reads the same), so one made-up file stands for all of them.
  */
 function readsBackEverywhere(word: string, kind: number, patterns: UrlPattern[], origins: string[]): boolean {
   const d = '00000000-0000-4000-8000-000000000000'
   return origins.every((origin) => {
     const match = matchObjectUrl(`${origin}/${word}/${d}`, patterns)
-    return match !== null && match.by === 'd' && match.identifier === d && match.kind === kind && !match.within
+    if (match === null || match.by !== 'd' || match.identifier !== d || match.within) return false
+    // A shape that names no kind (on its own origin) leaves the kinds open: the
+    // reader then looks the id up under every declared kind and still finds
+    // this file, so a stranger's kindless shape does not cost it its word.
+    return match.kind === kind || (match.kind === undefined && match.kinds === undefined)
   })
 }
 
