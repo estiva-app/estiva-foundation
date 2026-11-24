@@ -532,15 +532,25 @@ export function withPlaceOff(list: Pick<TeamsList, 'teams' | 'off'> | undefined,
  * naming the place, and the person's teams list. A topic's or space's
  * conversation is the app's own read (see `streamOf`); a team's chat is its
  * general stream.
+ *
+ * `people`: every key with a profile (`kind:0`). Given, the place's changes are
+ * only those naming one of them or `person`: a membership or level change
+ * names its person (§11.8, which the relay enforces), so that is everything
+ * {@link followingOf} and {@link placeListing} read, without every rename,
+ * listed file and look the place ever had. Absent or empty, every change.
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-membership-change-names-the-person-it-is-about.md
  */
-export function placeFilters(place: Place, person: string): Filter[] {
+export function placeFilters(place: Place, person: string, people?: readonly string[]): Filter[] {
   if (!PUBKEY.test(person)) throw new Error(`not a lowercase hex pubkey: ${JSON.stringify(person)}`)
   if (!FILE_ADDRESS.test(place.address)) throw new Error(`not a place address: ${JSON.stringify(place.address)}`)
   if (!FOLDER_ID.test(place.team)) throw new Error(`not a team id (lowercase UUID v4): ${JSON.stringify(place.team)}`)
   const [kind, author, d] = [Number(place.address.split(':')[0]), place.address.split(':')[1], dOf(place.address)]
   const id = fileIdOf(place.address)
+  // No key that reads as one (another form, a typo): every change, rather than a list of the reader alone.
+  const keys = (people ?? []).filter((p) => PUBKEY.test(p))
+  const named = keys.length ? { '#p': [...new Set([person, ...keys])].sort() } : {}
   return [
-    { kinds: [KIND_CHANGE], '#a': [place.address] },
+    { kinds: [KIND_CHANGE], '#a': [place.address], ...named },
     ...(kind === KIND_TEAM ? [] : [{ kinds: [kind], authors: [author], '#d': [d] }]),
     { kinds: [KIND_PUT_USER, KIND_REMOVE_USER, KIND_JOIN, KIND_LEAVE, KIND_CREATE_TEAM], '#h': [place.team] },
     { kinds: [KIND_ROSTER], '#d': [place.team] },

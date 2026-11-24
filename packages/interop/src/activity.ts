@@ -37,7 +37,7 @@
  * No decision record states this order of topics: the rule lives here, and
  * writing it up as SPEC §6.14 text is on the project's Later list.
  */
-import { fileIdOf, RELAY_PAGE_CEILING, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
+import { FILE_KINDS, fileIdOf, RELAY_PAGE_CEILING, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
 import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
 import { answeredByEach, answers, firstPages, nextPages, readAll, type ReadTopic } from './topics.js'
@@ -46,6 +46,10 @@ import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './l
 
 const KIND_CHANGE = 1851
 const KIND_READ_STATE = 30078
+/** A topic's list entry for a file: `lists:<d>` (topics.ts `listsField`). */
+const LISTS = 'lists:'
+/** A topic's changes read before a removal that names no `prev` (written before the topic was kept in order). */
+const OLD_REMOVAL_PAGE = 20
 const KIND_PROJECT = 30850
 const KIND_ISSUE = 30851
 const KIND_DOCUMENT = 30842
@@ -347,10 +351,12 @@ export async function readTopicActivity(
     ]
   }
   const first: Probe[] = []
+  // A topic kept in order is learnt from the times read too (readOwnByTimes), never from its every change.
+  const ownByTimes = (address: string) => times !== undefined && FILE_KINDS.includes(kindOf(address) ?? -1) && idOf(address) !== undefined
   for (const topic of topics) {
     const target = { address: topic.address, folder: topic.folder ?? null }
     first.push({ filter: { kinds: [KIND_COMMENT, KIND_MESSAGE], '#A': [topic.address] }, target, topics: [topic.address] })
-    first.push({ filter: { kinds: [KIND_CHANGE], '#a': [topic.address] }, target, topics: [topic.address] })
+    if (!ownByTimes(topic.address)) first.push({ filter: { kinds: [KIND_CHANGE], '#a': [topic.address] }, target, topics: [topic.address] })
   }
   for (const [file, on] of listed) first.push(...fileProbes({ address: file, folder: folderOfFile.get(file) ?? null }, [...on], true))
 
@@ -427,6 +433,8 @@ export async function readTopicActivity(
     const own = ownFilters.length > 0 ? read(ownFilters) : Promise.resolve([])
     // Awaited after the walk; a refusal before then is not left unhandled, and still throws there.
     own.catch(() => undefined)
+    const topicsOwn = readOwnByTimes(read)
+    topicsOwn.catch(() => undefined)
     // Each file under one is answered once per parent; each parent is walked once.
     const found = new Set<string>()
     let level = [...listed.keys()].filter((address) => CHILD_KINDS[kindOf(address) ?? -1])
@@ -474,6 +482,85 @@ export async function readTopicActivity(
     for (const entry of await own) {
       const on = listed.get(entry.a)
       if (on) count(entry, on)
+    }
+    await topicsOwn
+  }
+
+  /**
+   * Each topic's own changes, from the times read: every current change but a
+   * `lists:` one judged by its field names, as a listed file's are. A `lists:`
+   * change counts only when it puts a file on (its value `true`), which the
+   * times read does not carry, so those changes alone are read, by id; one
+   * that took a file off, newer than what already counts, sends the read to
+   * the change it follows (`prev`), back to the entry that put the file on. A
+   * removal written before the topic was kept in order names none: the
+   * topic's changes just before it are read instead, a page at a time by
+   * `until`, as far back as the plain read went. Never every change the topic
+   * had (18d151fb).
+   */
+  async function readOwnByTimes(read: TimesFn): Promise<void> {
+    const mine = topics.filter((topic) => ownByTimes(topic.address))
+    if (mine.length === 0) return
+    const byKind = new Map<number, string[]>()
+    for (const topic of mine) byKind.set(kindOf(topic.address)!, [...(byKind.get(kindOf(topic.address)!) ?? []), idOf(topic.address)!])
+    const asked = new Set(mine.map((topic) => topic.address))
+    const entries = (await read([...byKind].flatMap(([kind, ds]) => chunked(ds, VALUES_PER_FILTER).map((values) => ({ fields: 'times', kinds: [kind], '#d': values })))))
+      .filter((entry) => asked.has(entry.a))
+    const listsIds = new Map<string, string>()
+    for (const entry of entries) {
+      for (const change of entry.changes) {
+        const other = change.fields.filter((field) => !field.startsWith(LISTS))
+        if (other.length > 0 && countsAsActivity(changeOf(entry.a, { ...change, fields: other }), entry.a)) bump(entry.a, change.created_at)
+        if (other.length < change.fields.length) listsIds.set(change.id, entry.a)
+      }
+    }
+    const byId = async (ids: Iterable<string>) => {
+      const list = [...new Set(ids)]
+      if (list.length === 0) return []
+      return (await query(chunked(list, VALUES_PER_FILTER).map((values) => ({ ids: values })))).filter((event) => event.kind === KIND_CHANGE)
+    }
+    // A `lists:` change, as the fold takes it: its topic's, on that topic's team (isOn).
+    const entryOn = (event: SignedEvent, topic: string) => isOn(event, topic, folders.get(topic) ?? null)
+    const removals: { event: SignedEvent; topic: string; file: string }[] = []
+    for (const event of await byId(listsIds.keys())) {
+      const topic = listsIds.get(event.id)
+      if (!topic || !entryOn(event, topic)) continue
+      if (countsAsActivity(event, topic)) bump(topic, event.created_at)
+      else {
+        const file = fieldsOf(event).find(({ field }) => field.startsWith(LISTS))?.field.slice(LISTS.length)
+        // Only a removal newer than what already counts can hide an add that would.
+        if (file && event.created_at > (at.get(topic) ?? 0)) removals.push({ event, topic, file })
+      }
+    }
+    const prevOf = (event: SignedEvent) => event.tags.find((tag) => tag[0] === 'prev')?.[1]
+    const isEntry = (e: SignedEvent, topic: string, file: string) =>
+      entryOn(e, topic) && fieldsOf(e).some(({ field }) => field === `${LISTS}${file}`)
+    // Removals are rare (one per file taken off since the newest activity): each is walked on its own.
+    for (const { event, topic, file } of removals) {
+      let at = event
+      for (let step = 0; step < MAX_ROUNDS; step++) {
+        const prev = prevOf(at)
+        if (prev) {
+          const [before] = (await byId([prev])).filter((e) => isEntry(e, topic, file))
+          if (!before) break
+          if (countsAsActivity(before, topic)) {
+            bump(topic, before.created_at)
+            break
+          }
+          // A removal after a removal: the add is further back.
+          at = before
+          continue
+        }
+        // Written before the topic was kept in order: the topic's changes just before it, a page at a time.
+        const page = await query([{ kinds: [KIND_CHANGE], '#a': [topic], until: at.created_at, limit: OLD_REMOVAL_PAGE }])
+        const add = page.filter((e) => e.id !== at.id && isEntry(e, topic, file) && countsAsActivity(e, topic)).sort((a, b) => b.created_at - a.created_at)[0]
+        if (add) bump(topic, add.created_at)
+        if (add || page.length < OLD_REMOVAL_PAGE) break
+        const oldest = page.reduce((a, b) => (b.created_at < a.created_at ? b : a))
+        // A second holding a whole page: asking again would repeat it.
+        if (oldest.created_at === at.created_at) break
+        at = oldest
+      }
     }
   }
 
@@ -631,8 +718,8 @@ async function timesUnder(read: TimesFn, parents: readonly string[]): Promise<Fi
 
 /**
  * A current change as the times read answers it, shaped as the change {@link countsAsActivity} judges: its field names
- * as `set` tags with no value. The rule reads a value only for `lists:` on the topic itself, whose changes are still
- * read whole.
+ * as `set` tags with no value. The rule reads a value only for `lists:` on the topic itself, whose changes are read by
+ * id instead (`readOwnByTimes`).
  */
 function changeOf(file: string, change: FileTimes['changes'][number]): SignedEvent {
   return {

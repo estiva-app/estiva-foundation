@@ -6,6 +6,19 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.46.0 — 2026-11-24
+
+- **SPEC §11.8 (no rule changed; a narrower read of it):** `placeFilters`
+  takes an optional `people`, every key with a profile (`kind:0`). Given, a
+  place's changes are read as those naming one of them or the reader (`#a` +
+  `#p`), the read record
+  [a-membership-change-names-the-person-it-is-about](https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-membership-change-names-the-person-it-is-about.md)
+  sets: every membership and level change, and none of the place's renames,
+  listed files, looks or order. `followingOf` and `placeListing` answer the
+  same from it. Without `people`, or with none that is a key, every change, as
+  before. On production, as Miky, this read was part of the 258 old topic
+  changes a cold Ship open read; interop 0.115.0 removes the rest (18d151fb).
+
 ## 0.45.0 — 2026-11-20
 
 - **SPEC §6.2:** a membership change (`buildMembershipChange`, and so

@@ -6,6 +6,23 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.115.0 — 2026-11-24
+
+**Manifest: nothing new declared or read. Wire: reads only — a topic's own changes are no longer read whole to order topics (18d151fb).**
+
+- `readTopicActivity` with `times` learns each topic's own changes from the
+  times read (SPEC §6.13), as it already did a listed file's: every current
+  change but a `lists:` one is judged by its field names. A `lists:` change
+  counts only when it puts a file on, so those alone are read by id; a removal
+  newer than what already counts is followed to the change it names as `prev`,
+  back to the entry that put the file on (a removal written before the topic
+  was kept in order, with no `prev`, reads the topic's changes before it a
+  page at a time). Topics come in the same order. Without `times`, nothing
+  changes.
+- `topicList` and `readTopics` with the list read ask again about a skipped
+  list entry (a newest change with the wrong `o`) only up to that change
+  (`until`): the list read already answered what is newer.
+
 ## 0.114.0 — 2026-11-23
 
 **Manifest: nothing new declared or read. Wire: a read only — a card's children are read by the list read where their kind is opened (ALL-10).**
