@@ -65,6 +65,7 @@ const fileRoots = [
 
 type Filter = Record<string, unknown>
 const matches = (e: SignedEvent, f: Filter) => {
+  if (f.ids && !(f.ids as string[]).includes(e.id)) return false
   if (f.kinds && !(f.kinds as number[]).includes(e.kind)) return false
   if (typeof f.since === 'number' && e.created_at < f.since) return false
   if (typeof f.until === 'number' && e.created_at > f.until) return false
@@ -488,6 +489,16 @@ describe('with the relay\'s times read, the same topics come in the same order',
       change(WIDGETS, 'lists:new-d', 'false', T0 + 66),
       change(WIDGETS, `order:${PAGE.split(':')[2]}`, 'a0', T0 + 67),
     ]],
+    ['putting a file on the topic, then taking it off with the change it follows', (() => {
+      const add = change(WIDGETS, 'lists:new-d', 'true', T0 + 55)
+      const off = change(WIDGETS, 'lists:new-d', 'false', T0 + 66)
+      return [message(ONBOARDING, T0 + 50), add, { ...off, tags: [...off.tags, ['prev', add.id]] }]
+    })()],
+    ['a file put on the topic and still on, then a rename of the topic', [
+      message(ONBOARDING, T0 + 50),
+      change(WIDGETS, 'lists:new-d', 'true', T0 + 58),
+      change(WIDGETS, 'title', 'Widgets 2', T0 + 70),
+    ]],
     // Its newest record names the team: the file is in Leaf's team, as the plain read has it.
     ['an issue the relay still holds twice, moved to another team', [message(ONBOARDING, T0 + 50), root(ISSUE, T0 - 100, LEAF_TEAM, PROJECT)]],
   ]
@@ -496,19 +507,21 @@ describe('with the relay\'s times read, the same topics come in the same order',
       const events = [...fileRoots, ...extra]
       const plain = await readTopicActivity(relayOver(events).query, topics, { nowSeconds: NOW })
       const relay = relayOver(events)
-      const timed = await readTopicActivity(relay.query, topics, { nowSeconds: NOW, times: timesOver(events).times })
+      // The times read answers a topic from its first record, as the relay does; the plain read needs none.
+      const topicRoots = topics.map((t) => root(t.address, t.createdAt!, t.folder!))
+      const timed = await readTopicActivity(relay.query, topics, { nowSeconds: NOW, times: timesOver([...events, ...topicRoots]).times })
       assert.deepEqual(order(timed), order(plain))
       assert.deepEqual(new Map(timed.at), new Map(plain.at))
       const listedOf = (a: TopicActivity) => new Map([...a.files].map(([t, fs]) => [t, fs.map((f) => `${f.address} in ${f.folder}`).sort()]))
       assert.deepEqual(listedOf(timed), listedOf(plain))
       assert.deepEqual(new Map(timed.parents), new Map(plain.parents))
-      // No file's change and no file under one is read whole: only the topics' own changes and comments.
-      const topicAddresses = new Set(topics.map((t) => t.address))
+      // No file's change, no file under one and no topic is read whole (18d151fb): a topic's own changes come from
+      // the times read, its list entries by id, and only a removal with no `prev` reads the changes just before it.
       for (const f of relay.calls.flat()) {
         const kinds = (f.kinds as number[] | undefined) ?? []
         assert.ok(!kinds.includes(30851) && !kinds.includes(30842), `a root read: ${JSON.stringify(f)}`)
         // The moves into a listed project (`#A`) are read whole: one per move, never per edit.
-        if (kinds.includes(1851) && !f['#A']) assert.ok((f['#a'] as string[]).every((a) => topicAddresses.has(a)), `a file's changes read whole: ${JSON.stringify(f)}`)
+        if (kinds.includes(1851) && !f['#A']) assert.equal(typeof f.until, 'number', `a file's or a topic's changes read whole: ${JSON.stringify(f)}`)
       }
     })
   }

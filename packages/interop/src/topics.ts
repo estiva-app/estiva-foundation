@@ -427,13 +427,15 @@ const SKIPPED_READ_CAP = 100
  * wrong `o` the relay takes), so the good change before it is not in the
  * answer. For each file where that happened, read its changes on that topic
  * again (`#O` and `#o`), so it folds as a whole `#O` read would: the filters
- * for that read, none when nothing was skipped.
+ * for that read, none when nothing was skipped. Only the changes up to the
+ * newest skipped one (`until`): the list read already answered what is newer.
  */
 function skippedFilters(
   events: readonly SignedEvent[],
   folderOfList: (list: string) => string | null | undefined,
-): { kinds: number[]; '#O': string[]; '#o': string[] }[] {
+): { kinds: number[]; '#O': string[]; '#o': string[]; until: number }[] {
   const skipped = new Map<string, Set<string>>()
+  const until = new Map<string, number>()
   for (const event of events) {
     if (event.kind !== KIND_CHANGE) continue
     const list = tagOf(event, 'a')
@@ -450,9 +452,10 @@ function skippedFilters(
       // Bounded: a change setting hundreds of junk fields asks again about the first few only.
       if (files.size < SKIPPED_READ_CAP) files.add(file)
       skipped.set(holder[3], files)
+      until.set(holder[3], Math.max(until.get(holder[3]) ?? 0, event.created_at))
     }
   }
-  return [...skipped].map(([topic, files]) => ({ kinds: [KIND_CHANGE], '#O': [topic], '#o': [...files] }))
+  return [...skipped].map(([topic, files]) => ({ kinds: [KIND_CHANGE], '#O': [topic], '#o': [...files], until: until.get(topic)! }))
 }
 
 /** A topic as {@link readTopics} reads it. */

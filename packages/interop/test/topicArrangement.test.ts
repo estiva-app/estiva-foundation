@@ -54,6 +54,7 @@ function relay(events: SignedEvent[]) {
   const matches = (e: SignedEvent, filter: Filter) => {
     if (filter.ids && !filter.ids.includes(e.id)) return false
     if (filter.kinds && !filter.kinds.includes(e.kind)) return false
+    if (typeof filter.until === 'number' && e.created_at > filter.until) return false
     for (const [key, values] of Object.entries(filter)) {
       if (!key.startsWith('#')) continue
       const held = e.tags.filter((t) => t[0] === key.slice(1)).map((t) => t[1])
@@ -240,6 +241,16 @@ describe('the fold: one order and look for everyone', () => {
     const good = listed()
     const bad = signed({ ...good[1], created_at: Math.floor((MS + 30_000) / 1000), tags: good[1].tags.map((t) => (t[0] === 'ts' ? ['ts', String(MS + 30_000)] : t[0] === 'value' ? ['value', 'false'] : t[0] === 'o' ? ['o', 'f-x'] : t)) })
     assert.equal(order(await read([...good, bad], true)), 'f-a f-b f-c f-d')
+  })
+
+  it("asks again only about a skipped entry's changes up to it, never the topic's newer ones (18d151fb)", async () => {
+    const good = listed()
+    const bad = signed({ ...good[1], created_at: Math.floor((MS + 30_000) / 1000), tags: good[1].tags.map((t) => (t[0] === 'ts' ? ['ts', String(MS + 30_000)] : t[0] === 'value' ? ['value', 'false'] : t[0] === 'o' ? ['o', 'f-x'] : t)) })
+    const query = relay([topicRoot, ...fileRoots, ...good, bad])
+    assert.equal(order(await topicList(query, TOPIC, { listRead: true })), 'f-a f-b f-c f-d')
+    const again = query.asked.filter((f) => f['#O'])
+    assert.ok(again.length > 0, 'the skipped entry is asked again')
+    for (const f of again) assert.equal(f.until, bad.created_at, JSON.stringify(f))
   })
 
   it('reads a look a reader knows, and draws an unknown one as the file\'s own widget', async () => {
