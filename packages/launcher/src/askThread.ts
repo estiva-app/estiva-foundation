@@ -158,9 +158,13 @@ export function answerInstruction(question: string, chosen: readonly NumberedMes
       A page (KIN-5): its text, then the comments on it, resolved ones marked so a settled point is not read as open
       (Miky, KIN-5 kickoff: the answer reads the text and every comment). A part with no author is the page's own text.
     */
+    // One line per part, each saying what it is: a comment's line breaks cannot start a part of its own (KIN-5 review).
+    const line = (words: string) => words.replace(/\s*\n\s*/g, ' ')
     const material = chosen
       .map(({ n, message }) =>
-        message.author ? `[${n}] Comment by ${message.author}${message.resolved ? ' (resolved)' : ''}: ${message.body}` : `[${n}] ${message.body}`,
+        message.author
+          ? `[${n}] Comment by ${line(message.author)}${message.resolved ? ' (resolved)' : ''}: ${line(message.body)}`
+          : `[${n}] Page text: ${line(message.body)}`,
       )
       .join('\n')
     return [

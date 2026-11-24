@@ -300,6 +300,8 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
   /* One row per (object, field-setting action) pair: "Set status · Billing entry" is the thing somebody means. */
   const changeRows = useMemo(() => {
     const out: { action: LauncherAction; vocabularies: Record<string, VocabOption[]> }[] = []
+    // A change does not say the kind it writes: an app that says what it may sign is offered none (KIN-5 review).
+    if (host.maySign) return out
     for (const target of targets) {
       for (const resolved of target.actions) {
         const action = changeActionFrom(resolved, target)
@@ -307,7 +309,8 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
       }
     }
     return out
-  }, [targets])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targets, !host.maySign])
 
   /*
     What each app declares it can create — INT-9: a row exists only because a
@@ -1245,8 +1248,12 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
             ]
           : []
       // What the app can turn the answer into: a comment, a block in the page (Leaf; Miky, KIN-5 kickoff).
-      // Not once the question was changed: the answer on screen is to the old one.
-      if (answer && request && host.answerActions && !changed) {
+      /*
+        Not once the question was changed: the answer on screen is to the old one. Not on another page either: the
+        answer is about where it was asked, and must not be written into a page it was never about (KIN-5 review).
+      */
+      const askedHere = !sentFrom || sentFrom.pathname === pathname
+      if (answer && request && host.answerActions && !changed && askedHere) {
         // In the order the answer first cites them; an answer that cites nothing cites nothing, not every part read.
         const firstCited = [...new Set([...answer.text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]
         const cited = firstCited.flatMap((n) => answer.sources.find((s) => s.n === n)?.message ?? [])
