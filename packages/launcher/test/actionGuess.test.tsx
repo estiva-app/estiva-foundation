@@ -14,8 +14,9 @@ import { CommandLauncher } from '../src/CommandLauncher.js'
 import type { LauncherContext, LauncherHost } from '../src/host.js'
 import { forgetGuessers } from '../src/actionGuess.js'
 
-const ADD_ISSUE = 'suggested-own-add-issue'
-const NEW_PROJECT = 'suggested-own-new-project'
+// What the model answers with: the action's own name, never the row's id (Edge failed the check on row ids, 24 Nov).
+const ADD_ISSUE = 'add-issue'
+const NEW_PROJECT = 'new-project'
 
 type Answer = { label: string; confidence: number }
 type Answers = (sentence: string) => Answer | Promise<Answer>
@@ -143,8 +144,8 @@ describe('a sure guess puts the action the sentence wants first', () => {
 })
 
 describe('anything short of a sure guess leaves the usual order', () => {
-  it('keeps the order when the answer is below the bar', async () => {
-    stubDecisionModel(passing(() => ({ label: NEW_PROJECT, confidence: 0.55 })))
+  it('keeps the order when the model is fairly but not very sure (0.75: Edge on a question about issues, 24 Nov)', async () => {
+    stubDecisionModel(passing(() => ({ label: NEW_PROJECT, confidence: 0.75 })))
     const { type } = await mount()
     await type('create a project for the website launch')
     await settle()

@@ -227,7 +227,8 @@ const SHIP: LauncherApp = {
       // the consumer runtime skips it: an object-creating action needs a form.
       id: 'add-issue',
       label: 'Create issue',
-      guessAs: 'Create a new issue, bug or ticket in a Ship project',
+      // Ship's own words: "in a Ship project" kept Peek's project sentence under 0.8 in Edge (24 Nov).
+      guessAs: 'Add a new issue, bug or ticket',
       appliesTo: '30850',
       emits: { kind: 30851, setTag: 'a', toAddressOf: 'self' },
       submitLabel: 'Create issue',
@@ -272,7 +273,8 @@ const SHIP: LauncherApp = {
       // `add-issue` so declaring it is a manifest line, not a UI change.
       id: 'add-project',
       label: 'Create project',
-      guessAs: 'Create a new project in Ship',
+      // 0.90 in Edge for "create a project for the website launch" in Peek's list; "…in Ship" scored 0.797 (24 Nov).
+      guessAs: 'Create a new project',
       emits: { kind: 30850 },
       submitLabel: 'Create project',
       fields: [

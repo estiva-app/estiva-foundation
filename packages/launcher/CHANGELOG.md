@@ -2,6 +2,19 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.3.3 — 2026-11-24
+
+**The guess moves a row only when the model is very sure, so it works in Edge on
+production (KIN-7).** No host has to change.
+
+- A move needs 0.8 (was 0.6). On production Edge Dev put Add issue first for
+  "which issues are still open in this project" at 0.63–0.73, failed the check,
+  and the guess stayed off.
+- The model reads each action's own name (`new-project`), never the row's id
+  (`suggested-own-new-project`): with the ids, that question scored higher.
+- The catalogue's Create issue and Create project read as Ship's own words, so
+  Peek's "create a project…" scores 0.90 in Edge, not 0.797.
+
 ## 0.3.2 — 2026-11-24
 
 **The field stays the same field when the third word makes it a prompt (KIN-7
