@@ -2,6 +2,26 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.3.0 — 2026-11-24
+
+**The suggested action your sentence wants comes first, where the browser's
+on-device Decisions API passes the box's check (KIN-7).** No host has to change;
+a host that sets `guessAs` gives the model better words than the label.
+
+- Under a prompt, a typing pause asks `DecisionModel` which Suggested row the
+  sentence wants; an answer at 0.6 or more moves that row first. Hidden
+  "something else" options move nothing when they win.
+- The model is used only once it moves nothing for `CHECKS` ("assign this issue
+  to me", "which issues are still open in this project"). Chrome 160 failed it
+  on 24 Nov and keeps the usual order; Edge Dev 160 passed. No browser is named.
+- Once the pointer moves or an arrow key is pressed, the order holds until the
+  next key. An answer for a sentence since changed is dropped.
+- Typing never starts a download: a session is made only where `availability()`
+  says `'available'`. The Download row also fetches the guess's model, and shows
+  under any prompt when only that one is missing.
+- `LauncherOwnAction.guessAs` and `LauncherAction.guessAs`: what the model reads
+  for an action, never drawn.
+
 ## 0.2.0 — 2026-11-23
 
 **What is open can be a page (KIN-5).** No host has to change: Peek's

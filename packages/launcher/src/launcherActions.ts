@@ -77,6 +77,8 @@ export interface FormField {
 export interface LauncherAction {
   id: string
   label: string
+  /** What the on-device guess reads for this action, never drawn (KIN-7). Without it the guess reads the label. */
+  guessAs?: string
   /** Verbatim `ManifestAction` halves where the declaration exists today,
    *  so the runtime can key on them unchanged. */
   appliesTo?: string
@@ -225,6 +227,7 @@ const SHIP: LauncherApp = {
       // the consumer runtime skips it: an object-creating action needs a form.
       id: 'add-issue',
       label: 'Create issue',
+      guessAs: 'Create a new issue, bug or ticket in a Ship project',
       appliesTo: '30850',
       emits: { kind: 30851, setTag: 'a', toAddressOf: 'self' },
       submitLabel: 'Create issue',
@@ -269,6 +272,7 @@ const SHIP: LauncherApp = {
       // `add-issue` so declaring it is a manifest line, not a UI change.
       id: 'add-project',
       label: 'Create project',
+      guessAs: 'Create a new project in Ship',
       emits: { kind: 30850 },
       submitLabel: 'Create project',
       fields: [
@@ -343,6 +347,7 @@ const PEEK: LauncherApp = {
       */
       id: 'start-a-conversation',
       label: 'Start a conversation',
+      guessAs: 'Start a new conversation in a topic',
       declaredToday: true,
       emits: { kind: 9, toAddressOf: 'self' },
       submitLabel: 'Start conversation',

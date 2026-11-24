@@ -166,6 +166,11 @@ export interface LauncherOwnAction {
   label: string
   /** The second line: where it acts, "In Launch team". */
   description?: string
+  /**
+   * What the on-device guess reads for this action, never drawn: "Add a new
+   * issue, bug or ticket" (KIN-7). Without it the guess reads the label.
+   */
+  guessAs?: string
   icon?: ReactNode
   /** Do it. The box closes. */
   run: () => void
