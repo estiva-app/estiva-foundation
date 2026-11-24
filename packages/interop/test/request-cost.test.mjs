@@ -83,7 +83,10 @@ const ADDRESS = `${KIND}:${AUTHOR}:p1`
 const object = event({ kind: KIND, tags: [['d', 'p1'], ['title', 'Payment integration'], ['h', FOLDER]] })
 const child = event({ kind: CHILD, tags: [['d', 'i1'], ['title', 'A ticket'], ['a', ADDRESS]] })
 
-const world = () => countingRelay([manifest, object, child])
+// Another author's recommendation for another kind, as a relay in use holds (production held one, 24 Nov): an empty
+// recommendation sweep is not believed whole (THE-4), so a world with none asks by author.
+const elsewhere = event({ kind: 31989, pubkey: 'd'.repeat(64), tags: [['d', '40001'], ['a', `31990:${'d'.repeat(64)}:other-app`]] })
+const world = () => countingRelay([manifest, object, child, elsewhere])
 
 /*
   One file, read the one way (§6.13): its comments and its children's first
@@ -115,7 +118,9 @@ test('with the manifest memoised, a refresh is the object\'s own reads alone', a
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
   const warm = relay.count - cold
 
-  assert.equal(cold, 3 + OBJECT_READS)
+  // With a cache, discovery is two sweeps (THE-4): every manifest, which answers
+  // the claim and the creators alike, and every recommendation.
+  assert.equal(cold, 2 + OBJECT_READS)
   assert.equal(warm, OBJECT_READS, `a refresh must be the object's reads alone, was ${warm}`)
 })
 
@@ -163,7 +168,7 @@ test('clear() forgets, so republishing a manifest is recoverable without a reloa
   cache.clear()
   const before = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - before, 3 + OBJECT_READS, 'after clear(), discovery runs again')
+  assert.equal(relay.count - before, 2 + OBJECT_READS, 'after clear(), discovery runs again')
 })
 
 test('a kind nothing claims is memoised too, so the expensive miss is paid once', async () => {
@@ -258,9 +263,10 @@ test('a burst of cold resolves shares one discovery instead of paying it once ea
   const cache = createProjectionCache()
   await Promise.all(Array.from({ length: 20 }, () => resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)))
 
-  // Three discovery reads: the recommendation, the manifest, the creators' sweep.
-  assert.equal(discovery(relay.calls), 3, `discovery must run once for the burst, ran ${discovery(relay.calls) / 3} times`)
-  assert.equal(relay.count, 3 + 20 * OBJECT_READS, 'three for discovery, then each object\'s own')
+  // Two discovery reads (THE-4): the sweep of every recommendation, and the sweep
+  // of every manifest, which answers the claim and the creators alike.
+  assert.equal(discovery(relay.calls), 2, `discovery must run once for the burst, ran ${discovery(relay.calls) / 2} times`)
+  assert.equal(relay.count, 2 + 20 * OBJECT_READS, 'two for discovery, then each object\'s own')
 })
 
 test('a failed discovery is shared by the burst and not remembered', async () => {
@@ -303,7 +309,9 @@ test('clear() during a read keeps that read from writing its answer back', async
 
   const before = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - before, 2 + OBJECT_READS, 'what was read before clear() must not be believed after it')
+  // The recommendation, read across the clear(), is asked again. The manifest sweep the
+  // creators asked after the clear() is believed: it was read since the republish.
+  assert.equal(relay.count - before, 1 + OBJECT_READS, 'what was read before clear() must not be believed after it')
 })
 
 test('a cache without share keeps the old behaviour: look up, read, remember', async () => {
@@ -317,7 +325,7 @@ test('a cache without share keeps the old behaviour: look up, read, remember', a
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
   const cold = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
-  assert.equal(cold, 3 + OBJECT_READS)
+  assert.equal(cold, 2 + OBJECT_READS)
   assert.equal(relay.count - cold, OBJECT_READS)
 })
 
@@ -381,4 +389,61 @@ test('a recommended manifest that does not claim the kind is still read by its a
   assert.equal(resolved.address, `31990:${APP}:chosen`)
   assert.equal(resolved.viaRecommendation, true)
   assert.equal(relay.count, 3)
+})
+
+/*
+  THE-4 — every manifest, asked once. One Desk reopen as Miky asked the full
+  manifest sweep five times and each app's `#k` claim once per author whose
+  files were on screen: about 20 questions for four manifests (24 Nov). With a
+  cache, the sweep and the recommendations are read once and answer the rest.
+*/
+const sweeps = (calls, kind) => calls.filter((filters) => filters.some((f) => f.kinds?.includes(kind) && !f['#k'] && !f.authors)).length
+const OTHER = 'c'.repeat(64)
+
+test('two authors\' files of one kind ask the manifests once between them, and resolve as they did alone', async () => {
+  const events = [manifest, appManifest('chosen', [['k', String(KIND)]]), recommending('chosen')]
+  const relay = countingRelay(events)
+  const cache = createProjectionCache()
+  const [mine, theirs] = await Promise.all([
+    resolveManifest(POINTER, relay.query, cache),
+    resolveManifest({ ...POINTER, pubkey: OTHER }, relay.query, cache),
+  ])
+
+  assert.equal(relay.count, 2, `one sweep of manifests and one of recommendations, got ${relay.count}: ${JSON.stringify(relay.calls)}`)
+  // As a resolve with no cache answers each: the author's recommendation, and the newest claim for the other.
+  assert.equal(mine.address, (await resolveManifest(POINTER, countingRelay(events).query)).address)
+  assert.equal(mine.viaRecommendation, true)
+  assert.equal(theirs.address, (await resolveManifest({ ...POINTER, pubkey: OTHER }, countingRelay(events).query)).address)
+  assert.equal(theirs.viaRecommendation, false)
+})
+
+test('a sweep that comes back full is not taken for every manifest: the claim is asked by kind', async () => {
+  const filler = Array.from({ length: 100 }, (_, i) => appManifest(`filler-${i}`, [['k', '40001']]))
+  const relay = countingRelay([...filler, manifest])
+  const cache = createProjectionCache()
+  const resolved = await resolveManifest(POINTER, relay.query, cache)
+
+  assert.ok(resolved, 'the kind still resolves')
+  assert.ok(relay.calls.some(claimsKind), 'a sweep at its limit may have left the claim out, so it is asked')
+})
+
+test('a sweep that answers no manifest is asked again, not believed for the session', async () => {
+  const relay = countingRelay([object])
+  const cache = createProjectionCache()
+  assert.equal(await resolveManifest(POINTER, relay.query, cache), null)
+  assert.equal(await resolveManifest({ ...POINTER, pubkey: OTHER }, relay.query, cache), null)
+
+  assert.equal(sweeps(relay.calls, 31990), 2, 'an empty sweep is not remembered')
+})
+
+test('a recommendation sweep that answers nothing is not taken for "no recommendation": the author is asked', async () => {
+  // A relay still starting answers the sweep empty; believed, the newest claim — which any member may publish —
+  // would win over the author's own choice for the cache's whole life.
+  const chosen = appManifest('chosen', [['k', String(KIND)]])
+  const newer = appManifest('newer', [['k', String(KIND)]])
+  const relay = countingRelay([manifest, chosen, newer, recommending('chosen')])
+  const query = async (filters) => (filters.some((f) => f.kinds?.includes(31989) && !f.authors) ? [] : relay.query(filters))
+  const resolved = await resolveManifest(POINTER, query, createProjectionCache())
+
+  assert.equal(resolved.address, `31990:${APP}:chosen`, 'the author\'s recommendation still wins')
 })
