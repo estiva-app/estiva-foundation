@@ -79,12 +79,8 @@ export interface FileCandidatesOptions {
   cache?: ProjectionCache
   /** When each address was last written or read, in seconds — newer first within a tier. */
   at?: ReadonlyMap<string, number>
-  /** The types the relay keeps in order (`RelayFileReads.inOrder`): a project of one is picked as its link. */
-  inOrder?: readonly string[]
   /** The host Ship serves projects from: a picked project's link is `<it>/project/<d>`. Ship's own unless said, so every app picks the same link. */
   projectOrigin?: string
-  /** The relay offers the list read: an issue's project, read for its caption, is read by its current fields (`resolveForeignRoots`). */
-  listRead?: boolean
 }
 
 /** Where Ship serves projects (§13.1, decided 2026-11-03): one link for a project, whichever app picked it. */
@@ -99,9 +95,9 @@ export const SHIP_ORIGIN = 'https://ship.estiva.app'
  */
 export function pickedFileUri(
   address: string,
-  { inOrder = [], projectOrigin = SHIP_ORIGIN }: Pick<FileCandidatesOptions, 'inOrder' | 'projectOrigin'> = {},
+  { projectOrigin = SHIP_ORIGIN }: Pick<FileCandidatesOptions, 'projectOrigin'> = {},
 ): string {
-  const byId = fileIdFormOf(inOrder, address)
+  const byId = fileIdFormOf(address)
   return byId?.type === 'osnova.project' ? `${projectOrigin.replace(/\/+$/, '')}/project/${byId.id}` : fileReference(address)
 }
 
@@ -120,7 +116,7 @@ export async function fileCandidates(
   objects: readonly (ForeignObject | null | undefined)[],
   tier: number,
   query: QueryFn,
-  { cache, at, inOrder, projectOrigin, listRead }: FileCandidatesOptions = {},
+  { cache, at, projectOrigin }: FileCandidatesOptions = {},
 ): Promise<ReferenceCandidate[]> {
   const files = objects.filter(offerable)
   const parents = new Map<string, ForeignObject>()
@@ -130,7 +126,7 @@ export async function fileCandidates(
     ...new Set(files.flatMap((o) => (o.kind === KIND_ISSUE && o.parentRef && !parents.has(o.parentRef) ? [o.parentRef] : []))),
   ]
   if (missing.length) {
-    const read = await resolveForeignRoots(missing, query, cache, { listRead }).catch(() => [])
+    const read = await resolveForeignRoots(missing, query, cache).catch(() => [])
     for (const parent of read) if (parent.address && !parent.deleted) parents.set(parent.address, parent)
   }
   return files.map((o) => {
@@ -139,7 +135,7 @@ export async function fileCandidates(
     const summary = summaryOf(o)
     return {
       id: o.address,
-      uri: pickedFileUri(o.address, { inOrder, projectOrigin }),
+      uri: pickedFileUri(o.address, { projectOrigin }),
       type: typeOf(o.kind)!,
       kind: o.kind,
       title: o.slots.title!.value,

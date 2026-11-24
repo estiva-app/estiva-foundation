@@ -82,7 +82,7 @@ export interface LinkReader {
   tagsFor(
     blocks: readonly RenderBlock[],
     own: OwnPlace,
-    options?: { waitMs?: number; edit?: boolean; inOrder?: readonly string[] },
+    options?: { waitMs?: number; edit?: boolean },
   ): Promise<string[][]>
   /** {@link writtenOpenerOf} against the hosts the manifests read so far declare. */
   opener(url: string | undefined, opens: string | undefined, origin: string): string | undefined
@@ -221,13 +221,13 @@ export function linkReader(options: LinkReaderOptions): LinkReader {
       }
     },
     version: () => answered,
-    async tagsFor(blocks, own, { waitMs = 5000, edit = false, inOrder = [] } = {}) {
+    async tagsFor(blocks, own, { waitMs = 5000, edit = false } = {}) {
       const urls = linksIn(blocks).slice(0, MAX_LINKS_ASKED)
       const waiting = urls.filter((url) => !known.has(url))
       if (waiting.length > 0) await within(Promise.allSettled(waiting.map(answerOf)), waitMs)
       const first = new Set(urls)
       const resolve: LinkResolver = (url) => (first.has(url) ? knownValue(url) : undefined)
-      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (first.has(url) ? knownBlock(url) : undefined), inOrder)
+      return linkTagsOf(blocks, own, resolve, edit ? undefined : (url) => (first.has(url) ? knownBlock(url) : undefined))
     },
     opener: (url, opens, origin) => writtenOpenerOf(url, opens, origin, origins),
     declaredOrigins: () => origins,
@@ -260,7 +260,7 @@ export function linksIn(blocks: readonly RenderBlock[]): string[] {
  * message links now. An edit carries no `part` (pass no `blockOf`), and a
  * person is never here: `p` and `urgent` stay as the send wrote them.
  *
- * A file whose type the relay keeps in order (`inOrder`) is named by its id
+ * A file of the four base types is named by its id
  * too: an `o` after its `a`, and its `part` by the id (§6.4, §13.6.1). An
  * edit carries the `o` as a send does (§6.8).
  *
@@ -272,7 +272,6 @@ export function linkTagsOf(
   own: OwnPlace,
   resolve: LinkResolver,
   blockOf?: (url: string) => PartPointer | undefined,
-  inOrder: readonly string[] = [],
 ): string[][] {
   const file = own.file && sameValue(own.file)
   const parent = own.parent?.toLowerCase()
@@ -282,7 +281,7 @@ export function linkTagsOf(
       if (value !== parent) tags.push(['q', value])
     } else if (value !== file) {
       tags.push(['a', value])
-      const byId = fileIdFormOf(inOrder, value)
+      const byId = fileIdFormOf(value)
       if (byId && !tags.some((t) => t[0] === 'o' && t[1] === byId.id)) tags.push(['o', byId.id])
     }
   }
@@ -293,7 +292,7 @@ export function linkTagsOf(
       if (part && sameValue(part.address) !== file && !parts.has(part.address)) parts.set(part.address, part.block)
     }
     // As many as a box shows under it (conversation's `boxLinksOf`): a part the box did not draw is not sent.
-    for (const [address, block] of [...parts].slice(0, MAX_PARTS)) tags.push(partTag(fileIdFormOf(inOrder, address)?.id ?? address, block))
+    for (const [address, block] of [...parts].slice(0, MAX_PARTS)) tags.push(partTag(fileIdFormOf(address)?.id ?? address, block))
   }
   return tags
 }

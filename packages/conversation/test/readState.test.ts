@@ -93,12 +93,10 @@ describe('a file’s marker in two keys (§11.1, §11.8, C45)', () => {
     assert.equal(fileIdContext(PROJECT), undefined)
   })
 
-  it('a read of a project writes file:<d> and its address once projects are kept in order, and its address alone before (ALO-4)', async () => {
+  it('a read of a project writes file:<d> and its address (ALO-4)', async () => {
     const { fileReadMarkers } = await import('../dist/index.js')
-    assert.deepEqual(fileReadMarkers(PROJECT, 300, ['osnova.project']), { [BY_ID]: 300, [PROJECT]: 300 })
-    assert.deepEqual(fileReadMarkers(PROJECT, 300, []), { [PROJECT]: 300 })
-    assert.deepEqual(fileReadMarkers(PROJECT, 300, ['osnova.issue']), { [PROJECT]: 300 })
-    assert.deepEqual(fileReadMarkers('not an address', 300, ['osnova.project']), {})
+    assert.deepEqual(fileReadMarkers(PROJECT, 300), { [BY_ID]: 300, [PROJECT]: 300 })
+    assert.deepEqual(fileReadMarkers('not an address', 300), {})
   })
 
   it('reads only the address of a file whose d is no UUID', () => {

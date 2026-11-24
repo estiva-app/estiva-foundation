@@ -299,48 +299,26 @@ function isSearchMatch(value: unknown): value is SearchMatch {
 }
 
 /**
- * What a relay says, in its NIP-11 document, about reading files — SPEC §6.13.
+ * What a relay says, in its NIP-11 document, about finding files — SPEC §6.13:
+ * `search`, the types it finds by their words (`file_search.types`).
  *
- * - `list`: `/query` answers `"fields": "newest"` (`file_list.newest`), so an
- *   app reads a list with it rather than every change.
- * - `text`: the read takes `"text": true` beside `#d` (`file_list.text`), so
- *   opening a file costs its current text, not its history. Never sent to a
- *   relay that does not say so: one that ignored the key would answer as if
- *   the text had never changed.
- * - `inOrder`: the types the relay keeps in order (`files.requires_prev`), and
- *   whether it has made the switch at all (`files` present).
- * - `search`: the types it finds by their words (`file_search.types`).
- * - `times`: `/query` answers `"fields": "times"` (`file_list.times`), so an
- *   app learns when files changed without reading the changes.
+ * Nothing else is read from it. Every relay keeps every file type in order
+ * and answers the list, text and times reads (§6.13, from the close,
+ * 2026-11-24): an app reads a list by `"fields": "newest"`, opens a file with
+ * `"text": true` and learns when files changed by `"fields": "times"`, and
+ * names a file of the four base types by its id ({@link IN_ORDER_TYPES}).
  *
- * A relay that says nothing reads as none of them, which is always safe: the
- * app reads every change and folds them itself.
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/the-old-way-goes-once-miky-has-looked.md
  */
 export interface RelayFileReads {
-  list: boolean
-  text: boolean
-  switched: boolean
-  inOrder: string[]
   search: string[]
-  times: boolean
 }
 
 export function relayFileReadsOf(info: unknown): RelayFileReads {
   const doc = (info && typeof info === 'object' ? info : {}) as Record<string, unknown>
   const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined)
   const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
-  const files = obj(doc.files)
-  // A relay advertising the switch advertises the list too (§6.13); one from
-  // before `file_list` existed said it only under `files`.
-  const list = obj(doc.file_list) ?? (files?.newest === true ? { newest: true } : undefined)
-  return {
-    list: list?.newest === true,
-    text: list?.newest === true && list.text === true,
-    switched: !!files,
-    inOrder: strings(files?.requires_prev),
-    search: strings(obj(doc.file_search)?.types),
-    times: list?.newest === true && list.times === true,
-  }
+  return { search: strings(obj(doc.file_search)?.types) }
 }
 
 /** A project's type, as NIP-11 names it (TYPES.md). */
@@ -355,86 +333,8 @@ export const DOCUMENT_TYPE = 'osnova.document'
 /** A topic's type, as NIP-11 names it (TYPES.md). */
 export const TOPIC_TYPE = 'osnova.topic'
 
-/** How an app reads a type once switched: opened with its text, and found by its words where the relay says so. */
-export interface FileFieldsSwitch {
-  text: boolean
-  search?: true
-}
-
-/** {@link FileFieldsSwitch}, for projects. */
-export type ProjectFields = FileFieldsSwitch
-
-/**
- * Whether an app reads and writes one type's files by their fields (§6.13) —
- * one rule for Ship, Leaf, Peek and the agent, each type switched on its own
- * (ALO-5, ALO-6; issues in ISS-3).
- *
- * On when the relay announces it keeps the type in order (NIP-11 `files`,
- * `requires_prev` naming it), the one announced moment, or when this tab
- * opted in ({@link fieldsOptedIn}) to try it on the Folders the relay already
- * fences for that type. Either way only where the relay offers the list read
- * and the opened file's text with it: without that a file's page could not
- * read what it edits. Undefined is off: read and write that type as before.
- *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
- */
-export function fileFieldsOf(reads: RelayFileReads, type: string, optedIn: boolean): FileFieldsSwitch | undefined {
-  const announced = reads.switched && reads.inOrder.includes(type)
-  if (!reads.list || !reads.text || !(announced || optedIn)) return undefined
-  return { text: reads.text, ...(reads.search.includes(type) ? { search: true as const } : {}) }
-}
-
-/** {@link fileFieldsOf} for projects, as Ship, Leaf and Peek have called it since ALO-5. */
-export function projectFieldsOf(reads: RelayFileReads, optedIn: boolean): ProjectFields | undefined {
-  return fileFieldsOf(reads, PROJECT_TYPE, optedIn)
-}
-
-/** The part of the browser's `sessionStorage` {@link fieldsOptedIn} keeps the opt-in in. */
-export interface OptInStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
-
-/**
- * A tab's opt-in to reading projects by their fields: `?fields=on` in the
- * address it opened with turns it on, `?fields=off` off — `search` is the
- * page's query, and a hash-routed app passes its hash's query too — and it is kept in
- * `storage` — the tab's `sessionStorage`, never anything longer: nothing
- * narrows it to the fenced Folders, so a link carrying it must not switch a
- * browser for good. False when the storage cannot be read.
- */
-export function fieldsOptedIn(search: string, storage: OptInStorage | undefined, key = 'estiva.projectFields'): boolean {
-  return optedIn('fields', search, storage, key)
-}
-
-/**
- * A tab's opt-in to reading one type by its fields, kept as
- * {@link fieldsOptedIn} keeps the projects' one. Projects keep `?fields=on`;
- * any other type is its own word, `?<name>Fields=on` with the type's last
- * part (`?issueFields=on` for `osnova.issue`), so a tab can try issues on a
- * fenced team while projects stay as they are, or the other way round.
- * `key` is where it is kept, for an app that already keeps its project
- * opt-in under its own key.
- */
-export function typeFieldsOptedIn(type: string, search: string, storage: OptInStorage | undefined, key?: string): boolean {
-  if (type === PROJECT_TYPE) return fieldsOptedIn(search, storage, key)
-  const name = `${type.slice(type.lastIndexOf('.') + 1)}Fields`
-  return optedIn(name, search, storage, key ?? `estiva.${name}`)
-}
-
-function optedIn(param: string, search: string, storage: OptInStorage | undefined, key: string): boolean {
-  try {
-    if (!storage) return false
-    const escaped = param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const asked = new RegExp(`(?:^|[?&])${escaped}=([^&#]*)`).exec(search)?.[1]
-    if (asked === 'on') storage.setItem(key, 'on')
-    if (asked === 'off') storage.removeItem(key)
-    return storage.getItem(key) === 'on'
-  } catch {
-    return false
-  }
-}
+/** The four base types, each kept in order by every relay (SPEC §6.13): a writer names a file of one by its id (§6.4). */
+export const IN_ORDER_TYPES: readonly string[] = [PROJECT_TYPE, ISSUE_TYPE, DOCUMENT_TYPE, TOPIC_TYPE]
 
 /** What a person reads when the relay stays busy through the quiet retries. */
 export const RELAY_BUSY_MESSAGE = 'the relay is busy, try again in a moment'

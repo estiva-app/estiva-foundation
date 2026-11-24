@@ -219,14 +219,14 @@ export function threadStrength(root: Readable | undefined, replies: readonly Rea
  * does not name, unless it is the `A` — which is what keeps the mention row
  * readable without decoding the body.
  *
- * A file whose type the relay keeps in order (`inOrder`) earns an `o` with
- * its id after its `a` (§6.4).
+ * A file of the four base types earns an `o` with its id after its `a`
+ * (§6.4).
  */
-export function referenceTagsFor(body: string, own = '', inOrder: readonly string[] = []): NostrTag[] {
+export function referenceTagsFor(body: string, own = ''): NostrTag[] {
   const addresses = namedInBody(body)
   addresses.delete(own)
   return [...addresses].flatMap((a) => {
-    const byId = fileIdFormOf(inOrder, a)
+    const byId = fileIdFormOf(a)
     return byId ? [['a', a], ['o', byId.id]] : [['a', a]]
   })
 }

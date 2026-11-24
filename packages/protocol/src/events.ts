@@ -842,8 +842,6 @@ export function buildEdit(
     embeds?: readonly Embed[]
     /** The whole `imeta` set after this edit, when it changes it; it folds the same way (§6.8). */
     mediaTags?: NostrTag[]
-    /** The types the relay keeps in order: a card for a file of one names it by its id (`embedTagsOf`). */
-    inOrder?: readonly string[]
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
@@ -863,7 +861,7 @@ export function buildEdit(
       // and a rounded `ts` could land in the next second and be discarded by
       // its own agreement rule.
       ['ts', String(Math.floor(createdAtMs))],
-      ...embedTagsOf(args.embeds ?? [], args.inOrder),
+      ...embedTagsOf(args.embeds ?? []),
       ...(args.mediaTags ?? []),
     ],
     content: args.body,
