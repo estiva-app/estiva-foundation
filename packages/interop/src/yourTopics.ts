@@ -50,7 +50,6 @@ import {
   resolveIds,
   spacesOf,
   teamListFilters,
-  topicListFilter,
   topicRoots,
   type ListReadOptions,
   type ReadTopic,
@@ -96,8 +95,8 @@ export async function readYourTopics(
     spaces?: boolean
     cache?: ProjectionCache
     nowSeconds?: number
-    /** The relay's times read, where NIP-11 says `file_list.times`: the order is then learnt as times ({@link readTopicActivity}). */
-    times?: TimesFn
+    /** The relay's times read: the order is learnt as times ({@link readTopicActivity}). */
+    times: TimesFn
   },
 ): Promise<YourTopicsRead> {
   const cache = options.cache ?? createProjectionCache()

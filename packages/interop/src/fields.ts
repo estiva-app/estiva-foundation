@@ -31,7 +31,6 @@ import {
   type SignedEvent,
   type UnsignedEvent,
 } from '@estiva-app/protocol'
-import { refusalCode } from './folders.js'
 import { SUMMARY_FIELD, inTargetFolder, stageTagOf, targetFolders, type QueryFn, type Stage } from './projection.js'
 
 /** The change event every Estiva app writes (SPEC §6.2). */

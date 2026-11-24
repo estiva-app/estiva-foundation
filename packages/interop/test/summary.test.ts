@@ -18,6 +18,7 @@ import {
   resolveManifest,
 } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const FOLDER = '7b32200c-e4c0-4216-b79a-8490fc05e0bd'
 const OTHER_FOLDER = '0e2f4c1a-5b6d-4e7f-8a9b-0c1d2e3f4a5b'
@@ -92,8 +93,9 @@ function relay(events: SignedEvent[]) {
     }
     return true
   }
-  return async (filters: Record<string, unknown>[]) =>
+  const plain = async (filters: Record<string, unknown>[]) =>
     events.filter((e) => filters.some((f) => matches(e, f as Filter)))
+  return withListRead(plain, events)
 }
 
 describe("a file's summary is its subtitle, whatever its kind", () => {

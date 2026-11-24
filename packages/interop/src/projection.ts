@@ -14,7 +14,7 @@
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
 import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
-import { BASE_TYPE_OF_KIND, FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, changeTypeTags, fileIdFormOf } from '@estiva-app/protocol'
+import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, changeTypeTags, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
   BLOCK_DOCUMENT_FORMAT,
@@ -1430,6 +1430,9 @@ export const MOVED_TO_TAG = 'A'
  */
 export const ARCHIVED_FIELD = 'archived'
 
+/** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
+const DELETED_FIELD = 'deleted'
+
 /**
  * The field, and the root tag seeding it, that holds a file's one-line summary,
  * whatever its kind — SPEC §6.12.
@@ -1618,18 +1621,18 @@ const BARE_FILE_MANIFEST: Manifest = {
       id: 'delete',
       label: 'Delete',
       description:
-        'Delete this file. Where the relay keeps topics in order it is marked deleted, by anyone in its team, ' +
-        'stays on its lists and can be restored; elsewhere the relay is asked to delete it and decides — only ' +
-        'its author, or the owner of an agent that wrote it, may. Its comments stay as separate events.',
+        'Delete this file, or bring a deleted one back: `true` deletes, an empty value restores. Anyone in its ' +
+        'team may. A deleted file stays on its lists, leaves every read of them and can be restored; its ' +
+        'comments stay as separate events.',
       effect: 'destructive',
       appliesTo: [String(KIND_BARE_FILE)],
       /*
-        `listed`, as `create-file` on a Folder is (INT-12): a file put in a
-        Folder's state by a declaration is taken out of it by one. Without it a
-        consumer following declarations deleted the file and left its row in
-        every Folder that listed it — FOL-48's failure.
+        A `deleted` change (SPEC §6.5, §7.3): every relay keeps topics in
+        order and refuses a `kind:5` of one (`delete-by-field`).
+        why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
       */
-      emits: { kind: KIND_DELETION, listed: true },
+      emits: { kind: 1851, field: DELETED_FIELD },
+      input: { type: 'string', enum: DELETED_FIELD },
     },
   ],
   vocabularies: {
@@ -1637,6 +1640,10 @@ const BARE_FILE_MANIFEST: Manifest = {
     [ARCHIVED_FIELD]: [
       { value: '', label: 'Active', colour: 'neutral' },
       { value: 'true', label: 'Archived', colour: 'muted' },
+    ],
+    [DELETED_FIELD]: [
+      { value: '', label: 'Not deleted', colour: 'neutral' },
+      { value: 'true', label: 'Deleted', colour: 'muted' },
     ],
   },
 }
@@ -3921,8 +3928,6 @@ function buildObject(args: {
   return object
 }
 
-/** The field a file is deleted by (SPEC §6.5): `true` deletes it, the empty value restores it. */
-const DELETED_FIELD = 'deleted'
 /** A file's change (§6.2): what a Delete on a file kept in order is written as, whatever a listing names. */
 const KIND_FILE_CHANGE = 1851
 
@@ -5937,7 +5942,8 @@ function childAddressOf(event: SignedEvent): string | undefined {
 function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<string, unknown>[] {
   const { childFilter, resolved, pointer } = plan
   const records = resolved.manifest.records
-  if (!childFilter || !records) return []
+  // Children kept in order are read by the list read whether or not their app folds anything.
+  if (!childFilter || (!records && !plan.childrenOpened)) return []
   if (!answered.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)) {
     return []
   }
@@ -5953,6 +5959,7 @@ function childChangeFilters(plan: ObjectPlan, answered: SignedEvent[]): Record<s
     why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/opening-a-file-reads-its-current-text-not-its-history.md
   */
   if (plan.childrenOpened) return listReadFilters(addresses.flatMap((address) => addressPointerOf(address) ?? []))
+  if (!records) return []
   const roots = new Map<string, string[]>()
   for (const address of movedIn) {
     // A `d` may itself hold ':' — everything after the pubkey is the identifier.
@@ -7074,7 +7081,8 @@ export function buildActionEvent(args: ActionEventArgs): UnsignedActionEvent | s
  * relay keeps every file in order and refuses a `kind:5` on one.
  * That change marks the file only — nothing is taken off a team's list — and
  * a restore is the same field set back to empty (`setDeleted`). A Delete
- * declared as the `deleted` field is already a change, built as one.
+ * declared as the `deleted` field is already a change, built as one: `true`
+ * deletes, the empty value restores.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
  */

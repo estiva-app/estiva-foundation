@@ -12,13 +12,17 @@ import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildActionEvent, conversationsOf, threadsOf, type QueryFn } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const SHIP = 'b38fd2687b17bbde2e8079577cba601936acfe1b731d2d2ba7cdef29a063db46'
 const CATH = 'a8a7d739dda599143ec2e88a1c3b2d69808cd2a50001179c786f51d00dc3c697'
 const FOLDER = '85db5b59-9e49-4ea1-8e93-3d2a2d78c048'
 const ISSUE = 30851
 const COMMENT = 1111
-const ADDRESS = `${ISSUE}:${SHIP}:d68a8c78-5ec7-4652-b236-89ab57ac5b1e`
+const FILE_ID = 'd68a8c78-5ec7-4652-b236-89ab57ac5b1e'
+const ADDRESS = `${ISSUE}:${SHIP}:${FILE_ID}`
+/** The file by its id as well (§6.4): its `O` and its type, beside the address. */
+const ROOT_ID = [['O', FILE_ID], ['K', 'osnova.issue']]
 
 let seq = 0
 const event = (partial: Partial<SignedEvent> & { kind: number }): SignedEvent => ({
@@ -86,9 +90,15 @@ const markedNested = event({
 
 let calls: Record<string, unknown>[][] = []
 function relayOver(world: SignedEvent[]): QueryFn {
+  const read = withListRead(matchingIn(world), world)
   return async (filters) => {
     calls.push(filters)
-    return world.filter((e) =>
+    return read(filters)
+  }
+}
+function matchingIn(world: SignedEvent[]) {
+  return async (filters: Record<string, unknown>[]) =>
+    world.filter((e) =>
       filters.some((f) => {
         if (f.ids && !(f.ids as string[]).includes(e.id)) return false
         if (f.kinds && !(f.kinds as number[]).includes(e.kind)) return false
@@ -101,7 +111,6 @@ function relayOver(world: SignedEvent[]): QueryFn {
         return true
       }),
     )
-  }
 }
 const query = () => relayOver([manifest, root, other, shipReply, nipReply, nested, markedNested])
 
@@ -183,6 +192,7 @@ describe('buildActionEvent({ replyTo }) writes NIP-22’s reply, not a second to
       ['A', ADDRESS],
       ['K', String(ISSUE)],
       ['P', SHIP],
+      ...ROOT_ID,
       // The immediate parent is the comment: its id, its kind, its author.
       ['e', root.id],
       ['k', String(COMMENT)],
@@ -197,7 +207,7 @@ describe('buildActionEvent({ replyTo }) writes NIP-22’s reply, not a second to
     const quote = ['quote', 'first words', 'last words']
     const built = buildActionEvent({ ...base, replyTo: { id: root.id, kind: COMMENT, author: SHIP, place: [['A', ADDRESS], block, ['p', CATH], quote] } })
     assert.ok(typeof built !== 'string', String(built))
-    assert.deepEqual(built.tags, [['A', ADDRESS], ['K', String(ISSUE)], ['P', SHIP], ['e', root.id], ['k', String(COMMENT)], ['p', SHIP], block, quote, ['h', FOLDER]])
+    assert.deepEqual(built.tags, [['A', ADDRESS], ['K', String(ISSUE)], ['P', SHIP], ...ROOT_ID, ['e', root.id], ['k', String(COMMENT)], ['p', SHIP], block, quote, ['h', FOLDER]])
   })
 
   it('copies no place onto a reply to a Ship kind:9, which has none', () => {
@@ -217,8 +227,8 @@ describe('buildActionEvent({ replyTo }) writes NIP-22’s reply, not a second to
     const built = buildActionEvent(base)
     assert.ok(typeof built !== 'string')
     assert.deepEqual(built.tags, [
-      ['A', ADDRESS], ['K', String(ISSUE)], ['P', SHIP],
-      ['a', ADDRESS], ['k', String(ISSUE)], ['p', SHIP],
+      ['A', ADDRESS], ['K', String(ISSUE)], ['P', SHIP], ...ROOT_ID,
+      ['a', ADDRESS], ['k', String(ISSUE)], ['o', FILE_ID], ['k', 'osnova.issue'], ['p', SHIP],
       ['h', FOLDER],
     ])
   })

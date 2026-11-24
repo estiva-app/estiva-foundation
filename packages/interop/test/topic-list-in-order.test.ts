@@ -15,7 +15,7 @@ import {
   planListInTopic,
   planPutBackInTopic,
   planRemoveFromTopic,
-  prevsAfterSwitch,
+  openFile,
   topicList,
   writeChange,
   type QueryFn,
@@ -102,10 +102,12 @@ const send = (relay: Relay, by: string, at: number, file: string, listed: boolea
   })
 
 /** What a tab that has not read the list yet follows for one file: its entry, or the topic's first record. */
-const entryPrev = async (relay: Relay, file: string) =>
-  (await prevsAfterSwitch(relay.query, { kind: 30840, pubkey: QA1, d: TOPIC_D }, [listsField(file)]))![listsField(file)]
+const entryPrev = async (relay: Relay, file: string) => {
+  const topic = await openFile(relay.query, { kind: 30840, pubkey: QA1, d: TOPIC_D }, { text: false })
+  return topic!.fields[listsField(file)]?.id ?? topic!.root.id
+}
 
-const listedOn = async (relay: Relay) => (await topicList(relay.query, TOPIC, { listRead: true })).map((f) => f.file).sort()
+const listedOn = async (relay: Relay) => (await topicList(relay.query, TOPIC)).map((f) => f.file).sort()
 
 describe('adding to and taking off a topic kept in order — §6.13, §6.14', () => {
   it('two people adding different files from copies of the same age both land, each after the topic’s first record', async () => {
@@ -130,7 +132,7 @@ describe('adding to and taking off a topic kept in order — §6.13, §6.14', ()
     const relay = orderedRelay()
     const added = await send(relay, QA1, MS, PAGE, true, await entryPrev(relay, PAGE))
     assert.ok(added.ok)
-    const [file] = await topicList(relay.query, TOPIC, { listRead: true })
+    const [file] = await topicList(relay.query, TOPIC)
     assert.equal(file.prev.lists, added.id)
     const off = await send(relay, QA2, MS + 1_000, PAGE, false, file.prev.lists!)
     assert.ok(off.ok, JSON.stringify(off))
@@ -142,7 +144,7 @@ describe('adding to and taking off a topic kept in order — §6.13, §6.14', ()
     const relay = orderedRelay()
     const added = await send(relay, QA1, MS, PAGE, true, await entryPrev(relay, PAGE))
     assert.ok(added.ok)
-    const [stale] = await topicList(relay.query, TOPIC, { listRead: true })
+    const [stale] = await topicList(relay.query, TOPIC)
     const off = await send(relay, QA2, MS + 1_000, PAGE, false, added.id)
     assert.ok(off.ok)
     const back = await send(relay, QA2, MS + 2_000, PAGE, true, off.id)
@@ -157,22 +159,12 @@ describe('adding to and taking off a topic kept in order — §6.13, §6.14', ()
     const relay = orderedRelay()
     const added = await send(relay, QA1, MS, PAGE, true, await entryPrev(relay, PAGE))
     assert.ok(added.ok)
-    const [file] = await topicList(relay.query, TOPIC, { listRead: true })
+    const [file] = await topicList(relay.query, TOPIC)
     const off = await send(relay, QA1, MS + 1_000, PAGE, false, file.prev.lists!)
     assert.ok(off.ok)
     const undo = planPutBackInTopic(QA1, MS + 2_000, { topic: holder, file, after: null, listsPrev: off.id })
     const relisted = await relay.publish(sign(undo.relist))
     assert.ok(relisted.ok, JSON.stringify(relisted))
     assert.deepEqual(await listedOn(relay), [PAGE])
-  })
-})
-
-describe('where topics are not kept in order', () => {
-  it('an entry names no change it follows, as every relay and reader took it before', () => {
-    const [entry] = planListInTopic(QA1, MS, { topic: holder, file: PAGE })
-    assert.deepEqual(
-      entry.tags.map((t) => t[0]),
-      ['a', 'O', 'K', 'field', 'value', 'h', 'ts', 'o'],
-    )
   })
 })
