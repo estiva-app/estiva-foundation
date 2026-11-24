@@ -5,9 +5,10 @@ Every entry says whether an app that mounts the box has to change its `host`.
 ## 0.3.1 — 2026-11-24
 
 **The field stays the same field when the third word makes it a prompt (KIN-7
-fix).** 0.3.0 wrapped only the prompt's face, so the third word, and deleting
-it, remounted the field: focus and the element were lost mid-typing. Peek's
-suite caught it before any app took 0.3.0. No host has to change.
+fix).** 0.3.0 wrapped only the prompt's face, so the third word, deleting it,
+and going into Draft a reply or back remounted the field: focus and the element
+were lost mid-typing. One wrapper now holds every face. Peek's suite caught it
+before any app took 0.3.0. No host has to change.
 
 ## 0.3.0 — 2026-11-24
 
