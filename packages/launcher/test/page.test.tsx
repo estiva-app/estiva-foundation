@@ -134,6 +134,49 @@ describe('an answer about a page can be turned into what the app offers', () => 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
 
+  it('hands the cited parts in the order the answer first cites them, not by their numbers', async () => {
+    const answerActions = vi.fn<NonNullable<LauncherHost['answerActions']>>(() => [{ id: 'insert', label: 'Insert into the page', run: () => true }])
+    const { ask } = mount(withModel(async () => 'Ravi asked who writes the FAQ [2]. The date is open [1][2].', { answerActions }))
+
+    ask('what is still open on this page')
+    await waitFor(() => expect(optionNamed('Insert into the page')).toBeTruthy())
+
+    expect(answerActions.mock.calls.at(-1)![0].cited.map((m) => m.id)).toEqual(['comment-1', 'block-1'])
+  })
+
+  it('hands no cited part when the answer cites none, so the app does not act on a part it did not use', async () => {
+    const answerActions = vi.fn<NonNullable<LauncherHost['answerActions']>>(() => [{ id: 'insert', label: 'Insert into the page', run: () => true }])
+    const { ask } = mount(withModel(async () => 'The page does not say.', { answerActions }))
+
+    ask('what is still open on this page')
+    await waitFor(() => expect(optionNamed('Insert into the page')).toBeTruthy())
+
+    expect(answerActions.mock.calls.at(-1)![0].cited).toEqual([])
+  })
+
+  it('keeps the box and says so when the app’s action throws', async () => {
+    const { ask, onClose } = mount(
+      withModel(async () => 'The date is open [1].', {
+        answerActions: () => [
+          {
+            id: 'insert',
+            label: 'Insert into the page',
+            run: () => {
+              throw new Error('editor gone')
+            },
+          },
+        ],
+      }),
+    )
+
+    ask('what is still open on this page')
+    await waitFor(() => expect(optionNamed('Insert into the page')).toBeTruthy())
+    fireEvent.click(optionNamed('Insert into the page')!)
+
+    await waitFor(() => expect(screen.getByTestId('answer').textContent).toContain('Insert into the page did not work.'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('keeps the box and the answer, and says so, when the app could not do it', async () => {
     const { ask, onClose } = mount(
       withModel(async () => 'The date is open [1].', { answerActions: () => [{ id: 'insert', label: 'Insert into the page', run: () => false }] }),

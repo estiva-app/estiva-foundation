@@ -1204,7 +1204,7 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
                   : null,
                 unreachable
                   ? opened?.kind === 'page'
-                    ? `That ${part.one} could not be shown on the page.`
+                    ? 'That part could not be shown on the page.'
                     : 'That message is not loaded in the thread — scroll up to load earlier messages.'
                   : null,
                 actionFailed ? `${actionFailed} did not work. The answer is still here.` : null,
@@ -1245,8 +1245,12 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
             ]
           : []
       // What the app can turn the answer into: a comment, a block in the page (Leaf; Miky, KIN-5 kickoff).
-      if (answer && request && host.answerActions) {
-        const turnedInto = { text: answer.text.replace(/\s*\[\d+\]/g, ''), cited: answer.sources.map((s) => s.message) }
+      // Not once the question was changed: the answer on screen is to the old one.
+      if (answer && request && host.answerActions && !changed) {
+        // In the order the answer first cites them; an answer that cites nothing cites nothing, not every part read.
+        const firstCited = [...new Set([...answer.text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]
+        const cited = firstCited.flatMap((n) => answer.sources.find((s) => s.n === n)?.message ?? [])
+        const turnedInto = { text: answer.text.replace(/\s*\[\d+\]/g, ''), cited }
         for (const action of host.answerActions(turnedInto)) {
           next.push({
             id: `answer-${action.id}`,
@@ -1254,7 +1258,10 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
             ...(action.description ? { description: action.description } : {}),
             ...(action.icon ? { icon: action.icon } : {}),
             onSelect: () => {
-              void Promise.resolve(action.run()).then((done) => (done ? onClose() : setActionFailed(action.label)))
+              void Promise.resolve()
+                .then(() => action.run())
+                .catch(() => false)
+                .then((done) => (done ? onClose() : setActionFailed(action.label)))
             },
           })
         }
