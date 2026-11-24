@@ -1828,7 +1828,91 @@ function bareFileOpenedBy(opener: Manifest, template: string): ResolvedManifest 
  * containment, and the bare file's opener below — are the two that cannot ask
  * by kind.
  */
-const HANDLER_SWEEP_LIMIT = 50
+const HANDLER_SWEEP_LIMIT = 100
+
+/**
+ * How many recommendations (`kind:31989`) a sweep asks for. One per author and
+ * kind an author has chosen an app for; production held one on 2026-11-24.
+ */
+const RECOMMENDATION_SWEEP_LIMIT = 500
+
+/**
+ * One sweep of a NIP-89 kind, as a {@link ProjectionCache} keeps it: every
+ * event it answered, and whether that is all of them — it came back short of
+ * its limit, so a question by kind or author would find nothing it lacks.
+ */
+interface HandlerSweep {
+  readonly sweep: true
+  readonly events: readonly SignedEvent[]
+  readonly complete: boolean
+}
+
+/** A manifest sweep that answered nothing: not remembered, so the next resolve asks again. */
+const EMPTY_SWEEP = Symbol('empty manifest sweep')
+
+/**
+ * ## Every manifest, asked once (THE-4)
+ *
+ * The manifest questions were asked per reader and per `kind:pubkey`: one
+ * Desk reopen as Miky sent the full sweep five times (the bare file's opener
+ * under two keys, the creators, every Folder read by containment, Peek's URL
+ * shapes) and each app's `#k` claim once per author whose files were on
+ * screen — 20 or so questions for four manifests and 17 KB (2026-11-24),
+ * against a relay that allows 50 questions per 5 s. So with a cache the sweep
+ * is read once, shared by a reader that asks while it is in flight, and the
+ * claims are answered from it while it is complete. An empty sweep is not
+ * remembered: a relay answering no manifest at all is one to ask again, which
+ * is what Peek's own read did.
+ *
+ * Without a cache every reader asks, as before.
+ */
+async function handlerSweepOf(kind: number, limit: number, query: QueryFn, cache?: ProjectionCache): Promise<HandlerSweep> {
+  const read = async (): Promise<HandlerSweep> => {
+    const events = await query([{ kinds: [kind], limit }])
+    if (events.length === 0 && kind === KIND_HANDLER_INFORMATION) throw EMPTY_SWEEP
+    return { sweep: true, events, complete: events.length < limit }
+  }
+  try {
+    return await throughCache(cache, `sweep:${kind}`, read)
+  } catch (error) {
+    if (error === EMPTY_SWEEP) return { sweep: true, events: [], complete: false }
+    throw error
+  }
+}
+
+/**
+ * Every app's published manifest (`kind:31990`), read once per `cache` and
+ * shared with every resolve that uses the same cache: the sweep a resolve, a
+ * Folder read and a link reader all ask. Newest first, as the relay answers.
+ * Without a cache, one question each call.
+ */
+export async function readAllManifests(query: QueryFn, cache?: ProjectionCache): Promise<readonly SignedEvent[]> {
+  return (await handlerSweepOf(KIND_HANDLER_INFORMATION, HANDLER_SWEEP_LIMIT, query, cache)).events
+}
+
+const newestFirst = (a: SignedEvent, b: SignedEvent) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+
+/**
+ * The manifests claiming `kind`, newest first, at most 20 — what the `#k`
+ * question answers — from the cached sweep when it holds every manifest.
+ */
+async function claimsFor(kind: string, query: QueryFn, cache?: ProjectionCache): Promise<SignedEvent[]> {
+  if (cache) {
+    const all = await handlerSweepOf(KIND_HANDLER_INFORMATION, HANDLER_SWEEP_LIMIT, query, cache)
+    if (all.complete) return all.events.filter((e) => e.tags.some((t) => t[0] === 'k' && t[1] === kind)).sort(newestFirst).slice(0, 20)
+  }
+  return query([{ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }])
+}
+
+/** The author's newest recommendation for `kind`, as its own question answers, from the cached sweep when complete. */
+async function recommendationFor(pointer: AddressPointer, query: QueryFn, cache?: ProjectionCache): Promise<SignedEvent[]> {
+  const kind = String(pointer.kind)
+  if (cache) {
+    const all = await handlerSweepOf(KIND_HANDLER_RECOMMENDATION, RECOMMENDATION_SWEEP_LIMIT, query, cache)
+    if (all.complete) return all.events.filter((e) => e.pubkey === pointer.pubkey && tagValue(e, 'd') === kind).sort(newestFirst).slice(0, 1)
+  }
+  return query([{ kinds: [KIND_HANDLER_RECOMMENDATION], authors: [pointer.pubkey], '#d': [kind], limit: 1 }])
+}
 
 /**
  * The app that renders one aspect of every file, by its manifest's `aspect`.
@@ -1859,7 +1943,7 @@ async function resolveAspectApp(
   entity: 'naddr' | 'nevent' = 'naddr',
 ): Promise<ResolvedManifest | null> {
   return throughCache(cache, `aspect:${aspect}:${entity}`, async () => {
-    const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+    const handlers = await readAllManifests(query, cache)
     for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
       const manifest = parseManifest(candidate)
       if (manifest?.aspect !== aspect) continue
@@ -1905,7 +1989,7 @@ async function throughCache<T extends CachedManifests>(
  * for {@link creatorsOn}, every manifest declaring a creation on one kind
  * (MAN-8). Still only manifests, which is the whole of the cache's promise.
  */
-type CachedManifests = ResolvedManifest | null | readonly ResolvedManifest[]
+type CachedManifests = ResolvedManifest | null | readonly ResolvedManifest[] | HandlerSweep
 
 /**
  * A memo for the half of a resolve that does not change between refreshes.
@@ -2063,12 +2147,15 @@ export async function resolveManifest(
   if (pointer.kind === KIND_CHANNEL_METADATA) {
     return folderManifest(await resolveAspectApp('conversation', query, cache, 'naddr').catch(() => null))
   }
-  return throughCache(cache, `${pointer.kind}:${pointer.pubkey}`, () => resolveManifestUncached(pointer, query))
+  return throughCache(cache, `${pointer.kind}:${pointer.pubkey}`, () => resolveManifestUncached(pointer, query, cache))
 }
 
 async function resolveManifestUncached(
   pointer: AddressPointer,
   query: QueryFn,
+  // Only for the sweeps (THE-4): with one, the claim and the recommendation
+  // come from the session's two sweeps, not a question per `kind:pubkey`.
+  cache?: ProjectionCache,
 ): Promise<ResolvedManifest | null> {
   const parse = parseManifest
   const addressOf = (event: SignedEvent) =>
@@ -2079,20 +2166,9 @@ async function resolveManifestUncached(
   // ~0.5 s of a Leaf page opened by its link. A recommended manifest usually
   // claims the kind too, so the claim answers the recommendation's second read
   // as well. The claim's failure counts only when it is the answer.
-  const claim = query([
-    { kinds: [KIND_HANDLER_INFORMATION], '#k': [String(pointer.kind)], limit: 20 },
-  ])
+  const claim = claimsFor(String(pointer.kind), query, cache)
   void claim.catch(() => {})
-  const recommended = await query(
-    [
-      {
-        kinds: [KIND_HANDLER_RECOMMENDATION],
-        authors: [pointer.pubkey],
-        '#d': [String(pointer.kind)],
-        limit: 1,
-      },
-    ],
-  )
+  const recommended = await recommendationFor(pointer, query, cache)
   const manifestAddr = recommended[0]?.tags.find((t) => t[0] === 'a')?.[1]
   if (manifestAddr) {
     const [kind, pubkey, ...rest] = manifestAddr.split(':')
@@ -2161,7 +2237,7 @@ async function resolveManifestUncached(
  */
 async function creatorsOn(kind: number, query: QueryFn, cache?: ProjectionCache): Promise<readonly ResolvedManifest[]> {
   return throughCache(cache, `creators:${kind}`, async () => {
-    const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+    const handlers = await readAllManifests(query, cache)
     const creators: ResolvedManifest[] = []
     const claimed = new Set<number>()
     for (const candidate of [...handlers].sort((a, b) => b.created_at - a.created_at)) {
@@ -4658,9 +4734,13 @@ export async function seedManifests(pointers: Iterable<AddressPointer>, query: Q
   const claims = kinds.map((kind) => ({ kinds: [KIND_HANDLER_INFORMATION], '#k': [kind], limit: 20 }))
   // One filter each, as `resolveManifestUncached` asks: an author's older versions never crowd out another author's recommendation.
   const recommendations = authors.flatMap((author) => kinds.map((kind) => ({ kinds: [KIND_HANDLER_RECOMMENDATION], authors: [author], '#d': [kind], limit: 1 })))
-  const events = await query([...claims, ...recommendations])
+  // The session's two sweeps answer it when both hold everything (THE-4); both are asked before the first `await`.
+  const [manifests, recommended] = await Promise.all([
+    handlerSweepOf(KIND_HANDLER_INFORMATION, HANDLER_SWEEP_LIMIT, query, cache),
+    handlerSweepOf(KIND_HANDLER_RECOMMENDATION, RECOMMENDATION_SWEEP_LIMIT, query, cache),
+  ])
+  const events = manifests.complete && recommended.complete ? [...manifests.events, ...recommended.events] : await query([...claims, ...recommendations])
   const addressOf = (event: SignedEvent) => `${event.kind}:${event.pubkey}:${tagValue(event, 'd') ?? ''}`
-  const newestFirst = (a: SignedEvent, b: SignedEvent) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   for (const [key, pointer] of wanted) {
     const kind = String(pointer.kind)
     // As the claim's own request answers: its newest 20.
@@ -6413,8 +6493,7 @@ export async function resolveFolderProject(
   //    and the only non-app-specific source for them is the published handlers.
   //    This pass is discovery only — the manifest that actually *renders* the
   //    project is resolved below, recommendation-first, once its author is known.
-  const handlerFilter = [{ kinds: [KIND_HANDLER_INFORMATION], limit: 20 }]
-  const handlers = await query(handlerFilter)
+  const handlers = await readAllManifests(query, cache)
   const containers = new Map<number, { childKind: number; linkTag: string; limit?: number; match?: 'address' | 'identifier' }>()
   let discovered: Manifest | undefined
   for (const event of handlers) {
@@ -8272,7 +8351,7 @@ export async function resolveFolderContents(
       }
     : options.listedOnly
       ? { addresses: [], placed: new Map<string, SignedEvent[]>() }
-      : await addressesByContainment(folder, query)
+      : await addressesByContainment(folder, query, cache)
   const { kinds } = options
   const addresses = kinds
     ? everyAddress.filter((address) => kinds.includes(addressPointerOf(address)?.kind ?? NaN))
@@ -8562,7 +8641,7 @@ export async function resolveDeletedFiles(
   const everyAddress =
     state && tagValue(state, 'd') === folder
       ? await listedAddressesOf(state, query)
-      : (await addressesByContainment(folder, query)).addresses
+      : (await addressesByContainment(folder, query, cache)).addresses
   const files = everyAddress.flatMap((address) => {
     const pointer = addressPointerOf(address)
     return pointer && FILE_KINDS.includes(pointer.kind) ? [{ address, pointer }] : []
@@ -8693,10 +8772,12 @@ const ID_GROUP = 50
 async function addressesByContainment(
   folder: string,
   query: QueryFn,
+  cache?: ProjectionCache,
 ): Promise<{ addresses: string[]; placed: Map<string, SignedEvent[]> }> {
   // Which kinds could be files? Every kind any app declares a projection for.
-  // The only non-app-specific source for a kind number is a published manifest.
-  const handlers = await query([{ kinds: [KIND_HANDLER_INFORMATION], limit: HANDLER_SWEEP_LIMIT }])
+  // The only non-app-specific source for a kind number is a published manifest,
+  // read once per cache (THE-4): every Folder with no state asked it again.
+  const handlers = await readAllManifests(query, cache)
   const manifests = handlers.flatMap((event) => parseManifest(event) ?? [])
   // The bare file is listed by no manifest on the relay — its projection is
   // built in — so it has to be asked for by name, or a folder with no state

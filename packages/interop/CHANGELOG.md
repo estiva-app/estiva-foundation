@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.118.0 — 2026-11-24
+
+**Manifest: no change to what a manifest declares or how it is read. Wire:
+with a `ProjectionCache`, every manifest (`kind:31990`) and every
+recommendation (`kind:31989`) is asked once per cache, in one sweep each, and
+the rest is answered from them.** (THE-4.)
+
+- A Desk reopen as Miky asked the full manifest sweep five times (the bare
+  file's opener under two keys, the creators, every Folder read by
+  containment, Peek's URL shapes) and each app's `#k` claim once per author
+  whose files were on screen: about 20 questions for four manifests.
+- `resolveManifest`, `seedManifests`, the opener, the creators,
+  `resolveFolderProject` and a Folder read by containment take the claim and
+  the recommendation from the cached sweeps while each came back short of its
+  limit (100 manifests, 500 recommendations). A sweep at its limit is not
+  taken for all of them: the question by kind or author is asked, as before.
+- A sweep that answers no manifest at all is not remembered.
+- New: `readAllManifests(query, cache?)`, the sweep itself, for a consumer
+  that reads every manifest (Peek's link shapes).
+- Without a cache, every reader asks as before. `resolveFolderProject` and a
+  Folder read by containment now sweep up to 100 manifests, where they asked
+  for 20 and 50.
+
 ## 0.117.0 — 2026-11-24
 
 **Manifest: a Delete declared as a `deleted` field change is a plain change

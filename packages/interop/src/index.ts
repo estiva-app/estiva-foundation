@@ -26,6 +26,7 @@
  */
 export {
   resolveManifest,
+  readAllManifests,
   resolveActingManifest,
   resolveForeignObject,
   resolveForeignObjects,
