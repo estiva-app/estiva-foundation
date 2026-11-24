@@ -6,6 +6,14 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.118.1 — 2026-11-24
+
+**Manifest: no change to what a manifest declares or how it is read. Wire:
+a kind no manifest in the cached sweep claims is asked for by `#k` again, as
+before 0.118.0.** An app published while a cache holds the sweep (an hour in
+Peek) is found the first time one of its files is resolved, not when the sweep
+is next read (THE-4 review).
+
 ## 0.118.0 — 2026-11-24
 
 **Manifest: no change to what a manifest declares or how it is read. Wire:
