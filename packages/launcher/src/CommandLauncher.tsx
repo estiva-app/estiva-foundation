@@ -1545,16 +1545,20 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
 
     const { groups, pending, notes, empty } = firstLevel()
     return (
-      <CommandPaletteSearch
-        query={query}
-        onQueryChange={setQuery}
-        placeholder={placeholder}
-        groups={groups}
-        pending={pending}
-        notes={notes}
-        empty={empty}
-        about={about}
-      />
+      // The same wrapper as the prompt's, so the third word (and deleting it) keeps the very same field: a different
+      // tree here remounts it, and the person typing loses the field mid-word (KIN-7, found by Peek's suite).
+      <div className="contents" onPointerMoveCapture={holdGuess} onKeyDownCapture={holdGuessOnArrow}>
+        <CommandPaletteSearch
+          query={query}
+          onQueryChange={setQuery}
+          placeholder={placeholder}
+          groups={groups}
+          pending={pending}
+          notes={notes}
+          empty={empty}
+          about={about}
+        />
+      </div>
     )
   })()
 

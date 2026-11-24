@@ -216,6 +216,20 @@ describe('a row does not move under the hand reaching for it', () => {
   })
 })
 
+describe('the field is never swapped under the person typing', () => {
+  it('keeps the same focused field when the third word makes it a prompt, and when that word is deleted', async () => {
+    const { field, type } = await mount()
+    await type('launch plan')
+    const before = field()
+    before.focus()
+    await type('launch plan please')
+    expect(field()).toBe(before)
+    expect(document.activeElement).toBe(before)
+    await type('launch plan')
+    expect(field()).toBe(before)
+  })
+})
+
 describe('one suggested action has nothing to be put first', () => {
   it('offers no model download for the guess when there is a single row (Leaf’s New document)', async () => {
     const { model } = stubDecisionModel(passing(() => ({ label: 'x-ask', confidence: 0.9 })), 'downloadable')
