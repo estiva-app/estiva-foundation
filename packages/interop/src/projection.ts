@@ -1622,8 +1622,7 @@ const BARE_FILE_MANIFEST: Manifest = {
       label: 'Delete',
       description:
         'Delete this file, or bring a deleted one back: `true` deletes, an empty value restores. Anyone in its ' +
-        'team may. A deleted file stays on its lists, leaves every read of them and can be restored; its ' +
-        'comments stay as separate events.',
+        'team may. A deleted file no longer shows in its team and can be restored; its comments stay.',
       effect: 'destructive',
       appliesTo: [String(KIND_BARE_FILE)],
       /*

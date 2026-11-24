@@ -12,6 +12,7 @@ import {
   MEMBERS_FIELD,
   PARENT_FIELD,
   asCreateTopic,
+  changeActionFrom,
   creationsFor,
   launcherActionFrom,
   proseSubmission,
@@ -234,6 +235,24 @@ describe('launcherActionFrom — its fields', () => {
       fields: [{ name: 'dueDate', type: 'string', required: false }],
     })!
     expect(action.fields[0].label).toBe('Due date')
+  })
+})
+
+describe('changeActionFrom — a row per field a file lets you set', () => {
+  const topic = { address: `30840:${'a'.repeat(64)}:aaaaaaaa-0000-4000-8000-000000000001`, label: 'Launch' }
+  const options = [
+    { value: '', label: 'Not deleted' },
+    { value: 'true', label: 'Deleted' },
+  ]
+
+  it('offers no picker for a Delete written as its deleted change: it is confirmed on the file’s own menu (ALL-8)', () => {
+    const del: ResolvedAction = { id: 'delete', label: 'Delete', effect: 'destructive', control: 'select', field: 'deleted', options, current: '' }
+    expect(changeActionFrom(del, topic)).toBeNull()
+  })
+
+  it('still offers a status as a picker starting on the value it holds', () => {
+    const status: ResolvedAction = { id: 'set-status', label: 'Set status', control: 'select', field: 'status', options: [{ value: 'todo', label: 'Todo' }, { value: 'done', label: 'Done' }], current: 'done' }
+    expect(changeActionFrom(status, topic)?.fields[0]).toMatchObject({ key: 'status', control: 'enum', defaultValue: 'done' })
   })
 })
 

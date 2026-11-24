@@ -22,6 +22,9 @@ named by its id.** (ALL-8; SPEC §6.4, §6.13.) Needs `@estiva-app/protocol`
   commands, `linkReader().tagsFor` and `linkTagsOf`; `isSwitchRefusal`,
   `prevsAfterSwitch` (open the file and use `prevOf`) and `writeChange`'s
   `base`.
+- An older listing's `kind:5` Delete is built as the `deleted` change on every
+  file kind, a named file's (`30852`) included: pass its `prev`, and for a
+  named file its `type`, or the build refuses.
 - `readTopicActivity` and `readYourTopics` take `times` always: activity comes
   from the times read.
 - A file the list read leaves out (deleted, or not this reader's) is still read

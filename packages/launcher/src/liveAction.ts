@@ -360,6 +360,8 @@ export function changeActionFrom(
 ): LauncherAction | null {
   if (action.control !== 'select' && action.control !== 'pubkey') return null
   if (action.control === 'select' && !action.options?.length) return null
+  // A Delete written as its `deleted` change (SPEC §6.5) is asked with a confirm on the file's own menu, never picked here.
+  if (action.field === 'deleted') return null
 
   const key = action.field ?? 'value'
   const field: FormField = {
