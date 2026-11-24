@@ -378,11 +378,27 @@ const PEEK: LauncherApp = {
 }
 
 /**
+ * Leaf, as the box running in it knows itself (KIN-5). No parent kind: Leaf's manifest declares nothing creatable yet
+ * (KIN-9), so it is never probed, and its New document is the host's own action (`LauncherHost.ownActions`).
+ */
+const LEAF: LauncherApp = {
+  id: 'leaf',
+  label: 'Leaf',
+  description: 'Pages',
+  placeholder: 'Search, or ask about this page',
+  vocabularies: {},
+  actions: [],
+}
+
+/**
  * Every app the launcher knows, with the one it runs in marked `isHost` (KIN-4).
  *
  * Order matters: Ship first, matching the ask that started this (Cmd+K forms
  * for Ship, "and I don't see why we wouldn't expose Peek's actions as well").
  */
+
 export function launcherApps(hostId: string): LauncherApp[] {
-  return [SHIP, PEEK].map((app) => (app.id === hostId ? { ...app, isHost: true } : app))
+  // Leaf is listed only where it is the host: elsewhere it would be an app with nothing to offer, until KIN-9.
+  const apps = hostId === LEAF.id ? [SHIP, PEEK, LEAF] : [SHIP, PEEK]
+  return apps.map((app) => (app.id === hostId ? { ...app, isHost: true } : app))
 }
