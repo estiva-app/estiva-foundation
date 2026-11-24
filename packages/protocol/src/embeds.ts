@@ -56,16 +56,15 @@ export function embedTag(value: string, layout: EmbedLayout): string[] {
  * a layout this writer does not know carried as it was written (`written`).
  * Throws on a value that is neither an address nor an event id, or on a
  * layout that is neither known nor carried, rather than write a tag readers skip.
- * An address whose type is in `inOrder` (`RelayFileReads.inOrder`) is written
- * as the file's id.
+ * An address of one of the four base types is written as the file's id.
  */
-export function embedTagsOf(set: readonly Embed[], inOrder: readonly string[] = []): string[][] {
+export function embedTagsOf(set: readonly Embed[]): string[][] {
   const seen = new Set<string>()
   return set.flatMap((e) => {
     const normal = normalise(e.value)
     if (!normal) throw new Error(`not an address or event id: ${e.value}`)
-    // A file whose type the relay keeps in order is carded by its id (§13.6.2).
-    const value = fileIdFormOf(inOrder, normal)?.id ?? normal
+    // A file is carded by its id (§13.6.2).
+    const value = fileIdFormOf(normal)?.id ?? normal
     if (e.layout !== 'compact' && e.layout !== 'detailed' && e.layout !== 'none') throw new Error(`not an embed layout: ${String(e.layout)}`)
     if (seen.has(fileKeyOf(value))) return []
     seen.add(fileKeyOf(value))

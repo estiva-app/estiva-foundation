@@ -15,6 +15,12 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveForeignObject, isClosedStatus } from '../dist/index.js'
+import { withListRead } from './list-read.mjs'
+
+/** The fake relay, answering the list and open reads as the relay does (§6.13). */
+function relay(events) {
+  return withListRead(plainRelay(events), events)
+}
 
 const SHIP = 'a'.repeat(64)
 const PROJECT = 30850
@@ -31,7 +37,7 @@ const event = (partial) => ({
   ...partial,
 })
 
-const relay = (events) => async (filters) =>
+const plainRelay = (events) => async (filters) =>
   events.filter((e) =>
     filters.some((f) => {
       if (f.kinds && !f.kinds.includes(e.kind)) return false

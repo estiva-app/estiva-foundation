@@ -36,6 +36,8 @@ const RELAY = 'c4d0b5b1a3f1e2d4c6b8a0f2e4d6c8b0a2f4e6d8c0b2a4f6e8d0c2b4a6f8e0d2'
 const ISSUE = `30851:${PK}:f78c3b96-2a3b-4d92-910a-ac25aba672cd`
 const PROJECT = `30850:${PK}:15e9b50a-825a-4537-8b4a-df46efb9c7e4`
 const PAGE = `30842:${PK}:0b8e7a4c-5d61-4f0e-9a43-2f7c1d3e8b90`
+/** A file's card names it by its id (§13.6.2): every relay keeps the four base types in order. */
+const idOf = (address: string) => address.split(':')[2]
 const FOLDER = `39000:${RELAY}:05bebd5b-b699-4bd4-af50-f5377df0fd67`
 const MESSAGE = 'd064ad5af7aa5810775d78ef18c8f55efd58e7434e8a93face9c4a860195573a'
 const ref = (address: string) => `nostr:${addrToNaddr(address)}`
@@ -234,26 +236,16 @@ describe('C26 — the card replaces the row (§13.6.2)', () => {
   it('✕ on one of two old compact cards keeps the other', () => {
     const set: Embed[] = [{ value: ISSUE, layout: 'compact' }, { value: PROJECT, layout: 'compact' }]
     const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `${ref(ISSUE)} and ${ref(PROJECT)}`, embeds: withCard(set, ISSUE, 'none') })
-    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(ISSUE, 'none'), embedTag(PROJECT, 'compact')])
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(idOf(ISSUE), 'none'), embedTag(idOf(PROJECT), 'compact')])
     const cards = cardsIn(embedsOf(edit), tree(edit.content)).filter((e) => e.layout !== 'none')
     assert.deepEqual(cards, [{ value: PROJECT, layout: 'compact' }])
   })
 
-  it('once projects are kept in order, a project\'s card is written by its id and still draws under its reference; an issue\'s keeps its address (ALO-4)', () => {
-    const set: Embed[] = [{ value: ISSUE, layout: 'compact' }, { value: PROJECT, layout: 'detailed' }]
-    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `${ref(ISSUE)} and ${ref(PROJECT)}`, embeds: set, inOrder: ['osnova.project'] })
-    const ID = PROJECT.split(':')[2]
-    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(ISSUE, 'compact'), embedTag(ID, 'detailed')])
-    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)).map((e) => e.layout), ['compact', 'detailed'])
-  })
-
-  it('once pages are kept in order, a page\'s card is written by its id and still draws under its reference (ALL-3)', () => {
-    const set: Embed[] = [{ value: PAGE, layout: 'detailed' }]
-    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: ref(PAGE), embeds: set, inOrder: ['osnova.document'] })
-    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(PAGE.split(':')[2], 'detailed')])
-    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)), [{ value: PAGE, layout: 'detailed' }])
-    const before = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: ref(PAGE), embeds: set, inOrder: ['osnova.issue'] })
-    assert.deepEqual(before.tags.filter((t) => t[0] === 'embed'), [embedTag(PAGE, 'detailed')], 'by its address before its switch')
+  it('a file\'s card is written by its id and still draws under its reference (ALO-4, ALL-3)', () => {
+    const set: Embed[] = [{ value: ISSUE, layout: 'compact' }, { value: PROJECT, layout: 'detailed' }, { value: PAGE, layout: 'detailed' }]
+    const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `${ref(ISSUE)} and ${ref(PROJECT)} and ${ref(PAGE)}`, embeds: set })
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(idOf(ISSUE), 'compact'), embedTag(idOf(PROJECT), 'detailed'), embedTag(idOf(PAGE), 'detailed')])
+    assert.deepEqual(cardsIn(embedsOf(edit), tree(edit.content)).map((e) => e.layout), ['compact', 'detailed', 'detailed'])
   })
 })
 
@@ -292,9 +284,9 @@ describe('C27 — the default card (§13.6.2)', () => {
   it('an edit carries a layout this writer does not know as it was written', () => {
     const set = embedsOf({ tags: [['embed', PROJECT, 'gallery'], ['embed', ISSUE, 'compact']] })
     const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: withCard(set, ISSUE, 'none') })
-    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [['embed', PROJECT, 'gallery'], embedTag(ISSUE, 'none')])
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [['embed', idOf(PROJECT), 'gallery'], embedTag(idOf(ISSUE), 'none')])
     const removed = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: 'x', embeds: [{ value: PROJECT, layout: 'none', written: 'gallery' }] })
-    assert.deepEqual(removed.tags.filter((t) => t[0] === 'embed'), [embedTag(PROJECT, 'none')], 'a ✕ on it writes none, not the old layout')
+    assert.deepEqual(removed.tags.filter((t) => t[0] === 'embed'), [embedTag(idOf(PROJECT), 'none')], 'a ✕ on it writes none, not the old layout')
   })
 
   it('an edit adds it only for a file the previous body did not name, and carries the whole set', () => {
@@ -304,7 +296,7 @@ describe('C27 — the default card (§13.6.2)', () => {
     assert.equal(value, ISSUE)
     const set: Embed[] = [{ value: MESSAGE, layout: 'none' }]
     const edit = buildEdit(PK, 1_760_000_000_000, { channelUuid: 'f', targetEventId: MESSAGE, body: `now ${ref(ISSUE)}`, embeds: withCard(set, value!, 'detailed') })
-    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(MESSAGE, 'none'), embedTag(ISSUE, 'detailed')])
+    assert.deepEqual(edit.tags.filter((t) => t[0] === 'embed'), [embedTag(MESSAGE, 'none'), embedTag(idOf(ISSUE), 'detailed')])
 
     // ✕ before sending wrote no tag: fixing a word leaves the card off.
     assert.equal(defaultCardOf(named(`the ${ref(ISSUE)}`), [], { previous: named(`teh ${ref(ISSUE)}`) }), undefined)

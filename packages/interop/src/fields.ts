@@ -31,7 +31,6 @@ import {
   type SignedEvent,
   type UnsignedEvent,
 } from '@estiva-app/protocol'
-import { refusalCode } from './folders.js'
 import { SUMMARY_FIELD, inTargetFolder, stageTagOf, targetFolders, type QueryFn, type Stage } from './projection.js'
 
 /** The change event every Estiva app writes (SPEC §6.2). */
@@ -301,47 +300,6 @@ export function textOf(event: SignedEvent): MergeText | undefined {
   return { value, ...(format ? { format } : {}) }
 }
 
-/**
- * The relay's refusal of a change that names no change it follows, on a type
- * it keeps in order (§6.13): it has made the switch since this tab read its
- * NIP-11. Read it again, switch, and write the change again in order
- * ({@link prevsAfterSwitch}): the person sees nothing (Miky, 9 Nov, ALO-8).
- *
- * Decided by its reason code, `requires-prev` (§3.3), or, from a relay that
- * predates the code (a project's refusal until ISS-8), by its words after
- * `invalid:`; never on what follows them, so a relay that adds what to do
- * keeps being recognised.
- *
- * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-its-fields-each-kept-in-order-by-the-relay.md
- */
-export function isSwitchRefusal(reason: string | undefined): boolean {
-  if (refusalCode(reason) === 'requires-prev') return true
-  return !!reason && /^invalid: an? \w+ change names the change it follows in prev\b/.test(reason)
-}
-
-/**
- * Each field's `prev` for a change written again after the switch: the
- * field's current change, or the first record's id when it never changed —
- * one open of the file, with its text when the text is among them. A tab from
- * before the switch wrote with no `prev`, which meant "mine is the newest";
- * following the current change keeps that for a field set again. The text
- * also passes the text the tab read as `base` to {@link writeChange}, so
- * words saved since are merged, never written over. A `member:<P>` field
- * names no change it follows (§6.13) and gets no `prev`. Undefined when the
- * file cannot be read.
- *
- * Write again once: a second refusal of the same kind is shown as any refusal.
- */
-export async function prevsAfterSwitch(
-  query: QueryFn,
-  file: { kind: number; pubkey: string; d: string },
-  fields: readonly string[],
-): Promise<Record<string, string> | undefined> {
-  const opened = await openFile(query, file, { text: fields.includes(TEXT_FIELD) })
-  if (!opened) return undefined
-  return Object.fromEntries(fields.filter((f) => !f.startsWith('member:')).map((f) => [f, opened.fields[f]?.id ?? opened.root.id]))
-}
-
 /** What a `conflict:` refusal says (§6.2), as the relay words it. */
 export type Conflict =
   | { kind: 'stale'; field: string; current?: string }
@@ -374,14 +332,6 @@ export interface WriteChangeArgs {
    * last read.
    */
   prev: string
-  /**
-   * For the text: the text the writer read, when it cannot name the change
-   * it came from — a tab that read the file before the switch, writing again
-   * after {@link prevsAfterSwitch}. Where `prev`'s text differs from it,
-   * mine is merged onto `prev`'s by §13.3 before anything is sent, so
-   * someone's newer words are kept.
-   */
-  base?: MergeText
   /**
    * The unsigned change for this value, `prev` and time — `buildActionEvent`
    * bound to the field's action, so the manifest decides its shape and every
@@ -460,22 +410,6 @@ export async function writeChange(args: WriteChangeArgs): Promise<WriteChangeRes
   let base: MergeText | undefined
   let mergedOnto: SignedEvent | undefined
   let last = ''
-
-  if (isText && args.base) {
-    const followed = await byId(args.query, prev)
-    const theirs = followed && textOf(followed)
-    if (!followed || !theirs) return { ok: false, refused: `the text it follows, ${prev}, could not be read to merge onto` }
-    if (theirs.value !== args.base.value || (theirs.format ?? '') !== (args.base.format ?? '')) {
-      const merge = mergeTexts(args.base, theirs, mine)
-      if (merge.asks) return { ok: false, asks: merge.asks, theirs: followed }
-      if (merge.merged.value === theirs.value && (merge.merged.format ?? '') === (theirs.format ?? '')) {
-        return { ok: true, unchanged: true, id: followed.id, mergedOnto: followed }
-      }
-      mergedOnto = followed
-      mine = merge.merged
-    }
-    base = theirs
-  }
 
   for (let attempt = 0; attempt < tries; attempt++) {
     const built = args.build({ value: mine.value, format: mine.format, prev, createdAtMs: Math.max(now(), after) })
@@ -610,13 +544,6 @@ export interface FieldWrite {
 /** What {@link writeChanges} is handed: {@link WriteChangeArgs}, for several fields of one file. */
 export interface WriteChangesArgs extends Omit<WriteChangeArgs, 'field' | 'value' | 'format' | 'prev' | 'build'> {
   fields: readonly FieldWrite[]
-  /**
-   * The types the relay keeps in order (`RelayFileReads.inOrder`). A change
-   * setting several fields is sent only for one of them: a reader older than
-   * interop 0.76.0 folds nothing from a `set`, and the switch is what says
-   * every app reads it (record one-change-may-set-several-fields…).
-   */
-  inOrder: readonly string[]
   /** The unsigned one-field change for one field: `buildActionEvent` bound to that field's action. */
   build: (input: FieldWrite & { createdAtMs: number }) => UnsignedEvent | string
 }
@@ -648,8 +575,9 @@ export async function writeChanges(args: WriteChangesArgs): Promise<WriteChangeR
     const change = combineChanges(built)
     if (typeof change === 'string') return { ok: false, refused: change }
     const type = BASE_TYPE_OF_KIND[change.tags[0][1].split(':').map(Number)[0]]
-    if (!type || !args.inOrder.includes(type)) {
-      return { ok: false, refused: 'Several fields go in one change only once the relay keeps this type in order: write each with writeChange.' }
+    // A named file (30852) is no base type: its fields go one change each.
+    if (!type) {
+      return { ok: false, refused: 'Several fields go in one change only on a file of the four base types: write each with writeChange.' }
     }
     const signed = await args.sign(change)
     const answer = await args.publish(signed)
@@ -732,8 +660,6 @@ export interface CreateFileArgs {
   text?: MergeText
   /** Any other first value that is not on the first record (a status, an assignee), written after the text, with no text. */
   others?: readonly { field: string; value: string }[]
-  /** The types the relay keeps in order (`RelayFileReads.inOrder`): several other values go in one change only for these. */
-  inOrder: readonly string[]
   /** The unsigned one-field change for one field, as {@link WriteChangeArgs.build}: `buildActionEvent` bound to that field's action. */
   build: (input: { field: string; value: string; format?: string; prev: string; createdAtMs: number }) => UnsignedEvent | string
   sign: WriteChangeArgs['sign']
@@ -834,12 +760,11 @@ export async function finishCreating(args: Omit<CreateFileArgs, 'root'>, root: S
 
   const others = args.others ?? []
   const type = BASE_TYPE_OF_KIND[root.kind]
-  if (others.length > 1 && type && args.inOrder.includes(type)) {
+  if (others.length > 1 && type) {
     let together: WriteChangeResult
     try {
       together = await writeChanges({
         ...common,
-        inOrder: args.inOrder,
         fields: others.map((o) => ({ field: o.field, value: o.value, prev: root.id })),
         build: (input) => args.build(input),
       })

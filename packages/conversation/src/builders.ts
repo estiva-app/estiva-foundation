@@ -52,13 +52,11 @@ export function buildComment(
     blockId?: string
     files?: readonly Imeta[]
     tags?: readonly NostrTag[]
-    /** The types the relay keeps in order (`RelayFileReads.inOrder`): a file of one is named by its id too. */
-    inOrder?: readonly string[]
   },
 ): UnsignedEvent {
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.about)
-  const byId = fileIdFormOf(args.inOrder ?? [], args.about)
+  const byId = fileIdFormOf(args.about)
   return {
     pubkey,
     created_at: toNostrSeconds(createdAtMs),
@@ -138,13 +136,11 @@ export function buildReply(
     body: string
     files?: readonly Imeta[]
     tags?: readonly NostrTag[]
-    /** As {@link buildComment}'s: the reply names its file by its id as its comment does. */
-    inOrder?: readonly string[]
   },
 ): UnsignedEvent {
   assertFolder(args.folder)
   const [kind, author] = kindAndAuthor(args.comment.anchor)
-  const byId = fileIdFormOf(args.inOrder ?? [], args.comment.anchor)
+  const byId = fileIdFormOf(args.comment.anchor)
   // Its own file is its `A`/`O`, never a link: not by address, and not by id in an `o` or a `part`.
   const ownId = fileIdOf(args.comment.anchor)
   const earned = (args.tags ?? []).filter(

@@ -298,13 +298,12 @@ export async function readTopicActivity(
   options: {
     nowSeconds?: number
     /**
-     * The relay's times read (SPEC §6.13, `"fields": "times"`), where NIP-11
-     * says `file_list.times` (`relayFileReadsOf`): the listed files' changes
-     * and the files under them are then learnt as times, never as whole
-     * changes and roots. Without it, every change is read whole as before.
+     * The relay's times read (SPEC §6.13, `"fields": "times"`): the listed
+     * files' changes and the files under them are learnt as times, never as
+     * whole changes and roots.
      */
-    times?: TimesFn
-  } = {},
+    times: TimesFn
+  },
 ): Promise<TopicActivity> {
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000)
   const capped = (at: number) => Math.min(at, now)
@@ -343,16 +342,15 @@ export async function readTopicActivity(
     const file = target.address
     const id = fileIdOf(file)
     // Every change carries the file's `a`; its `O` only since 30 Oct 2026. A comment carries `A`, or `O` in its newer form (§6.4).
-    // With the times read, a file's changes are learnt as times (readByTimes), and only its comments are read.
+    // A file's changes are learnt as times (readByTimes), and only its comments are read.
     return [
-      ...(times ? [] : [{ filter: { kinds: [KIND_CHANGE], '#a': [file] }, target, topics: list }]),
       { filter: { kinds: [KIND_COMMENT], '#A': [file] }, target, topics: list, keepsComments },
       ...(id ? [{ filter: { kinds: [KIND_COMMENT], '#O': [id] }, target, topics: list, keepsComments }] : []),
     ]
   }
   const first: Probe[] = []
   // A topic kept in order is learnt from the times read too (readOwnByTimes), never from its every change.
-  const ownByTimes = (address: string) => times !== undefined && FILE_KINDS.includes(kindOf(address) ?? -1) && idOf(address) !== undefined
+  const ownByTimes = (address: string) => FILE_KINDS.includes(kindOf(address) ?? -1) && idOf(address) !== undefined
   for (const topic of topics) {
     const target = { address: topic.address, folder: topic.folder ?? null }
     first.push({ filter: { kinds: [KIND_COMMENT, KIND_MESSAGE], '#A': [topic.address] }, target, topics: [topic.address] })
@@ -364,8 +362,8 @@ export async function readTopicActivity(
   // first page of each file found by the level before, and every probe still
   // open, a page further back. No filter here names a team (`#h`), the only
   // values a relay caps per request, so none is split across requests.
-  if (times) await readByTimes(times)
-  const under = filesUnder(times ? [] : [...listed.keys()])
+  await readByTimes(times)
+  const under = filesUnder([])
   // Each file found under a listed one, as last found, and the topics it has been read for.
   const asFound = new Map<string, ActivityFile>()
   const readFor = new Map<string, Set<string>>()

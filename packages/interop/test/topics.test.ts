@@ -19,6 +19,7 @@ import {
   topicsOfFile,
 } from '../dist/index.js'
 import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const QA1 = 'a'.repeat(64)
 const QA2 = 'b'.repeat(64)
@@ -66,7 +67,7 @@ function relay(events: SignedEvent[]) {
     }
     return true
   }
-  return async (filters: Record<string, unknown>[]) => events.filter((e) => filters.some((f) => matches(e, f as Filter)))
+  return withListRead(async (filters: Record<string, unknown>[]) => events.filter((e) => filters.some((f) => matches(e, f as Filter))), events)
 }
 
 const topicRoot = root(30840, QA1, TOPIC_D, FOLDER)
@@ -250,8 +251,9 @@ describe("a topic's list", () => {
     const roots = ids.map((d) => root(30842, QA1, d, OTHER_FOLDER))
     const entries = ids.map((d, i) => list(d, MS + i))
     const all = relay([topicRoot, ...roots, ...entries])
+    // The list read's `limit` counts first records, so only a plain lookup is capped.
     const capped = async (filters: Record<string, unknown>[]) =>
-      filters.some((f) => '#d' in f) ? (await all(filters)).slice(0, 250) : all(filters)
+      filters.some((f) => '#d' in f && !f.fields) ? (await all(filters)).slice(0, 250) : all(filters)
     const files = await topicList(capped, TOPIC)
     assert.equal(files.length, 300)
     assert.equal(files.filter((f) => f.address === null).length, 0)

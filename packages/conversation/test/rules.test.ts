@@ -122,8 +122,12 @@ describe('writing a comment', () => {
       ['A', ISSUE],
       ['K', '30851'],
       ['P', ALICE],
+      ['O', ISSUE.split(':')[2]],
+      ['K', 'osnova.issue'],
       ['a', ISSUE],
       ['k', '30851'],
+      ['o', ISSUE.split(':')[2]],
+      ['k', 'osnova.issue'],
       ['p', ALICE],
       ['block', 'blk-1'],
       ['h', FOLDER],
@@ -132,9 +136,9 @@ describe('writing a comment', () => {
     ])
   })
 
-  it('once issues are kept in order, names its file in both forms: A K P O K a k o k p, the first K and k the kind (ALO-4)', () => {
+  it('names its file in both forms: A K P O K a k o k p, the first K and k the kind (ALO-4)', () => {
     const D = ISSUE.split(':')[2]
-    const unsigned = buildComment(BOB, 1_700_500_000_042, { about: ISSUE, folder: FOLDER, body: 'hi', inOrder: ['osnova.issue'] })
+    const unsigned = buildComment(BOB, 1_700_500_000_042, { about: ISSUE, folder: FOLDER, body: 'hi' })
     assert.deepEqual(unsigned.tags.slice(0, 10), [
       ['A', ISSUE],
       ['K', '30851'],
@@ -147,7 +151,7 @@ describe('writing a comment', () => {
       ['k', 'osnova.issue'],
       ['p', ALICE],
     ])
-    const reply = buildReply(BOB, 1_700_500_000_043, { comment: { id: '1'.repeat(64), anchor: ISSUE, author: ALICE }, folder: FOLDER, body: 'yes', inOrder: ['osnova.issue'] })
+    const reply = buildReply(BOB, 1_700_500_000_043, { comment: { id: '1'.repeat(64), anchor: ISSUE, author: ALICE }, folder: FOLDER, body: 'yes' })
     assert.deepEqual(reply.tags.slice(0, 8), [
       ['A', ISSUE],
       ['K', '30851'],
@@ -158,14 +162,13 @@ describe('writing a comment', () => {
       ['k', '1111'],
       ['p', ALICE],
     ])
-    assert.equal(buildComment(BOB, 0, { about: ISSUE, folder: FOLDER, body: 'x', inOrder: ['osnova.project'] }).tags.some((t) => t[0] === 'O'), false)
   })
 
-  it('once pages and topics are kept in order, a comment on each names it in both forms, each by its own type (ALL-3)', () => {
+  it('a comment on a page or a topic names it in both forms, each by its own type (ALL-3)', () => {
     for (const [kind, type] of [['30842', 'osnova.document'], ['30840', 'osnova.topic']]) {
       const D = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
       const about = `${kind}:${ALICE}:${D}`
-      const unsigned = buildComment(BOB, 1_700_500_000_042, { about, folder: FOLDER, body: 'hi', inOrder: ['osnova.document', 'osnova.topic'] })
+      const unsigned = buildComment(BOB, 1_700_500_000_042, { about, folder: FOLDER, body: 'hi' })
       assert.deepEqual(unsigned.tags.slice(0, 10), [
         ['A', about],
         ['K', kind],
@@ -178,8 +181,6 @@ describe('writing a comment', () => {
         ['k', type],
         ['p', ALICE],
       ], type)
-      const before = buildComment(BOB, 0, { about, folder: FOLDER, body: 'x', inOrder: ['osnova.project', 'osnova.issue'] })
-      assert.equal(before.tags.some((t) => t[0] === 'O' || t[0] === 'o'), false, `${type}: by its address alone before its switch`)
     }
   })
 
@@ -190,13 +191,13 @@ describe('writing a comment', () => {
 
   it('earns an a for every address the body names except its own, and a p per npub', () => {
     const body = `${naddrOf(ISSUE)} and ${naddrOf(OTHER)} and nostr:naddr1broken, cc nostr:${encodeNpub(BOB)}`
-    assert.deepEqual(referenceTagsFor(body, ISSUE), [['a', OTHER]])
+    assert.deepEqual(referenceTagsFor(body, ISSUE), [['a', OTHER], ['o', OTHER.split(':')[2]]])
     assert.deepEqual(mentionTagsFor(body), [['p', BOB]])
   })
 
-  it('once issues are kept in order, a named issue earns an o with its id after its a, and its own file neither (ALO-4)', () => {
+  it('a named issue earns an o with its id after its a, and its own file neither (ALO-4)', () => {
     const body = `${naddrOf(ISSUE)} and ${naddrOf(OTHER)}`
-    assert.deepEqual(referenceTagsFor(body, ISSUE, ['osnova.issue']), [['a', OTHER], ['o', OTHER.split(':')[2]]])
+    assert.deepEqual(referenceTagsFor(body, ISSUE), [['a', OTHER], ['o', OTHER.split(':')[2]]])
   })
 
   it('a reply never carries its own file as a link, by its id in an o or a part either (ALO-4)', () => {
@@ -205,7 +206,6 @@ describe('writing a comment', () => {
       comment: { id: '1'.repeat(64), anchor: ISSUE, author: ALICE },
       folder: FOLDER,
       body: 'see',
-      inOrder: ['osnova.issue'],
       tags: [['o', D], ['part', D, 'b1'], ['o', OTHER.split(':')[2]]],
     })
     assert.deepEqual(reply.tags.filter((t) => t[0] === 'o' || t[0] === 'part'), [['o', OTHER.split(':')[2]]])

@@ -23,6 +23,12 @@ import {
   resolveFolderContents,
   resolveForeignObject,
 } from '../dist/index.js'
+import { withListRead } from './list-read.mjs'
+
+/** The fake relay, answering the list and open reads as the relay does (§6.13). */
+function relay(events) {
+  return withListRead(plainRelay(events), events)
+}
 
 const AUTHOR = 'a'.repeat(64)
 const ACTOR = 'c'.repeat(64)
@@ -136,7 +142,7 @@ const content = (overrides = {}) => ({
 const manifestEvent = (body) =>
   event({ kind: 31990, tags: [['d', 'estiva-ship'], ['k', String(PROJECT)], ['k', String(ISSUE)]], content: JSON.stringify(body) })
 
-const relay = (events) => async (filters) =>
+const plainRelay = (events) => async (filters) =>
   events.filter((e) =>
     filters.some((f) => {
       if (f.kinds && !f.kinds.includes(e.kind)) return false
@@ -285,29 +291,17 @@ describe('placement and listed — where a new object lives, and the command tha
 
   test('buildActionEvent refuses a listed action rather than drop its command', () => {
     assert.match(buildActionEvent(addProject()), /buildActionEvents/)
-    assert.match(buildActionEvent(args('delete-project', { kind: PROJECT, address: P1 })), /buildActionEvents/)
   })
 
-  test('a deletion unlists from every Folder with state that names it, after the kind:5', () => {
-    const events = buildActionEvents(
-      args('delete-project', {
-        kind: PROJECT,
-        address: P1,
-        listedIn: [
-          { id: TEAM, hasState: true },
-          { id: OTHER_TEAM, hasState: false },
-          // The same Folder from a second read: one remove, not two.
-          { id: TEAM, hasState: true },
-        ],
-      }),
-    )
-    assert.deepEqual(events.map((e) => e.kind), [5, 1852])
-    assert.deepEqual(events[0].tags, [['a', P1], ['k', String(PROJECT)]])
-    assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'remove'], ['a', P1]])
+  test('a Delete this listing declares as a kind:5 is the project\'s deleted change, after the one it follows, and takes it off no team', () => {
+    const prev = 'c'.repeat(64)
+    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: P1, prev, listedIn: [{ id: TEAM, hasState: true }] }))
+    assert.deepEqual(events.map((e) => e.kind), [1851], 'never a kind:5, which the relay refuses on any file')
+    assert.deepEqual(events[0].tags.filter((t) => ['field', 'value', 'prev'].includes(t[0])), [['field', 'deleted'], ['value', 'true'], ['prev', prev]])
   })
 
-  test('a listed deletion refuses to run without knowing who lists it', () => {
-    assert.match(buildActionEvents(args('delete-project', { kind: PROJECT, address: P1 })), /teams that list it/)
+  test('that Delete is refused before it is sent when it names no change it follows', () => {
+    assert.match(buildActionEvents(args('delete-project', { kind: PROJECT, address: P1, listedIn: [] })), /prev/)
   })
 
   test('an action that is not listed is one event from either builder', () => {
@@ -443,10 +437,9 @@ describe('actionProblems — the declarations checked before signing', () => {
 describe('a project named by its id once the relay keeps projects in order — SPEC §6.4, §3.3 (ALO-4)', () => {
   const ID = '0f8a7c1e-5b2d-4e6f-9a3b-c4d5e6f7a8b9'
   const PROJECT_BY_ID = `${PROJECT}:${AUTHOR}:${ID}`
-  const KEPT = ['osnova.project']
 
   test('a comment carries A, K kind, P, O, K type, then a, k kind, o, k type, p: the first K and k stay the kind', () => {
-    const event = buildActionEvent(args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: KEPT }))
+    const event = buildActionEvent(args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi' }))
     assert.deepEqual(event.tags.slice(0, 10), [
       ['A', PROJECT_BY_ID],
       ['K', String(PROJECT)],
@@ -463,7 +456,7 @@ describe('a project named by its id once the relay keeps projects in order — S
 
   test('a reply carries O and the type beside its A, and its lowercase tags stay e, k 1111 and p', () => {
     const event = buildActionEvent(
-      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'yes', inOrder: KEPT, replyTo: { id: 'f'.repeat(64), kind: 1111, author: ACTOR } }),
+      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'yes', replyTo: { id: 'f'.repeat(64), kind: 1111, author: ACTOR } }),
     )
     assert.deepEqual(event.tags.slice(0, 8), [
       ['A', PROJECT_BY_ID],
@@ -477,28 +470,23 @@ describe('a project named by its id once the relay keeps projects in order — S
     ])
   })
 
-  test('before the switch a comment names the project by its address alone, as every reader reads it', () => {
-    const event = buildActionEvent(args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: [] }))
-    assert.equal(event.tags.some((t) => t[0] === 'O' || t[0] === 'o'), false)
-  })
-
   test('the comment\'s own file by its id is not a link: a body naming it earns no second o', () => {
     const event = buildActionEvent(
-      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', inOrder: KEPT, linkTags: [['a', PROJECT_BY_ID], ['o', ID], ['part', ID, 'b1']] }),
+      args('comment', { kind: PROJECT, address: PROJECT_BY_ID, value: 'hi', linkTags: [['a', PROJECT_BY_ID], ['o', ID], ['part', ID, 'b1']] }),
     )
     assert.deepEqual(event.tags.filter((t) => t[0] === 'o' || t[0] === 'part'), [['o', ID]])
   })
 
   test('a new project is listed in its Folder by its id', () => {
     const events = buildActionEvents(
-      args('add-project', { kind: 39000, address: `39000:${AUTHOR}:${TEAM}`, value: { name: 'Launch' }, newId: ID, folderHasState: true, inOrder: KEPT }),
+      args('add-project', { kind: 39000, address: `39000:${AUTHOR}:${TEAM}`, value: { name: 'Launch' }, newId: ID, folderHasState: true }),
     )
     assert.deepEqual(events[1].tags, [['h', TEAM], ['op', 'add'], ['o', ID]])
   })
 
   test('an older listing’s kind:5 Delete of a project kept in order is its deleted change, and takes it off no Folder (SPEC §7.3)', () => {
     const prev = 'd'.repeat(64)
-    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: PROJECT_BY_ID, listedIn: [{ id: TEAM, hasState: true }], inOrder: KEPT, prev }))
+    const events = buildActionEvents(args('delete-project', { kind: PROJECT, address: PROJECT_BY_ID, listedIn: [{ id: TEAM, hasState: true }], prev }))
     assert.equal(events.length, 1)
     assert.equal(events[0].kind, 1851)
     assert.deepEqual(

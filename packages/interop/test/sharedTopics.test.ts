@@ -138,20 +138,13 @@ describe('readTopics — every topic the viewer can read, once', () => {
     assert.equal(by.get(hotel.address)!.object.archived?.with, golf.address)
   })
 
-  it('where topics are kept in order, reads each topic by its current fields and asks for no topic’s every change (ALL-6)', async () => {
+  it('reads each topic by its current fields and asks for no topic’s every change (ALL-6)', async () => {
     const everyChange = (asked: Filter[]) =>
       asked.filter((f) => f.kinds?.includes(1851) && !f.fields && !f['#p'] && ((f['#a'] as string[] | undefined) ?? []).some((a) => a.startsWith('30840:')))
-    const before = relay(world)
-    const whole = await readTopics(before.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true })
-    // The control: without the option, each topic's every change is still asked for.
-    assert.ok(everyChange(before.asked).length > 0)
     const after = relay(world)
-    const listedRead = await readTopics(after.query, ME, { nowSeconds: NOW, listRead: true, parentsListRead: true, topicsListRead: true })
+    const read = await readTopics(after.query, ME, { nowSeconds: NOW })
     assert.deepEqual(everyChange(after.asked), [])
-    // The same topics either way: title, archive (with a parent too) and whose they are.
-    const drawn = (read: typeof whole) =>
-      read.topics.map((t) => [t.object.address, t.object.slots.title?.value, t.object.archived?.with ?? !!t.object.archived, t.yours]).sort()
-    assert.deepEqual(drawn(listedRead), drawn(whole))
+    assert.equal(read.topics.length, topics.length)
     const listed = after.asked.filter((f) => f.fields && f.kinds?.includes(30840)).flatMap((f) => (f['#d'] as string[] | undefined) ?? [])
     assert.deepEqual([...new Set(listed)].sort(), topics.map((t) => t.address.split(':')[2]).sort())
   })

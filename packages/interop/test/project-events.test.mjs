@@ -10,6 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { projectEvents, resolveForeignObject, resolveManifest } from '../dist/index.js'
 import { encodeNaddr } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const APP = 'c'.repeat(64)
 const AUTHOR = 'a'.repeat(64)
@@ -66,8 +67,8 @@ const archived = change('archived', 'true')
 const moved = change('project', TARGET)
 const events = [manifest, project, target, issue, renamed, done, assigned, archived, moved]
 
-/** A relay over `events`, answering the filter shapes the resolver sends. */
-const query = async (filters) => {
+/** A relay over `events`, answering the filter shapes the resolver sends, the list and open reads (§6.13) among them. */
+const plainQuery = async (filters) => {
   const hit = new Map()
   for (const f of filters) {
     for (const e of events) {
@@ -80,6 +81,7 @@ const query = async (filters) => {
   }
   return [...hit.values()]
 }
+const query = withListRead(plainQuery, events)
 
 const pointer = (address) => {
   const [kind, pubkey, identifier] = address.split(':')

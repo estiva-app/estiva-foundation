@@ -25,6 +25,7 @@ import {
 } from '../dist/index.js'
 import { buildLevelChange, buildMembershipChange, buildMutedEvent, memberField, serializeMutedBlob } from '@estiva-app/conversation'
 import type { SignedEvent, UnsignedEvent } from '@estiva-app/protocol'
+import { timesOver } from './list-read.mjs'
 
 const ME = 'a'.repeat(64)
 const THEM = 'b'.repeat(64)
@@ -170,19 +171,27 @@ function relay(events: SignedEvent[]) {
     }
     return [...out.values()]
   }
-  return { query, calls }
+  return { query, calls, times: timesOver(events).times }
 }
 
 /** What an app gets today: every topic, the filter it applies, then the activity of what is left. */
-async function readTheLongWay(events: SignedEvent[], listRead: boolean, muted: ReadonlySet<string> | undefined, spaces = false) {
-  const { query, calls } = relay(events)
-  const read = await readTopics(query, ME, { listRead, parentsListRead: listRead, nowSeconds: NOW })
+async function readTheLongWay(events: SignedEvent[], muted: ReadonlySet<string> | undefined, spaces = false) {
+  const { query, calls, times } = relay(events)
+  const read = await readTopics(query, ME, { nowSeconds: NOW })
   const yours = read.topics.filter((t) => t.yours && (spaces || !t.space) && !isArchived(t.object) && !muted?.has(t.address))
-  const activity = await readTopicActivity(query, activityTopics(yours), { nowSeconds: NOW })
+  const activity = await readTopicActivity(query, activityTopics(yours), { nowSeconds: NOW, times })
   const newest = byActivity(activity.at)
   yours.sort((a, b) => newest(a.address, b.address))
   return { topics: yours, at: new Map(yours.map((t) => [t.address, activity.at.get(t.address)])), calls }
 }
+
+/**
+ * The topics readTopics also answers: it reads them by the list read, which leaves a deleted one out, while the
+ * lean read reads a deleted topic plain and hands it back marked deleted.
+ */
+const standing = (topics: readonly ReadTopic[]) => topics.filter((t) => !t.object.deleted)
+const standingAt = (read: { topics: readonly ReadTopic[]; at: ReadonlyMap<string, number | undefined> }) =>
+  new Map(standing(read.topics).map((t) => [t.address, read.at.get(t.address)]))
 
 /** What both reads must agree on, topic by topic. */
 const drawn = (topic: ReadTopic) => ({
@@ -199,55 +208,51 @@ const drawn = (topic: ReadTopic) => ({
   listed: topic.listed,
 })
 
-for (const listRead of [true, false]) {
-  describe(`readYourTopics ${listRead ? 'by the list read' : 'on a relay without the list read'}`, () => {
-    it('answers the topics, how the viewer is in each, their lists, archives and order that readTopics, the filter and readTopicActivity do', async () => {
-      const events = [...world, mutedList([addressOf(echo)])]
-      const lean = await readYourTopics(relay(events).query, ME, { listRead, decrypt, nowSeconds: NOW })
-      const long = await readTheLongWay(events, listRead, new Set([addressOf(echo)]))
-      // In it, made or added or a level chosen; not archived, muted, a space, left, or somebody else's.
-      // Alpha and bravo both last moved by the comment on the issue (alpha lists its project): equal, by address.
-      assert.deepEqual(
-        lean.topics.map((t) => t.address),
-        [india, alpha, bravo, kilo, juliet].map(addressOf),
-      )
-      assert.deepEqual(lean.topics.map(drawn), long.topics.map(drawn))
-      assert.deepEqual(lean.at, long.at)
-      assert.deepEqual([...(lean.muted ?? [])], [addressOf(echo)])
-      // The viewer is in bravo by somebody else's change naming them, with what it lists resolved.
-      const b = lean.topics.find((t) => t.address === addressOf(bravo))!
-      assert.deepEqual(b.following.ways, ['added'])
-      assert.deepEqual(b.listed.map((f) => f.address), [addressOf(issue)])
-      assert.deepEqual(lean.topics.find((t) => t.address === addressOf(alpha))!.listed.map((f) => f.address), [addressOf(openProject), addressOf(doc)])
-    })
-
-    it('keeps a space when asked, and a muted topic when the mute list does not open', async () => {
-      const events = [...world, mutedList([addressOf(echo)])]
-      const lean = await readYourTopics(relay(events).query, ME, { listRead, decrypt: async () => undefined, spaces: true, nowSeconds: NOW })
-      const long = await readTheLongWay(events, listRead, undefined, true)
-      assert.equal(lean.muted, undefined)
-      assert.ok(lean.topics.some((t) => t.address === addressOf(foxtrot)))
-      assert.ok(lean.topics.some((t) => t.address === addressOf(echo)))
-      assert.deepEqual(lean.topics.map(drawn), long.topics.map(drawn))
-      assert.deepEqual(lean.at, long.at)
-    })
-
-    it('leaves out a topic archived with its project, and keeps one under an open project', async () => {
-      const lean = await readYourTopics(relay([...world]).query, ME, { listRead, decrypt, nowSeconds: NOW })
-      assert.ok(!lean.topics.some((t) => t.address === addressOf(delta)))
-      assert.ok(lean.topics.some((t) => t.address === addressOf(india)), 'a topic under an open project stays')
-    })
-
-    if (listRead) {
-      it('by the list read, never asks for a parent project’s every change to see it archived', async () => {
-        const { query, calls } = relay([...world])
-        await readYourTopics(query, ME, { listRead, decrypt, nowSeconds: NOW })
-        const byA = calls.flat().filter((f) => f.kinds?.includes(1851) && !f['#p'] && !f.fields).flatMap((f) => (f['#a'] as string[]) ?? [])
-        assert.ok(!byA.includes(addressOf(shelvedProject)), `read by #a: ${byA}`)
-      })
-    }
+describe('readYourTopics', () => {
+  it('answers the topics, how the viewer is in each, their lists, archives and order that readTopics, the filter and readTopicActivity do', async () => {
+    const events = [...world, mutedList([addressOf(echo)])]
+    const lean = await readYourTopics(relay(events).query, ME, { decrypt, nowSeconds: NOW, times: relay(events).times })
+    const long = await readTheLongWay(events, new Set([addressOf(echo)]))
+    // In it, made or added or a level chosen; not archived, muted, a space, left, or somebody else's.
+    // Alpha and bravo both last moved by the comment on the issue (alpha lists its project): equal, by address.
+    assert.deepEqual(
+      lean.topics.map((t) => t.address),
+      [india, alpha, bravo, kilo, juliet].map(addressOf),
+    )
+    assert.deepEqual(standing(lean.topics).map(drawn), long.topics.map(drawn))
+    assert.deepEqual(standingAt(lean), long.at)
+    assert.deepEqual([...(lean.muted ?? [])], [addressOf(echo)])
+    // The viewer is in bravo by somebody else's change naming them, with what it lists resolved.
+    const b = lean.topics.find((t) => t.address === addressOf(bravo))!
+    assert.deepEqual(b.following.ways, ['added'])
+    assert.deepEqual(b.listed.map((f) => f.address), [addressOf(issue)])
+    assert.deepEqual(lean.topics.find((t) => t.address === addressOf(alpha))!.listed.map((f) => f.address), [addressOf(openProject), addressOf(doc)])
   })
-}
+
+  it('keeps a space when asked, and a muted topic when the mute list does not open', async () => {
+    const events = [...world, mutedList([addressOf(echo)])]
+    const lean = await readYourTopics(relay(events).query, ME, { decrypt: async () => undefined, spaces: true, nowSeconds: NOW, times: relay(events).times })
+    const long = await readTheLongWay(events, undefined, true)
+    assert.equal(lean.muted, undefined)
+    assert.ok(lean.topics.some((t) => t.address === addressOf(foxtrot)))
+    assert.ok(lean.topics.some((t) => t.address === addressOf(echo)))
+    assert.deepEqual(standing(lean.topics).map(drawn), long.topics.map(drawn))
+    assert.deepEqual(standingAt(lean), long.at)
+  })
+
+  it('leaves out a topic archived with its project, and keeps one under an open project', async () => {
+    const lean = await readYourTopics(relay([...world]).query, ME, { decrypt, nowSeconds: NOW, times: relay([...world]).times })
+    assert.ok(!lean.topics.some((t) => t.address === addressOf(delta)))
+    assert.ok(lean.topics.some((t) => t.address === addressOf(india)), 'a topic under an open project stays')
+  })
+
+  it('by the list read, never asks for a parent project’s every change to see it archived', async () => {
+    const { query, calls, times } = relay([...world])
+    await readYourTopics(query, ME, { decrypt, nowSeconds: NOW, times })
+    const byA = calls.flat().filter((f) => f.kinds?.includes(1851) && !f['#p'] && !f.fields).flatMap((f) => (f['#a'] as string[]) ?? [])
+    assert.ok(!byA.includes(addressOf(shelvedProject)), `read by #a: ${byA}`)
+  })
+})
 
 describe('readYourTopics: the requests it makes', () => {
   /**
@@ -274,28 +279,28 @@ describe('readYourTopics: the requests it makes', () => {
 
   it('reads 12 of 53 topics in one request a round, a list read always alone, fewer than the long way asks', async () => {
     const events = workspace()
-    const { query, calls } = relay(events)
-    const lean = await readYourTopics(query, ME, { listRead: true, decrypt, nowSeconds: NOW })
-    const long = await readTheLongWay(events, true, new Set())
+    const { query, calls, times } = relay(events)
+    const lean = await readYourTopics(query, ME, { decrypt, nowSeconds: NOW, times })
+    const long = await readTheLongWay(events, new Set())
     assert.equal(lean.topics.length, 12)
-    assert.deepEqual(lean.topics.map(drawn), long.topics.map(drawn))
-    assert.deepEqual(lean.at, long.at)
+    assert.deepEqual(standing(lean.topics).map(drawn), long.topics.map(drawn))
+    assert.deepEqual(standingAt(lean), long.at)
     for (const request of calls) {
       const lists = request.filter((f) => f.fields).length
       assert.ok(lists === 0 || lists === request.length, 'a list read goes alone')
     }
     // At most: 1 roots and mute list · 2 changes naming me and team lists · 3 the list read of the topics that could be
     // mine (after 2, since ALO-22) · 4 listed ids and parents' manifests · 5 the parents by the list read (one level: a
-    // project has none), beside activity's
-    // two ticks (the files under the listed ones, then what is under those with the found files' first pages).
-    assert.ok(calls.length <= 7, `${calls.length} requests`)
+    // project has none), beside activity's three: the changes that put files on the topics, by id; the moves naming a
+    // listed project; and the comments and messages. The files under the listed ones come from the times read.
+    assert.ok(calls.length <= 8, `${calls.length} requests`)
     assert.ok(long.calls.length > calls.length, `the long way: ${long.calls.length}`)
   })
 
   it('reads the current fields of only the 12 topics that could be yours, not all 53 (ALO-22)', async () => {
     const events = workspace()
-    const { query, calls } = relay(events)
-    const lean = await readYourTopics(query, ME, { listRead: true, decrypt, nowSeconds: NOW })
+    const { query, calls, times } = relay(events)
+    const lean = await readYourTopics(query, ME, { decrypt, nowSeconds: NOW, times })
     assert.equal(lean.topics.length, 12)
     const asked = calls.flat().filter((f) => f.fields && (f.kinds as number[] | undefined)?.includes(30840)).flatMap((f) => f['#d'] as string[])
     const yours = events.filter((e) => e.kind === 30840 && e.pubkey === ME).map((e) => e.tags.find((t) => t[0] === 'd')![1])

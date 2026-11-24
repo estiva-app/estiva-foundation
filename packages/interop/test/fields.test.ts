@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeEventId, serializeBlockDocument, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
-import { buildActionEvent, changedAt, combineChanges, fieldsSetBy, filesOf, historyOf, isSwitchRefusal, listFiles, openFile, prevsAfterSwitch, textOf, writeChange, writeChanges, type QueryFn } from '../dist/index.js'
+import { buildActionEvent, changedAt, combineChanges, fieldsSetBy, filesOf, historyOf, listFiles, openFile, textOf, writeChange, writeChanges, type QueryFn } from '../dist/index.js'
 
 const OWNER = 'a'.repeat(64)
 const AGENT = 'c'.repeat(64)
@@ -242,81 +242,6 @@ describe('reading files by their fields — §6.13', () => {
   })
 })
 
-describe('a tab open across the switch writes again in order — §6.13, ALO-8', () => {
-  it('knows the relay\'s refusal of a project change with no prev, with or without what to do after it', () => {
-    assert.equal(isSwitchRefusal('invalid: a project change names the change it follows in prev'), true)
-    assert.equal(isSwitchRefusal('invalid: a project change names the change it follows in prev; reload to save'), true)
-    assert.equal(isSwitchRefusal('invalid: a file change names the change it follows in prev'), true)
-  })
-
-  it('does not take another refusal for the switch', () => {
-    assert.equal(isSwitchRefusal('invalid: a change is filed in its file\'s team'), false)
-    assert.equal(isSwitchRefusal('conflict: title follows ' + 'f'.repeat(64)), false)
-    assert.equal(isSwitchRefusal('blocked: a project change names the change it follows in prev'), false)
-    assert.equal(isSwitchRefusal(undefined), false)
-  })
-
-  it('follows each field\'s current change, or the first record for a field never changed, and the relay takes it', async () => {
-    const relay = keptRelay()
-    const theirs = relay.theirs(QA1, 'title', 'Launch, renamed', T0 + 1000)
-    const text = relay.theirs(QA1, 'description', blocks(p('b1', 'the plan')), T0 + 2000)
-    const asked: Record<string, unknown>[] = []
-    const prevs = await prevsAfterSwitch(
-      async (f) => (asked.push(...f), [root, theirs, text]),
-      { kind: PROJECT, pubkey: OWNER, d: D },
-      ['title', 'status', 'description'],
-    )
-    assert.deepEqual(prevs, { title: theirs.id, status: root.id, description: text.id })
-    assert.equal(asked[0].text, true, 'the text is among them, so the file is opened with it')
-    const written = await agentWrite(relay, 'title', 'Launch, from an old tab', prevs!.title)
-    assert.equal(written.ok, true)
-    assert.equal(relay.published.length, 1, 'accepted the first time: no conflict to answer')
-    assert.equal(tag(relay.published[0], 'prev'), theirs.id, 'on the wire it follows the current title')
-    const status = await agentWrite(relay, 'status', 'in_progress', prevs!.status)
-    assert.equal(status.ok, true)
-    assert.equal(tag(relay.published[1], 'prev'), root.id, 'a field never changed follows the first record')
-  })
-
-  it('gives a member: field no prev, as the relay asks none of it', async () => {
-    const prevs = await prevsAfterSwitch(async () => [root], { kind: PROJECT, pubkey: OWNER, d: D }, ['title', `member:${QA1}`])
-    assert.deepEqual(prevs, { title: root.id })
-  })
-
-  it('merges an old tab\'s text onto words saved since it read the file, rather than writing over them', async () => {
-    const relay = keptRelay()
-    const read = blocks(p('b1', 'the plan'))
-    relay.theirs(OWNER, 'description', read, T0 + 1000)
-    const since = relay.theirs(QA1, 'description', blocks(p('b1', 'the plan'), p('b2', 'added since')), T0 + 2000)
-    const prevs = await prevsAfterSwitch(async () => [root, since], { kind: PROJECT, pubkey: OWNER, d: D }, ['description'])
-    const result = await writeChange({
-      field: 'description',
-      value: blocks(p('b1', 'the plan, edited in the old tab')),
-      format: 'estiva-blocks-1',
-      prev: prevs!.description,
-      base: { value: read, format: 'estiva-blocks-1' },
-      build: (input) => change(AGENT, 'description', input.value, input.prev, input.createdAtMs),
-      sign: async (e) => sign(e),
-      publish: relay.publish,
-      query: relay.query,
-      current: relay.current,
-      now: () => T0 + 60_000,
-    })
-    assert.equal(result.ok, true)
-    const sent = relay.published.at(-1)!
-    assert.equal(tag(sent, 'prev'), since.id)
-    const text = tag(sent, 'value') ?? ''
-    assert.match(text, /edited in the old tab/)
-    assert.match(text, /added since/, 'the words saved since are kept')
-  })
-
-  it('opens without the text when the text is not among them, and says nothing for a file it cannot read', async () => {
-    const asked: Record<string, unknown>[] = []
-    const prevs = await prevsAfterSwitch(async (f) => (asked.push(...f), []), { kind: PROJECT, pubkey: OWNER, d: D }, ['title'])
-    assert.equal(prevs, undefined)
-    assert.equal('text' in asked[0], false)
-  })
-})
-
 describe('answering conflict: — §6.2, §13.3', () => {
   it('a status set after QA-1\'s, from an older copy, is set again after theirs and stands', async () => {
     const relay = keptRelay()
@@ -402,10 +327,8 @@ const agentWriteMany = (
   relay: ReturnType<typeof keptRelay>,
   fields: { field: string; value: string; prev: string }[],
   now = T0 + 60_000,
-  inOrder: string[] = ['osnova.project'],
 ) =>
   writeChanges({
-    inOrder,
     fields: fields.map((f) => (f.field === 'description' ? { ...f, format: 'estiva-blocks-1' } : f)),
     build: (input) => change(AGENT, input.field, input.value, input.prev, input.createdAtMs),
     sign: async (e) => sign(e),
@@ -491,16 +414,6 @@ describe('a change setting several fields — §6.2, ALO-4', () => {
     ])
     assert.equal(relay.head('status').id, sent.id)
     assert.equal(relay.head('title').id, sent.id, 'the later title stands')
-  })
-
-  it('is never sent before the relay keeps the type in order, when today\'s apps would fold nothing from it', async () => {
-    const relay = keptRelay()
-    const result = await agentWriteMany(relay, [
-      { field: 'status', value: 'done', prev: root.id },
-      { field: 'title', value: 'Launch 2', prev: root.id },
-    ], T0 + 60_000, [])
-    assert.ok(!result.ok && 'refused' in result && /writeChange/.test(result.refused))
-    assert.equal(relay.published.length, 0)
   })
 
   it('merges a text QA-1 changed in another block, inside the same several-field change', async () => {

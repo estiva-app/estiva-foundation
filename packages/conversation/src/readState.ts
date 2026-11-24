@@ -152,18 +152,17 @@ const FILE_ID_PREFIX = 'file:'
 
 /**
  * The markers a read of a file writes, for `advanceContexts`: under
- * `file:<d>` once the relay keeps the file's type in order (`inOrder`,
- * `RelayFileReads.inOrder`), and under its address too, while an app that
- * reads only the address key remains (§11.6, *added 2026-11-02*). Before the
- * switch, under its address alone. Empty for anything that is not a file's
- * address.
+ * `file:<d>` for a file of the four base types, every relay keeping them in
+ * order, and under its address too, while an app that reads only the address
+ * key remains (§11.6, *added 2026-11-02*); under its address alone for any
+ * other file. Empty for anything that is not a file's address.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-unread-state-is-keyed-file-and-its-id.md
  */
-export function fileReadMarkers(address: string, at: number, inOrder: readonly string[] = []): Record<string, number> {
+export function fileReadMarkers(address: string, at: number): Record<string, number> {
   const byAddress = fileContext(address)
   if (byAddress === undefined) return {}
-  const byId = fileIdContext(fileIdFormOf(inOrder, address)?.id)
+  const byId = fileIdContext(fileIdFormOf(address)?.id)
   return byId === undefined ? { [byAddress]: at } : { [byId]: at, [byAddress]: at }
 }
 

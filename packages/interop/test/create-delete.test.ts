@@ -139,7 +139,6 @@ function issueRelay() {
 const creating = (relay: ReturnType<typeof issueRelay>, extra: Partial<interop.CreateFileArgs> = {}): interop.CreateFileArgs => ({
   root: firstRecord(),
   text: { value: blocks(p('b1', 'Steps to reproduce')), format: BLOCKS },
-  inOrder: ['osnova.project', 'osnova.issue'],
   build: (input) => change(OWNER, input),
   sign: async (e) => sign(e),
   publish: relay.publish,
@@ -165,13 +164,6 @@ describe('a new file’s text is its first change — §6.1', () => {
     assert.ok(others.tags.filter((t) => t[0] === 'set').every((t) => t[3] === root.id), 'each following the first record')
     assert.ok(!fieldsSetBy(others).some((f) => f.field === 'description'), 'with no text')
     assert.ok(result.ok && result.heads.description === text.id && result.heads.status === others.id)
-  })
-
-  it('before the relay keeps the type in order, writes each other first value as its own change', async () => {
-    const relay = issueRelay()
-    const result = await createFile(creating(relay, { inOrder: ['osnova.project'], others: [{ field: 'status', value: 'todo' }, { field: 'assignee', value: QA2 }] }))
-    assert.equal(result.ok, true)
-    assert.deepEqual(relay.published.slice(2).map((e) => [tag(e, 'field'), tag(e, 'prev')]), [['status', relay.published[0].id], ['assignee', relay.published[0].id]])
   })
 
   it('refuses a first record carrying text before sending anything', async () => {
@@ -250,14 +242,5 @@ describe('delete and restore any file — §6.5', () => {
     assert.deepEqual(fieldsSetBy(relay.published.at(-1)!), [{ field: 'deleted', value: '' }])
     assert.equal(tag(relay.published.at(-1)!, 'prev'), deleted.id)
     assert.ok(!relay.published.some((e) => e.kind === 5))
-  })
-})
-
-describe('the relay’s refusals, by their codes — §3.3', () => {
-  it('a change naming no prev is the switch, by its code and by the old project words', () => {
-    assert.equal(interop.isSwitchRefusal('invalid: requires-prev: an issue change names the change it follows in prev; update the app'), true)
-    assert.equal(interop.isSwitchRefusal('invalid: a project change names the change it follows in prev; reload'), true, 'a project, before its code')
-    assert.equal(interop.isSwitchRefusal("invalid: text-is-a-change: an issue's first record carries no text"), false)
-    assert.equal(interop.isSwitchRefusal('invalid: delete-by-field: an issue is deleted by its deleted field, not kind 5'), false)
   })
 })

@@ -86,12 +86,12 @@ describe('the tags a comment earns for its links', () => {
   test('a Ship issue link alone on its line earns its a; one in code, the words of a link on words, and http earn nothing', async () => {
     const links = linkReader({ query: relayOf(issues).query })
     const body = [URL1, `\`${URL2}\``, `[${URL2}](https://example.com/x)`, `http://ship.estiva.app/issue/second-${D2}`].join('\n')
-    assert.deepEqual(await links.tagsFor(marker(body), {}), [['a', ISSUE1]])
+    assert.deepEqual(await links.tagsFor(marker(body), {}), [['a', ISSUE1], ['o', D1]])
   })
 
   test('[A](B) is one link to B', async () => {
     const links = linkReader({ query: relayOf(issues).query })
-    assert.deepEqual(await links.tagsFor(marker(`see [${URL1}](${URL2})`), {}), [['a', ISSUE2]])
+    assert.deepEqual(await links.tagsFor(marker(`see [${URL1}](${URL2})`), {}), [['a', ISSUE2], ['o', D2]])
   })
 
   test('the comment’s own file earns no a, the message it answers no q, and another message a q', async () => {
@@ -100,6 +100,7 @@ describe('the tags a comment earns for its links', () => {
     const body = `${URL1} ${URL2} https://peek.estiva.app/message/${MESSAGE} https://peek.estiva.app/message/${other}`
     assert.deepEqual(await links.tagsFor(marker(body), { file: ISSUE1, parent: MESSAGE }), [
       ['a', ISSUE2],
+      ['o', D2],
       ['q', other],
     ])
   })
@@ -109,44 +110,42 @@ describe('the tags a comment earns for its links', () => {
     const naddr = `nostr:${encodeNaddr({ kind: 30851, pubkey: SHIP, identifier: D2, relays: [] })}`
     assert.deepEqual(await links.tagsFor(marker(`${naddr} and ${URL1}`), {}), [
       ['a', ISSUE2],
+      ['o', D2],
       ['a', ISSUE1],
+      ['o', D1],
     ])
   })
 
-  test('a link to one block earns its file’s a and a part on a send, and the a alone on an edit', async () => {
+  test('a link to one block earns its file’s a and o and a part by the id on a send, and the a and o alone on an edit', async () => {
     const links = linkReader({ query: relayOf(issues).query })
     const body = marker(`${URL1}#block-b1`)
     assert.deepEqual(await links.tagsFor(body, {}), [
       ['a', ISSUE1],
-      ['part', ISSUE1, 'b1'],
+      ['o', D1],
+      ['part', D1, 'b1'],
     ])
-    assert.deepEqual(await links.tagsFor(body, {}, { edit: true }), [['a', ISSUE1]])
+    assert.deepEqual(await links.tagsFor(body, {}, { edit: true }), [['a', ISSUE1], ['o', D1]])
   })
 
-  test('once the relay keeps the type in order, a link names its file by its id too: an o after the a, and the part by the id (ALO-4)', async () => {
+  test('a link names its file by its id too: an o after the a, and the part by the id (ALO-4)', async () => {
     const links = linkReader({ query: relayOf(issues).query })
     const body = marker(`${URL1}#block-b1 ${URL2}`)
-    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'] }), [
+    assert.deepEqual(await links.tagsFor(body, {}), [
       ['a', ISSUE1],
       ['o', D1],
       ['a', ISSUE2],
       ['o', D2],
       ['part', D1, 'b1'],
     ])
-    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'], edit: true }), [
+    assert.deepEqual(await links.tagsFor(body, {}, { edit: true }), [
       ['a', ISSUE1],
       ['o', D1],
       ['a', ISSUE2],
       ['o', D2],
     ], 'an edit carries the o as a send does')
-    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.project'] }), [
-      ['a', ISSUE1],
-      ['a', ISSUE2],
-      ['part', ISSUE1, 'b1'],
-    ], 'another type kept in order changes nothing')
   })
 
-  test('once pages are kept in order, a link to a page’s block names the page by its id too, and its part by the id (ALL-3)', async () => {
+  test('a link to a page’s block names the page by its id too, and its part by the id (ALL-3)', async () => {
     const LEAF = 'f'.repeat(64)
     const leaf = {
       ...manifest,
@@ -161,15 +160,11 @@ describe('the tags a comment earns for its links', () => {
     const page = `30842:${OTHER}:${D1}`
     const links = linkReader({ query: relayOf([leaf, event(30842, OTHER, [['d', D1]])]).query })
     const body = marker(`https://leaf.estiva.app/document/plan-${D1}#block-b1`)
-    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.document'] }), [
+    assert.deepEqual(await links.tagsFor(body, {}), [
       ['a', page],
       ['o', D1],
       ['part', D1, 'b1'],
     ])
-    assert.deepEqual(await links.tagsFor(body, {}, { inOrder: ['osnova.issue'] }), [
-      ['a', page],
-      ['part', page, 'b1'],
-    ], 'by its address before its switch')
   })
 
   test('a d two authors hold, and a d under a kind that is not addressable, name nothing', async () => {

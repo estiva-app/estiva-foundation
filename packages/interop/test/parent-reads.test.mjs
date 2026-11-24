@@ -6,16 +6,15 @@
  * read every change of each project it drew as a parent, or walked through to
  * see whether a parent was archived. The claims under test:
  *
- * - with `listRead` (or the switched kinds, `openRead`), a parent is read as its
- *   first record and each field's current change, never by `#a`, and the answer
- *   is what a read of every change gives;
- * - a file the list read leaves out (deleted) is read as before, so a deleted
- *   parent is still found and still says it was archived;
- * - without the option, nothing changes.
+ * - a parent is read as its first record and each field's current change,
+ *   never by `#a`, and the answer is what a read of every change gives;
+ * - a file the list read leaves out (deleted) is read by its changes, so a
+ *   deleted parent is still found and still says it was archived.
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, resolveForeignRoots, resolveParents, filesOf, readTopics } from '../dist/index.js'
+import { resolveForeignObject, resolveForeignRoots, resolveParents, readTopics } from '../dist/index.js'
+import { listAnswer } from './list-read.mjs'
 
 const OWNER = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -68,7 +67,7 @@ const matches = (f, e) => {
   return true
 }
 
-/** A relay with §6.13's list read: a request is all `fields` or none, and a deleted file is left out. */
+/** A relay with §6.13's list and open reads: a request is all `fields` or none, and a deleted file is left out. */
 function relay(events) {
   const asked = []
   const query = async (filters) => {
@@ -76,10 +75,7 @@ function relay(events) {
     const byFields = filters.filter((f) => f.fields)
     if (byFields.length === 0) return events.filter((e) => filters.some((f) => matches(f, e)))
     if (byFields.length !== filters.length) throw new Error('fields: every filter must ask for "fields": "newest"')
-    const roots = events.filter((e) => byFields.some((f) => matches(f, e)))
-    return filesOf(events)
-      .filter((file) => roots.includes(file.root) && file.fields.deleted?.value !== 'true')
-      .flatMap((file) => file.events)
+    return listAnswer(events, byFields, matches)
   }
   return {
     query,
@@ -98,11 +94,9 @@ describe('resolveParents by the list read', () => {
     const stays = issue('stays', p1)
     const events = [ship, p1, p2, moved, stays, change(moved, 'project', addressOf(p2), OTHER), ...edits(moved), ...edits(stays)]
     const r = relay(events)
-    const parents = await resolveParents([addressOf(moved), addressOf(stays)], r.query, undefined, { listRead: true })
+    const parents = await resolveParents([addressOf(moved), addressOf(stays)], r.query)
     assert.deepEqual(parents, { [addressOf(moved)]: addressOf(p2), [addressOf(stays)]: addressOf(p1) })
     assert.deepEqual(r.changesByA(), [])
-    // The same answer as a read of every change.
-    assert.deepEqual(await resolveParents([addressOf(moved), addressOf(stays)], relay(events).query), parents)
   })
 
   test('a deleted issue, which the list read leaves out, still has its moved parent', async () => {
@@ -110,7 +104,7 @@ describe('resolveParents by the list read', () => {
     const p2 = project('p2')
     const gone = issue('gone', p1)
     const r = relay([ship, p1, p2, gone, change(gone, 'project', addressOf(p2)), change(gone, 'deleted', 'true')])
-    assert.deepEqual(await resolveParents([addressOf(gone)], r.query, undefined, { listRead: true }), { [addressOf(gone)]: addressOf(p2) })
+    assert.deepEqual(await resolveParents([addressOf(gone)], r.query), { [addressOf(gone)]: addressOf(p2) })
     assert.deepEqual(r.changesByA(), [addressOf(gone)])
   })
 
@@ -120,7 +114,7 @@ describe('resolveParents by the list read', () => {
     const mine = issue('twin', p1)
     const theirs = event({ kind: ISSUE, pubkey: OTHER, tags: [['d', 'twin'], ['title', 'twin'], ['a', addressOf(p1)], ['h', TEAM]] })
     const r = relay([ship, p1, p2, mine, theirs, change(theirs, 'project', addressOf(p2), OTHER), change(theirs, 'deleted', 'true', OTHER)])
-    const parents = await resolveParents([addressOf(mine), addressOf(theirs)], r.query, undefined, { listRead: true })
+    const parents = await resolveParents([addressOf(mine), addressOf(theirs)], r.query)
     assert.deepEqual(parents, { [addressOf(mine)]: addressOf(p1), [addressOf(theirs)]: addressOf(p2) })
   })
 })
@@ -145,49 +139,34 @@ describe('an archived parent, read by the list read', () => {
     return { shelved, open, under, fine, events }
   }
 
-  test('an issue opened with the switched kinds is archived with its project, and no project’s changes are read', async () => {
+  test('an opened issue is archived with its project, and no project’s changes are read', async () => {
     const { shelved, under, fine, events } = setup()
     const r = relay(events)
-    const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true, openRead: [PROJECT] })
-    const other = await resolveForeignObject(addressOf(fine), r.query, async () => ({}), 0, undefined, { archivedWith: true, openRead: [PROJECT] })
+    const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true })
+    const other = await resolveForeignObject(addressOf(fine), r.query, async () => ({}), 0, undefined, { archivedWith: true })
     assert.equal(opened.archived?.with, addressOf(shelved))
     assert.equal(other.archived, undefined)
     const projects = r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`))
     assert.deepEqual(projects, [], `read by #a: ${projects}`)
   })
 
-  test('with listRead and no switched kinds, an issue is archived with its project, and no project’s changes are read', async () => {
-    const { shelved, under, events } = setup()
-    const r = relay(events)
-    const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true, listRead: true })
-    assert.equal(opened.archived?.with, addressOf(shelved))
-    assert.deepEqual(r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`)), [])
-  })
-
   test('issues listed by the list read are archived with their project, and no changes are read one by one', async () => {
     const { shelved, under, fine, events } = setup()
     const r = relay(events)
-    const roots = await resolveForeignRoots([addressOf(under), addressOf(fine)], r.query, undefined, { archivedWith: true, listRead: true })
+    const roots = await resolveForeignRoots([addressOf(under), addressOf(fine)], r.query, undefined, { archivedWith: true })
     const byD = Object.fromEntries(roots.map((o) => [o.address, o.archived?.with]))
     assert.deepEqual(byD, { [addressOf(under)]: addressOf(shelved), [addressOf(fine)]: undefined })
     assert.deepEqual(r.changesByA(), [])
   })
 
-  test('a deleted archived project, which the list read leaves out, is read as before and still archives its issue', async () => {
+  test('a deleted archived project, which the list read leaves out, is read by its changes and still archives its issue', async () => {
     const { shelved, under, events } = setup({ deleted: true })
-    const r = relay(events)
-    const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true, openRead: [PROJECT] })
-    assert.equal(opened.archived?.with, addressOf(shelved))
-    assert.ok(r.changesByA().includes(addressOf(shelved)))
-  })
-
-  test('without the switched kinds, the project’s changes are read as before', async () => {
-    const { shelved, under, events } = setup()
     const r = relay(events)
     const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true })
     assert.equal(opened.archived?.with, addressOf(shelved))
     assert.ok(r.changesByA().includes(addressOf(shelved)))
   })
+
 })
 
 describe('readTopics: a topic’s archived project, read by the list read', () => {
@@ -203,25 +182,19 @@ describe('readTopics: a topic’s archived project, read by the list read', () =
     return { shelved, under, fine, text, events }
   }
 
-  test('with parentsListRead, a topic under an archived project is archived with it, and no project’s changes are read', async () => {
-    const { shelved, under, fine, text, events } = setup()
+  test('a topic under an archived project is archived with it, and no project’s changes are read', async () => {
+    const { shelved, under, fine, events } = setup()
     const r = relay(events)
-    const read = await readTopics(r.query, OTHER, { parentsListRead: true })
+    const read = await readTopics(r.query, OTHER)
     const archivedWith = Object.fromEntries(read.topics.map((t) => [t.address, t.object.archived?.with]))
     assert.deepEqual(archivedWith, { [addressOf(under)]: addressOf(shelved), [addressOf(fine)]: undefined })
     const projects = r.changesByA().filter((a) => a.startsWith(`${PROJECT}:`))
     assert.deepEqual(projects, [], `read by #a: ${projects}`)
-    // The topics themselves are still read in full, their text with them: its newest change is known, so it can be edited.
-    assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.prevs?.description, text.id)
+    // The topics are listed too, so their text is not read: an edit of it opens the topic first.
+    assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.prevs?.description, '')
+    assert.ok(!r.asked().some((f) => f.text === true), 'no open read for a list of topics')
   })
 
-  test('without parentsListRead, the archived project’s changes are read as before', async () => {
-    const { shelved, under, events } = setup()
-    const r = relay(events)
-    const read = await readTopics(r.query, OTHER)
-    assert.equal(read.topics.find((t) => t.address === addressOf(under)).object.archived?.with, addressOf(shelved))
-    assert.ok(r.changesByA().includes(addressOf(shelved)))
-  })
 })
 
 describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
@@ -243,7 +216,7 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
       ...edits(stays), ...edits(p1),
     ]
     const r = relay(events)
-    const roots = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { listRead: true, children: true })
+    const roots = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { children: true })
     assert.deepEqual(roots.map((o) => o.address), [addressOf(p1)])
     const children = roots[0].children ?? []
     assert.deepEqual(new Set(children.map((c) => c.slots.title?.value)), new Set(['Stays, renamed', 'arrived']))
@@ -269,7 +242,7 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
       const answer = await r.query(filters)
       return filters.every((f) => f.fields) ? [...answer.filter((e) => e.id !== stale.id), ...(answer.some((e) => e.id === stale.id) ? [current] : [])] : answer
     }
-    const [root] = await resolveForeignRoots([addressOf(p1)], listRead, undefined, { listRead: true, children: true })
+    const [root] = await resolveForeignRoots([addressOf(p1)], listRead, undefined, { children: true })
     assert.deepEqual(root.children ?? [], [])
   })
 
@@ -284,7 +257,7 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
     const other = issue('other', p1)
     const r = relay([tracker, p1, linked, other, change(linked, 'status', 'done'), change(other, 'status', 'todo')])
     const eachOnItsOwn = async (filters) => (await Promise.all(filters.map((f) => r.query([f])))).flat()
-    const roots = await resolveForeignRoots([addressOf(p1), addressOf(linked)], eachOnItsOwn, undefined, { listRead: true, children: true })
+    const roots = await resolveForeignRoots([addressOf(p1), addressOf(linked)], eachOnItsOwn, undefined, { children: true })
     const parent = roots.find((o) => o.address === addressOf(p1))
     assert.deepEqual(parent.children.map((c) => c.address).sort(), [addressOf(linked), addressOf(other)].sort())
     assert.deepEqual(parent.progress, { done: 1, total: 2 }, 'the ring the card draws')
@@ -293,7 +266,7 @@ describe('resolveForeignRoots with children, by the list read (TOPI-8)', () => {
   test('without children, nothing under the file is read', async () => {
     const p1 = project('p1')
     const r = relay([ship, p1, issue('stays', p1)])
-    const [root] = await resolveForeignRoots([addressOf(p1)], r.query, undefined, { listRead: true })
+    const [root] = await resolveForeignRoots([addressOf(p1)], r.query)
     assert.equal(root.children, undefined)
     assert.deepEqual(r.asked().filter((f) => f['#a']?.includes(addressOf(p1)) || f['#A']?.includes(addressOf(p1))), [])
   })

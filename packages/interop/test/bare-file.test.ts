@@ -24,6 +24,7 @@ import {
   resolveManifest,
 } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const TEAM = '7b32200c-e4c0-4216-b79a-8490fc05e0bd'
 const AUTHOR = 'a'.repeat(64)
@@ -80,8 +81,9 @@ function relay(events: SignedEvent[]) {
     }
     return true
   }
-  return async (filters: Record<string, unknown>[]) =>
+  const plain = async (filters: Record<string, unknown>[]) =>
     events.filter((e) => filters.some((f) => matches(e, f as Filter)))
+  return withListRead(plain, events)
 }
 
 describe('a bare file resolves with no manifest anywhere', () => {
@@ -472,7 +474,7 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
         ['summarize', 'text', 'writes'],
         ['move', 'text', 'writes'],
         ['archive', 'select', 'writes'],
-        ['delete', 'confirm', 'destructive'],
+        ['delete', 'select', 'destructive'],
       ],
     )
     // `rename` sets the field the title slot reads — one fact, two views (PEEK-18).
@@ -603,35 +605,11 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
     }
   })
 
-  it('deletes with a NIP-09 request naming the address, for the relay to adjudicate', () => {
-    // `listed` since INT-12, so it is built with every Folder that lists it.
-    const built = buildActionEvents({
-      manifest: BARE_MANIFEST,
-      kind: KIND_BARE_FILE,
-      address: TOPIC,
-      objectAuthor: AUTHOR,
-      folder: TEAM,
-      actionId: 'delete',
-      value: '',
-      pubkey: OTHER,
-      createdAtMs: 1_700_000_000_000,
-      listedIn: [],
-    })
-    assert.notEqual(typeof built, 'string', String(built))
-    const [request, ...rest] = built as Exclude<typeof built, string>
-    assert.equal(rest.length, 0, 'listed in no Folder, so nothing to remove')
-    assert.equal(request.kind, 5)
-    assert.deepEqual(request.tags, [['a', TOPIC], ['k', String(KIND_BARE_FILE)]])
-    assert.equal(request.content, '')
-    assert.ok(!request.tags.some((t) => t[0] === 'e'), 'an `e` tag would route the relay to the wrong branch')
-  })
-
-  describe('where the relay keeps topics in order (SPEC §7.3, §6.5)', () => {
-    // A topic named by its id: a uuid `d`, so its type's switch applies to it.
+  describe('Delete marks the topic (SPEC §7.3, §6.5)', () => {
     const ID = '5d0c9a1e-7b2f-4c3d-9e8a-1f2b3c4d5e6f'
     const KEPT_TOPIC = `${KIND_BARE_FILE}:${AUTHOR}:${ID}`
     const ROOT = 'e'.repeat(64)
-    const del = (inOrder: string[], prev?: string) =>
+    const del = (prev?: string, value = 'true') =>
       buildActionEvents({
         manifest: BARE_MANIFEST,
         kind: KIND_BARE_FILE,
@@ -639,16 +617,15 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
         objectAuthor: AUTHOR,
         folder: TEAM,
         actionId: 'delete',
-        value: '',
+        value,
         pubkey: OTHER,
         createdAtMs: 1_700_000_000_000,
         listedIn: [{ id: TEAM, hasState: true }],
-        inOrder,
         ...(prev ? { prev } : {}),
       })
 
     it('Delete marks the topic: its deleted change after the one it follows, by anyone, and it stays on its team', () => {
-      const built = del(['osnova.topic'], ROOT)
+      const built = del(ROOT)
       assert.notEqual(typeof built, 'string', String(built))
       const events = built as Exclude<typeof built, string>
       assert.equal(events.length, 1, 'no team command: a delete takes it off no list, so a restore puts back exactly what was there')
@@ -666,10 +643,17 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       ])
     })
 
-    it('a topic whose d is not an id is marked deleted too, since the relay refuses a kind:5 on any topic kept in order', () => {
+    it('Restore is the same field set back to empty, after the delete it follows', () => {
+      const built = del('d'.repeat(64), '')
+      assert.notEqual(typeof built, 'string', String(built))
+      const [change] = built as Exclude<typeof built, string>
+      assert.deepEqual(change.tags.filter((t) => ['field', 'value', 'prev'].includes(t[0])), [['field', 'deleted'], ['value', ''], ['prev', 'd'.repeat(64)]])
+    })
+
+    it('a topic whose d is not an id is marked deleted too, since the relay refuses a kind:5 on any file', () => {
       const built = buildActionEvent({
         manifest: BARE_MANIFEST, kind: KIND_BARE_FILE, address: TOPIC, objectAuthor: AUTHOR, folder: TEAM,
-        actionId: 'delete', value: '', pubkey: OTHER, createdAtMs: 1_700_000_000_000, inOrder: ['osnova.topic'], prev: ROOT,
+        actionId: 'delete', value: 'true', pubkey: OTHER, createdAtMs: 1_700_000_000_000, prev: ROOT,
       })
       assert.notEqual(typeof built, 'string', String(built))
       const change = built as Exclude<typeof built, string>
@@ -677,27 +661,41 @@ describe('a bare file can be renamed and deleted, because its manifest says so',
       assert.deepEqual(change.tags.filter((t) => ['field', 'value', 'prev'].includes(t[0])), [['field', 'deleted'], ['value', 'true'], ['prev', ROOT]])
     })
 
-    it('a listing that names another kind for its changes cannot turn Delete into that kind: it is refused', () => {
-      for (const changeKind of [5, 0]) {
-        const manifest = { ...BARE_MANIFEST, records: { ...BARE_MANIFEST.records!, changeKind } }
-        const built = buildActionEvents({
-          manifest, kind: KIND_BARE_FILE, address: KEPT_TOPIC, objectAuthor: AUTHOR, folder: TEAM, listedIn: [],
-          actionId: 'delete', value: '', pubkey: OTHER, createdAtMs: 1_700_000_000_000, inOrder: ['osnova.topic'], prev: ROOT,
+    describe('an older listing whose Delete is a kind:5', () => {
+      // What a listing published before the close may still say; the relay refuses a kind:5 on any file.
+      const olderOf = (manifest: typeof BARE_MANIFEST) => ({
+        ...manifest,
+        actions: manifest.actions!.map((a) => (a.id === 'delete' ? { ...a, emits: { kind: 5, scope: 'address' as const, listed: true } } : a)),
+      })
+      let OLDER: typeof BARE_MANIFEST
+      before(() => {
+        OLDER = olderOf(BARE_MANIFEST)
+      })
+      const older = (manifest: typeof BARE_MANIFEST, prev?: string) =>
+        buildActionEvents({
+          manifest, kind: KIND_BARE_FILE, address: KEPT_TOPIC, objectAuthor: AUTHOR, folder: TEAM, listedIn: [{ id: TEAM, hasState: true }],
+          actionId: 'delete', value: '', pubkey: OTHER, createdAtMs: 1_700_000_000_000, ...(prev ? { prev } : {}),
         })
-        assert.match(String(built), /kind 1851 change/, `changeKind ${changeKind} built ${JSON.stringify(built)}`)
-      }
-    })
 
-    it('a Delete that names no change it follows is refused before it is sent', () => {
-      assert.match(String(del(['osnova.topic'])), /prev/)
-    })
+      it('is written as the topic’s deleted change, true, and takes it off no list', () => {
+        const built = older(OLDER, ROOT)
+        assert.notEqual(typeof built, 'string', String(built))
+        const events = built as Exclude<typeof built, string>
+        assert.equal(events.length, 1)
+        assert.equal(events[0].kind, CHANGE_KIND)
+        assert.deepEqual(events[0].tags.filter((t) => ['field', 'value', 'prev'].includes(t[0])), [['field', 'deleted'], ['value', 'true'], ['prev', ROOT]])
+      })
 
-    it('where only pages are kept in order, a topic is still deleted by a NIP-09 request and taken off its team', () => {
-      const built = del(['osnova.document'])
-      assert.notEqual(typeof built, 'string', String(built))
-      const [request, remove] = built as Exclude<typeof built, string>
-      assert.equal(request.kind, 5)
-      assert.ok(remove, 'its team’s listing is removed as before')
+      it('naming another kind for its changes cannot turn Delete into that kind: it is refused', () => {
+        for (const changeKind of [5, 0]) {
+          const built = older({ ...OLDER, records: { ...OLDER.records!, changeKind } }, ROOT)
+          assert.match(String(built), /kind 1851 change/, `changeKind ${changeKind} built ${JSON.stringify(built)}`)
+        }
+      })
+
+      it('naming no change it follows is refused before it is sent', () => {
+        assert.match(String(older(OLDER)), /prev/)
+      })
     })
   })
 

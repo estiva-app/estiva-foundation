@@ -28,6 +28,7 @@ import {
   type ListedFile,
 } from '../dist/index.js'
 import { RELAY_PAGE_CEILING, type SignedEvent, type UnsignedEvent } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const QA1 = 'a'.repeat(64)
 const QA2 = 'b'.repeat(64)
@@ -129,9 +130,10 @@ const matches = (e: SignedEvent, f: Filter) => {
 }
 function relayOver(events: SignedEvent[]) {
   const calls: Filter[][] = []
+  const plain = withListRead(async (filters: Filter[]) => events.filter((e) => filters.some((f) => matches(e, f))), events)
   const query = async (filters: Filter[]) => {
     calls.push(filters)
-    return events.filter((e) => filters.some((f) => matches(e, f)))
+    return plain(filters)
   }
   return { query, calls }
 }

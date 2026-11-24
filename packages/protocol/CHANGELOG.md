@@ -4,6 +4,24 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.69.0 — 2026-11-24
+
+**Wire behaviour: a file of the four base types is always named by its id as
+well as its address; the relay's old-way switches are no longer read.** (ALL-8;
+SPEC §6.4, §6.13.) Every relay keeps projects, issues, pages and topics in
+order, so there is nothing left to switch on.
+
+- Removed: `relayFileReadsOf`'s `list`, `text`, `switched`, `inOrder` and
+  `times` (it now answers `search` alone), `fileFieldsOf`, `projectFieldsOf`,
+  `FileFieldsSwitch`, `ProjectFields`, `OptInStorage`, `fieldsOptedIn` and
+  `typeFieldsOptedIn`. An app reads files by the list, open and times reads
+  without asking.
+- `fileIdFormOf(address)` and `embedTagsOf(set)` drop their `inOrder`
+  argument: a file of a base type is named by its id (an `o` beside its `a`, a
+  `part` and a listing by the id, a card by the id). A named file (`30852`) and
+  anything else is still named by its address alone.
+- Added: `IN_ORDER_TYPES`, the four base types the relay keeps in order.
+
 ## 0.68.0 — 2026-11-24
 
 **Wire behaviour: nothing new written; a file with an odd id is no longer

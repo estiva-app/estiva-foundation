@@ -303,7 +303,7 @@ describe('fileReference', () => {
     const uri = fileReference(address)
     assert.match(uri, /^nostr:naddr1/)
     assert.deepEqual(decodeNaddr(uri.slice('nostr:'.length)), { kind: 30851, pubkey: PK, identifier: '2c3e45f8-029a-4998-8eb3-b49177986605', relays: [] })
-    assert.deepEqual(referenceTagsFor(`see ${uri}`), [['a', address]])
+    assert.deepEqual(referenceTagsFor(`see ${uri}`), [['a', address], ['o', '2c3e45f8-029a-4998-8eb3-b49177986605']])
   })
 
   it('refuses what is not an address', () => {

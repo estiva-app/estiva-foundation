@@ -15,6 +15,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveForeignObject, resolveManifest, createProjectionCache, MANIFEST_TTL_MS } from '../dist/index.js'
+import { withListRead } from './list-read.mjs'
 
 const AUTHOR = 'a'.repeat(64)
 const KIND = 30850
@@ -35,9 +36,17 @@ const event = (partial) => ({
 /** The fake relay, plus a count of how many times it was asked. */
 function countingRelay(events) {
   const calls = []
+  const answer = withListRead(matching(events), events)
   const query = async (filters) => {
     calls.push(filters)
-    return events.filter((e) =>
+    return answer(filters)
+  }
+  return { query, calls, get count() { return calls.length } }
+}
+
+function matching(events) {
+  return async (filters) =>
+    events.filter((e) =>
       filters.some((f) => {
         if (f.ids && !f.ids.includes(e.id)) return false
         if (f.kinds && !f.kinds.includes(e.kind)) return false
@@ -50,8 +59,6 @@ function countingRelay(events) {
         return true
       }),
     )
-  }
-  return { query, calls, get count() { return calls.length } }
 }
 
 const manifest = event({
@@ -78,20 +85,28 @@ const child = event({ kind: CHILD, tags: [['d', 'i1'], ['title', 'A ticket'], ['
 
 const world = () => countingRelay([manifest, object, child])
 
+/*
+  One file, read the one way (§6.13): its comments and its children's first
+  records in one plain request, the file itself by the open read beside it (a
+  relay takes no request mixing list reads with plain ones), and then its
+  children's current fields by the list read, once their first records are in.
+*/
+const OBJECT_READS = 3
+
 test('the children no longer cost a round trip of their own', async () => {
   const relay = world()
   const found = await resolveForeignObject(ADDRESS, relay.query)
 
   assert.equal(found.children.length, 1, 'the list still resolves')
   assert.equal(found.children[0].slots.title.value, 'A ticket')
-  // Two for NIP-89 discovery, one for everything about the object, and — since
-  // MAN-8 — one sweep of every manifest for what other apps create on this
-  // kind. The sweep is sent beside the object's read, so it adds a request and
-  // not a wait; with a cache it is paid once per kind, like the other two.
-  assert.equal(relay.count, 4, `expected 4 round trips, got ${relay.count}`)
+  // Two for NIP-89 discovery, the object's own, and — since MAN-8 — one sweep
+  // of every manifest for what other apps create on this kind. The sweep is
+  // sent beside the object's read, so it adds a request and not a wait; with a
+  // cache it is paid once per kind, like the other two.
+  assert.equal(relay.count, 3 + OBJECT_READS, `expected ${3 + OBJECT_READS} round trips, got ${relay.count}`)
 })
 
-test('with the manifest memoised, a refresh is a single request', async () => {
+test('with the manifest memoised, a refresh is the object\'s own reads alone', async () => {
   const relay = world()
   const cache = createProjectionCache()
 
@@ -100,8 +115,8 @@ test('with the manifest memoised, a refresh is a single request', async () => {
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
   const warm = relay.count - cold
 
-  assert.equal(cold, 4)
-  assert.equal(warm, 1, `a refresh must be one request, was ${warm}`)
+  assert.equal(cold, 3 + OBJECT_READS)
+  assert.equal(warm, OBJECT_READS, `a refresh must be the object's reads alone, was ${warm}`)
 })
 
 test('the refresh still sees a change — it is the object that is re-read, not the cache', async () => {
@@ -128,7 +143,7 @@ test('no cache is exactly the old behaviour, twice over', async () => {
   const relay = world()
   await resolveForeignObject(ADDRESS, relay.query)
   await resolveForeignObject(ADDRESS, relay.query)
-  assert.equal(relay.count, 8, 'without a cache nothing is remembered between resolves')
+  assert.equal(relay.count, 2 * (3 + OBJECT_READS), 'without a cache nothing is remembered between resolves')
 })
 
 test('a manifest is not believed for ever', async () => {
@@ -137,7 +152,7 @@ test('a manifest is not believed for ever', async () => {
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
   const cold = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - cold, 4, 'a zero TTL must re-ask, or the TTL is decoration')
+  assert.equal(relay.count - cold, 3 + OBJECT_READS, 'a zero TTL must re-ask, or the TTL is decoration')
   assert.ok(MANIFEST_TTL_MS > 0)
 })
 
@@ -148,7 +163,7 @@ test('clear() forgets, so republishing a manifest is recoverable without a reloa
   cache.clear()
   const before = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - before, 4, 'after clear(), discovery runs again')
+  assert.equal(relay.count - before, 3 + OBJECT_READS, 'after clear(), discovery runs again')
 })
 
 test('a kind nothing claims is memoised too, so the expensive miss is paid once', async () => {
@@ -245,7 +260,7 @@ test('a burst of cold resolves shares one discovery instead of paying it once ea
 
   // Three discovery reads: the recommendation, the manifest, the creators' sweep.
   assert.equal(discovery(relay.calls), 3, `discovery must run once for the burst, ran ${discovery(relay.calls) / 3} times`)
-  assert.equal(relay.count, 23, 'three for discovery, one per object')
+  assert.equal(relay.count, 3 + 20 * OBJECT_READS, 'three for discovery, then each object\'s own')
 })
 
 test('a failed discovery is shared by the burst and not remembered', async () => {
@@ -288,7 +303,7 @@ test('clear() during a read keeps that read from writing its answer back', async
 
   const before = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, cache)
-  assert.equal(relay.count - before, 3, 'what was read before clear() must not be believed after it')
+  assert.equal(relay.count - before, 2 + OBJECT_READS, 'what was read before clear() must not be believed after it')
 })
 
 test('a cache without share keeps the old behaviour: look up, read, remember', async () => {
@@ -302,8 +317,8 @@ test('a cache without share keeps the old behaviour: look up, read, remember', a
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
   const cold = relay.count
   await resolveForeignObject(ADDRESS, relay.query, undefined, 0, handWritten)
-  assert.equal(cold, 4)
-  assert.equal(relay.count - cold, 1)
+  assert.equal(cold, 3 + OBJECT_READS)
+  assert.equal(relay.count - cold, OBJECT_READS)
 })
 
 /*

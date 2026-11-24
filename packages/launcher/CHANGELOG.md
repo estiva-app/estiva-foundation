@@ -2,6 +2,14 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.3.1 — 2026-11-24
+
+**No host has to change.** (ALL-8.) A file's Delete written as its `deleted`
+change (SPEC §6.5) is no longer offered as a ⌘K picker row ("Delete · <file>"
+with Not deleted / Deleted): it is asked with a confirm on the file's own menu.
+Works with `@estiva-app/interop` 0.117.0, where a topic's built-in Delete
+became that change.
+
 ## 0.3.0 — 2026-11-24
 
 **The suggested action your sentence wants comes first, where the browser's

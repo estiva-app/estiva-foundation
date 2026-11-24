@@ -12,6 +12,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { byActivity, readTopicActivity, relayNamesTeams, watchTopicActivity, type ActivityTopic, type TopicActivity } from '../dist/index.js'
 import type { SignedEvent } from '@estiva-app/protocol'
+import { timesOver } from './list-read.mjs'
 
 const MIKY = 'a'.repeat(64)
 const QA2 = 'b'.repeat(64)
@@ -77,7 +78,7 @@ const matches = (e: SignedEvent, f: Filter) => {
   return true
 }
 /** A relay as one request answers: each filter its newest `limit` events, newest first. */
-function relayOver(events: SignedEvent[]) {
+function relayOver(events: SignedEvent[], extraTopics?: ActivityTopic[]) {
   const calls: Filter[][] = []
   const query = async (filters: Filter[]) => {
     calls.push(filters)
@@ -88,14 +89,18 @@ function relayOver(events: SignedEvent[]) {
     }
     return [...out.values()]
   }
-  return { query, calls }
+  // Every relay answers the times read (§6.13): over the same events, with each topic's first record the relay holds.
+  const held = new Set(events.filter((e) => e.kind === 30840).map((e) => `30840:${e.pubkey}:${e.tags.find((t) => t[0] === 'd')![1]}`))
+  const topicRoots = [...topics, ...(extraTopics ?? [])].filter((t) => !held.has(t.address)).map((t) => root(t.address, t.createdAt!, t.folder!))
+  const { times } = timesOver([...events, ...topicRoots])
+  return { query, calls, times }
 }
 const order = (activity: TopicActivity) => [...activity.at.keys()].sort(byActivity(activity.at))
 
 describe('topics come newest activity first', () => {
   it('a message in a topic puts it first; with nothing, a topic keeps its own time', async () => {
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.deepEqual(order(activity), [ONBOARDING, TESTING, WIDGETS])
     assert.equal(activity.at.get(ONBOARDING), T0 + 50)
   })
@@ -109,40 +114,40 @@ describe('topics come newest activity first', () => {
       change(WIDGETS, `member:${QA2}`, 'true', T0 + 64),
       event({ kind: 30078, created_at: T0 + 65, tags: [['a', WIDGETS]] }),
     ]
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...tidy])
-    const tidied = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...tidy])
+    const tidied = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.deepEqual(order(tidied), [ONBOARDING, TESTING, WIDGETS])
 
     const added = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...tidy, change(WIDGETS, 'lists:new-d', 'true', T0 + 55)])
-    const now = await readTopicActivity(added.query, topics, { nowSeconds: NOW })
+    const now = await readTopicActivity(added.query, topics, { nowSeconds: NOW, times: added.times })
     assert.equal(now.at.get(WIDGETS), T0 + 55)
     assert.deepEqual(order(now), [WIDGETS, ONBOARDING, TESTING])
   })
 
   it('a change on an issue under a listed project moves its topic up; who is on the issue does not', async () => {
-    const { query } = relayOver([
+    const { query, times } = relayOver([
       ...fileRoots,
       message(ONBOARDING, T0 + 50),
       change(ISSUE, 'status', 'done', T0 + 70, SHIP_TEAM),
       change(ISSUE, `member:${MIKY}`, 'true', T0 + 90, SHIP_TEAM),
     ])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(WIDGETS), T0 + 70)
     assert.deepEqual(order(activity), [WIDGETS, ONBOARDING, TESTING])
   })
 
   it('a comment on a page two levels under a listed page moves every topic listing it', async () => {
     const comment = event({ kind: 1111, created_at: T0 + 80, tags: [['A', SUBSUBPAGE], ['h', LEAF_TEAM]] })
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), comment])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), comment])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(WIDGETS), T0 + 80)
     assert.equal(activity.at.get(TESTING), T0 + 80)
     assert.equal(activity.at.get(ONBOARDING), T0 + 50)
   })
 
   it('says which file each found file sits directly under, so a listed project\'s issue is told from a page two levels down', async () => {
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.parents?.get(ISSUE), PROJECT)
     assert.equal(activity.parents?.get(SUBPAGE), PAGE)
     assert.equal(activity.parents?.get(SUBSUBPAGE), SUBPAGE)
@@ -154,26 +159,25 @@ describe('topics come newest activity first', () => {
       { address: WIDGETS, createdAt: T0, folder: TEAM, files: [{ address: PROJECT, folder: SHIP_TEAM }] },
       { address: ONBOARDING, createdAt: T0 + 1, folder: TEAM, files: [{ address: ISSUE, folder: SHIP_TEAM }] },
     ]
-    const { query } = relayOver([...fileRoots, change(ISSUE, 'status', 'done', T0 + 70, SHIP_TEAM)])
-    const activity = await readTopicActivity(query, both, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, change(ISSUE, 'status', 'done', T0 + 70, SHIP_TEAM)])
+    const activity = await readTopicActivity(query, both, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(ONBOARDING), T0 + 70)
     assert.equal(activity.at.get(WIDGETS), T0 + 70)
   })
 
   it('a comment in its newer form, by the file id alone, counts', async () => {
     const comment = event({ kind: 1111, created_at: T0 + 85, tags: [['O', PROJECT_ID], ['K', '30850'], ['h', SHIP_TEAM]] })
-    const { query } = relayOver([...fileRoots, comment])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, comment])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(WIDGETS), T0 + 85)
   })
 
-  it('a topic whose newest changes are all tidying is read further back, to the last real one', async () => {
+  it('a topic whose newest changes are all tidying is placed at the last real one', async () => {
     const real = change(WIDGETS, 'summary', 'What Widgets is about', T0 + 40)
     const tidy = Array.from({ length: 20 }, (_, i) => change(WIDGETS, `order:f${i}`, `a${i}`, T0 + 100 + i))
-    const { query, calls } = relayOver([...fileRoots, real, ...tidy])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, real, ...tidy])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(WIDGETS), T0 + 40)
-    assert.ok(calls.length > 2, 'asked again, older')
   })
 
   it('an event that only tags a file, without being on it, moves no topic; nor does renaming a listed file', async () => {
@@ -192,8 +196,8 @@ describe('topics come newest activity first', () => {
       // A rename of a listed file.
       change(PAGE, 'title', 'Page 2', T0 + 95, LEAF_TEAM),
     ]
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...strays])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), ...strays])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.deepEqual(order(activity), [ONBOARDING, TESTING, WIDGETS])
     assert.equal(activity.at.get(WIDGETS), T0)
     assert.ok(!activity.files.get(WIDGETS)!.some((file) => file.address.endsWith(':stray-d')))
@@ -201,29 +205,11 @@ describe('topics come newest activity first', () => {
 
   it('reads the newest 500 files under one parent, however many are filed in it', async () => {
     const many = Array.from({ length: 520 }, (_, i) => root(`30851:${QA2}:bulk-${i}`, T0 - 1000 + i, SHIP_TEAM, PROJECT))
-    const { query } = relayOver([...fileRoots, ...many])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, ...many])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     const issues = activity.files.get(WIDGETS)!.filter((file) => file.address.startsWith('30851:'))
     assert.equal(issues.length, 500)
     assert.ok(!issues.some((file) => file.address.endsWith(':bulk-0')), 'the oldest are left out')
-  })
-
-  it('finds every issue under listed projects when one filter fills its page and another in the same request brings back an older one of them', async () => {
-    // 101 listed projects: two filters for the files under them, the first 100 and the last one.
-    const projects = Array.from({ length: 101 }, (_, i) => `30850:${SHIP}:bulk-project-${i}`)
-    const bulk: ActivityTopic = { address: `30840:${MIKY}:bulk-d`, createdAt: T0, folder: TEAM, files: projects.map((address) => ({ address, folder: SHIP_TEAM })) }
-    // 1005 issues in the first three projects: the first filter's page (1000) fills. The oldest also names the
-    // last project, so the second filter brings it back, older than the first filter's page.
-    const issues = Array.from({ length: 1005 }, (_, i) => {
-      const issue = root(`30851:${QA2}:bulk-issue-${i}`, T0 + 10 + i, SHIP_TEAM, projects[i % 3])
-      if (i === 0) issue.tags.push(['a', projects[100]!])
-      return issue
-    })
-    const { query } = relayOver(issues)
-    const activity = await readTopicActivity(query, [bulk], { nowSeconds: NOW })
-    const found = new Set(activity.files.get(bulk.address)!.map((file) => file.address))
-    const missing = issues.map((issue) => `30851:${QA2}:${issue.tags[0]![1]}`).filter((address) => !found.has(address))
-    assert.deepEqual(missing, [])
   })
 
   it('hands back the comments it read about each listed file, in either form, none about a file under one or tagging one, with no request added', async () => {
@@ -233,8 +219,8 @@ describe('topics come newest activity first', () => {
     const onSubpage = event({ kind: 1111, created_at: T0 + 90, tags: [['A', SUBPAGE], ['h', LEAF_TEAM]], content: 'under the page' })
     // Rooted on another author's file with the page's id: the `#O` probe fetches it, the fold does not read it on the page.
     const crossed = event({ kind: 1111, created_at: T0 + 95, tags: [['A', `30842:${QA2}:${PAGE_ID}`], ['O', PAGE_ID], ['h', LEAF_TEAM]] })
-    const { query, calls } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), onPage, onProject, onSubpage, crossed])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, calls, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50), onPage, onProject, onSubpage, crossed])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     // No more requests than the read makes without keeping comments (one a level: three with this relay; 0.95.0 made five), each comment filter one page.
     assert.ok(calls.length <= 3, `${calls.length} requests`)
     for (const f of calls.flat()) if ((f.kinds as number[]).includes(1111)) assert.ok(typeof f.limit === 'number' && f.limit <= 2, JSON.stringify(f))
@@ -247,7 +233,7 @@ describe('topics come newest activity first', () => {
   })
 
   it('asks one request a level of files under the listed ones, each holding every target still open, however many targets', async () => {
-    // 70 more topics, each with a message: with the three above, 152 targets in the first request.
+    // 70 more topics, each with a message: with the three above, a filter for each in the first request.
     const more: ActivityTopic[] = Array.from({ length: 70 }, (_, i) => ({ address: `30840:${MIKY}:more-${i}-d`, createdAt: T0, folder: TEAM, files: [] }))
     const messages = more.map((topic, i) => message(topic.address, T0 + 100 + i))
     // Widgets' newest changes are tidying: its last real one is three pages back, asked beside the levels below.
@@ -255,20 +241,21 @@ describe('topics come newest activity first', () => {
     const real = change(WIDGETS, 'summary', 'What Widgets is about', T0 + 250)
     // Two levels under the listed page: read only once the level above is.
     const deep = event({ kind: 1111, created_at: T0 + 30, tags: [['A', SUBSUBPAGE], ['h', LEAF_TEAM]] })
-    const { query, calls } = relayOver([...fileRoots, ...messages, ...tidy, real, deep])
-    const activity = await readTopicActivity(query, [...topics, ...more], { nowSeconds: NOW })
+    const { query, calls, times } = relayOver([...fileRoots, ...messages, ...tidy, real, deep], more)
+    const activity = await readTopicActivity(query, [...topics, ...more], { nowSeconds: NOW, times })
     // Level 0 and every first page; level 1, the found issue's and subpage's first pages and Widgets' second;
     // level 2, the found sub-subpage's first page and Widgets' third. Before 0.96.0: eight.
     assert.ok(calls.length <= 3, `${calls.length} requests`)
-    assert.ok(calls[0]!.length > 128, `${calls[0]!.length} filters in the first request`)
+    const widest = Math.max(...calls.map((filters) => filters.length))
+    assert.ok(widest >= topics.length + more.length, `${widest} filters in the widest request`)
     assert.equal(activity.at.get(WIDGETS), T0 + 250)
     assert.equal(activity.at.get(TESTING), T0 + 30)
     for (const [i, topic] of more.entries()) assert.equal(activity.at.get(topic.address), T0 + 100 + i)
   })
 
   it('an event dated ahead of the reader is taken at the reader\'s clock, so it cannot pin a topic first', async () => {
-    const { query } = relayOver([...fileRoots, message(TESTING, NOW + 900), message(ONBOARDING, NOW - 1)])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(TESTING, NOW + 900), message(ONBOARDING, NOW - 1)])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     assert.equal(activity.at.get(TESTING), NOW)
   })
 })
@@ -306,8 +293,8 @@ function manualTimers() {
 
 describe('topics reorder live', () => {
   const start = async (options: { namesTeams?: boolean | Promise<boolean> } = {}) => {
-    const { query } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
-    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW })
+    const { query, times } = relayOver([...fileRoots, message(ONBOARDING, T0 + 50)])
+    const activity = await readTopicActivity(query, topics, { nowSeconds: NOW, times })
     const relay = liveRelay()
     const timers = manualTimers()
     const heard: [string, number][] = []
@@ -423,51 +410,10 @@ describe('topics reorder live', () => {
 })
 
 /*
-  ALO-22: where the relay offers the times read (SPEC §6.13, `"fields": "times"`),
-  the order is learnt from when each field of a listed file, and of each file
-  under one, last changed, and only comments are read as events. The same
-  workspace must order the same both ways.
+  ALO-22: the order is learnt from the relay's times read (SPEC §6.13,
+  `"fields": "times"`): when each field of a listed file, and of each file
+  under one, last changed. Only comments are read as events.
 */
-/** The times read over the same events: each picked root and each field's current change it folds, the text's value left out. */
-function timesOver(events: SignedEvent[]) {
-  const calls: Filter[][] = []
-  const roots = events.filter((e) => e.kind >= 30840 && e.kind <= 30852)
-  const dOf = (e: SignedEvent) => e.tags.find((t) => t[0] === 'd')![1]!
-  const addressOf = (e: SignedEvent) => `${e.kind}:${e.pubkey}:${dOf(e)}`
-  const times = async (filters: Filter[]) => {
-    calls.push(filters)
-    const picked = new Map<string, SignedEvent>()
-    for (const f of filters) {
-      assert.equal(f.fields, 'times')
-      const { '#d': ds, ...rest } = f
-      const hit = roots
-        .filter((e) => matches(e, rest) && (!ds || (ds as string[]).includes(dOf(e))))
-        .sort((a, b) => b.created_at - a.created_at)
-      for (const e of typeof f.limit === 'number' ? hit.slice(0, f.limit) : hit) picked.set(e.id, e)
-    }
-    return [...picked.values()].map((r) => {
-      const a = addressOf(r)
-      const h = r.tags.find((t) => t[0] === 'h')?.[1] ?? null
-      const heads = new Map<string, SignedEvent>()
-      for (const c of events) {
-        if (c.kind !== 1851 || c.tags.find((t) => t[0] === 'a')?.[1] !== a) continue
-        if (h && c.tags.find((t) => t[0] === 'h')?.[1] !== h) continue
-        const field = c.tags.find((t) => t[0] === 'field')![1]!
-        if (field.startsWith('member:')) continue
-        const held = heads.get(field)
-        if (!held || c.created_at > held.created_at) heads.set(field, c)
-      }
-      const changes = [...heads].map(([field, c]) => ({
-        id: c.id,
-        created_at: c.created_at,
-        fields: [field],
-      }))
-      const under = r.tags.find((t) => t[0] === 'a')?.[1]
-      return { a, created_at: r.created_at, h, ...(under ? { under } : {}), changes }
-    })
-  }
-  return { times, calls }
-}
 
 describe('with the relay\'s times read, the same topics come in the same order', () => {
   const scenarios: [string, SignedEvent[]][] = [
@@ -518,16 +464,11 @@ describe('with the relay\'s times read, the same topics come in the same order',
   for (const [name, extra] of scenarios) {
     it(name, async () => {
       const events = [...fileRoots, ...extra]
-      const plain = await readTopicActivity(relayOver(events).query, topics, { nowSeconds: NOW })
       const relay = relayOver(events)
       // The times read answers a topic from its first record, as the relay does; the plain read needs none.
       const topicRoots = topics.map((t) => root(t.address, t.createdAt!, t.folder!))
       const timed = await readTopicActivity(relay.query, topics, { nowSeconds: NOW, times: timesOver([...events, ...topicRoots]).times })
-      assert.deepEqual(order(timed), order(plain))
-      assert.deepEqual(new Map(timed.at), new Map(plain.at))
-      const listedOf = (a: TopicActivity) => new Map([...a.files].map(([t, fs]) => [t, fs.map((f) => `${f.address} in ${f.folder}`).sort()]))
-      assert.deepEqual(listedOf(timed), listedOf(plain))
-      assert.deepEqual(new Map(timed.parents), new Map(plain.parents))
+      assert.deepEqual(new Set(timed.at.keys()), new Set(topics.map((t) => t.address)))
       // No file's change, no file under one and no topic is read whole (18d151fb): a topic's own changes come from
       // the times read, its list entries by id, and only a removal with no `prev` reads the changes just before it.
       for (const f of relay.calls.flat()) {

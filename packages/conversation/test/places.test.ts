@@ -356,8 +356,8 @@ describe('the level change, the teams list and the reads', () => {
   })
 
   it('the reads for a place ask for its changes, the roster, the space marks and the teams list', () => {
-    const filters = placeFilters(topicPlace, BOB)
-    assert.deepEqual(filters[0], { kinds: [1851], '#a': [TOPIC] })
+    const filters = placeFilters(topicPlace, BOB, [])
+    assert.deepEqual(filters[0], { kinds: [1851], '#a': [TOPIC], '#p': [BOB] })
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [1852], '#a': [TOPIC] })))
     assert.ok(filters.some((f) => JSON.stringify(f) === JSON.stringify({ kinds: [30078], authors: [BOB], '#d': ['estiva:teams:v1'], limit: 1 })))
   })
@@ -371,15 +371,15 @@ describe('the level change, the teams list and the reads', () => {
     const rename = event({ kind: 1851, pubkey: ALICE, created_at: T0 + 5, tags: [['a', TOPIC], ['O', D], ['field', 'title'], ['value', 'Renamed'], ['h', TEAM]] })
     const listed = event({ kind: 1851, pubkey: BOB, created_at: T0 + 6, tags: [['a', TOPIC], ['O', D], ['field', 'lists:x'], ['value', 'true'], ['h', TEAM]] })
     const stored = [root(), rename, listed, level(BOB, T0 + 200, 'all'), member(ALICE, T0 + 210, CAROL, true), member(CAROL, T0 + 220, CAROL, false), member(ALICE, T0 + 230, BOB, true)]
-    const read = (people?: string[]) => stored.filter((e) => placeFilters(topicPlace, BOB, people).some((f) => answers(f as Record<string, unknown>, e)))
+    const read = (people: string[]) => stored.filter((e) => placeFilters(topicPlace, BOB, people).some((f) => answers(f as Record<string, unknown>, e)))
     const narrow = read([ALICE, CAROL])
     assert.ok(!narrow.includes(rename) && !narrow.includes(listed), 'a rename and a listed file are not read')
     const facts = (events: SignedEvent[]) => ({ events, roster: [roster(T0 + 60, ALICE), createTeam(ALICE, T0)] })
-    assert.deepEqual(placeListing(topicPlace, facts(narrow)), placeListing(topicPlace, facts(read())))
-    assert.deepEqual(brief(following(BOB, facts(narrow))), brief(following(BOB, facts(read()))))
-    assert.deepEqual(brief(following(CAROL, facts(narrow))), brief(following(CAROL, facts(read()))))
-    // Keys in another form are no list of people: every change, not the reader's alone.
-    assert.deepEqual(placeListing(topicPlace, facts(read([ALICE.toUpperCase(), 'npub1xyz']))), placeListing(topicPlace, facts(read())))
+    assert.deepEqual(placeListing(topicPlace, facts(narrow)), placeListing(topicPlace, facts(stored)))
+    assert.deepEqual(brief(following(BOB, facts(narrow))), brief(following(BOB, facts(stored))))
+    assert.deepEqual(brief(following(CAROL, facts(narrow))), brief(following(CAROL, facts(stored))))
+    // Keys in another form name nobody: the reader's own changes alone.
+    assert.deepEqual(read([ALICE.toUpperCase(), 'npub1xyz']), read([]))
   })
 })
 

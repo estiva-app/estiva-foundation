@@ -297,13 +297,6 @@ export interface ListedFile extends FileArrangement {
 export interface ListReadOptions {
   /** The file kinds a listed id resolves over (§6.14 "A listed id resolves"). */
   fileKinds?: readonly number[]
-  /**
-   * The relay offers the list read (NIP-11 `file_list.newest`): read each
-   * topic's fields as their current changes, at most three per file however
-   * often its files were moved, not every change ever made (§6.13). Without
-   * it, every change by `#O`, which grows with each move.
-   */
-  listRead?: boolean
 }
 
 /**
@@ -351,10 +344,10 @@ async function listsOf(
   rootsRead: Promise<ReadonlyMap<string, SignedEvent>>,
   options: ListReadOptions,
 ): Promise<Map<string, ListedFile[]>> {
-  // Paged without the list read: every move adds a change to a topic's `#O`, and an unpaged read would lose its oldest entries.
-  const [roots, events] = await Promise.all([rootsRead, options.listRead ? newestChanges(query, asked) : readAll(query, asked.map(topicListFilter))])
+  // Each topic's fields as their current changes, at most three per file however often its files were moved (§6.13).
+  const [roots, events] = await Promise.all([rootsRead, newestChanges(query, asked)])
   const folderOfList = listFolderCheck(asked, roots)
-  if (options.listRead) events.push(...(await readAll(query, skippedFilters(events, folderOfList))))
+  events.push(...(await readAll(query, skippedFilters(events, folderOfList))))
   const ids = listedIds(events, folderOfList)
   const resolved = ids.length ? await resolveIds(query, ids, options.fileKinds) : new Map()
   return listsFrom(asked, roots, events, resolved)
@@ -671,13 +664,9 @@ function newestFirst(a: SignedEvent, b: SignedEvent): number {
  *
  * How the viewer is in each topic is {@link followingOf} over its root and
  * the changes naming them (TEA-6), the fold Peek's switch reads too.
- * `parentsListRead`, where the relay offers the list read (NIP-11
- * `file_list`): the parents walked to see whether a topic is archived with one
- * are read as their current values (§6.13), not every change ever made to them
- * (ALO-15). `topicsListRead`, where topics are kept in order (§6.13, ALL-6):
- * the topics themselves are read the same way, each field's current change and
- * no text, rather than every change each topic ever had; without it they are
- * read as before, their text included.
+ * The topics, and the parents walked to see whether a topic is archived with
+ * one, are read as their current values (§6.13): each field's current change
+ * and no text, not every change each ever had (ALO-15, ALL-6).
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-topic-keeps-its-own-list-of-files.md
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-file-type-is-kept-in-order-and-a-delete-only-marks-the-file.md
@@ -685,20 +674,15 @@ function newestFirst(a: SignedEvent, b: SignedEvent): number {
 export async function readTopics(
   query: QueryFn,
   me: string,
-  options: ListReadOptions & { cache?: ProjectionCache; nowSeconds?: number; parentsListRead?: boolean; topicsListRead?: boolean } = {},
+  options: ListReadOptions & { cache?: ProjectionCache; nowSeconds?: number } = {},
 ): Promise<TopicsRead> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000)
   const roots = topicRoots(await readAll(query, [{ kinds: [KIND_TOPIC] }]))
   const addresses = [...roots.keys()]
   if (addresses.length === 0) return { me, topics: [], membership: foldMemberships(me, [], nowSeconds), mentionedIn: new Set(), inConversations: new Map() }
   const [objects, lists, part, states] = await Promise.all([
-    resolveForeignRoots(addresses, query, options.cache, {
-      archivedWith: true,
-      parentsListRead: options.parentsListRead,
-      ...(options.topicsListRead ? { listRead: true } : {}),
-    }),
-    // The relay that offers the list read for the parents offers it for the topics' own lists.
-    listsOf(query, addresses, Promise.resolve(roots), { ...options, listRead: options.listRead ?? options.parentsListRead }),
+    resolveForeignRoots(addresses, query, options.cache, { archivedWith: true }),
+    listsOf(query, addresses, Promise.resolve(roots), options),
     // Held once each, though one comment can answer two of the filters: the folds count events.
     readAll(query, personInFilesFilters(me, addresses)),
     // The team lists naming a topic, for which of them are spaces.
@@ -790,19 +774,18 @@ export function readTopicOf(
 
 /**
  * The second half of a topic list read for the lists asked for, from the
- * changes already read ({@link topicListFilter} or the list read), for a
- * reader that gathers its requests: the filters asking again about what the
- * list read skipped (none without it), and every id to resolve whatever
+ * changes the list read already answered, for a reader that gathers its
+ * requests: the filters asking again about what the list read skipped, and
+ * every id to resolve whatever
  * that answer says — the ids listed now and the ones asked about again.
  */
 export function listReadPlan(
   asked: readonly string[],
   roots: ReadonlyMap<string, SignedEvent>,
   events: readonly SignedEvent[],
-  listRead: boolean,
 ): { again: Record<string, unknown>[]; ids: string[] } {
   const folderOfList = listFolderCheck(asked, roots)
-  const again = listRead ? skippedFilters(events, folderOfList) : []
+  const again = skippedFilters(events, folderOfList)
   const ids = new Set(listedIds(events, folderOfList))
   for (const filter of again) for (const id of filter['#o']) ids.add(id)
   return { again, ids: [...ids] }

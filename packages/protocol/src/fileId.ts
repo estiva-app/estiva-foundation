@@ -74,22 +74,18 @@ export interface FileIdForm {
 }
 
 /**
- * How to name the file at `address` by its id, when its type's apps write it
- * so: once the relay keeps the type in order (its NIP-11 `files.requires_prev`,
- * `RelayFileReads.inOrder`; SPEC §6.4, "Apps move to the pair type by type").
- * Undefined before, and for an address whose `d` is not a file's id: a writer
- * then names the file by its address alone, as every reader reads it.
- *
- * The id forms ride behind this switch because four of them are not additive
- * for a reader that knows only the address: a listing entry, a `part`, an
- * `embed` and a read under `file:<d>`.
+ * How to name the file at `address` by its id: every relay keeps the four
+ * base types in order (SPEC §6.4, §6.13), so a writer names a file of one by
+ * its id. Undefined for an address whose `d` is not a file's id, or whose
+ * kind is not a base type's (a named file's `30852`, a team's `39000`): a
+ * writer then names it by its address alone, as every reader reads it.
  *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-is-named-by-its-id-in-a-capital-and-small-tag.md
  */
-export function fileIdFormOf(inOrder: readonly string[], address: string): FileIdForm | undefined {
+export function fileIdFormOf(address: string): FileIdForm | undefined {
   const id = fileIdOf(address)
   const type = BASE_TYPE_OF_KIND[Number(address.slice(0, address.indexOf(':')))]
-  return id !== undefined && type !== undefined && inOrder.includes(type) ? { id, type } : undefined
+  return id !== undefined && type !== undefined ? { id, type } : undefined
 }
 
 /**
