@@ -97,7 +97,7 @@ function relay(events: SignedEvent[]) {
 /** Four files listed a second apart, in FILES order. */
 const listed = () => FILES.map((d, i) => list(d, MS + i * 1000))
 const order = (files: { file: string }[]) => files.map((f) => f.file).join(' ')
-const read = async (events: SignedEvent[], listRead = false) => topicList(relay([topicRoot, ...fileRoots, ...events]), TOPIC, { listRead })
+const read = async (events: SignedEvent[]) => topicList(relay([topicRoot, ...fileRoots, ...events]), TOPIC)
 
 describe('the place key', () => {
   it('always finds a key strictly between two, at either open end, and never one ending in 0', () => {
@@ -217,37 +217,33 @@ describe('the fold: one order and look for everyone', () => {
       created_at: Math.floor((MS + 20_000) / 1000),
       tags: [...top.tags.filter((t) => t[0] !== 'o' && t[0] !== 'ts' && t[0] !== 'value'), ['ts', String(MS + 20_000)], ['value', '1'], ['o', 'f-x']],
     })
-    for (const listRead of [false, true]) {
-      const got = await read([...listed(), top, bad], listRead)
-      assert.equal(order(got), 'f-d f-a f-b f-c', `listRead ${listRead}`)
-      // The next move follows the relay's newest change for the field, the skipped one: the relay chains them all.
-      assert.equal(got[0].prev.order, bad.id)
-    }
+    const got = await read([...listed(), top, bad])
+    assert.equal(order(got), 'f-d f-a f-b f-c')
+    // The next move follows the relay's newest change for the field, the skipped one: the relay chains them all.
+    assert.equal(got[0].prev.order, bad.id)
   })
 
-  it("never lets a move or a look filed in another team than the topic's change it, in either read", async () => {
+  it("never lets a move or a look filed in another team than the topic's change it", async () => {
     const files = await read(listed())
     const elsewhere = (e: UnsignedEvent) => signed({ ...e, tags: e.tags.map((t) => (t[0] === 'h' ? ['h', '0e2f4c1a-5b6d-4e7f-8a9b-0c1d2e3f4a5b'] : t)) })
     const top = elsewhere(planMoveInTopic(QA2, MS + 10_000, { topic: holder, files, file: 'f-d', after: null })!)
     const row = elsewhere(planLookInTopic(QA2, MS + 10_000, { topic: holder, file: files[0], look: 'row' }))
-    for (const listRead of [false, true]) {
-      const got = await read([...listed(), top, row], listRead)
-      assert.equal(order(got), 'f-a f-b f-c f-d', `listRead ${listRead}`)
-      assert.equal(got[0].look, undefined, `listRead ${listRead}`)
-    }
+    const got = await read([...listed(), top, row])
+    assert.equal(order(got), 'f-a f-b f-c f-d')
+    assert.equal(got[0].look, undefined)
   })
 
   it('keeps a file listed by the list read when a newer change listing it names the wrong `o`', async () => {
     const good = listed()
     const bad = signed({ ...good[1], created_at: Math.floor((MS + 30_000) / 1000), tags: good[1].tags.map((t) => (t[0] === 'ts' ? ['ts', String(MS + 30_000)] : t[0] === 'value' ? ['value', 'false'] : t[0] === 'o' ? ['o', 'f-x'] : t)) })
-    assert.equal(order(await read([...good, bad], true)), 'f-a f-b f-c f-d')
+    assert.equal(order(await read([...good, bad])), 'f-a f-b f-c f-d')
   })
 
   it("asks again only about a skipped entry's changes up to it, never the topic's newer ones (18d151fb)", async () => {
     const good = listed()
     const bad = signed({ ...good[1], created_at: Math.floor((MS + 30_000) / 1000), tags: good[1].tags.map((t) => (t[0] === 'ts' ? ['ts', String(MS + 30_000)] : t[0] === 'value' ? ['value', 'false'] : t[0] === 'o' ? ['o', 'f-x'] : t)) })
     const query = relay([topicRoot, ...fileRoots, ...good, bad])
-    assert.equal(order(await topicList(query, TOPIC, { listRead: true })), 'f-a f-b f-c f-d')
+    assert.equal(order(await topicList(query, TOPIC)), 'f-a f-b f-c f-d')
     const again = query.asked.filter((f) => f['#O'])
     assert.ok(again.length > 0, 'the skipped entry is asked again')
     for (const f of again) assert.equal(f.until, bad.created_at, JSON.stringify(f))
@@ -272,7 +268,7 @@ describe('the list read stays bounded however often files are moved', () => {
       events.push(signed(planMoveInTopic(i % 2 ? QA1 : QA2, MS + 10_000 + i * 1000, { topic: holder, files, file: FILES[i % 4], after: null })!))
     }
     const query = relay([topicRoot, ...fileRoots, ...events])
-    const viaNewest = await topicList(query, TOPIC, { listRead: true })
+    const viaNewest = await topicList(query, TOPIC)
     assert.equal(order(viaNewest), order(await read(events)))
     assert.equal(query.asked.filter((f) => '#O' in f).length, 0, 'no whole #O read')
   })

@@ -11,6 +11,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveForeignObjects, resolveParents } from '../dist/index.js'
+import { withListRead } from './list-read.mjs'
 
 const AUTHOR = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -32,7 +33,7 @@ const event = (partial) => ({
   ...partial,
 })
 
-/** Honours `limit` per filter and concatenates, as buzz does; counts every POST. */
+/** Honours `limit` per filter and concatenates, as buzz does, and answers the list read (§6.13); counts every POST. */
 function countingRelay(events, { fail } = {}) {
   const calls = []
   const matches = (f, e) => {
@@ -45,15 +46,18 @@ function countingRelay(events, { fail } = {}) {
     }
     return true
   }
-  const query = async (filters) => {
-    calls.push(filters)
-    if (fail?.(filters)) throw new Error('rate_limited')
-    return filters.flatMap((f) =>
+  const plain = async (filters) =>
+    filters.flatMap((f) =>
       events
         .filter((e) => matches(f, e))
         .sort((a, b) => b.created_at - a.created_at)
         .slice(0, f.limit ?? Infinity),
     )
+  const listed = withListRead(plain, events)
+  const query = async (filters) => {
+    calls.push(filters)
+    if (fail?.(filters)) throw new Error('rate_limited')
+    return listed(filters)
   }
   // A read of anything but a manifest or a handler — what the set itself costs.
   const own = () => calls.filter((filters) => !filters.some((f) => f.kinds?.some((k) => k === 31990 || k === 31989)))
@@ -130,7 +134,7 @@ describe('resolveParents', () => {
     for (const ref of refs) assert.equal(parents[ref], objects[ref]?.parentRef ?? null, ref)
   })
 
-  test('a hundred files are one read, with no comment or child filter in it', async () => {
+  test('a hundred files are one list read of their first records, with no comment, child or change filter in it', async () => {
     const events = [shipManifest()]
     const refs = []
     for (let n = 0; n < 100; n++) {
@@ -141,9 +145,10 @@ describe('resolveParents', () => {
     const relay = countingRelay(events)
     const parents = await resolveParents(refs, relay.query)
     assert.equal(relay.own().length, 1, 'one POST for the set')
-    const kinds = new Set(relay.own()[0].flatMap((f) => f.kinds))
-    assert.deepEqual([...kinds].sort(), [CHANGE, ISSUE], 'roots and changes, nothing else')
-    assert.equal(relay.own()[0].filter((f) => f.kinds.includes(ISSUE)).length, 1, 'one root filter for one author’s hundred')
+    const [read] = relay.own()
+    assert.deepEqual([...new Set(read.flatMap((f) => f.kinds))], [ISSUE], 'first records alone: the relay adds their current changes')
+    assert.ok(read.every((f) => f.fields === 'newest'), 'by the list read')
+    assert.equal(read.length, 1, 'one filter for one author’s hundred')
     for (let n = 0; n < 100; n++) assert.equal(parents[I(`i${n}`)], n % 3 === 0 ? P2 : P1)
   })
 

@@ -93,12 +93,12 @@ lists children its app folds — their changes, so a moved or archived child is
 not drawn under its old parent (MAN-7). Event references (`nevent`) are not addresses
 and come back `null`; resolve those with `resolveForeignEvent`.
 
-Where the relay offers the open read with text (NIP-11 `file_list.text`), pass
-the kinds you have switched as `openRead` — `{ openRead: [30850] }` for
-projects. Each such file then costs its first record, one current change per
-field and one text, however long its history (SPEC §6.13), and every object
-carries `prevs` for the next change to name (`prevOf(object, field)`). A
-deleted file is read as before and comes back with `deleted: { by, at }`.
+A file of the four base types (project, issue, page, topic) is opened by the
+relay's open read: its first record, one current change per field and its
+text, however long its history (SPEC §6.13), and every object carries `prevs`
+for the next change to name (`prevOf(object, field)`). A list reads the same
+without the text. A deleted file, which neither read returns, is read by its
+changes and comes back with `deleted: { by, at }`.
 
 Need only where each file sits? Ask for that alone — the roots, and the moves
 where a kind can be moved, without anybody's comments or children:
@@ -604,9 +604,9 @@ and 4 requests warm.
 
 A deleted file (SPEC §6.5) stays listed in its Folder, and no list returns it.
 An Archive's Deleted filter reads them on its own, when it is drawn:
-`resolveDeletedFiles(folderId, query, people, cache, { listRead })` answers the
-Folder's deleted files, each with `deleted: { by, at }`; with `listRead` only
-the files the list read leaves out are read whole.
+`resolveDeletedFiles(folderId, query, people, cache)` answers the Folder's
+deleted files, each with `deleted: { by, at }`; only the files the list read
+leaves out are read whole.
 
 ### A whole tree: one load query
 
@@ -792,7 +792,7 @@ const topics = await topicsOfFile(query, projectId)  // [{ address, root, entry 
 const lists = await topicLists(query, myTopics)      // Map<topicAddress, files>: a whole column of topics in three reads
 const read = await readTopics(query, me)             // every topic: list, Folder, archive, yours — Add to topic is addableTopics(read, folders)
 const talk = await topicConversations(read, query, { merged, muted }) // Map<topicAddress, { conversations, unread }>, Peek's badge
-const mine = await readYourTopics(query, me, { decrypt, listRead }) // a sidebar's: { topics, at, muted }, yours alone, newest activity first
+const mine = await readYourTopics(query, me, { decrypt, times }) // a sidebar's: { topics, at, muted }, yours alone, newest activity first
 ```
 
 `topicsOfFile` asks `{kinds:[1851], "#o":[id]}`; a file's own changes, by `#O`

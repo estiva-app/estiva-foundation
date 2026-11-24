@@ -28,11 +28,11 @@ export function matchesFilter(filter, event) {
  * The list read's answer to `filters` over `events`: each first record a
  * filter picks, with its fields' current changes; a deleted file is left out.
  */
-export function listAnswer(events, filters) {
+export function listAnswer(events, filters, matches = matchesFilter) {
   const out = new Map()
   for (const filter of filters) {
     const { fields: _fields, text, limit, ...rest } = filter
-    const roots = events.filter((e) => e.kind >= 30000 && matchesFilter(rest, e)).sort((a, b) => b.created_at - a.created_at)
+    const roots = events.filter((e) => e.kind >= 30000 && matches(rest, e)).sort((a, b) => b.created_at - a.created_at)
     const picked = new Set(typeof limit === 'number' ? roots.slice(0, limit) : roots)
     // The open read (`text: true`) carries the current text as well.
     for (const file of filesOf(events, { withText: text === true })) {
@@ -84,16 +84,16 @@ export function timesOver(events) {
 
 /**
  * A query that answers every `"fields"` filter by the list read over `events`
- * and hands the rest to `plain`, in one answer.
+ * and hands the rest to `plain`, in one answer. `matches(filter, event)`
+ * picks first records, for a fake that honours more than tags (a `search`).
  */
-export function withListRead(plain, events) {
+export function withListRead(plain, events, matches = matchesFilter) {
   return async (filters) => {
-    if (process.env.LISTREAD_DEBUG) console.log('ASKED', JSON.stringify(filters))
     const listed = filters.filter((f) => f.fields === 'newest')
     const rest = filters.filter((f) => f.fields !== 'newest')
     const out = new Map()
     if (rest.length > 0) for (const e of await plain(rest)) out.set(e.id, e)
-    for (const e of listAnswer(typeof events === 'function' ? events() : events, listed)) out.set(e.id, e)
+    for (const e of listAnswer(typeof events === 'function' ? events() : events, listed, matches)) out.set(e.id, e)
     return [...out.values()]
   }
 }

@@ -15,6 +15,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveForeignObject, resolveForeignObjects, createProjectionCache } from '../dist/index.js'
 import { MAX_FILTERS_PER_QUERY } from '@estiva-app/protocol'
+import { withListRead } from './list-read.mjs'
 
 const AUTHOR = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -34,7 +35,7 @@ const event = (partial) => ({
   ...partial,
 })
 
-/** The fake relay: honours `limit` per filter and concatenates, as buzz does. */
+/** The fake relay: honours `limit` per filter and concatenates, as buzz does, and answers the list and open reads (§6.13). */
 function countingRelay(events, { fail } = {}) {
   const calls = []
   const matches = (f, e) => {
@@ -48,15 +49,18 @@ function countingRelay(events, { fail } = {}) {
     }
     return true
   }
-  const query = async (filters) => {
-    calls.push(filters)
-    if (fail?.(filters)) throw new Error('rate_limited')
-    return filters.flatMap((f) =>
+  const plain = async (filters) =>
+    filters.flatMap((f) =>
       events
         .filter((e) => matches(f, e))
         .sort((a, b) => b.created_at - a.created_at)
         .slice(0, f.limit ?? Infinity),
     )
+  const read = withListRead(plain, events)
+  const query = async (filters) => {
+    calls.push(filters)
+    if (fail?.(filters)) throw new Error('rate_limited')
+    return read(filters)
   }
   return { query, calls, get count() { return calls.length } }
 }
@@ -103,22 +107,28 @@ function world() {
   return { events, refs }
 }
 
-test('a warm set of twenty costs one request, where it cost twenty', async () => {
+test('a warm set of twenty costs what one object costs, where it cost twenty times that', async () => {
   const { events, refs } = world()
   const relay = countingRelay(events)
   const cache = createProjectionCache()
   await resolveForeignObjects(refs, relay.query, undefined, cache)
 
+  // One object, warm: its open read and the plain read of its comments (§6.13), never mixed in one request.
+  const one = relay.count
+  await resolveForeignObject(refs[0], relay.query, undefined, 0, cache)
+  const perObject = relay.count - one
+  assert.equal(perObject, 2)
+
   const before = relay.count
   const objects = await resolveForeignObjects(refs, relay.query, undefined, cache)
-  assert.equal(relay.count - before, 1, 'one POST for twenty objects, the manifest memoised')
+  assert.equal(relay.count - before, perObject, 'twenty objects for the price of one, the manifest memoised')
   assert.equal(Object.keys(objects).length, 20)
   assert.ok(refs.every((ref) => objects[ref]?.slots.title.value.startsWith('Issue')))
 
   // The baseline this replaces, measured the same way.
   const single = relay.count
   await Promise.all(refs.map((ref) => resolveForeignObject(ref, relay.query, undefined, 0, cache)))
-  assert.equal(relay.count - single, 20)
+  assert.equal(relay.count - single, 20 * perObject)
 })
 
 test('every object is exactly what the single resolve returns for it', async () => {
@@ -163,7 +173,7 @@ test('two authors may use the same kind and d, and each gets its own root', asyn
 test('a set larger than one POST takes is chunked, never truncated', async () => {
   const events = [manifest]
   const refs = []
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 150; i++) {
     refs.push(address(`big${i}`))
     events.push(issue(`big${i}`, `Big ${i}`))
   }
@@ -174,10 +184,11 @@ test('a set larger than one POST takes is chunked, never truncated', async () =>
   const before = relay.count
   const objects = await resolveForeignObjects(refs, relay.query, undefined, cache)
   const sent = relay.calls.slice(before)
-  // Three filters an issue: root, changes, comments.
-  assert.equal(sent.length, Math.ceil((50 * 3) / MAX_FILTERS_PER_QUERY))
+  // One comments filter an issue, in plain reads; the issues themselves by the open read beside them.
+  const plain = sent.filter((filters) => !filters.some((f) => f.fields))
+  assert.equal(plain.length, Math.ceil(150 / MAX_FILTERS_PER_QUERY))
   assert.ok(sent.every((filters) => filters.length <= MAX_FILTERS_PER_QUERY))
-  assert.ok(refs.every((ref) => objects[ref].slots.title.value.startsWith('Big')), 'the 43rd is there too')
+  assert.ok(refs.every((ref) => objects[ref].slots.title.value.startsWith('Big')), 'the last one is there too')
 })
 
 test('without a cache, a manifest is still read once per app rather than once per object', async () => {
@@ -197,9 +208,14 @@ test('two spellings of one object are two answers from one set of filters', asyn
   await resolveForeignObjects([refs[0]], relay.query, undefined, cache)
   const naddr = (await resolveForeignObject(refs[0], relay.query, undefined, 0, cache)).naddr
 
+  const once = relay.count
+  await resolveForeignObjects([refs[0]], relay.query, undefined, cache)
+  const filtersOf = (from) => relay.calls.slice(from).flat().length
+  const alone = filtersOf(once)
+
   const before = relay.count
   const objects = await resolveForeignObjects([refs[0], `nostr:${naddr}`], relay.query, undefined, cache)
-  assert.equal(relay.calls[before].length, 3, 'one root, one changes, one comments filter')
+  assert.equal(filtersOf(before), alone, 'the filters of one object, not two')
   assert.equal(objects[refs[0]].eventId, objects[`nostr:${naddr}`].eventId)
 })
 

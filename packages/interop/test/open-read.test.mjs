@@ -3,12 +3,12 @@
  *
  * The claims under test:
  *
- * - a file of a kind the caller opens by fields is read as its first record,
- *   each field's current change and its current text, and none of its changes
- *   by `#a`; it draws what a read of every change draws;
+ * - a file is opened as its first record, each field's current change and
+ *   its current text, and none of its changes by `#a`; it draws what a read of
+ *   every change draws;
  * - each changed field's current change id comes with it, the `prev` its next
  *   change names;
- * - a deleted file, which the open read leaves out, is read as before and says
+ * - a deleted file, which the open read leaves out, is read by its changes and says
  *   who deleted it; a restored one does not;
  * - many files open in one read per author and kind, apart from plain reads.
  */
@@ -96,26 +96,17 @@ describe('opening a file by the open read (ALO-6)', () => {
   const words = change(launch, 'description', 'Newest words', OTHER)
   const events = [app, launch, ...older, renamed, words]
 
-  test('a project opened by fields reads none of its changes by `#a`, and draws its newest title and text', async () => {
+  test('an opened project reads none of its changes by `#a`, and draws its newest title and text', async () => {
     const relay = opening(events)
-    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople)
     assert.equal(object.slots.title?.value, 'Launch, renamed')
     assert.equal(object.slots.body?.value, 'Newest words')
     assert.deepEqual(relay.changesByA(), [], 'no change is read by `#a`')
     assert.deepEqual(relay.opens().map((f) => [f['#d'], f.text]), [[['launch'], true]], 'one open read, with the text')
   })
 
-  test('without the option the same project reads every change, and draws the same', async () => {
-    const relay = opening(events)
-    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople)
-    assert.equal(object.slots.title?.value, 'Launch, renamed')
-    assert.equal(object.slots.body?.value, 'Newest words')
-    assert.deepEqual(relay.changesByA(), [addressOf(launch)])
-    assert.deepEqual(relay.opens(), [])
-  })
-
   test('each changed field names its current change as the next `prev`; an unchanged one names the first record', async () => {
-    const object = await resolveForeignObject(addressOf(launch), opening(events).query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const object = await resolveForeignObject(addressOf(launch), opening(events).query, noPeople)
     assert.equal(object.prevs?.title, renamed.id)
     assert.equal(object.prevs?.description, words.id)
     assert.equal(typeof interop.prevOf, 'function', 'prevOf is exported')
@@ -124,7 +115,7 @@ describe('opening a file by the open read (ALO-6)', () => {
   })
 
   test('a project read by a list names no `prev` for its text, which the list does not carry', async () => {
-    const [listed] = await interop.resolveForeignRoots([addressOf(launch)], opening(events).query, undefined, { listRead: true })
+    const [listed] = await interop.resolveForeignRoots([addressOf(launch)], opening(events).query)
     assert.equal(listed.prevs?.title, renamed.id)
     assert.equal(typeof interop.prevOf, 'function', 'prevOf is exported')
     assert.equal(interop.prevOf(listed, 'description'), undefined, 'not the first record: its text is unread')
@@ -132,7 +123,7 @@ describe('opening a file by the open read (ALO-6)', () => {
 
   test('a list that never draws what a file says opens it without its text: the newest title, and its text unread (APP-11)', async () => {
     const relay = opening(events)
-    const objects = await resolveForeignObjects([addressOf(launch)], relay.query, noPeople, undefined, { openRead: [PLAN], withoutText: true })
+    const objects = await resolveForeignObjects([addressOf(launch)], relay.query, noPeople, undefined, { withoutText: true })
     const object = objects[addressOf(launch)]
     assert.equal(object.slots.title?.value, 'Launch, renamed')
     assert.deepEqual(relay.opens().map((f) => [f['#d'], f.text]), [[['launch'], undefined]], 'one open read, without the text')
@@ -143,14 +134,14 @@ describe('opening a file by the open read (ALO-6)', () => {
   test('a deleted project, which the open read leaves out, is read whole and says who deleted it', async () => {
     const gone = change(launch, 'deleted', 'true', OTHER)
     const relay = opening([...events, gone])
-    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople)
     assert.equal(object.unreachable, undefined)
     assert.deepEqual(object.deleted, { by: OTHER, at: gone.created_at })
     assert.equal(object.slots.title?.value, 'Launch, renamed', 'still drawn, for the notice and Restore')
     assert.deepEqual(relay.changesByA(), [addressOf(launch)], 'its changes are read only because the open read left it out')
 
     const back = change(launch, 'deleted', '')
-    const restored = await resolveForeignObject(addressOf(launch), opening([...events, gone, back]).query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const restored = await resolveForeignObject(addressOf(launch), opening([...events, gone, back]).query, noPeople)
     assert.equal(restored.deleted, undefined)
   })
 
@@ -158,7 +149,7 @@ describe('opening a file by the open read (ALO-6)', () => {
     const bare = event({ kind: PLAN, tags: [['d', 'bare'], ['title', 'Bare']] })
     // No `h` either, so nothing tells it apart from the root's own team.
     const gone = event({ kind: 1851, pubkey: OTHER, tags: [['a', addressOf(bare)], ['field', 'deleted'], ['value', 'true']] })
-    const object = await resolveForeignObject(addressOf(bare), opening([app, bare, gone]).query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const object = await resolveForeignObject(addressOf(bare), opening([app, bare, gone]).query, noPeople)
     assert.equal(object.unreachable, undefined)
     assert.equal(object.slots.title?.value, 'Bare')
     assert.equal(object.deleted, undefined)
@@ -166,7 +157,7 @@ describe('opening a file by the open read (ALO-6)', () => {
 
   test('a file nobody can read is still unreachable, not deleted', async () => {
     const missing = `${PLAN}:${OWNER}:nowhere`
-    const object = await resolveForeignObject(missing, opening(events).query, noPeople, 0, undefined, { openRead: [PLAN] })
+    const object = await resolveForeignObject(missing, opening(events).query, noPeople)
     assert.equal(object.unreachable, true)
     assert.equal(object.deleted, undefined)
   })
@@ -174,7 +165,7 @@ describe('opening a file by the open read (ALO-6)', () => {
   test('many projects open in one read per author and kind, never mixed with a plain read', async () => {
     const roadmap = plan('roadmap', 'Roadmap')
     const relay = opening([...events, roadmap, change(roadmap, 'title', 'Roadmap 2027')])
-    const objects = await resolveForeignObjects([addressOf(launch), addressOf(roadmap)], relay.query, noPeople, undefined, { openRead: [PLAN] })
+    const objects = await resolveForeignObjects([addressOf(launch), addressOf(roadmap)], relay.query, noPeople)
     assert.deepEqual(
       [addressOf(launch), addressOf(roadmap)].map((a) => objects[a]?.slots.title?.value),
       ['Launch, renamed', 'Roadmap 2027'],
@@ -184,7 +175,7 @@ describe('opening a file by the open read (ALO-6)', () => {
   })
 })
 
-describe("a page's sub-pages, when the relay keeps pages in order (ALL-10)", () => {
+describe("a page's sub-pages (ALL-10)", () => {
   // A page app whose page lists its sub-pages by their roots' `a`, moved by `parent` (SPEC §6.7), as Leaf's does.
   const PAGE = 30842
   const pages = event({
@@ -226,9 +217,9 @@ describe("a page's sub-pages, when the relay keeps pages in order (ALL-10)", () 
   ]
   const titles = (object) => (object.children ?? []).map((child) => child.slots.title?.value).sort()
 
-  test('opened by fields, its sub-pages draw their current titles and none of their changes is read by `#a`', async () => {
+  test('opened, its sub-pages draw their current titles and none of their changes is read by `#a`', async () => {
     const relay = opening(events)
-    const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople, 0, undefined, { openRead: [PAGE] })
+    const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople)
     assert.deepEqual(relay.changesByA(), [], 'no sub-page change is read by `#a`')
     assert.deepEqual(titles(object), ['Week 1, renamed', 'Week 3'], 'the deleted one is left out, the moved-in one is there')
     // Its text was not read, so a text change from the card names no `prev` it never saw.
@@ -237,17 +228,9 @@ describe("a page's sub-pages, when the relay keeps pages in order (ALL-10)", () 
 
   test('in a set of cards too, by one list read for the sub-pages', async () => {
     const relay = opening(events)
-    const objects = await resolveForeignObjects([addressOf(weekly)], relay.query, noPeople, undefined, { openRead: [PAGE] })
+    const objects = await resolveForeignObjects([addressOf(weekly)], relay.query, noPeople)
     assert.deepEqual(relay.changesByA(), [])
     assert.deepEqual(titles(objects[addressOf(weekly)]), ['Week 1, renamed', 'Week 3'])
-  })
-
-  test('without the open read, the same sub-pages, each read whole', async () => {
-    const relay = opening(events)
-    const object = await resolveForeignObject(addressOf(weekly), relay.query, noPeople)
-    // A deleted sub-page is still drawn by this older read; it goes with it (ALL-8).
-    assert.deepEqual(titles(object).filter((title) => title !== 'Week 2'), ['Week 1, renamed', 'Week 3'])
-    assert.ok(relay.changesByA().includes(addressOf(renamed)), 'the plain read still reads every change')
   })
 })
 
@@ -271,19 +254,11 @@ describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", (
   test('lists only the deleted one, with its current title and who deleted it, reading only it whole', async () => {
     const relay = opening(events)
     assert.equal(typeof interop.resolveDeletedFiles, 'function', 'resolveDeletedFiles is exported')
-    const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople, undefined, { listRead: true })
+    const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople)
     assert.deepEqual(
       files.map((file) => [file.slots.title?.value, file.deleted]),
       [['Gone, renamed', { by: OTHER, at: deleted.created_at }]],
     )
     assert.deepEqual(relay.changesByA(), [addressOf(gone)], 'the live and the restored ones are not read by `#a`')
-  })
-
-  test('without the list read, the same one, each file read whole', async () => {
-    const relay = opening(events)
-    assert.equal(typeof interop.resolveDeletedFiles, 'function', 'resolveDeletedFiles is exported')
-    const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople)
-    assert.deepEqual(files.map((file) => file.slots.title?.value), ['Gone, renamed'])
-    assert.deepEqual(relay.opens(), [])
   })
 })

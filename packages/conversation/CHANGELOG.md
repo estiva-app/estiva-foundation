@@ -6,6 +6,16 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.47.0 — 2026-11-24
+
+- **SPEC §6.4, §6.13 (no rule changed; the switch is gone):** a comment,
+  reply or read marker on a file of the four base types always names the file
+  by its id as well (`O`/`K`, `o`, `file:<d>`). `fileReadMarkers(address, at)`
+  and `referenceTagsFor(body, own)` drop their `inOrder` argument, and the
+  builders' `inOrder` option is gone. Needs `@estiva-app/protocol` 0.69.0.
+- **SPEC §11.8:** `placeFilters(place, person, people)` takes `people`
+  always: a place's changes are only those by a key with a profile.
+
 ## 0.46.0 — 2026-11-24
 
 - **SPEC §11.8 (no rule changed; a narrower read of it):** `placeFilters`

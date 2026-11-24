@@ -6,6 +6,31 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.117.0 — 2026-11-24
+
+**Manifest: a Delete declared as a `deleted` field change is a plain change
+(`true` deletes, empty restores); a `kind:5` Delete on a file of a base type is
+built as that change. Wire: every file of a base type is read the one way — the
+list read for lists, the open read to open, the times read for activity — and
+named by its id.** (ALL-8; SPEC §6.4, §6.13.) Needs `@estiva-app/protocol`
+0.69.0 and `@estiva-app/conversation` 0.47.0.
+
+- Removed the old-way options: `listRead`, `openRead` and `parentsListRead`
+  on `resolveForeignObject(s)`, `resolveForeignRoots`, `resolveParents`,
+  `resolveFolderContents`, `resolveDeletedFiles`, `listFolders`, `readTopics`,
+  `readYourTopics` and `topicList`; `inOrder` on `writeChanges`, the folder
+  commands, `linkReader().tagsFor` and `linkTagsOf`; `isSwitchRefusal`,
+  `prevsAfterSwitch` (open the file and use `prevOf`) and `writeChange`'s
+  `base`.
+- `readTopicActivity` and `readYourTopics` take `times` always: activity comes
+  from the times read.
+- A file the list read leaves out (deleted, or not this reader's) is still read
+  by its changes where a caller needs to say it was deleted or where it sat.
+- A file's links, listings, folder commands and parts name it by its id beside
+  its address.
+- Fixed: the children of a file whose app declares no change records were
+  dropped when its list was read.
+
 ## 0.116.0 — 2026-11-24
 
 **Manifest: nothing new declared; `urls` and `k` are now also read to write a
