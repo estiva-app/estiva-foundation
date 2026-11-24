@@ -558,6 +558,22 @@ placeholder in the query is the identity, and the path's is then the container
 gets `{ identifier, by, kind }` or null — a URL nothing claims is a link and
 stays one.
 
+To write a file's link, read the words once from every manifest you hold, then
+build links in render:
+
+```ts
+import { fileLinkWordsOf, fileUrlOf } from '@estiva-app/interop'
+
+const words = fileLinkWordsOf(manifests)          // every kind:31990 you read
+fileUrlOf(issue.address, words, 'https://ship.estiva.app', issue.title)
+// → https://ship.estiva.app/issue/copy-link-is-wrong-3f6d2a1e-…
+```
+
+The word is the kind's owner's (SPEC §7.7 rule 1). A kind with no word, or a
+named type (`30852`), gets `/o/<naddr>`; an id that is not a random lowercase
+uuid gets `null`, since no such file exists. Every link it writes reads back
+through `matchObjectUrl` as the same file on every app's host.
+
 ---
 
 ## 5. Read a whole folder, across every app in it

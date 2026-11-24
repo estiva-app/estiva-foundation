@@ -18,8 +18,14 @@
  */
 export const FILE_KINDS: readonly number[] = [30840, 30842, 30850, 30851, 30852]
 
-/** A file's id: a lowercase UUID. */
-const FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/**
+ * A file's id: a random (version 4) lowercase uuid, as `crypto.randomUUID()`
+ * writes it (SPEC §6.1). The relay refuses a file with any other `d` and a
+ * change aimed at one (`invalid: bad-file-id:`), so no other can name a file.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-files-id-is-a-random-uuid-the-same-rule-as-a-teams-id.md
+ */
+const FILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 /** `kind:pubkey:d`, the `d` captured. */
 const ADDRESS = /^\d+:[0-9a-fA-F]{64}:([^]*)$/
@@ -39,7 +45,7 @@ export function fileKeyOf(value: string): string {
   return fileIdOf(value) ?? value
 }
 
-/** The file's id in an address: its `d`, when that is a lowercase UUID. */
+/** The file's id in an address: its `d`, when that is a file's id ({@link isFileId}). */
 export function fileIdOf(address: string): string | undefined {
   const d = ADDRESS.exec(address)?.[1]
   return d !== undefined && FILE_ID.test(d) ? d : undefined

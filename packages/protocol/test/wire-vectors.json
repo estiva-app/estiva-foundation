@@ -633,7 +633,7 @@
     },
     {
       "name": "bare-file",
-      "note": "Was `file`, NIP-FC-shaped (Ship only before SHA-3): d, title, h, then one `a` per Component and metadata JSON in content. Re-recorded 2026-09-11 for SPEC §6.7: d, title, h, at most one `a` naming the parent of any kind, and a §13.3 block document in content. Zero kind:30840 events existed on production when the shape changed (measured 2026-09-10), so nothing published can disagree with the new bytes.",
+      "note": "Was `file`, NIP-FC-shaped (Ship only before SHA-3): d, title, h, then one `a` per Component and metadata JSON in content. Re-recorded 2026-09-11 for SPEC §6.7: d, title, h, at most one `a` naming the parent of any kind, and a §13.3 block document in content. Zero kind:30840 events existed on production when the shape changed (measured 2026-09-10), so nothing published can disagree with the new bytes. Its d re-recorded 2026-11-24 (LIN-2) from `f1` to a v4 uuid: the builder now refuses any other id, as the relay does (SPEC §6.1); the shape and tag order are unchanged.",
       "producedBy": [
         "spec"
       ],
@@ -644,7 +644,7 @@
         "tags": [
           [
             "d",
-            "f1"
+            "e3b5c1a7-4f2d-4c8e-9a61-7d0f2b9c5e48"
           ],
           [
             "title",
@@ -661,7 +661,7 @@
         ],
         "content": "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"id\":\"b1\",\"content\":[{\"type\":\"text\",\"text\":\"Ship Friday.\"}]}]}"
       },
-      "id": "ad4d4ff95fe90e8ae169baf558fd37ca6f0bf7bb779bf01fe9582b727911d7d7"
+      "id": "411aa28751129cd0175b91862a4b3f8a471ec9b228a236da396ad29ef26a5aa0"
     },
     {
       "name": "highlight",

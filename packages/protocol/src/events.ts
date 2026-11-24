@@ -1086,7 +1086,11 @@ export function buildBareFile(
   pubkey: string,
   createdAtMs: number,
   args: {
-    /** Stable id, an opaque uuid (RFC 0.4 §4.3). Never a slug. */
+    /**
+     * The file's id: a random (version 4) lowercase uuid, `crypto.randomUUID()`.
+     * Anything else throws before an event exists — the relay would refuse it
+     * as `bad-file-id`, and no app could write it a link (SPEC §6.1).
+     */
     fileId: string
     title: string
     /** The Folder's channel. Required — see above. */
@@ -1098,6 +1102,10 @@ export function buildBareFile(
   },
 ): UnsignedEvent {
   assertHex64(pubkey, 'pubkey')
+  // why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/every-server-refuses-a-file-whose-id-is-not-a-random-uuid.md
+  if (!isFileId(args.fileId)) {
+    throw new Error(`a file's id is a random (version 4) lowercase uuid, got ${JSON.stringify(args.fileId)}`)
+  }
   if (!args.channelUuid) throw new Error('a bare file must name the Folder it lives in (h)')
   if (args.parent !== undefined && !/^\d+:[0-9a-f]{64}:/.test(args.parent)) {
     throw new Error(`parent must be an address "<kind>:<pubkey>:<d>", got "${args.parent}"`)

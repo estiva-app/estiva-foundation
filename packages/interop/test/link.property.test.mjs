@@ -19,7 +19,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fc from 'fast-check'
 import { hex64Arb, runSettings } from '@estiva-app/protocol/testing'
-import { blockUrlOf, eventIdFromRef, identifierFromRef, matchObjectUrl, objectRef, slugify, urlPatternsOf } from '../dist/index.js'
+import { decodeNaddr, isFileId } from '@estiva-app/protocol'
+import {
+  blockUrlOf,
+  eventIdFromRef,
+  fileLinkWordsOf,
+  filePathOf,
+  fileUrlOf,
+  identifierFromRef,
+  matchObjectUrl,
+  objectRef,
+  slugify,
+  urlPatternsOf,
+} from '../dist/index.js'
 
 // 2,000 inputs a rule (measured 20 Nov 2026: about 0.3 s a rule).
 const settings = runSettings(2000)
@@ -136,7 +148,7 @@ test('a link to a thread names the comment, inside the file it is on', () => {
 
 test('a link to one block, written by blockUrlOf, reads back as that file and block', () => {
   fc.assert(
-    fc.property(dArb, titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
+    fc.property(fc.uuid({ version: 4 }), titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
       const url = blockUrlOf(PATTERNS, { kind, d, title, block })
       assert.ok(url)
       const match = matchObjectUrl(url, PATTERNS)
@@ -158,10 +170,11 @@ const anyDArb = fc.oneof(
   fc.uuid(),
 )
 
-test('blockUrlOf writes a link for any d only when that link reads back as the same d', () => {
+test('blockUrlOf writes a link only for a file id, and that link reads back as the same d', () => {
   fc.assert(
-    fc.property(anyDArb, titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
+    fc.property(fc.oneof(anyDArb, fc.uuid({ version: [1, 7] })), titleArb, blockArb, fc.constantFrom(30850, 30851, 30842), (d, title, block, kind) => {
       const url = blockUrlOf(PATTERNS, { kind, d, title, block })
+      assert.equal(url !== undefined, isFileId(d), JSON.stringify(d))
       if (url === undefined) return
       assert.equal(matchObjectUrl(url, PATTERNS)?.identifier, d, url)
     }),
@@ -183,6 +196,102 @@ test('any text pasted as a link is read without throwing, and names a file only 
       if (!match) return
       assert.ok(text.toLowerCase().includes(match.identifier), text)
       assert.match(match.identifier, match.by === 'd' ? /^[0-9a-f-]{36}$/ : /^[0-9a-f]{64}$/, text)
+    }),
+    settings,
+  )
+})
+
+/*
+  The writer (LIN-2). Peek's own property test of its copy (TES-4,
+  `objectUrl.property.test.ts`) moves here with the code it tested: every link
+  the shared writer writes reads back through `matchObjectUrl` as the same
+  file, and an id no file can have gets no link at all.
+*/
+
+const AUTHOR = 'e'.repeat(64)
+/** The production manifests above, with what makes each a kind's owner: Ship's and Leaf's `k` claims, Peek's `conversation` aspect. */
+const OWNED = [
+  { ...MANIFESTS[0], pubkey: 'a'.repeat(64), created_at: 1_793_000_000, content: JSON.stringify({ aspect: 'conversation' }) },
+  { ...MANIFESTS[1], pubkey: 'b'.repeat(64), created_at: 1_793_500_000, content: JSON.stringify({ projections: { 30850: {}, 30851: {} } }), tags: [...MANIFESTS[1].tags, ['k', '30850'], ['k', '30851']] },
+  { ...MANIFESTS[2], pubkey: 'c'.repeat(64), created_at: 1_795_000_000, content: JSON.stringify({ projections: { 30842: {} } }), tags: [...MANIFESTS[2].tags, ['k', '30842']] },
+]
+const WORDS = fileLinkWordsOf(OWNED)
+/** A file's id as the apps make one, `crypto.randomUUID()`. */
+const v4Arb = fc.uuid({ version: 4 })
+const ALL_FILE_KINDS = [30840, 30842, 30850, 30851, 30852]
+
+test("a file's link, written by the shared writer, reads back as that file and kind on any app's host", () => {
+  fc.assert(
+    fc.property(v4Arb, fc.option(titleArb), fc.constantFrom(...FILE_KINDS), fc.constantFrom(...HOSTS), (d, title, { kind, word }, host) => {
+      const url = fileUrlOf(`${kind}:${AUTHOR}:${d}`, WORDS, host, title ?? undefined)
+      assert.ok(url?.startsWith(`${host}/${word}/`), url ?? 'no link')
+      const match = matchObjectUrl(url, PATTERNS)
+      assert.deepEqual([match?.identifier, match?.by, match?.kind], [d, 'd', kind], url)
+    }),
+    settings,
+  )
+})
+
+test('the writer writes a link only for an id a file can have: a v4 lowercase uuid', () => {
+  const idArb = fc.oneof(anyDArb, fc.uuid({ version: [1, 2, 3, 5, 6, 7, 8] }), v4Arb, v4Arb.map((u) => u.toUpperCase()))
+  fc.assert(
+    fc.property(idArb, fc.constantFrom(...ALL_FILE_KINDS), titleArb, (d, kind, title) => {
+      const path = filePathOf(`${kind}:${AUTHOR}:${d}`, WORDS, title)
+      assert.equal(path !== null, isFileId(d), `${kind} ${JSON.stringify(d)} → ${path}`)
+    }),
+    settings,
+  )
+})
+
+/**
+ * Any manifest another app or a stranger could publish beside ours: a word,
+ * for a kind, on a host, with or without a `k` claim and a projection, or the
+ * `conversation` aspect, at any time. Whatever they declare, a link the
+ * writer writes is either the file's `/o/<naddr>` or reads back as the same
+ * file and kind on every declared host — never as another file, another kind,
+ * or a plain link.
+ */
+const strangerArb = fc
+  .record({
+    host: fc.constantFrom('https://tickets.example', 'https://chat.example', 'https://ship.estiva.app', 'https://peek.estiva.app'),
+    word: fc.constantFrom('issue', 'topic', 'project', 'document', 'ticket', 'room', 'o', 'Issue'),
+    kind: fc.constantFrom(30840, 30842, 30850, 30851, 30852, 30999, 1111),
+    claims: fc.boolean(),
+    projects: fc.boolean(),
+    conversation: fc.boolean(),
+    query: fc.boolean(),
+    created_at: fc.integer({ min: 1_790_000_000, max: 1_800_000_000 }),
+    pubkey: hex64Arb(),
+  })
+  .map((s) => ({
+    pubkey: s.pubkey,
+    created_at: s.created_at,
+    content: JSON.stringify({ ...(s.conversation ? { aspect: 'conversation' } : {}), ...(s.projects ? { projections: { [s.kind]: {} } } : {}) }),
+    tags: [
+      ...(s.claims ? [['k', String(s.kind)]] : []),
+      ['web', `${s.host}/o/<bech32>`, 'naddr'],
+      ['urls', `${s.host}/${s.word}/<slug>-<d>${s.query ? '?thread=<id>' : ''}`, String(s.kind)],
+    ],
+  }))
+
+test("whatever other manifests declare, a link the writer writes is the file's /o/ or reads back as that file on every host", () => {
+  fc.assert(
+    fc.property(fc.array(strangerArb, { maxLength: 4 }), v4Arb, fc.constantFrom(...ALL_FILE_KINDS), fc.option(titleArb), (strangers, d, kind, title) => {
+      const manifests = [...OWNED, ...strangers]
+      const address = `${kind}:${AUTHOR}:${d}`
+      const path = filePathOf(address, fileLinkWordsOf(manifests), title ?? undefined)
+      assert.ok(path, address)
+      if (path.startsWith('/o/')) {
+        const back = decodeNaddr(path.slice(3))
+        assert.deepEqual([back.kind, back.pubkey, back.identifier], [kind, AUTHOR, d], path)
+        return
+      }
+      const patterns = manifests.flatMap(urlPatternsOf)
+      const origins = [...new Set(patterns.map((p) => new URL(p.pattern).origin))]
+      for (const origin of origins) {
+        const match = matchObjectUrl(`${origin}${path}`, patterns)
+        assert.deepEqual([match?.identifier, match?.by, match?.kind], [d, 'd', kind], `${origin}${path}`)
+      }
     }),
     settings,
   )

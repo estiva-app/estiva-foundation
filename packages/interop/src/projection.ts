@@ -1285,7 +1285,7 @@ const hasTagValue = (e: SignedEvent, name: string, value: string) =>
  * `effect` is the one exception, and only because misreading it is unsafe
  * rather than merely wrong. See {@link ActionEffect}.
  */
-function parseManifest(event: SignedEvent): Manifest | null {
+export function parseManifest(event: Pick<SignedEvent, 'content'>): Manifest | null {
   try {
     const manifest = JSON.parse(event.content) as Manifest
     if (manifest?.actions) manifest.actions = manifest.actions.map(withKnownEffect)
@@ -1337,7 +1337,7 @@ const asArray = (value: string | string[]) => (Array.isArray(value) ? value : [v
  * Returns undefined when no usable template was published, which is an ordinary
  * state rather than an error: an app may render objects it has nowhere to open.
  */
-function webTemplate(event: SignedEvent, entity: string): string | undefined {
+export function webTemplate(event: Pick<SignedEvent, 'tags'>, entity: string): string | undefined {
   for (const tag of event.tags) {
     if (tag[0] !== 'web' || !tag[1]) continue
     // The third element names the entity type; NIP-89 permits omitting it, in
