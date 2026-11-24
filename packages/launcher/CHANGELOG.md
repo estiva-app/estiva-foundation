@@ -2,6 +2,16 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.3.4 — 2026-11-24
+
+**Ship's New project is offered in a box that does not list Peek (KIN-11).** No
+host has to change; a host's `creatableUnder` is now asked for teams (`39000`)
+too, whichever apps it lists.
+
+- What another app declares on a team was found only in a box that listed the
+  app whose kind a team is, Peek. Leaf's lists Leaf and Ship, so its box offered
+  Add issue and never New project.
+
 ## 0.3.3 — 2026-11-24
 
 **The guess moves a row only when the model is very sure, so it works in Edge on

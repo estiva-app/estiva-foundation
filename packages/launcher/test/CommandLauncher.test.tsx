@@ -244,3 +244,35 @@ describe('what the frame is told, so Escape can keep the box', () => {
     expect(onState).toHaveBeenCalledWith({ holds: true, status: 'working' })
   })
 })
+
+describe('another app’s creation on a team, where the app whose kind a team is is not listed (KIN-11)', () => {
+  const SHIP_MANIFEST = '31990:bb:estiva-ship'
+  const field = (name: string) => ({ name, type: 'string', required: true })
+  const reads = {
+    30850: {
+      actions: [{ id: 'add-issue', label: 'Add issue', control: 'form', fields: [field('title')] }],
+      manifest: SHIP_MANIFEST,
+      parents: [{ address: '30850:bb:website', title: 'Website' }],
+    },
+    39000: {
+      actions: [{ id: 'add-project', label: 'New project', control: 'form', fields: [field('name')], declaredBy: { address: SHIP_MANIFEST } }],
+      parents: [],
+      parentsFor: { 'add-project': [{ address: '39000:rr:ops', title: 'Ops' }] },
+    },
+  } as unknown as Record<number, Awaited<ReturnType<LauncherHost['manifests']['creatableUnder']>>>
+
+  it('offers Ship’s New project in a box that lists Leaf and Ship but not Peek, as Leaf’s does', async () => {
+    const host = standIn({
+      // As Leaf lists them: itself, and Ship, whose issue and project it may make.
+      apps: launcherApps('leaf').filter((app) => app.isHost || app.id === 'ship'),
+      maySign: (kind) => [30023, 30850, 30851].includes(kind),
+      manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction: async () => ({ ok: true }), resolveObject: async () => null },
+    })
+    const { type } = mount(host)
+
+    type('create a project for the website launch')
+
+    await waitFor(() => expect(optionNamed('Add issue')).toBeTruthy())
+    expect(optionNamed('New project')).toBeTruthy()
+  })
+})
