@@ -3,7 +3,7 @@ import { IconAlignLeft, IconDownload, IconEraser, IconPencil, IconRefresh, IconW
 import { Avatar, KindIcon, CommandPalette, CommandPaletteAnswer, type CommandPaletteChip, CommandPaletteForm, type CommandPaletteGroup, CommandPaletteQuote, type CommandPaletteRow, CommandPaletteSearch, CommandPaletteWorking, FieldLine, isApplePlatform, isPlainClick, useToast } from '@estiva-app/ui'
 import { ActionFormFields } from './ActionFormFields.js'
 import { applyPrefill, draftValues, missingFields, seedDraft, type FormDraft } from './formDraft.js'
-import type { ResolvedAction } from '@estiva-app/interop'
+import { KIND_CHANNEL_METADATA, type ResolvedAction } from '@estiva-app/interop'
 import { addrToNaddr } from '@estiva-app/protocol'
 import { fileEmptyState, isPrompt, launcherMatch, matchPeople, messageEmptyState, type MessageSearchState } from './launcherSearch.js'
 import type { PrefillAvailability } from './promptApi.js'
@@ -350,7 +350,9 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     // another kind that failed is read as nothing there.
     // The host reads its own kind alone (INT-13): it is read on every opening, and declares nothing on another.
     async (required: number, ownKindOnly = false): Promise<Map<number, CreatableKindRead | null>> => {
-      const kinds = ownKindOnly ? [required] : [...new Set(probeable(LAUNCHER_APPS).map((app) => app.parentKind as number))]
+      // A team is read whichever apps are listed: what another app declares on one (Ship's New project) is found
+      // there, and an app that does not list Peek still offers it (KIN-11, Leaf).
+      const kinds = ownKindOnly ? [required] : [...new Set([...probeable(LAUNCHER_APPS).map((app) => app.parentKind as number), KIND_CHANNEL_METADATA])]
       const reads = await Promise.allSettled(
         kinds.map((kind) => {
           let read = kindReads.current.get(kind)

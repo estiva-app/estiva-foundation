@@ -1,0 +1,1 @@
+{"root":["./src/ActionFormFields.tsx","./src/CommandLauncher.tsx","./src/actionCatalogue.ts","./src/actionGuess.ts","./src/askThread.ts","./src/formDraft.ts","./src/host.ts","./src/index.ts","./src/launcherActions.ts","./src/launcherSearch.ts","./src/liveAction.ts","./src/prefill.ts","./src/promptApi.ts","./src/useKeptLauncher.tsx"],"version":"5.9.3"}
