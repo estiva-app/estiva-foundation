@@ -7,6 +7,7 @@ import type { ResolvedAction } from '@estiva-app/interop'
 import { addrToNaddr } from '@estiva-app/protocol'
 import { fileEmptyState, isPrompt, launcherMatch, matchPeople, messageEmptyState, type MessageSearchState } from './launcherSearch.js'
 import type { PrefillAvailability } from './promptApi.js'
+import { downloadGuessModel, guessAvailability, guesserFor, type GuessOption } from './actionGuess.js'
 import { probeable } from './actionCatalogue.js'
 import { draftInstruction, formSchema, prefillInstruction, threadContext, usablePrefill } from './prefill.js'
 import { answerInstruction, parseAnswer, selectMessages, type NumberedMessage } from './askThread.js'
@@ -140,6 +141,13 @@ export interface CommandLauncherProps {
 }
 
 const icon = (Glyph: typeof IconPencil) => <Glyph size={16} stroke={1.5} />
+/** What the guess reads for an app's declared action: the catalogue's words for that id, never the manifest's (KIN-7). */
+const guessWording = (app: LauncherApp, actionId: string): string => {
+  const own = app.actions.find((action) => action.id === actionId)
+  return own?.guessAs ?? own?.label ?? actionId.replace(/-/g, ' ')
+}
+/** The typing pause after which the guess is asked (KIN-7): short, because Edge takes ~1.4 s to answer and the order should settle within about two seconds. */
+const GUESS_PAUSE_MS = 150
 
 /** Just the prose of what is open, oldest first: what goes in a prompt. */
 const bodies = (opened: LauncherOpen | undefined): string[] => (opened?.messages ?? []).map((m) => m.body)
@@ -444,16 +452,27 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     rows would have been. Nothing starts a download but choosing the row (PEE-6).
   */
   const modelDownloadable = availability === 'downloadable' || availability === 'downloading'
+  /** The guess's model can be fetched (KIN-7): the Download row offers it under a prompt, and only that row fetches it. */
+  const [guessDownloadable, setGuessDownloadable] = useState(false)
+  /** The options the guess is asked about, as last drawn: what the Download row fetches the model for. */
+  const guessOptionsRef = useRef<GuessOption[]>([])
   const [download, setDownload] = useState<number | 'failed' | null>(null)
   const startDownload = useCallback(() => {
     if (typeof download === 'number') return
     setDownload(0)
-    void downloadModel((fraction) => setDownload(Math.round(fraction * 100))).then((ok) => {
+    // The guess's model, where the browser has it to fetch: the same row, the same click (KIN-7).
+    // Its progress shows on the row only when the answers' model is not also coming (that one reports its own).
+    const guessFetch = guessDownloadable
+      ? downloadGuessModel(guessOptionsRef.current, modelDownloadable ? undefined : (fraction) => setDownload(Math.round(fraction * 100)))
+      : Promise.resolve(true)
+    const answerFetch = modelDownloadable ? downloadModel((fraction) => setDownload(Math.round(fraction * 100))) : Promise.resolve(true)
+    void Promise.all([answerFetch, guessFetch]).then(([ok, guessOk]) => {
       // No cancellation guard: the fetch belongs to the browser and outlives the launcher.
-      setDownload(ok ? null : 'failed')
+      setDownload(ok && guessOk ? null : 'failed')
       if (ok) setAvailability('available')
+      if (guessOk) setGuessDownloadable(false)
     })
-  }, [download])
+  }, [download, guessDownloadable, modelDownloadable])
 
   const hasThread = (opened?.messages?.length ?? 0) > 0
 
@@ -924,8 +943,9 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
 
   /** Under a prompt, where the model could run but is not here yet: the offer to fetch it (INT-10). Never a nag: only a prompt shows it. */
   const downloadRows = (): CommandPaletteRow[] => {
-    if (!hasThread) return []
-    if (modelDownloadable) {
+    // Only where the row has always been, with a conversation to ask about; the same click also fetches the
+    // guess's model (KIN-7). The guess alone never adds the row: it would offer gigabytes for an order.
+    if (hasThread && (modelDownloadable || guessDownloadable)) {
       const label =
         download === 'failed'
           ? 'This browser refused the model — asking is unavailable here'
@@ -972,31 +992,113 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
       },
     }))
 
-  const suggestedRows = (typed: string): CommandPaletteRow[] => [
-    ...ownRows('suggested'),
-    ...probeable(LAUNCHER_APPS).flatMap((app) =>
-      liveActions(app).map((action) => ({
-        id: `suggested-${app.id}-${action.id}`,
-        label: action.label,
-        description: app.isHost ? undefined : app.label,
-        leading: <span className="flex size-8 items-center justify-center">{appMark(app, 16)}</span>,
-        onSelect: () => setStack((s) => [...s, { level: { kind: 'form', action, app, sentence: typed }, query: '' }]),
-      })),
-    ),
-    ...(hasThread && modelReady && context.composer
-      ? [
-          {
-            id: 'draft',
-            label: 'Draft a reply',
-            // Peek's own action, so it carries Peek's mark like the rows above it.
-            ...(HOST_APPS[0]
-              ? { leading: <span className="flex size-8 items-center justify-center">{appMark(HOST_APPS[0], 16)}</span> }
-              : { icon: icon(IconWriting) }),
-            onSelect: openDraft,
+  /** The Suggested rows in their usual order, each with what the on-device guess reads for it (KIN-7). */
+  const suggestedEntries = (typed: string): { row: CommandPaletteRow; wording: string }[] => {
+    const own = host.ownActions ?? []
+    return [
+      ...ownRows('suggested').map((row, at) => ({ row, wording: own[at]?.guessAs ?? row.label })),
+      ...probeable(LAUNCHER_APPS).flatMap((app) =>
+        liveActions(app).map((action) => ({
+          row: {
+            id: `suggested-${app.id}-${action.id}`,
+            label: action.label,
+            description: app.isHost ? undefined : app.label,
+            leading: <span className="flex size-8 items-center justify-center">{appMark(app, 16)}</span>,
+            onSelect: () => setStack((s) => [...s, { level: { kind: 'form', action, app, sentence: typed }, query: '' }]),
           },
-        ]
-      : []),
-  ]
+          // Only words this package wrote: a live row's label comes from a manifest on the relay, and whoever wrote
+          // that could word it to win every sentence, or to fail the check and switch the guess off.
+          wording: guessWording(app, action.id),
+        })),
+      ),
+      ...(hasThread && modelReady && context.composer
+        ? [
+            {
+              row: {
+                id: 'draft',
+                label: 'Draft a reply',
+                // Peek's own action, so it carries Peek's mark like the rows above it.
+                ...(HOST_APPS[0]
+                  ? { leading: <span className="flex size-8 items-center justify-center">{appMark(HOST_APPS[0], 16)}</span> }
+                  : { icon: icon(IconWriting) }),
+                onSelect: openDraft,
+              },
+              wording: 'Draft a reply to the conversation that is open',
+            },
+          ]
+        : []),
+    ]
+  }
+
+  /** The Suggested rows, the guessed one first where the guess is sure (KIN-7). */
+  const suggestedRows = (typed: string): CommandPaletteRow[] => {
+    const rows = suggestedEntries(typed).map((entry) => entry.row)
+    const at = guessFirst === null ? -1 : rows.findIndex((row) => row.id === guessFirst)
+    return at <= 0 ? rows : [rows[at] as CommandPaletteRow, ...rows.slice(0, at), ...rows.slice(at + 1)]
+  }
+
+  /*
+    The guess (KIN-7). The options are the Suggested rows with what the model
+    reads for each. The session and its check start as the box opens, so the
+    first sentence does not wait for them; each typing pause asks once, and an
+    answer for a sentence since changed is dropped. Once the person has moved
+    the pointer or an arrow key, the order holds until they type again: a row
+    must not change under the hand reaching for it.
+  */
+  const guessOptions: GuessOption[] = suggestedEntries('').map((entry) => ({ id: entry.row.id, wording: entry.wording }))
+  const guessKey = JSON.stringify(guessOptions)
+  guessOptionsRef.current = guessOptions
+  const [guessFirst, setGuessFirst] = useState<string | null>(null)
+  const guessHeld = useRef(false)
+  useEffect(() => {
+    let cancelled = false
+    const options = JSON.parse(guessKey) as GuessOption[]
+    // One row has nothing to be put first: no guess, and no model to offer for it (Leaf's New document alone).
+    if (options.length < 2) {
+      setGuessDownloadable(false)
+      return
+    }
+    void guessAvailability(options).then((said) => !cancelled && setGuessDownloadable(said === 'downloadable' || said === 'downloading'))
+    void guesserFor(options)
+    return () => {
+      cancelled = true
+    }
+  }, [guessKey])
+  useEffect(() => {
+    guessHeld.current = false
+    if (!prompting) {
+      setGuessFirst(null)
+      return
+    }
+    let cancelled = false
+    const sentence = query.trim()
+    const timer = setTimeout(() => {
+      void guesserFor(JSON.parse(guessKey) as GuessOption[])
+        .then((guess) => (guess ? guess(sentence) : null))
+        .then((first) => {
+          if (cancelled || guessHeld.current) return
+          guessedFor.current = sentence
+          setGuessFirst(first)
+        })
+    }, GUESS_PAUSE_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [prompting, query, guessKey])
+  /** The sentence the order on screen was guessed for: a hold never freezes an earlier sentence's guess. */
+  const guessedFor = useRef('')
+  const holdGuess = useCallback(() => {
+    if (guessHeld.current) return
+    guessHeld.current = true
+    if (guessedFor.current !== query.trim()) setGuessFirst(null)
+  }, [query])
+  const holdGuessOnArrow = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') holdGuess()
+    },
+    [holdGuess],
+  )
 
   const firstLevel = (): { groups: CommandPaletteGroup[]; pending?: string; notes: string[]; empty?: string } => {
     const typed = query.trim()
@@ -1424,17 +1526,20 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     if (prompting) {
       const { groups, pending, body } = promptFace()
       return (
-        <CommandPaletteSearch
-          query={query}
-          onQueryChange={setQuery}
-          placeholder={placeholder}
-          groups={groups}
-          pending={pending}
-          about={about}
-          prompt={{ onSubmit: ask, submitWord: 'ask' }}
-        >
-          {body}
-        </CommandPaletteSearch>
+        // The pointer or an arrow holds the guessed order until the next key (KIN-7); `contents` draws no box.
+        <div className="contents" onPointerMoveCapture={holdGuess} onKeyDownCapture={holdGuessOnArrow}>
+          <CommandPaletteSearch
+            query={query}
+            onQueryChange={setQuery}
+            placeholder={placeholder}
+            groups={groups}
+            pending={pending}
+            about={about}
+            prompt={{ onSubmit: ask, submitWord: 'ask' }}
+          >
+            {body}
+          </CommandPaletteSearch>
+        </div>
       )
     }
 
