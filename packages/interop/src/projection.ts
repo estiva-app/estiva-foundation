@@ -1833,8 +1833,11 @@ const HANDLER_SWEEP_LIMIT = 100
 /**
  * How many recommendations (`kind:31989`) a sweep asks for. One per author and
  * kind an author has chosen an app for; production held one on 2026-11-24.
+ * Kept at the manifests' 100: a sweep is believed whole only when it comes
+ * back short of its limit, and common relays cap an answer at 500 (strfry,
+ * nostr-rs-relay) or 1,000 (buzz), so a cap never cuts one short unnoticed.
  */
-const RECOMMENDATION_SWEEP_LIMIT = 500
+const RECOMMENDATION_SWEEP_LIMIT = 100
 
 /**
  * One sweep of a NIP-89 kind, as a {@link ProjectionCache} keeps it: every
@@ -1847,8 +1850,8 @@ interface HandlerSweep {
   readonly complete: boolean
 }
 
-/** A manifest sweep that answered nothing: not remembered, so the next resolve asks again. */
-const EMPTY_SWEEP = Symbol('empty manifest sweep')
+/** A sweep that answered nothing: not remembered, so the next resolve asks again. */
+const EMPTY_SWEEP = Symbol('empty sweep')
 
 /**
  * ## Every manifest, asked once (THE-4)
@@ -1860,16 +1863,19 @@ const EMPTY_SWEEP = Symbol('empty manifest sweep')
  * screen — 20 or so questions for four manifests and 17 KB (2026-11-24),
  * against a relay that allows 50 questions per 5 s. So with a cache the sweep
  * is read once, shared by a reader that asks while it is in flight, and the
- * claims are answered from it while it is complete. An empty sweep is not
- * remembered: a relay answering no manifest at all is one to ask again, which
- * is what Peek's own read did.
+ * claims are answered from it while it is complete. An empty sweep is neither
+ * remembered nor believed whole: a relay still starting, or a read that raced
+ * sign-in, answers nothing, as Peek's own read found. Believed, an empty
+ * recommendation sweep would hand every author's kind to the newest claim,
+ * which any member may publish, for the cache's whole life (THE-4 security
+ * review); each resolve asks its own question instead, as before.
  *
  * Without a cache every reader asks, as before.
  */
 async function handlerSweepOf(kind: number, limit: number, query: QueryFn, cache?: ProjectionCache): Promise<HandlerSweep> {
   const read = async (): Promise<HandlerSweep> => {
     const events = await query([{ kinds: [kind], limit }])
-    if (events.length === 0 && kind === KIND_HANDLER_INFORMATION) throw EMPTY_SWEEP
+    if (events.length === 0) throw EMPTY_SWEEP
     return { sweep: true, events, complete: events.length < limit }
   }
   try {

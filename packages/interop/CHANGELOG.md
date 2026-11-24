@@ -20,9 +20,11 @@ the rest is answered from them.** (THE-4.)
 - `resolveManifest`, `seedManifests`, the opener, the creators,
   `resolveFolderProject` and a Folder read by containment take the claim and
   the recommendation from the cached sweeps while each came back short of its
-  limit (100 manifests, 500 recommendations). A sweep at its limit is not
-  taken for all of them: the question by kind or author is asked, as before.
-- A sweep that answers no manifest at all is not remembered.
+  limit (100 each). A sweep at its limit is not taken for all of them: the
+  question by kind or author is asked, as before.
+- A sweep that answers nothing is neither remembered nor believed whole: an
+  empty recommendation sweep would otherwise hand every kind to the newest
+  claim for the cache's life.
 - New: `readAllManifests(query, cache?)`, the sweep itself, for a consumer
   that reads every manifest (Peek's link shapes).
 - Without a cache, every reader asks as before. `resolveFolderProject` and a

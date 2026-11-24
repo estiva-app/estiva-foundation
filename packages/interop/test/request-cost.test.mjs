@@ -83,7 +83,10 @@ const ADDRESS = `${KIND}:${AUTHOR}:p1`
 const object = event({ kind: KIND, tags: [['d', 'p1'], ['title', 'Payment integration'], ['h', FOLDER]] })
 const child = event({ kind: CHILD, tags: [['d', 'i1'], ['title', 'A ticket'], ['a', ADDRESS]] })
 
-const world = () => countingRelay([manifest, object, child])
+// Another author's recommendation for another kind, as a relay in use holds (production held one, 24 Nov): an empty
+// recommendation sweep is not believed whole (THE-4), so a world with none asks by author.
+const elsewhere = event({ kind: 31989, pubkey: 'd'.repeat(64), tags: [['d', '40001'], ['a', `31990:${'d'.repeat(64)}:other-app`]] })
+const world = () => countingRelay([manifest, object, child, elsewhere])
 
 /*
   One file, read the one way (§6.13): its comments and its children's first
@@ -431,4 +434,16 @@ test('a sweep that answers no manifest is asked again, not believed for the sess
   assert.equal(await resolveManifest({ ...POINTER, pubkey: OTHER }, relay.query, cache), null)
 
   assert.equal(sweeps(relay.calls, 31990), 2, 'an empty sweep is not remembered')
+})
+
+test('a recommendation sweep that answers nothing is not taken for "no recommendation": the author is asked', async () => {
+  // A relay still starting answers the sweep empty; believed, the newest claim — which any member may publish —
+  // would win over the author's own choice for the cache's whole life.
+  const chosen = appManifest('chosen', [['k', String(KIND)]])
+  const newer = appManifest('newer', [['k', String(KIND)]])
+  const relay = countingRelay([manifest, chosen, newer, recommending('chosen')])
+  const query = async (filters) => (filters.some((f) => f.kinds?.includes(31989) && !f.authors) ? [] : relay.query(filters))
+  const resolved = await resolveManifest(POINTER, query, createProjectionCache())
+
+  assert.equal(resolved.address, `31990:${APP}:chosen`, 'the author\'s recommendation still wins')
 })
