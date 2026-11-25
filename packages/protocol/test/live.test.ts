@@ -18,7 +18,7 @@
 import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { KIND } from '../dist/index.js'
-import type { SignedEvent, UnsignedEvent } from '../dist/index.js'
+import type { ReconcileOutcome, SignedEvent, UnsignedEvent } from '../dist/index.js'
 import { createLiveRelay, Negentropy, NegentropySet, parseFrame, toWebSocketUrl, type SocketLike } from '../dist/index.js'
 
 /*
@@ -867,6 +867,18 @@ describe('reconcile (NIP-77)', () => {
     step()
     step()
     assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
+  })
+
+  it('a rate-limited open is handed back at once when the caller asks not to retry, and nothing is sent again', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    let outcome: ReconcileOutcome | undefined
+    void h.relay.reconcile({ kinds: [9] }, held, { retryRateLimited: false }).then((result) => (outcome = result))
+    s.deliver(['NEG-ERR', s.sentOf('NEG-OPEN')[0]![1], 'rate-limited: slow down'])
+    await Promise.resolve()
+    assert.deepEqual(outcome, { ok: false, reason: 'refused', message: 'rate-limited: slow down' })
+    h.advance(60_000)
+    assert.equal(s.sentOf('NEG-OPEN').length, 1)
   })
 
   it('a socket lost mid-way starts the reconciliation again on the next one', async () => {

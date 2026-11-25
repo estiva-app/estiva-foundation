@@ -205,6 +205,24 @@ test('a windowed question catches up its window and answers its newest events', 
   )
 })
 
+test('a windowed question whose window lost messages never answers an older message the relay did not compare', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const messages = team('t1', 200)
+  r.publish(...messages)
+  const filters = [{ kinds: [9], '#h': ['t1'], limit: 50 }]
+  const snap = await copy()
+  // Scrolled back: the copy holds all 200, far past the window.
+  snap.absorb([{ kinds: [9], '#h': ['t1'] }], messages)
+  // While away, five in the window were deleted, and the five just below it too.
+  for (const gone of [...messages.slice(195), ...messages.slice(145, 150)]) r.remove(gone.id)
+
+  const result = await catchUp(snap, filters, r.relay)
+  assert.deepEqual(
+    result.events.map((e) => e.id),
+    (await r.relay.query(filters)).map((e) => e.id),
+  )
+})
+
 test('a question with almost nothing held is simply asked again', async () => {
   const r = fakeRelay({ teams: new Set(['t1']) })
   r.publish(...team('t1', 3))

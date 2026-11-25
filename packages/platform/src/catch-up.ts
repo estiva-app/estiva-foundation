@@ -178,9 +178,14 @@ export async function catchUp(
       snapshot.caughtUp(asked, reconciled, fetched, diff.have)
       result.fetched += fetched.length
       result.dropped += diff.have.length
-      const current = (snapshot.held(withoutLimit(asked)) ?? []).sort(byRelayOrder)
-      // Gone events left the window short and the copy cannot say what was older: ask instead.
+      // Only what the relay just compared counts: an older event the copy still holds below the window was never
+      // checked, and may be deleted or out of reach now (THE-6 /land).
       const windowed = limit !== undefined && reconciled.since !== asked.since
+      const since = windowed ? (reconciled.since as number) : -Infinity
+      const current = (snapshot.held(withoutLimit(asked)) ?? [])
+        .filter((event) => event.created_at >= since)
+        .sort(byRelayOrder)
+      // Gone events left the window short and the copy cannot say what was older: ask instead.
       if (windowed && current.length < limit) {
         askAgain.push(asked)
         return

@@ -4,6 +4,15 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.71.0 — 2026-11-25
+
+**Wire behaviour: unchanged unless asked.** `LiveRelay.reconcile` takes
+`retryRateLimited: false`, as `subscribe` does: a `rate-limited:` `NEG-ERR`
+then resolves `refused` at once instead of sending the `NEG-OPEN` again after
+the wait. For a caller that paces its own frames and asks plainly instead
+(Peek's catch-up, THE-6): retrying inside its read slot held a reopen's reads
+up to a minute while the relay said to back off. The default still retries.
+
 ## 0.70.0 — 2026-11-25
 
 **Wire behaviour: a client can now send NIP-77 `NEG-OPEN`, `NEG-MSG` and
