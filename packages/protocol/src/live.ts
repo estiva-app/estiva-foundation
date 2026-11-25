@@ -684,7 +684,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         log('relay notice', { message: frame.message })
         // A relay without NIP-77 answers NEG-OPEN with a NOTICE naming no subscription.
         // Only a reconciliation the relay has not answered yet can be what it means.
-        if (/NEG-|unknown|unsupported|not supported|invalid message|unrecognized/i.test(frame.message)) {
+        if (/NEG-|unknown (cmd|command|verb|message type)|unsupported (cmd|command|verb|message)|unrecognized (cmd|command|verb|message)/i.test(frame.message)) {
           for (const rec of [...reconciliations.values()]) {
             if (!rec.answered && rec.negentropy) {
               finishReconciliation(rec, { ok: false, reason: 'unsupported', message: frame.message }, false)
@@ -787,7 +787,10 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
           resolve,
         }
         reconciliations.set(rec.id, rec)
+        // The clock starts now, not when the socket is live: a relay that never lets us in
+        // ends it as timed out, and the caller asks plainly instead of waiting for good.
         if (state === 'live') openReconciliation(rec)
+        else armReconcileTimeout(rec)
       })
     },
     reconnect() {

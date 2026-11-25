@@ -44,11 +44,19 @@ export interface CatchUpResult {
   /** Filters caught up with NIP-77, and asked again. */
   reconciled: number
   asked: number
-  /** Events fetched because the copy lacked them, and held ones dropped as gone. */
+  /**
+   * Events fetched because the copy lacked them, and held ones dropped as gone. Both
+   * were applied to the copy, even for a windowed filter that was then asked again too.
+   */
   fetched: number
   dropped: number
 }
 
+/**
+ * A placeholder until THE-6 sets it from the speed kit's reopen leg: below about
+ * 16 held events negentropy's first message is the id list itself, so a catch-up
+ * saves no bytes and costs a second round trip.
+ */
 export const CATCH_UP_SMALLEST_HELD = 16
 const IDS_PER_FILTER = 500
 const FILTERS_PER_QUERY = 10
@@ -90,7 +98,9 @@ async function reconcileSplitting(
   if (outcome.ok) return { need: outcome.need, have: outcome.have }
   if (outcome.reason !== 'blocked' || splits <= 0) return null
   const from = typeof filter.since === 'number' ? filter.since : 0
-  const to = typeof filter.until === 'number' ? filter.until : now
+  // Past the newest held event too: one dated ahead of this clock must stay in the newer half's set.
+  const newest = held.reduce((most, event) => Math.max(most, event.created_at), 0)
+  const to = typeof filter.until === 'number' ? filter.until : Math.max(now, newest)
   if (to - from < 2) return null
   const middle = Math.floor((from + to) / 2)
   const older = { ...filter, since: from, until: middle }
@@ -134,7 +144,8 @@ export async function catchUp(
   const now = Math.floor((options.now ?? Date.now)() / 1000)
 
   await snapshot.ready
-  const speaks = filters.length > 0 && (await relay.speaksNip77())
+  // A relay whose information document cannot be read is asked plainly, as one without NIP-77.
+  const speaks = filters.length > 0 && (await Promise.resolve().then(() => relay.speaksNip77()).catch(() => false))
   const result: CatchUpResult = { events: [], reconciled: 0, asked: 0, fetched: 0, dropped: 0 }
   const out = new Map<string, SignedEvent>()
   const askAgain: SnapshotFilter[] = []

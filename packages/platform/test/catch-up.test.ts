@@ -235,6 +235,29 @@ test('a question past the relay page is caught up whole, where asking again coul
   assert.equal(result.events.length, 1_500)
 })
 
+test('a relay whose information document cannot be read is asked plainly, not failed', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  r.publish(...team('t1', 40))
+  const filters = [{ kinds: [9], '#h': ['t1'] }]
+  const snap = await copy()
+  snap.absorb(filters, await r.relay.query(filters))
+  const broken: CatchUpRelay = { ...r.relay, speaksNip77: () => Promise.reject(new Error('NIP-11 unreachable')) }
+  const result = await catchUp(snap, filters, broken)
+  assert.equal(result.asked, 1)
+  assert.equal(result.events.length, 40)
+})
+
+test('a split question keeps a held event dated ahead of this device clock', async () => {
+  const r = fakeRelay({ maxSet: 120, teams: new Set(['t1']) })
+  const ahead = ev(9, 2_000_100, [['h', 't1']])
+  r.publish(...team('t1', 400), ahead)
+  const filters = [{ kinds: [9], '#h': ['t1'] }]
+  const snap = await copy()
+  snap.absorb([{ ...filters[0], until: 9_999_999 }], await r.relay.query([{ ...filters[0], limit: 1_000 }]))
+  await catchUp(snap, filters, r.relay, { now: () => 2_000_000 * 1000 })
+  assert.ok(snap.held(filters[0]!)!.some((e) => e.id === ahead.id), 'still held')
+})
+
 test('the relay information document says whether it speaks NIP-77', () => {
   assert.equal(relaySpeaksNip77({ supported_nips: [1, 11, 77] }), true)
   assert.equal(relaySpeaksNip77({ supported_nips: [1, 11] }), false)

@@ -836,6 +836,25 @@ describe('reconcile (NIP-77)', () => {
     assert.equal(s.sentOf('NEG-CLOSE').length, 1)
   })
 
+  it('a relay that never lets the socket in ends the reconciliation as timed out', async () => {
+    const h = harness()
+    const outcome = h.relay.reconcile({ kinds: [9] }, held, { timeoutMs: 1_000 })
+    h.advance(1_000)
+    const result = await outcome
+    assert.equal(result.ok === false ? result.reason : 'ok', 'timeout')
+  })
+
+  it('a NOTICE about something else leaves a reconciliation running', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [9] }, held)
+    s.deliver(['NOTICE', 'invalid message: bad filter in another request'])
+    const step = serve(s, relaySet)
+    step()
+    step()
+    assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
+  })
+
   it('a rate-limited open is asked again after the wait, not handed back', async () => {
     const h = harness()
     const s = await reachLive(h)
