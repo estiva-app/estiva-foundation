@@ -12,7 +12,11 @@
  * one where two round trips cost more than the answer, and for a windowed one
  * (`limit`) whose window moved further than the catch-up saves.
  *
+ * A file list (`"fields": "newest"`, SPEC §6.13) is caught up the same way,
+ * from the ids of its last answer the copy remembers.
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-copy-on-the-device-catches-up-with-nip-77.md
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-list-catches-up-with-nip-77-too.md
  */
 import type { ReconcileOutcome, SignedEvent } from '@estiva-app/protocol'
 import type { EventSnapshot, SnapshotFilter } from './event-snapshot.js'
@@ -152,13 +156,18 @@ export async function catchUp(
 
   await Promise.all(
     filters.map(async (asked) => {
-      const all = speaks ? snapshot.held(withoutLimit(asked)) : null
+      // A list read (`fields`) is held as its last answer, and only when its `limit` cannot cut it; it is
+      // never windowed, nor split by time, since its `since` and `until` pick first records and a change goes
+      // with its file (THE-9). A relay that refuses it, or calls it too big, is asked plainly.
+      const list = asked.fields !== undefined
+      const heldOf = (filter: SnapshotFilter) => snapshot.held(list ? filter : withoutLimit(filter))
+      const all = speaks ? heldOf(asked) : null
       if (!all || all.length < smallestHeld) {
         askAgain.push(asked)
         return
       }
       // A windowed question is reconciled from the oldest event of the window the copy holds.
-      const limit = typeof asked.limit === 'number' ? asked.limit : undefined
+      const limit = !list && typeof asked.limit === 'number' ? asked.limit : undefined
       let reconciled = withoutLimit(asked)
       let held = all
       if (limit !== undefined && all.length >= limit) {
@@ -168,7 +177,7 @@ export async function catchUp(
         held = all.filter((event) => event.created_at >= since)
       }
 
-      const diff = await reconcileSplitting(relay, reconciled, held, maxSplits, now)
+      const diff = await reconcileSplitting(relay, reconciled, held, list ? 0 : maxSplits, now)
       // The window moved past what it holds: asking again is the smaller read.
       if (!diff || (limit !== undefined && diff.need.length > limit)) {
         askAgain.push(asked)
@@ -182,7 +191,7 @@ export async function catchUp(
       // checked, and may be deleted or out of reach now (THE-6 /land).
       const windowed = limit !== undefined && reconciled.since !== asked.since
       const since = windowed ? (reconciled.since as number) : -Infinity
-      const current = (snapshot.held(withoutLimit(asked)) ?? [])
+      const current = (heldOf(asked) ?? [])
         .filter((event) => event.created_at >= since)
         .sort(byRelayOrder)
       // Gone events left the window short and the copy cannot say what was older: ask instead.

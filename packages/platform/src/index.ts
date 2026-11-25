@@ -93,6 +93,7 @@ export {
   matchesSnapshotFilter,
   memorySnapshotStorage,
   snapshotFilterKey,
+  snapshotListKey,
   snapshotScope,
   type EventSnapshot,
   type EventSnapshotOptions,
