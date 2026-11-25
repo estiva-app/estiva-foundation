@@ -13,7 +13,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveFolderContents, listFolders, listFolderRecords, topLevelFolders, KIND_FOLDER_STATE } from '../dist/index.js'
+import { resolveFolderContents, listFolders, listFolderRecords, topLevelFolders, createLoadQuery, KIND_FOLDER_STATE } from '../dist/index.js'
 
 const RINGER = 'a'.repeat(64)
 const TIDES = 'b'.repeat(64)
@@ -279,6 +279,71 @@ describe('the folder that has no state yet', () => {
     // globally — so a move into a private Folder is still refused.
     assert.equal(files[0].folder, FOLDER)
     assert.equal(files[0].scopedTo, undefined)
+  })
+})
+
+/**
+ * THE-11: a reader whose query catches lists up from a copy finds a Folder's projects as SPEC §6.13 says — in the
+ * workspace's project list read, by `buzz-channel` — and never asks `#buzz-channel`, which a socket `REQ` ignores
+ * (production answered 500 unrelated files, 575 KB, per Folder) and a catch-up refuses.
+ */
+describe('a Folder with no state finds its projects in the workspace project list, under a query that catches lists up', () => {
+  const PROJECT = 30850
+  const ELSEWHERE = '3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f'
+  const projectsManifest = event({
+    kind: 31990,
+    pubkey: RINGER,
+    tags: [['d', 'projects'], ['k', String(PROJECT)]],
+    content: JSON.stringify({
+      name: 'Projects',
+      records: { changeKind: 1851, targetTag: 'a', fieldTag: 'f', valueTag: 'v' },
+      projections: { [PROJECT]: { widget: 'card', slots: { title: { tag: 'title' } } } },
+    }),
+  })
+  const here = event({ kind: PROJECT, pubkey: RINGER, tags: [['d', 'here'], ['title', 'Placed here'], ['buzz-channel', FOLDER]] })
+  const there = event({ kind: PROJECT, pubkey: RINGER, tags: [['d', 'there'], ['title', 'Placed elsewhere'], ['buzz-channel', ELSEWHERE]] })
+  // A current change the list read answers beside its project, naming this Folder as a value: not a placement here.
+  const retitle = event({ kind: 1851, pubkey: RINGER, tags: [['a', addressOf(there)], ['f', 'note'], ['v', FOLDER], ['h', ELSEWHERE]] })
+
+  /** A relay over a socket: `#buzz-channel` is no tag a Nostr filter asks for, so it is ignored, as production did. */
+  const socket = (events, asked) => {
+    const answer = relay(events)
+    return Object.assign(
+      async (filters) => {
+        asked.push(...filters)
+        return answer(filters.map(({ ['#buzz-channel']: _ignored, ...rest }) => rest))
+      },
+      { catchesUpLists: true },
+    )
+  }
+
+  test('lists only the projects whose buzz-channel names it, and never asks #buzz-channel', async () => {
+    const asked = []
+    const query = socket([projectsManifest, channel, here, there, retitle], asked)
+    const { files } = await resolveFolderContents(FOLDER, query, async () => ({}))
+    assert.deepEqual(files.map((f) => f.slots.title?.value), ['Placed here'])
+    assert.equal(asked.some((f) => '#buzz-channel' in f), false, 'no #buzz-channel question')
+    assert.ok(asked.some((f) => f.fields === 'newest' && f.kinds?.includes(PROJECT) && Object.keys(f).length === 2), 'the workspace project list read')
+  })
+
+  test('several Folders in one load ask the workspace project list once', async () => {
+    const asked = []
+    const load = createLoadQuery(socket([projectsManifest, channel, here, there], asked))
+    await Promise.all([resolveFolderContents(FOLDER, load, async () => ({})), resolveFolderContents(ELSEWHERE, load, async () => ({}))])
+    await resolveFolderContents(FOLDER, load, async () => ({}))
+    const wide = asked.filter((f) => f.fields === 'newest' && Object.keys(f).length === 2)
+    assert.equal(wide.length, 1)
+  })
+
+  test('a query that does not catch lists up keeps asking #buzz-channel, not the whole list', async () => {
+    const asked = []
+    const plain = async (filters) => {
+      asked.push(...filters)
+      return relay([projectsManifest, channel, here, there])(filters)
+    }
+    const { files } = await resolveFolderContents(FOLDER, plain, async () => ({}))
+    assert.deepEqual(files.map((f) => f.slots.title?.value), ['Placed here'])
+    assert.equal(asked.some((f) => f.fields === 'newest' && Object.keys(f).length === 2), false)
   })
 })
 
