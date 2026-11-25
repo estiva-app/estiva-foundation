@@ -39,7 +39,8 @@
  */
 import { FILE_KINDS, fileIdOf, RELAY_PAGE_CEILING, type FileTimes, type LiveRelay, type SignedEvent } from '@estiva-app/protocol'
 import { isAbout, KIND_COMMENT } from '@estiva-app/conversation'
-import { folderOf, KIND_MESSAGE, type QueryFn } from './projection.js'
+import { folderOf, KIND_MESSAGE, type QueryFn, type TimesFn } from './projection.js'
+export type { TimesFn } from './projection.js'
 import { answeredByEach, answers, firstPages, nextPages, readAll, type ReadTopic } from './topics.js'
 import { fieldsSetBy } from './fields.js'
 import { LISTED_WATCH_REBUILD_MS, MAX_FILTERS_PER_REQ, openWhenKnown } from './listedConversations.js'
@@ -618,9 +619,6 @@ function chunked<T>(list: readonly T[], size: number): T[][] {
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
   return out
 }
-
-/** The relay's times read (`Relay.queryTimes`, or an app's own post through `timesOf`): every filter says `"fields": "times"`. */
-export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[]>
 
 /** Roots asked per page of a times read: a parent with thousands under it is still read whole, a page at a time. */
 const TIMES_PAGE = RELAY_PAGE_CEILING

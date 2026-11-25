@@ -6,6 +6,29 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.119.0 — 2026-11-25
+
+**Manifest: no change to what a manifest declares or how it is read. Wire: a
+file the list read leaves out (deleted, or not this reader's) is no longer read
+by every change it ever had** (`kind:1851` by `#a`, up to 500). It is read as
+SPEC §6.5 finds a deleted file: the times read (`"fields": "times"`) by `#d`,
+then its first record and each field's current change by `ids`. One the times
+read does not answer is not the reader's, and nothing more is read for it.
+This was the last old-way read in the shared code: a parent's archive walk
+(`archivedWith`, `markTopicsArchivedWith`), `resolveParents`, and opening a
+deleted file (`resolveForeignObject(s)`, `resolveDeletedFiles`).
+
+- **`QueryFn` may carry `times`**, the times read as the same reader, and
+  `withTimes(query, times)` makes one. An app attaches it where it builds its
+  query. `createLoadQuery` keeps it; `readYourTopics` uses its own `times`
+  when the query has none.
+- **A query without `times` reads such a file as one it cannot read**: a
+  deleted parent ends the archive walk, and a deleted file opens as
+  unreachable rather than "deleted by …". Attach `times` to keep both.
+- Measured as Miky on Weekly Plans in Leaf (25 Nov): two deleted QA files
+  above a page cost an 8 KB every-change read; the deleted project alone is
+  5.7 KB that way and 3.3 KB by its current changes.
+
 ## 0.118.1 — 2026-11-24
 
 **Manifest: no change to what a manifest declares or how it is read. Wire:

@@ -98,6 +98,7 @@ export {
   type ProjectionCache,
   type ResolvedManifest,
   type QueryFn,
+  withTimes,
   type PeopleFn,
   type People,
   type ForeignObject,

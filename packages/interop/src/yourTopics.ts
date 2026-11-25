@@ -34,6 +34,7 @@ import {
   markTopicsArchivedWith,
   projectTopics,
   seedManifests,
+  withTimes,
   type ForeignObject,
   type ProjectionCache,
   type QueryFn,
@@ -169,7 +170,8 @@ export async function readYourTopics(
     readTopicActivity(query, activityTopics(topics), { nowSeconds: options.nowSeconds, times: options.times }),
     markTopicsArchivedWith(
       topics.map((topic) => topic.object),
-      query,
+      // The same reader's times read: a deleted parent is read by its current changes.
+      query.times ? query : withTimes(query, options.times),
       cache,
       FILE_KINDS,
     ),
