@@ -71,6 +71,7 @@ import {
   type SignedEvent,
   type UnsignedEvent,
 } from './events.js'
+import { Negentropy, NegentropySet } from './negentropy.js'
 
 /**
  * `WebSocket` and the timer functions are not in `lib.es2022`, and this package
@@ -186,9 +187,59 @@ export interface LiveRelay {
     onEvent: (event: SignedEvent) => void,
     options?: { onEose?: () => void; onClosed?: (reason: string) => void; retryRateLimited?: boolean },
   ): Subscription
+  /**
+   * NIP-77: tell the relay what the copy holds for `filter` (each event's id
+   * and `created_at`) and learn what it is missing (`need`) and what it holds
+   * that the relay no longer returns to this person (`have`). Nothing is
+   * uploaded. Waits for the socket like {@link subscribe}, and starts over on a
+   * reconnect. Never rejects: a relay that does not speak NIP-77, refuses, or
+   * says nothing in time resolves `ok: false`, and the caller asks again.
+   */
+  reconcile(
+    filter: Record<string, unknown>,
+    held: readonly { id: string; created_at: number }[],
+    options?: { timeoutMs?: number },
+  ): Promise<ReconcileOutcome>
   state(): RelayState
   /** Stop for good. Does not reconnect afterwards. */
   close(): void
+}
+
+/**
+ * How a reconciliation ended. `blocked` carries the most events the relay will
+ * reconcile in one question, when it said, so the caller can split by time.
+ */
+export type ReconcileOutcome =
+  | { ok: true; need: string[]; have: string[] }
+  | { ok: false; reason: 'unsupported' | 'blocked' | 'refused' | 'timeout'; message: string; max?: number }
+
+/** How long a reconciliation may wait for the relay's next round before giving up. */
+export const RECONCILE_TIMEOUT_MS = 15_000
+
+/**
+ * Each outgoing NIP-77 message, in bytes before hex. Hex doubles it, and the
+ * relay takes frames up to its NIP-11 `max_message_length` (512 KiB on ours).
+ */
+const RECONCILE_FRAME_BYTES = 200_000
+
+/** NIP-77's prefix for a question the relay will not reconcile as asked, e.g. too many events. */
+const BLOCKED_PREFIX = 'blocked:'
+
+interface LiveReconciliation {
+  id: string
+  filter: Record<string, unknown>
+  held: readonly { id: string; created_at: number }[]
+  /** Started afresh on every open, so a reconnect mid-way begins again. */
+  negentropy: Negentropy | null
+  need: Set<string>
+  have: Set<string>
+  /** Whether the relay has answered this open at all: a NOTICE before that may be "unknown verb". */
+  answered: boolean
+  busyRetries: number
+  retryTimer: unknown
+  timeout: unknown
+  timeoutMs: number
+  resolve: (outcome: ReconcileOutcome) => void
 }
 
 /** How many consecutive AUTH refusals before giving up rather than looping. */
@@ -265,6 +316,8 @@ type RelayFrame =
   | { type: 'EOSE'; subId: string }
   | { type: 'CLOSED'; subId: string; message: string }
   | { type: 'NOTICE'; message: string }
+  | { type: 'NEG-MSG'; subId: string; message: string }
+  | { type: 'NEG-ERR'; subId: string; reason: string }
   | { type: 'OTHER' }
 
 export function parseFrame(raw: unknown): RelayFrame {
@@ -309,6 +362,14 @@ export function parseFrame(raw: unknown): RelayFrame {
       return typeof parsed[1] === 'string'
         ? { type: 'NOTICE', message: parsed[1] }
         : { type: 'OTHER' }
+    case 'NEG-MSG':
+      return typeof parsed[1] === 'string' && typeof parsed[2] === 'string'
+        ? { type: 'NEG-MSG', subId: parsed[1], message: parsed[2] }
+        : { type: 'OTHER' }
+    case 'NEG-ERR':
+      return typeof parsed[1] === 'string'
+        ? { type: 'NEG-ERR', subId: parsed[1], reason: typeof parsed[2] === 'string' ? parsed[2] : '' }
+        : { type: 'OTHER' }
     default:
       return { type: 'OTHER' }
   }
@@ -325,6 +386,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
   const log = options.log ?? (() => {})
 
   const subscriptions = new Map<string, LiveSubscription>()
+  const reconciliations = new Map<string, LiveReconciliation>()
   let socket: SocketLike | null = null
   let state: RelayState = 'connecting'
   let attempt = 0
@@ -394,6 +456,96 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
     return true
   }
 
+  function clearReconcileTimers(rec: LiveReconciliation) {
+    if (rec.retryTimer !== null) clearTimer(rec.retryTimer)
+    if (rec.timeout !== null) clearTimer(rec.timeout)
+    rec.retryTimer = rec.timeout = null
+  }
+
+  /** End a reconciliation once, closing it on the relay when it is still open there. */
+  function finishReconciliation(rec: LiveReconciliation, outcome: ReconcileOutcome, sendClose: boolean) {
+    if (reconciliations.get(rec.id) !== rec) return
+    reconciliations.delete(rec.id)
+    clearReconcileTimers(rec)
+    if (sendClose && state === 'live') send(['NEG-CLOSE', rec.id])
+    rec.resolve(outcome)
+  }
+
+  function armReconcileTimeout(rec: LiveReconciliation) {
+    if (rec.timeout !== null) clearTimer(rec.timeout)
+    rec.timeout = setTimer(() => {
+      rec.timeout = null
+      log('reconciliation timed out', { subId: rec.id })
+      finishReconciliation(rec, { ok: false, reason: 'timeout', message: 'the relay did not answer in time' }, true)
+    }, rec.timeoutMs)
+  }
+
+  function openReconciliation(rec: LiveReconciliation) {
+    if (rec.retryTimer !== null) {
+      clearTimer(rec.retryTimer)
+      rec.retryTimer = null
+    }
+    const set = new NegentropySet()
+    for (const item of rec.held) set.insert(item.created_at, item.id)
+    rec.negentropy = new Negentropy(set, RECONCILE_FRAME_BYTES)
+    rec.need.clear()
+    rec.have.clear()
+    rec.answered = false
+    send(['NEG-OPEN', rec.id, rec.filter, rec.negentropy.initiate()])
+    armReconcileTimeout(rec)
+  }
+
+  function onReconcileMessage(rec: LiveReconciliation, message: string) {
+    rec.answered = true
+    rec.busyRetries = 0
+    let next: string | null
+    try {
+      next = rec.negentropy!.reconcile(
+        message,
+        (id) => rec.have.add(id),
+        (id) => rec.need.add(id),
+      )
+    } catch (error) {
+      finishReconciliation(rec, { ok: false, reason: 'refused', message: (error as Error).message }, true)
+      return
+    }
+    if (next === null) {
+      finishReconciliation(rec, { ok: true, need: [...rec.need], have: [...rec.have] }, true)
+      return
+    }
+    send(['NEG-MSG', rec.id, next])
+    armReconcileTimeout(rec)
+  }
+
+  function onReconcileError(rec: LiveReconciliation, reason: string) {
+    log('reconciliation refused', { subId: rec.id, reason })
+    // The relay has closed it on its side: NIP-77 says a NEG-ERR ends the reconciliation.
+    if (reason === RELAY_BUSY_CLOSED || reason.startsWith(RATE_LIMITED_PREFIX)) {
+      if (rec.busyRetries < MAX_BUSY_RETRIES) {
+        const jitter = backoff.jitter()
+        const busyDelay = Math.min(backoff.maxMs, backoff.baseMs * 2 ** rec.busyRetries) * (0.5 + jitter / 2)
+        const delay = reason.startsWith(RATE_LIMITED_PREFIX)
+          ? Math.max(busyDelay, RATE_LIMITED_MIN_WAIT_MS * (1 + jitter / 5))
+          : busyDelay
+        rec.busyRetries += 1
+        clearReconcileTimers(rec)
+        rec.retryTimer = setTimer(() => {
+          rec.retryTimer = null
+          if (reconciliations.get(rec.id) === rec && state === 'live') openReconciliation(rec)
+        }, delay)
+        return
+      }
+    }
+    if (reason.startsWith(BLOCKED_PREFIX)) {
+      const max = /(\d[\d,_]*)/.exec(reason)?.[1]
+      const outcome: ReconcileOutcome = { ok: false, reason: 'blocked', message: reason }
+      if (max) outcome.max = Number(max.replace(/[,_]/g, ''))
+      finishReconciliation(rec, outcome, false)
+      return
+    }
+    finishReconciliation(rec, { ok: false, reason: 'refused', message: reason }, false)
+  }
+
   /**
    * Tear the socket down and schedule another attempt.
    *
@@ -415,9 +567,15 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
     }
     pendingAuthEventId = null
 
+    // A reconciliation half done on the old socket starts again on the next one. Its clock keeps
+    // running, so a relay that stays away ends it as timed out and the caller asks plainly instead.
+
     if (authFailures >= MAX_AUTH_FAILURES) {
       setState('failed')
       log('giving up after repeated auth refusals', { authFailures, reason })
+      for (const rec of [...reconciliations.values()]) {
+        finishReconciliation(rec, { ok: false, reason: 'refused', message: 'the relay refused to sign in' }, false)
+      }
       return
     }
 
@@ -487,6 +645,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
     // and not the subscriptions is the silent half of this failure: the app
     // looks connected and never hears anything again.
     for (const sub of subscriptions.values()) openSubscription(sub)
+    for (const rec of reconciliations.values()) openReconciliation(rec)
   }
 
   function onFrame(raw: unknown) {
@@ -523,7 +682,26 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       }
       case 'NOTICE':
         log('relay notice', { message: frame.message })
+        // A relay without NIP-77 answers NEG-OPEN with a NOTICE naming no subscription.
+        // Only a reconciliation the relay has not answered yet can be what it means.
+        if (/NEG-|unknown|unsupported|not supported|invalid message|unrecognized/i.test(frame.message)) {
+          for (const rec of [...reconciliations.values()]) {
+            if (!rec.answered && rec.negentropy) {
+              finishReconciliation(rec, { ok: false, reason: 'unsupported', message: frame.message }, false)
+            }
+          }
+        }
         return
+      case 'NEG-MSG': {
+        const rec = reconciliations.get(frame.subId)
+        if (rec?.negentropy) onReconcileMessage(rec, frame.message)
+        return
+      }
+      case 'NEG-ERR': {
+        const rec = reconciliations.get(frame.subId)
+        if (rec) onReconcileError(rec, frame.reason)
+        return
+      }
       default:
         return
     }
@@ -588,6 +766,30 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
         },
       }
     },
+    reconcile(filter, held, reconcileOptions) {
+      return new Promise<ReconcileOutcome>((resolve) => {
+        if (stopped || state === 'failed') {
+          resolve({ ok: false, reason: 'refused', message: 'the connection is closed' })
+          return
+        }
+        const rec: LiveReconciliation = {
+          id: `${options.subscriptionPrefix ?? 'sub'}-neg-${nextSubId++}`,
+          filter,
+          held,
+          negentropy: null,
+          need: new Set(),
+          have: new Set(),
+          answered: false,
+          busyRetries: 0,
+          retryTimer: null,
+          timeout: null,
+          timeoutMs: reconcileOptions?.timeoutMs ?? RECONCILE_TIMEOUT_MS,
+          resolve,
+        }
+        reconciliations.set(rec.id, rec)
+        if (state === 'live') openReconciliation(rec)
+      })
+    },
     reconnect() {
       if (stopped) return
       if (reconnectTimer !== null) {
@@ -619,6 +821,9 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
       }
       for (const sub of subscriptions.values()) cancelBusyRetry(sub)
       subscriptions.clear()
+      for (const rec of [...reconciliations.values()]) {
+        finishReconciliation(rec, { ok: false, reason: 'refused', message: 'the connection is closed' }, false)
+      }
       if (socket) {
         socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null
         try {

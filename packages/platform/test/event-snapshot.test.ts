@@ -422,6 +422,21 @@ test('what was answered whole survives a reload; a copy written before it covers
   assert.notEqual(older.answer([{ kinds: [1851], '#a': all, limit: 1000 }]), null, 'its exact keys still answer')
 })
 
+test('a question with no limit that the relay cut at its page keeps the older events the copy holds', async () => {
+  const { snap } = await fresh()
+  const all = Array.from({ length: 1_500 }, (_, i) => ev(9, 10_000 + i, [['h', 'g']]))
+  const filter = { kinds: [9], '#h': ['g'] }
+  // Held from an earlier, paged read of all 1,500.
+  snap.absorb([{ ...filter, until: 99_999 }], all)
+  // The relay answers a question with no limit with its newest 1,000 only.
+  const newest = [...all].reverse().slice(0, 1_000)
+  snap.absorb([filter], newest)
+  assert.equal(snap.answer([filter])?.length, 1_500, 'the 500 older events are still held')
+  // A limit past the relay's own page is cut at it too.
+  snap.absorb([{ ...filter, limit: 5_000 }], newest)
+  assert.equal(snap.answer([filter])?.length, 1_500)
+})
+
 test('a scope is one person on one relay', () => {
   assert.equal(snapshotScope('wss://relay/', 'pk'), 'wss://relay|pk')
 })

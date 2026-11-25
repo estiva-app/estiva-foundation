@@ -76,7 +76,16 @@ export {
   type VisibilityTarget,
 } from './refresh.js'
 export {
+  CATCH_UP_SMALLEST_HELD,
+  catchUp,
+  relaySpeaksNip77,
+  type CatchUpOptions,
+  type CatchUpRelay,
+  type CatchUpResult,
+} from './catch-up.js'
+export {
   SNAPSHOT_MAX_EVENTS,
+  SNAPSHOT_RELAY_MAX_LIMIT,
   SNAPSHOT_SAVE_AFTER_MS,
   SNAPSHOT_SEEN_REFRESH_MS,
   createEventSnapshot,

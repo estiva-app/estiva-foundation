@@ -1,5 +1,34 @@
 # @estiva-app/platform
 
+## 0.13.0
+
+The copy on the device can catch a question up with NIP-77 (THE-5). It
+downloads only what it is missing and drops what is gone or can no longer be
+read, where today it asks for everything again. Needs `@estiva-app/protocol`
+0.70.0 for `LiveRelay.reconcile`.
+
+- `catchUp(snapshot, filters, relay, options?)` catches each filter up and
+  returns the answer asking again would give, with what it cost (`reconciled`,
+  `asked`, `fetched`, `dropped`). For each filter it asks plainly instead when
+  the relay does not speak NIP-77 or refuses, when the filter is one the copy
+  cannot judge (`search`), when it holds fewer than `CATCH_UP_SMALLEST_HELD`
+  events, or when a windowed (`limit`) question's window moved further than
+  catching up saves. A question the relay calls too big is split by time. The
+  relay side is `CatchUpRelay`: whether it speaks NIP-77
+  (`relaySpeaksNip77(nip11)`), `reconcile`, and a plain `query`.
+- `EventSnapshot.held(filter)` and `caughtUp(asked, reconciled, fetched,
+  gone)` are the copy's two halves of a catch-up. A catch-up also marks every
+  event the relay still returns as seen, so the events it never sends again
+  are not the first to be trimmed.
+- Fixed: a question with no `limit`, or with one past the relay's own 1,000
+  (`relayMaxLimit`, `SNAPSHOT_RELAY_MAX_LIMIT`), was treated as answered in
+  full. A copy holding more than 1,000 matches then dropped the older ones the
+  relay had simply not sent.
+- `SNAPSHOT_MAX_EVENTS` goes from 10,000 to 20,000. One open of Peek's Desk
+  reads 9,000–12,000 events, so a copy capped at 10,000 dropped part of what
+  every reopen reads, and a catch-up would have fetched that part again each
+  time.
+
 ## 0.12.0
 
 A failure report says why (Miky, 23 Nov). Sentry filed every "Could not load"
