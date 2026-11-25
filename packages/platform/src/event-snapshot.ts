@@ -109,6 +109,8 @@ export interface EventSnapshotOptions {
   version: number
   /** Past this many events the least recently seen are dropped. */
   maxEvents?: number
+  /** The most events the relay returns to a filter, with no `limit` or a bigger one (NIP-11 `max_limit`). */
+  relayMaxLimit?: number
   /** How long after a change the copy is written. */
   saveAfterMs?: number
   /** How old an event's last-seen time may grow before seeing it again is written (it orders what is dropped). */
@@ -124,6 +126,17 @@ export interface EventSnapshot {
   answer(filters: SnapshotFilter[]): SignedEvent[] | null
   /** Take in the relay's answer to these filters: add what it sent, drop what it no longer has. */
   absorb(filters: SnapshotFilter[], events: SignedEvent[]): void
+  /**
+   * The held events a filter matches, `limit` aside: what a catch-up tells the
+   * relay the copy holds. `null` for a filter a copy cannot judge (`search`).
+   */
+  held(filter: SnapshotFilter): SignedEvent[] | null
+  /**
+   * Take in a catch-up (NIP-77) of `reconciled`, asked as `asked`: `fetched` are
+   * the events the copy lacked, `gone` the held ids the relay no longer returns.
+   * The copy then holds, for `reconciled`, what asking it again would return.
+   */
+  caughtUp(asked: SnapshotFilter, reconciled: SnapshotFilter, fetched: SignedEvent[], gone: string[]): void
   /** The kept plaintext of a ciphertext this copy holds, if any. */
   plaintextOf(content: string): string | undefined
   keepPlaintext(content: string, plaintext: string): void
@@ -136,7 +149,14 @@ export interface EventSnapshot {
   discard(): void
 }
 
-export const SNAPSHOT_MAX_EVENTS = 10_000
+/**
+ * One open of Peek's Desk reads 9,000–12,000 events (THE-1, 24 Nov). A copy that
+ * holds fewer drops part of what every reopen reads, and a catch-up then fetches
+ * that part again each time; this leaves room for the Desk and what is read ahead.
+ */
+export const SNAPSHOT_MAX_EVENTS = 20_000
+/** What our relay returns to a filter at most (NIP-11 `max_limit`), whatever its `limit`. */
+export const SNAPSHOT_RELAY_MAX_LIMIT = 1_000
 export const SNAPSHOT_SAVE_AFTER_MS = 1_000
 /**
  * An event the copy already holds, unchanged, is written again only this long
@@ -274,6 +294,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   /** The storage's sign-out count when this copy was read; no read, no write. */
   let epoch: number | undefined
   const maxEvents = options.maxEvents ?? SNAPSHOT_MAX_EVENTS
+  const relayMaxLimit = options.relayMaxLimit ?? SNAPSHOT_RELAY_MAX_LIMIT
   const saveAfterMs = options.saveAfterMs ?? SNAPSHOT_SAVE_AFTER_MS
   const seenRefreshMs = options.seenRefreshMs ?? SNAPSHOT_SEEN_REFRESH_MS
   const now = options.now ?? (() => Date.now())
@@ -439,18 +460,15 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     const returned = new Set(answer.map((event) => event.id))
     for (const filter of asked) {
       if (!answerable(filter)) continue
-      const key = snapshotFilterKey(filter)
-      if (!filters.has(key)) {
-        filters.add(key)
-        filtersDirty = true
-      }
       const matches = snapshotMatcher(filter)
       const sent = answer.filter(matches)
       // Cut by its limit — counted on the whole answer too when it is the only filter, so an
       // event the relay matched and this rule does not cannot make a cut answer look whole.
       // Not when the limit is past the most the filter can match, unless the relay sent two
       // versions of one replaceable event, which that bound assumes it never keeps.
-      const limit = typeof filter.limit === 'number' ? filter.limit : Infinity
+      // No `limit`, or one past the relay's own, is still cut at the relay's: an answer that long
+      // says nothing about what is older, so the copy keeps what it holds there.
+      const limit = Math.min(typeof filter.limit === 'number' ? filter.limit : Infinity, relayMaxLimit)
       // An event with two `d` tags matches two coordinates' worth of `#d`, so the bound holds only for one each.
       const bounded =
         limit >= mostMatches(filter) &&
@@ -458,16 +476,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         sent.every((event) => event.tags.filter((tag) => tag[0] === 'd').length <= 1)
       const cut = !bounded && (sent.length >= limit || (asked.length === 1 && answer.length >= limit))
       // Whole only for all time: an answer from `since` on says nothing about what came before it.
-      const isWhole = !cut && filter.since === undefined && filter.until === undefined
-      const wasWhole = whole.has(key)
-      if (isWhole) whole.add(key)
-      else whole.delete(key)
-      if (wasWhole !== isWhole) {
-        // Newly whole: its values join what is covered; no longer whole: what is covered is worked out again.
-        if (!isWhole) covers = undefined
-        else if (covers) addCovers(covers, key)
-        filtersDirty = true
-      }
+      markAnswered(filter, !cut && filter.since === undefined && filter.until === undefined)
       const floor = cut && sent.length ? Math.min(...sent.map((event) => event.created_at)) : cut ? Infinity : -Infinity
       for (const event of candidates(filter)) {
         // At the cut's own second the relay may have held back events it still has: not judged.
@@ -475,6 +484,60 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         if (matches(event)) drop(event.id)
       }
     }
+    applyDeletions(answer)
+    trim()
+    schedule()
+  }
+
+  /**
+   * Record that `filter` was answered, and whether whole. Newly whole: its values
+   * join what is covered; no longer whole: what is covered is worked out again.
+   */
+  function markAnswered(filter: SnapshotFilter, isWhole: boolean) {
+    const key = snapshotFilterKey(filter)
+    if (!filters.has(key)) {
+      filters.add(key)
+      filtersDirty = true
+    }
+    const wasWhole = whole.has(key)
+    if (isWhole) whole.add(key)
+    else whole.delete(key)
+    if (wasWhole !== isWhole) {
+      if (!isWhole) covers = undefined
+      else if (covers) addCovers(covers, key)
+      filtersDirty = true
+    }
+  }
+
+  function settle(asked: SnapshotFilter, reconciled: SnapshotFilter, fetched: SignedEvent[], gone: string[]) {
+    if (closed) return
+    const seenAt = now()
+    for (const id of gone) drop(id)
+    for (const event of fetched) hold({ event, seenAt }, true)
+    applyDeletions(fetched)
+    // Everything the relay still returns was seen now, whether fetched or already held:
+    // otherwise what a catch-up never re-sends would be the first trimmed.
+    const matches = snapshotMatcher(reconciled)
+    let count = 0
+    for (const event of candidates(reconciled)) {
+      if (!matches(event)) continue
+      count += 1
+      const stored = events.get(event.id)!
+      hold({ event, seenAt, ...(stored.plaintext !== undefined ? { plaintext: stored.plaintext } : {}) }, true)
+    }
+    if (answerable(asked)) {
+      const limit = typeof asked.limit === 'number' ? asked.limit : Infinity
+      // Whole when it covers all time and, asked with a `limit`, holds fewer than it.
+      const allTime = reconciled.since === undefined && reconciled.until === undefined
+      const unbounded = asked.since === undefined && asked.until === undefined
+      markAnswered(asked, allTime && unbounded && count < limit)
+    }
+    trim()
+    schedule()
+  }
+
+  /** A `kind:5` drops the events it names that its own author signed. */
+  function applyDeletions(answer: SignedEvent[]) {
     for (const event of answer) {
       if (event.kind !== 5) continue
       for (const tag of event.tags) {
@@ -488,8 +551,6 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         }
       }
     }
-    trim()
-    schedule()
   }
 
   function trim() {
@@ -572,6 +633,14 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (closed) return
       if (!loaded) early.push([asked, answer])
       else take(asked, answer)
+    },
+    held(filter) {
+      if (!answerable(filter)) return null
+      return candidates(filter).filter(snapshotMatcher(filter))
+    },
+    caughtUp(asked, reconciled, fetched, gone) {
+      // A catch-up builds its held set from the copy, so it runs after `ready`; one before is ignored.
+      if (loaded) settle(asked, reconciled, fetched, gone)
     },
     plaintextOf(content) {
       const id = byContent.get(content)

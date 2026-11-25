@@ -19,7 +19,7 @@ import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { KIND } from '../dist/index.js'
 import type { SignedEvent, UnsignedEvent } from '../dist/index.js'
-import { createLiveRelay, parseFrame, toWebSocketUrl, type SocketLike } from '../dist/index.js'
+import { createLiveRelay, Negentropy, NegentropySet, parseFrame, toWebSocketUrl, type SocketLike } from '../dist/index.js'
 
 /*
   Two helpers vitest provided and `node:test` does not, written out rather than
@@ -739,5 +739,148 @@ describe('shutting down', () => {
 
     first.deliver(['AUTH', 'stale-challenge'])
     assert.equal((second.sentOf('AUTH')).length, 0)
+  })
+})
+
+/*
+  THE-5 — NIP-77 reconciliation over the live socket. The relay side here is
+  the same negentropy code playing the relay; negentropy.test.ts checks it
+  against an independent implementation, and the production probe against
+  the relay itself.
+*/
+describe('reconcile (NIP-77)', () => {
+  const id = (n: number) => n.toString(16).padStart(64, '0')
+  const held = [1, 2, 3, 4].map((n) => ({ id: id(n), created_at: 1_000 + n }))
+  /** The relay holds 2, 3, 4 and a new 5: the copy needs 5 and holds a gone 1. */
+  const relaySet = [2, 3, 4, 5].map((n) => ({ id: id(n), created_at: 1_000 + n }))
+
+  /** Answer every NEG-OPEN / NEG-MSG the client has sent since `from`, as a relay holding `set`. */
+  function serve(s: FakeSocket, set: { id: string; created_at: number }[], from = 0) {
+    const relaySide = new Map<string, Negentropy>()
+    let answered = from
+    return () => {
+      const frames = s.sent.slice(answered)
+      answered = s.sent.length
+      for (const frame of frames) {
+        const subId = frame[1] as string
+        if (frame[0] === 'NEG-OPEN') {
+          const storage = new NegentropySet()
+          for (const item of set) storage.insert(item.created_at, item.id)
+          relaySide.set(subId, new Negentropy(storage, 0))
+          const reply = relaySide.get(subId)!.reconcile(frame[3] as string, () => {}, () => {})
+          s.deliver(['NEG-MSG', subId, reply ?? '61'])
+        } else if (frame[0] === 'NEG-MSG') {
+          const reply = relaySide.get(subId)!.reconcile(frame[2] as string, () => {}, () => {})
+          s.deliver(['NEG-MSG', subId, reply ?? '61'])
+        }
+      }
+    }
+  }
+
+  it('opens with the filter and what the copy holds, and resolves what it is missing and what is gone', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [9], '#h': ['team'] }, held)
+    const open = s.sentOf('NEG-OPEN')[0]!
+    assert.deepEqual(open[2], { kinds: [9], '#h': ['team'] })
+    assert.equal(typeof open[3], 'string')
+    const step = serve(s, relaySet)
+    step()
+    step()
+    assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
+    assert.equal(s.sentOf('NEG-CLOSE').length, 1, 'closed on the relay when done')
+    assert.equal(s.sentOf('EVENT').length, 0, 'nothing the copy holds is uploaded')
+  })
+
+  it('waits for the socket to be live before opening, like a subscription', async () => {
+    const h = harness()
+    const outcome = h.relay.reconcile({ kinds: [9] }, held)
+    const s = await reachLive(h)
+    assert.equal(s.sentOf('NEG-OPEN').length, 1)
+    const step = serve(s, relaySet)
+    step()
+    step()
+    assert.equal((await outcome).ok, true)
+  })
+
+  it('a relay that calls the question too big says how big it may be', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [1] }, held)
+    const message = 'blocked: this question matches more than 100000 events; split it with since and until'
+    s.deliver(['NEG-ERR', s.sentOf('NEG-OPEN')[0]![1], message])
+    assert.deepEqual(await outcome, { ok: false, reason: 'blocked', message, max: 100000 })
+  })
+
+  it('a relay that does not know NEG-OPEN, and says so in a NOTICE, means asking again', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [1] }, held)
+    s.deliver(['NOTICE', 'ERROR: bad msg: unknown cmd'])
+    const result = await outcome
+    assert.equal(result.ok === false ? result.reason : 'ok', 'unsupported')
+  })
+
+  it('a relay that never answers ends as timed out, and the reconciliation is closed', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    let settled = false
+    const outcome = h.relay.reconcile({ kinds: [1] }, held, { timeoutMs: 1_000 })
+    void outcome.then(() => (settled = true))
+    h.advance(999)
+    await Promise.resolve()
+    assert.equal(settled, false)
+    h.advance(1)
+    const result = await outcome
+    assert.equal(result.ok === false ? result.reason : 'ok', 'timeout')
+    assert.equal(s.sentOf('NEG-CLOSE').length, 1)
+  })
+
+  it('a relay that never lets the socket in ends the reconciliation as timed out', async () => {
+    const h = harness()
+    const outcome = h.relay.reconcile({ kinds: [9] }, held, { timeoutMs: 1_000 })
+    h.advance(1_000)
+    const result = await outcome
+    assert.equal(result.ok === false ? result.reason : 'ok', 'timeout')
+  })
+
+  it('a NOTICE about something else leaves a reconciliation running', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [9] }, held)
+    s.deliver(['NOTICE', 'invalid message: bad filter in another request'])
+    const step = serve(s, relaySet)
+    step()
+    step()
+    assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
+  })
+
+  it('a rate-limited open is asked again after the wait, not handed back', async () => {
+    const h = harness()
+    const s = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [9] }, held)
+    s.deliver(['NEG-ERR', s.sentOf('NEG-OPEN')[0]![1], 'rate-limited: slow down'])
+    assert.equal(s.sentOf('NEG-OPEN').length, 1)
+    h.advance(6_000)
+    assert.equal(s.sentOf('NEG-OPEN').length, 2)
+    const step = serve(s, relaySet, s.sent.length - 1)
+    step()
+    step()
+    assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
+  })
+
+  it('a socket lost mid-way starts the reconciliation again on the next one', async () => {
+    const h = harness()
+    const first = await reachLive(h)
+    const outcome = h.relay.reconcile({ kinds: [9] }, held)
+    assert.equal(first.sentOf('NEG-OPEN').length, 1)
+    first.drop()
+    h.advance(10) // the reconnect's backoff, well inside the reconciliation's own clock
+    const second = await reachLive(h)
+    assert.equal(second.sentOf('NEG-OPEN').length, 1, 'opened again on the new socket')
+    const step = serve(second, relaySet)
+    step()
+    step()
+    assert.deepEqual(await outcome, { ok: true, need: [id(5)], have: [id(1)] })
   })
 })

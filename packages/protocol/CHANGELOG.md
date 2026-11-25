@@ -4,6 +4,29 @@ Every entry answers the wire question explicitly, including when the answer is
 nothing (ADR 0002 §4b). A change to the bytes an app publishes is a MAJOR — in
 `0.x`, a MINOR — even when no TypeScript signature moved.
 
+## 0.70.0 — 2026-11-25
+
+**Wire behaviour: a client can now send NIP-77 `NEG-OPEN`, `NEG-MSG` and
+`NEG-CLOSE`, and reads `NEG-MSG` and `NEG-ERR`.** (THE-5; record
+a-copy-on-the-device-catches-up-with-nip-77.) Nothing is sent unless an app
+calls `reconcile`; no event an app publishes changes.
+
+- `LiveRelay.reconcile(filter, held, { timeoutMs? })`: tells the relay the ids
+  and `created_at` the copy holds for one filter and resolves `{ ok: true,
+  need, have }`: what the copy is missing and what it holds that the relay no
+  longer returns to this person. It never uploads anything. It waits for the
+  socket like `subscribe`, starts over after a reconnect, and asks again after
+  a `rate-limited:` or busy refusal. Otherwise it resolves `{ ok: false,
+  reason }` and never rejects. The reasons are `blocked` (with the relay's
+  `max` when it names one, so the caller can split by time), `unsupported` (a
+  NOTICE for the unknown verb), `refused`, or `timeout` after
+  `RECONCILE_TIMEOUT_MS`.
+- `Negentropy` and `NegentropySet`: protocol version 1 (`0x61`), what the
+  relay's Rust `negentropy` 0.5 speaks. They are ported from nostr-tools'
+  `nip77` (public domain), which exports no `./nip77` path. They add no new
+  dependency; hashing uses `@noble/hashes`.
+- `parseFrame` reads `NEG-MSG` and `NEG-ERR`.
+
 ## 0.69.0 — 2026-11-24
 
 **Wire behaviour: a file of the four base types is always named by its id as
