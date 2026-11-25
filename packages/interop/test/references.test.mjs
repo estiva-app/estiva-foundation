@@ -60,10 +60,14 @@ function searchingRelay(events) {
         .slice(0, f.limit ?? Infinity),
     )
   const answer = withListRead(plain, events, matches)
-  const query = async (filters) => {
-    calls.push(filters)
-    return answer(filters)
-  }
+  // The times read rides on the query, as an app's does (`withTimes`).
+  const query = Object.assign(
+    async (filters) => {
+      calls.push(filters)
+      return answer(filters)
+    },
+    { times: answer.times },
+  )
   const own = () => calls.filter((filters) => !filters.some((f) => f.kinds?.some((k) => k === 31990 || k === 31989)))
   return { query, calls, own }
 }

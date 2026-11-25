@@ -48,13 +48,14 @@ export function listAnswer(events, filters, matches = matchesFilter) {
  * first record a filter picks, with the time and fields of each field's
  * current change, never a value. A join or leave (`member:`) is left out.
  */
-export function timesOver(events) {
+export function timesOver(source) {
   const calls = []
-  const roots = events.filter((e) => e.kind >= 30840 && e.kind <= 30852)
   const tag = (e, name) => e.tags.find((t) => t[0] === name)?.[1]
   const addressOf = (e) => `${e.kind}:${e.pubkey}:${tag(e, 'd')}`
   const times = async (filters) => {
     calls.push(filters)
+    const events = typeof source === 'function' ? source() : source
+    const roots = events.filter((e) => e.kind >= 30840 && e.kind <= 30852)
     const picked = new Map()
     for (const f of filters) {
       if (f.fields !== 'times') throw new Error(`a times read says "fields": "times": ${JSON.stringify(f)}`)
@@ -86,9 +87,12 @@ export function timesOver(events) {
  * A query that answers every `"fields"` filter by the list read over `events`
  * and hands the rest to `plain`, in one answer. `matches(filter, event)`
  * picks first records, for a fake that honours more than tags (a `search`).
+ * It carries the times read over the same events as `times`, as an app's
+ * query does (`withTimes`), so a deleted file is found by its current changes.
  */
 export function withListRead(plain, events, matches = matchesFilter) {
-  return async (filters) => {
+  return Object.assign(read, { times: timesOver(events).times })
+  async function read(filters) {
     const listed = filters.filter((f) => f.fields === 'newest')
     const rest = filters.filter((f) => f.fields !== 'newest')
     const out = new Map()

@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import * as interop from '../dist/index.js'
 
 const { resolveForeignObject, resolveForeignObjects, filesOf } = interop
+import { timesOver } from './list-read.mjs'
 
 const OWNER = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -54,6 +55,7 @@ const change = (file, field, value, by = OWNER) =>
 const plain = (events) => async (filters) =>
   events.filter((e) =>
     filters.some((f) => {
+      if (f.ids && !f.ids.includes(e.id)) return false
       if (f.kinds && !f.kinds.includes(e.kind)) return false
       if (f.authors && !f.authors.includes(e.pubkey)) return false
       for (const [key, want] of Object.entries(f)) {
@@ -65,10 +67,14 @@ const plain = (events) => async (filters) =>
     }),
   )
 
-/** A relay with §6.13's read: a request is all `fields` or none, and a deleted file is left out. */
-const opening = (events) => {
+/**
+ * A relay with §6.13's read: a request is all `fields` or none, and a deleted file is left out. Its query carries the
+ * times read (`withTimes`) unless `times` is false.
+ */
+const opening = (events, { times = true } = {}) => {
   const asked = []
-  const query = async (filters) => {
+  const timesRead = timesOver(events)
+  const read = async (filters) => {
     asked.push(filters)
     const byFields = filters.filter((f) => f.fields)
     if (byFields.length === 0) return plain(events)(filters)
@@ -80,10 +86,13 @@ const opening = (events) => {
       .flatMap((file) => file.events)
   }
   return {
-    query,
+    query: times ? interop.withTimes(read, timesRead.times) : read,
     /** Every value asked for by `#a` with the change kind: a file's changes read one by one. */
     changesByA: () => asked.flat().filter((f) => f.kinds?.includes(1851)).flatMap((f) => f['#a'] ?? []),
     opens: () => asked.flat().filter((f) => f.fields),
+    /** Every event id read by `ids`. */
+    byIds: () => asked.flat().flatMap((f) => f.ids ?? []),
+    timesAsked: () => timesRead.calls.flat(),
   }
 }
 
@@ -131,18 +140,28 @@ describe('opening a file by the open read (ALO-6)', () => {
     assert.equal(interop.prevOf(object, 'description'), undefined, 'its text is unread, so no edit builds on it')
   })
 
-  test('a deleted project, which the open read leaves out, is read whole and says who deleted it', async () => {
+  test('a deleted project, which the open read leaves out, is read by its current changes and says who deleted it', async () => {
     const gone = change(launch, 'deleted', 'true', OTHER)
     const relay = opening([...events, gone])
     const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople)
     assert.equal(object.unreachable, undefined)
     assert.deepEqual(object.deleted, { by: OTHER, at: gone.created_at })
     assert.equal(object.slots.title?.value, 'Launch, renamed', 'still drawn, for the notice and Restore')
-    assert.deepEqual(relay.changesByA(), [addressOf(launch)], 'its changes are read only because the open read left it out')
+    assert.deepEqual(relay.changesByA(), [], 'never every change it ever had')
+    assert.deepEqual(relay.timesAsked().map((f) => f['#d']), [['launch']], 'found by the times read')
+    assert.deepEqual(new Set(relay.byIds()), new Set([renamed.id, words.id, gone.id]), 'each field’s current change, by id, and no older one')
 
     const back = change(launch, 'deleted', '')
     const restored = await resolveForeignObject(addressOf(launch), opening([...events, gone, back]).query, noPeople)
     assert.equal(restored.deleted, undefined)
+  })
+
+  test('a deleted project read without the times read is not read by every change, and reads as unreachable', async () => {
+    const gone = change(launch, 'deleted', 'true', OTHER)
+    const relay = opening([...events, gone], { times: false })
+    const object = await resolveForeignObject(addressOf(launch), relay.query, noPeople)
+    assert.equal(object.unreachable, true)
+    assert.deepEqual(relay.changesByA(), [], 'no old way left')
   })
 
   test('a file whose first record names no team is not deleted by a change, which no team can make', async () => {
@@ -251,7 +270,7 @@ describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", (
     event({ kind: 30890, tags: [['d', TEAM], ...[launch, gone, back].map((file) => ['a', addressOf(file)])] }),
   ]
 
-  test('lists only the deleted one, with its current title and who deleted it, reading only it whole', async () => {
+  test('lists only the deleted one, with its current title and who deleted it, reading none by every change', async () => {
     const relay = opening(events)
     assert.equal(typeof interop.resolveDeletedFiles, 'function', 'resolveDeletedFiles is exported')
     const files = await interop.resolveDeletedFiles(TEAM, relay.query, noPeople)
@@ -259,6 +278,6 @@ describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", (
       files.map((file) => [file.slots.title?.value, file.deleted]),
       [['Gone, renamed', { by: OTHER, at: deleted.created_at }]],
     )
-    assert.deepEqual(relay.changesByA(), [addressOf(gone)], 'the live and the restored ones are not read by `#a`')
+    assert.deepEqual(relay.changesByA(), [], 'no file is read by `#a`, the deleted one included')
   })
 })

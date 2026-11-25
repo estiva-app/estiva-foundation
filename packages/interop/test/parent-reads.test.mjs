@@ -13,8 +13,8 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveForeignObject, resolveForeignRoots, resolveParents, readTopics } from '../dist/index.js'
-import { listAnswer } from './list-read.mjs'
+import { createLoadQuery, resolveForeignObject, resolveForeignRoots, resolveParents, readTopics, withTimes } from '../dist/index.js'
+import { listAnswer, timesOver } from './list-read.mjs'
 
 const OWNER = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
@@ -57,6 +57,7 @@ const change = (file, field, value, by = OWNER) =>
 const edits = (file) => Array.from({ length: 20 }, (_, n) => change(file, 'description', `Draft ${n}`))
 
 const matches = (f, e) => {
+  if (f.ids && !f.ids.includes(e.id)) return false
   if (f.kinds && !f.kinds.includes(e.kind)) return false
   if (f.authors && !f.authors.includes(e.pubkey)) return false
   for (const [key, want] of Object.entries(f)) {
@@ -67,18 +68,26 @@ const matches = (f, e) => {
   return true
 }
 
-/** A relay with §6.13's list and open reads: a request is all `fields` or none, and a deleted file is left out. */
+/**
+ * A relay with §6.13's list, open and times reads: a request is all `fields` or none, and a deleted file is left out
+ * of the list read; the query carries the times read (`withTimes`).
+ */
 function relay(events) {
   const asked = []
-  const query = async (filters) => {
+  const read = async (filters) => {
     asked.push(filters)
     const byFields = filters.filter((f) => f.fields)
     if (byFields.length === 0) return events.filter((e) => filters.some((f) => matches(f, e)))
     if (byFields.length !== filters.length) throw new Error('fields: every filter must ask for "fields": "newest"')
     return listAnswer(events, byFields, matches)
   }
+  const timesRead = timesOver(events)
   return {
-    query,
+    query: withTimes(read, timesRead.times),
+    /** Every file the times read was asked for, by `kind:author:d`. */
+    timesAsked: () => timesRead.calls.flat().flatMap((f) => f['#d'].map((d) => `${f.kinds[0]}:${f.authors[0]}:${d}`)),
+    /** Every event id read by `ids`. */
+    byIds: () => asked.flat().flatMap((f) => f.ids ?? []),
     /** Every filter asked of the relay. */
     asked: () => asked.flat(),
     /** Every address whose changes were read one by one, by `#a` with the change kind. */
@@ -103,9 +112,22 @@ describe('resolveParents by the list read', () => {
     const p1 = project('p1')
     const p2 = project('p2')
     const gone = issue('gone', p1)
-    const r = relay([ship, p1, p2, gone, change(gone, 'project', addressOf(p2)), change(gone, 'deleted', 'true')])
+    const moves = [change(gone, 'project', addressOf(p1)), change(gone, 'project', addressOf(p2))]
+    const r = relay([ship, p1, p2, gone, ...moves, ...edits(gone), change(gone, 'deleted', 'true')])
     assert.deepEqual(await resolveParents([addressOf(gone)], r.query), { [addressOf(gone)]: addressOf(p2) })
-    assert.deepEqual(r.changesByA(), [addressOf(gone)])
+    assert.deepEqual(r.changesByA(), [], 'never every change it ever had')
+    assert.deepEqual(r.timesAsked(), [addressOf(gone)], 'found by the times read')
+    assert.equal(r.byIds().length, 3, 'its current move, text and delete, by id: no older move, no older save')
+    assert.ok(!r.byIds().includes(moves[0].id))
+  })
+
+  test('read through a load query, a deleted issue still has its moved parent, and no change is read by `#a`', async () => {
+    const p1 = project('p1')
+    const p2 = project('p2')
+    const gone = issue('gone', p1)
+    const r = relay([ship, p1, p2, gone, change(gone, 'project', addressOf(p2)), ...edits(gone), change(gone, 'deleted', 'true')])
+    assert.deepEqual(await resolveParents([addressOf(gone)], createLoadQuery(r.query)), { [addressOf(gone)]: addressOf(p2) })
+    assert.deepEqual(r.changesByA(), [])
   })
 
   test('another author’s file with the same id does not answer for a deleted one, which keeps its moved parent', async () => {
@@ -159,12 +181,36 @@ describe('an archived parent, read by the list read', () => {
     assert.deepEqual(r.changesByA(), [])
   })
 
-  test('a deleted archived project, which the list read leaves out, is read by its changes and still archives its issue', async () => {
+  test('a deleted archived project, which the list read leaves out, is read by its current changes and still archives its issue', async () => {
     const { shelved, under, events } = setup({ deleted: true })
     const r = relay(events)
     const opened = await resolveForeignObject(addressOf(under), r.query, async () => ({}), 0, undefined, { archivedWith: true })
     assert.equal(opened.archived?.with, addressOf(shelved))
-    assert.ok(r.changesByA().includes(addressOf(shelved)))
+    assert.deepEqual(r.changesByA(), [], 'never every change it ever had')
+    assert.deepEqual(r.timesAsked(), [addressOf(shelved)])
+  })
+
+  test('a deleted topic that is not archived is walked through to an archived one above it (SPEC §6.5)', async () => {
+    const page = (d, parent) => event({ kind: 30840, tags: [['d', d], ['title', d], ...(parent ? [['a', addressOf(parent)]] : []), ['h', TEAM]] })
+    const top = page('top')
+    const middle = page('middle', top)
+    const under = page('under-middle', middle)
+    const events = [top, middle, under, change(top, 'archived', 'true'), change(middle, 'deleted', 'true'), ...edits(middle)]
+    const r = relay(events)
+    const [read] = await resolveForeignRoots([addressOf(under)], r.query, undefined, { archivedWith: true })
+    assert.equal(read.archived?.with, addressOf(top))
+    assert.deepEqual(r.timesAsked(), [addressOf(middle)], 'only the deleted topic is found by the times read')
+    assert.deepEqual(r.changesByA(), [])
+  })
+
+  test('a parent this reader cannot read ends the walk, with nothing above it claimed', async () => {
+    const { under, events } = setup({ deleted: true })
+    // The relay answers no row for the deleted project: as for one in a team this reader is not in.
+    const r = relay(events)
+    const blind = withTimes(r.query, async () => [])
+    const opened = await resolveForeignObject(addressOf(under), blind, async () => ({}), 0, undefined, { archivedWith: true })
+    assert.equal(opened.archived, undefined)
+    assert.deepEqual(r.changesByA(), [])
   })
 
 })

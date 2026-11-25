@@ -224,7 +224,10 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
     return flight
   }
 
-  return async (filters) => {
+  // The times read goes straight to the relay: a deleted file is rare, and held reads hold events, not times.
+  return Object.assign(load, query.times ? { times: query.times } : {})
+
+  async function load(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
     const send: Filter[] = []
     const asked: ByTag[] = []
     const askedWhole: WholeKinds[] = []

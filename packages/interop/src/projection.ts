@@ -13,7 +13,7 @@
  * thing the whole exercise argues against.
  */
 import { decodeNevent, encodeNaddr, encodeNevent, pointerToAddress, referenceToPointer, type AddressPointer, type EventPointer } from '@estiva-app/protocol'
-import { parseProfile, type Profile, type SignedEvent } from '@estiva-app/protocol'
+import { parseProfile, type FileTimes, type Profile, type SignedEvent } from '@estiva-app/protocol'
 import { FILE_KINDS, MAX_FILTERS_PER_QUERY, RELAY_PAGE_CEILING, changeTypeTags, fileIdFormOf } from '@estiva-app/protocol'
 import {
   attachmentsInDocument,
@@ -32,8 +32,25 @@ import { identifierOf, listedEntriesOf, listsFile, planPlaceFile, planUnlistFile
 */
 import { anchorsOf, byOrder, isCommentOn, isReply, MAX_MENTIONED_PEOPLE, mentionTagsFor, orderingMs } from '@estiva-app/conversation'
 
-/** Query the relay. Returns matching events; shape mirrors the HTTP bridge. */
-export type QueryFn = (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>
+/**
+ * Query the relay. Returns matching events; shape mirrors the HTTP bridge.
+ *
+ * `times`, when set, is the relay's times read as the same reader ({@link withTimes}). It is how a file the list read
+ * leaves out, a deleted one, is still read by its current changes alone (SPEC §6.5, "Finding a team's deleted
+ * files"). A query without it reads such a file as one this reader cannot read: never by every change it ever had.
+ */
+export type QueryFn = ((filters: Record<string, unknown>[]) => Promise<SignedEvent[]>) & { times?: TimesFn }
+
+/** The relay's times read (`Relay.queryTimes`, or an app's own post through `timesOf`): every filter says `"fields": "times"`. */
+export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[]>
+
+/**
+ * `query` carrying `times`, the times read **as the same reader**: a file the list read leaves out is found through
+ * it, so it must answer what `query` would be allowed to see, never more.
+ */
+export function withTimes(query: (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>, times: TimesFn): QueryFn {
+  return Object.assign((filters: Record<string, unknown>[]) => query(filters), { times })
+}
 
 /** An unsigned Nostr event, ready for `sign.ts`. */
 export interface UnsignedActionEvent {
@@ -4823,6 +4840,40 @@ function listedIn(events: readonly SignedEvent[], pointer: AddressPointer): bool
   return events.some((e) => e.kind === pointer.kind && e.pubkey === pointer.pubkey && tagValue(e, 'd') === pointer.identifier)
 }
 
+/**
+ * The files a list read left out, deleted or not this reader's, read as SPEC §6.5 finds a deleted file: the times
+ * read names each one's current changes (§6.13, deleted ones included), then its first record and those changes are
+ * read, the changes by id, and everything is decided on those signed events, never on the times' rows. So a deleted
+ * file still has its parent, its archive and who deleted it, as the list read would give a file not deleted, and
+ * never every change it ever had. One the times read does not answer is not this reader's: nothing more is read for
+ * it. Nothing is read without `query.times` either ({@link QueryFn}).
+ */
+async function readUnlisted(
+  pointers: readonly AddressPointer[],
+  query: QueryFn,
+  /** False leaves out a change that sets only the text (SPEC §6.10's `description`), as a list read without `text`. */
+  text = true,
+): Promise<SignedEvent[]> {
+  const times = query.times
+  if (pointers.length === 0 || !times) return []
+  const byTimes = listReadFilters(pointers).map(({ fields: _list, ...filter }) => ({ ...filter, fields: 'times' }))
+  const parts: Record<string, unknown>[][] = []
+  for (let start = 0; start < byTimes.length; start += MAX_FILTERS_PER_QUERY) parts.push(byTimes.slice(start, start + MAX_FILTERS_PER_QUERY))
+  const rows: FileTimes[] = (await Promise.all(parts.map((part) => times(part)))).flat()
+  const asked = new Set(pointers.map(pointerToAddress))
+  const answered = rows.filter((row) => asked.has(row.a))
+  if (answered.length === 0) return []
+  const wanted = answered.flatMap((row) => row.changes.filter((change) => text || !change.fields.every((field) => field === 'description')))
+  const ids = [...new Set(wanted.map((change) => change.id))]
+  const roots = listReadFilters(answered.map((row) => addressPointerOf(row.a)!)).map(({ fields: _list, ...filter }) => filter)
+  const changes: Record<string, unknown>[] = []
+  for (let start = 0; start < ids.length; start += RELAY_PAGE_CEILING) {
+    const chunk = ids.slice(start, start + RELAY_PAGE_CEILING)
+    changes.push({ ids: chunk, limit: chunk.length })
+  }
+  return queryChunked([...roots, ...changes], query)
+}
+
 /** The manifest each pointer's author reads it through, one read per `kind:pubkey`. */
 async function manifestsOf(pointers: Iterable<AddressPointer>, query: QueryFn, cache?: ProjectionCache): Promise<Map<string, ResolvedManifest>> {
   const manifests = new Map<string, ResolvedManifest>()
@@ -4931,9 +4982,9 @@ export async function resolveParents(
     listFilters.length ? queryChunked(listFilters, query) : Promise.resolve<SignedEvent[]>([]),
     plainRead(drawn.filter((entry) => !byList.has(entry))),
   ])
-  // Deleted, or not this reader's: read as before, so a deleted file still has its parent.
+  // Deleted, or not this reader's: by its current changes, so a deleted file still has its parent.
   const unanswered = [...byList].filter(({ pointer }) => !listedIn(listed, pointer))
-  const events = [...listed, ...plain, ...(unanswered.length ? await plainRead(unanswered) : [])]
+  const events = [...listed, ...plain, ...(await readUnlisted(unanswered.map(({ pointer }) => pointer), query))]
 
   for (const { reference, pointer } of drawn) {
     const manifest = manifests.get(manifestKeyOf(pointer))!
@@ -5089,7 +5140,8 @@ function withFiles(object: ForeignObject, files: ForeignObject[] | undefined): F
  * An ancestor of a kind in `listKinds` is read by the relay's list read (SPEC
  * §6.13): its first record and each field's current change, the archive and
  * the move among them, never its older changes. One the list read leaves out
- * (deleted, or not this reader's) is read as before.
+ * (deleted, or not this reader's) is read by its current changes too
+ * ({@link readUnlisted}).
  */
 async function markArchivedParents(
   entries: { object: ForeignObject; manifest?: Manifest }[],
@@ -5204,9 +5256,10 @@ async function walkArchivedAbove(
       listFilters.length ? queryChunked(listFilters, query) : Promise.resolve<SignedEvent[]>([]),
       plainRead(addresses.filter((address) => !byList.has(address))),
     ])
-    // Deleted, or not this reader's: read as before, so the walk ends where it always did.
+    // Deleted, or not this reader's: by its current changes, so a deleted level is walked through (SPEC §6.5) and
+    // one this reader cannot read ends the walk, as it always did.
     const unanswered = [...byList].filter((address) => !listedIn(listed, addressPointerOf(address)!))
-    const events = [...listed, ...plain, ...(await plainRead(unanswered))]
+    const events = [...listed, ...plain, ...(await readUnlisted(unanswered.map((address) => addressPointerOf(address)!), query))]
     const read = new Map<string, { archive?: Archive; parent?: string; manifest?: Manifest }>()
     for (const [index, { key, address, pointer, manifest }] of ancestors.entries()) {
       const root = events
@@ -5340,7 +5393,7 @@ interface ObjectPlan {
    * reader's) is not drawn (ALL-10).
    */
   childrenOpened: boolean
-  /** Its root and every change, as read before the open read: for a file that read does not answer. */
+  /** Its root and every change: how a kind the open read does not take is read. */
   history: Record<string, unknown>[]
   openUrl?: string
 }
@@ -5403,8 +5456,9 @@ function planObject(
  * What the open read answers for the planned files it opens (SPEC §6.13): one
  * read per author and kind, apart from the plain reads, since a relay refuses a
  * request mixing the two. A file it does not answer — deleted, or not this
- * reader's — has its root and every change read as before, so a deleted file
- * still says who deleted it and an unreadable one is still told apart from it.
+ * reader's — is read by its current changes ({@link readUnlisted}), so a
+ * deleted file still says who deleted it and an unreadable one is still told
+ * apart from it.
  */
 async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn, text = true): Promise<SignedEvent[]> {
   const opened = new Map<string, ObjectPlan>()
@@ -5426,8 +5480,7 @@ async function openedEvents(plans: readonly ObjectPlan[], query: QueryFn, text =
   }
   const answered = await queryChunked(filters, query)
   const unanswered = [...opened.values()].filter(({ pointer }) => !listedIn(answered, pointer))
-  const history = unanswered.length ? await queryChunked(unanswered.flatMap((plan) => plan.history), query) : []
-  return [...answered, ...history]
+  return [...answered, ...(await readUnlisted(unanswered.map(({ pointer }) => pointer), query, text))]
 }
 
 /** An object and its children, before the people lookup that needs both. */
