@@ -194,11 +194,14 @@ export interface LiveRelay {
    * uploaded. Waits for the socket like {@link subscribe}, and starts over on a
    * reconnect. Never rejects: a relay that does not speak NIP-77, refuses, or
    * says nothing in time resolves `ok: false`, and the caller asks again.
+   * `retryRateLimited: false` resolves a `rate-limited:` refusal at once, as
+   * `refused`, instead of opening again after the wait, as `subscribe` does:
+   * for a caller that paces itself and has a plain read to fall back on.
    */
   reconcile(
     filter: Record<string, unknown>,
     held: readonly { id: string; created_at: number }[],
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; retryRateLimited?: boolean },
   ): Promise<ReconcileOutcome>
   state(): RelayState
   /** Stop for good. Does not reconnect afterwards. */
@@ -236,6 +239,7 @@ interface LiveReconciliation {
   /** Whether the relay has answered this open at all: a NOTICE before that may be "unknown verb". */
   answered: boolean
   busyRetries: number
+  retryRateLimited: boolean
   retryTimer: unknown
   timeout: unknown
   timeoutMs: number
@@ -520,11 +524,12 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
   function onReconcileError(rec: LiveReconciliation, reason: string) {
     log('reconciliation refused', { subId: rec.id, reason })
     // The relay has closed it on its side: NIP-77 says a NEG-ERR ends the reconciliation.
-    if (reason === RELAY_BUSY_CLOSED || reason.startsWith(RATE_LIMITED_PREFIX)) {
+    const rateLimited = reason.startsWith(RATE_LIMITED_PREFIX)
+    if (reason === RELAY_BUSY_CLOSED || (rateLimited && rec.retryRateLimited)) {
       if (rec.busyRetries < MAX_BUSY_RETRIES) {
         const jitter = backoff.jitter()
         const busyDelay = Math.min(backoff.maxMs, backoff.baseMs * 2 ** rec.busyRetries) * (0.5 + jitter / 2)
-        const delay = reason.startsWith(RATE_LIMITED_PREFIX)
+        const delay = rateLimited
           ? Math.max(busyDelay, RATE_LIMITED_MIN_WAIT_MS * (1 + jitter / 5))
           : busyDelay
         rec.busyRetries += 1
@@ -781,6 +786,7 @@ export function createLiveRelay(options: LiveRelayOptions): LiveRelay {
           have: new Set(),
           answered: false,
           busyRetries: 0,
+          retryRateLimited: reconcileOptions?.retryRateLimited ?? true,
           retryTimer: null,
           timeout: null,
           timeoutMs: reconcileOptions?.timeoutMs ?? RECONCILE_TIMEOUT_MS,

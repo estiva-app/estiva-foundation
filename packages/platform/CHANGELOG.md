@@ -1,5 +1,14 @@
 # @estiva-app/platform
 
+## 0.13.1
+
+A windowed question (`limit`) caught up from a copy that holds more than its
+window no longer answers older events the relay did not compare (THE-6 review).
+When messages in the window were deleted, or a team in it was lost, older
+held events below the window filled the gap, and those could be deleted or out
+of reach too. Now only what the relay compared counts; a window left short is
+asked again, as the code already intended.
+
 ## 0.13.0
 
 The copy on the device can catch a question up with NIP-77 (THE-5). It
