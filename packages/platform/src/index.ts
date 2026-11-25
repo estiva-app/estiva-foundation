@@ -85,6 +85,7 @@ export {
 } from './catch-up.js'
 export {
   SNAPSHOT_MAX_EVENTS,
+  SNAPSHOT_MAX_LISTS,
   SNAPSHOT_RELAY_MAX_LIMIT,
   SNAPSHOT_SAVE_AFTER_MS,
   SNAPSHOT_SEEN_REFRESH_MS,
@@ -93,6 +94,7 @@ export {
   matchesSnapshotFilter,
   memorySnapshotStorage,
   snapshotFilterKey,
+  snapshotListKey,
   snapshotScope,
   type EventSnapshot,
   type EventSnapshotOptions,

@@ -1,5 +1,35 @@
 # @estiva-app/platform
 
+## 0.14.0
+
+A file list (SPEC §6.13, `"fields": "newest"`) catches up from the copy too
+(THE-9). The copy remembers the ids of each list's last answer — its first
+records, and the changes whose `a` names one of them — and `catchUp` tells the
+relay those, downloading only what changed since: a reopen with nothing new
+fetches none of the list again. Needs a relay whose NIP-77 takes `fields`
+(buzz from estiva-app/buzz#74); one that refuses it gets the list asked plainly.
+
+- `held(filter)` answers a list read with its last answer's events, and `null`
+  for one never answered or whose `limit` could cut it. Only a `limit` at least
+  the most first records the filter can match (interop's `authors`, one kind
+  and `#d`) leaves a list catch-up-able.
+- After a catch-up, a list's ids are what it held, less what the relay no
+  longer lists, plus what it fetched. An id leaving a list leaves only that
+  list: a replaced change or a deleted file stays held and readable by id.
+- A plain answer to several filters is split per list: a first record to each
+  list it matches, a change to the lists of the file its `a` names. An answer
+  of the relay's whole page of first records (1,000) is not remembered.
+- A list is never windowed or split by time: its `since` and `until` pick first
+  records, and a change goes with its file. A list the relay calls too big is
+  asked plainly.
+- Stored with the copy (`SnapshotRecord.lists`), written only when a list
+  changed; a save of events alone keeps the stored lists. At most
+  `SNAPSHOT_MAX_LISTS` (500, option `maxLists`) are remembered, the least
+  recently answered forgotten first. `snapshotListKey(filter)` is exported.
+- Not covered: interop's team listing asks `#buzz-channel` beside `#h`, which
+  neither the copy nor a catch-up takes; it is still asked plainly until
+  interop finds a team's projects by §6.13's rule (a blocker in the project).
+
 ## 0.13.1
 
 A windowed question (`limit`) caught up from a copy that holds more than its

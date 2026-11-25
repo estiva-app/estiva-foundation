@@ -44,6 +44,19 @@
  * the relay's signer meters. The plaintext is the person's own data, so it is
  * kept beside the event that carried it and handed back for the same
  * ciphertext — which always decrypts to the same text, so it is never stale.
+ *
+ * ## File lists
+ *
+ * A list read (SPEC §6.13, `"fields": "newest"`) is answered by the relay's own
+ * rules — each file's current changes, deleted files left out — which no set of
+ * held events can judge. So the copy remembers the ids of each list's last
+ * answer instead: its first records, and the changes whose `a` names one of
+ * them. That is what a catch-up tells the relay it holds; after it, the list's
+ * ids are what it held, less those the relay no longer lists, plus those it
+ * fetched. An id that leaves a list leaves only that list: a replaced change or
+ * a deleted file is still a signed event that may be read by id.
+ *
+ * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-list-catches-up-with-nip-77-too.md
  */
 import type { SignedEvent } from '@estiva-app/protocol'
 
@@ -66,6 +79,8 @@ export interface SnapshotRecord {
   filters: string[]
   /** Those of them whose last answer was whole, not cut by its `limit`; absent in a copy written before 0.6. */
   whole?: string[]
+  /** Each list read's last answer, by {@link snapshotListKey}; absent in a copy written before 0.14. */
+  lists?: Record<string, string[]>
 }
 
 /** What changed since the last save. */
@@ -77,6 +92,8 @@ export interface SnapshotChange {
   remove: string[]
   filters: string[]
   whole: string[]
+  /** Every list's ids, when one changed since the last save; absent, the stored lists stay. */
+  lists?: Record<string, string[]>
 }
 
 /** Where a copy lives between page loads. {@link indexedDbSnapshotStorage} is the browser's. */
@@ -109,6 +126,8 @@ export interface EventSnapshotOptions {
   version: number
   /** Past this many events the least recently seen are dropped. */
   maxEvents?: number
+  /** Past this many list reads remembered the least recently answered is forgotten. */
+  maxLists?: number
   /** The most events the relay returns to a filter, with no `limit` or a bigger one (NIP-11 `max_limit`). */
   relayMaxLimit?: number
   /** How long after a change the copy is written. */
@@ -128,7 +147,9 @@ export interface EventSnapshot {
   absorb(filters: SnapshotFilter[], events: SignedEvent[]): void
   /**
    * The held events a filter matches, `limit` aside: what a catch-up tells the
-   * relay the copy holds. `null` for a filter a copy cannot judge (`search`).
+   * relay the copy holds. For a list read, its last answer's events, and `limit`
+   * counts: `null` for one whose `limit` could cut it ({@link snapshotListKey}),
+   * or never answered. `null` for a filter a copy cannot judge (`search`).
    */
   held(filter: SnapshotFilter): SignedEvent[] | null
   /**
@@ -155,6 +176,12 @@ export interface EventSnapshot {
  * that part again each time; this leaves room for the Desk and what is read ahead.
  */
 export const SNAPSHOT_MAX_EVENTS = 20_000
+/**
+ * Interop pools a set of files into `#d` lists whose sets change as the files
+ * do, so old lists are never asked again; this keeps room for every list one
+ * Desk asks, several times over.
+ */
+export const SNAPSHOT_MAX_LISTS = 500
 /** What our relay returns to a filter at most (NIP-11 `max_limit`), whatever its `limit`. */
 export const SNAPSHOT_RELAY_MAX_LIMIT = 1_000
 export const SNAPSHOT_SAVE_AFTER_MS = 1_000
@@ -244,6 +271,31 @@ function answerable(filter: SnapshotFilter): boolean {
   )
 }
 
+/** A list read's question about first records: the filter without `fields` and `limit`. */
+function listRoots(filter: SnapshotFilter): SnapshotFilter {
+  const { fields: _fields, limit: _limit, ...rest } = filter
+  return rest
+}
+
+/**
+ * The key a list read's last answer is remembered by, `since` and `until`
+ * included (they pick its first records), `limit` left out; `null` for a
+ * filter that is not a list read the copy can remember — one with a field the
+ * copy does not know, or a `limit` that could cut it: only one at least the
+ * most first records it can match (`authors`, one kind and `#d`, as interop
+ * asks a set of files) leaves the answer whole.
+ */
+export function snapshotListKey(filter: SnapshotFilter): string | null {
+  if (filter.fields !== 'newest') return null
+  const roots = listRoots(filter)
+  if (!answerable(roots)) return null
+  if (filter.limit !== undefined && !(typeof filter.limit === 'number' && filter.limit >= mostMatches(roots))) return null
+  const keys = Object.keys(filter)
+    .filter((k) => k !== 'limit')
+    .sort()
+  return JSON.stringify(keys.map((k) => [k, sortedValue(filter[k])]))
+}
+
 const isReplaceableKind = (kind: number) => kind === 0 || kind === 3 || (kind >= 10_000 && kind < 20_000)
 const isAddressableKind = (kind: number) => kind >= 30_000 && kind < 40_000
 
@@ -294,6 +346,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   /** The storage's sign-out count when this copy was read; no read, no write. */
   let epoch: number | undefined
   const maxEvents = options.maxEvents ?? SNAPSHOT_MAX_EVENTS
+  const maxLists = options.maxLists ?? SNAPSHOT_MAX_LISTS
   const relayMaxLimit = options.relayMaxLimit ?? SNAPSHOT_RELAY_MAX_LIMIT
   const saveAfterMs = options.saveAfterMs ?? SNAPSHOT_SAVE_AFTER_MS
   const seenRefreshMs = options.seenRefreshMs ?? SNAPSHOT_SEEN_REFRESH_MS
@@ -318,6 +371,9 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   const whole = new Set<string>()
   /** Every value answered whole, by {@link coverShape}; built when first asked, dropped when `whole` changes. */
   let covers: Map<string, Set<string>> | undefined
+  /** Each list read's last answer, by {@link snapshotListKey}. */
+  const lists = new Map<string, Set<string>>()
+  let listsDirty = false
   const dirty = new Set<string>()
   const removed = new Set<string>()
   let filtersDirty = false
@@ -401,7 +457,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       timers().clearTimeout(timer)
       timer = undefined
     }
-    if (closed || epoch === undefined || (!dirty.size && !removed.size && !filtersDirty)) return
+    if (closed || epoch === undefined || (!dirty.size && !removed.size && !filtersDirty && !listsDirty)) return
     const change: SnapshotChange = {
       version,
       epoch,
@@ -412,11 +468,13 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       remove: [...removed],
       filters: [...filters],
       whole: [...whole],
+      ...(listsDirty ? { lists: Object.fromEntries([...lists].map(([key, ids]) => [key, [...ids]])) } : {}),
     }
     for (const stored of change.put) writtenSeenAt.set(stored.event.id, stored.seenAt)
     dirty.clear()
     removed.clear()
     filtersDirty = false
+    listsDirty = false
     try {
       await storage.save(scope, change)
     } catch {
@@ -426,6 +484,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       for (const stored of change.put) if (events.has(stored.event.id) && !removed.has(stored.event.id)) dirty.add(stored.event.id)
       for (const id of change.remove) if (!events.has(id)) removed.add(id)
       filtersDirty = true
+      if (change.lists) listsDirty = true
       schedule()
     }
   }
@@ -443,6 +502,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         for (const stored of record.events) hold(stored, false)
         for (const key of record.filters) filters.add(key)
         for (const key of record.whole ?? []) if (filters.has(key)) whole.add(key)
+        for (const [key, ids] of Object.entries(record.lists ?? {})) lists.set(key, new Set(ids))
         // An answer asked before the stored copy was read built what is covered without it.
         covers = undefined
       }
@@ -484,7 +544,73 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         if (matches(event)) drop(event.id)
       }
     }
+    for (const filter of asked) rememberList(filter, answer)
     applyDeletions(answer)
+    trim()
+    schedule()
+  }
+
+  /**
+   * Remember a list read's share of a plain answer, which may answer several
+   * filters at once: a first record belongs to each list it matches, a change
+   * to the lists of the first record its `a` names. An answer of the relay's
+   * whole page of first records may be cut, so it is not remembered.
+   */
+  function rememberList(filter: SnapshotFilter, answer: SignedEvent[]) {
+    const key = snapshotListKey(filter)
+    if (key === null) return
+    const roots = answer.filter(snapshotMatcher(listRoots(filter)))
+    if (roots.length >= relayMaxLimit) {
+      if (lists.delete(key)) listsDirty = true
+      return
+    }
+    const ids = new Set(roots.map((event) => event.id))
+    const addresses = new Set(roots.map(replaceableKey).filter((a): a is string => a !== null))
+    for (const event of answer) {
+      if (event.tags.some((tag) => tag[0] === 'a' && tag[1] !== undefined && addresses.has(tag[1]))) ids.add(event.id)
+    }
+    setList(key, ids)
+  }
+
+  /** A list's ids, now the most recently answered; written only when they changed. */
+  function setList(key: string, ids: Set<string>) {
+    const before = lists.get(key)
+    if (!before || before.size !== ids.size || [...ids].some((id) => !before.has(id))) listsDirty = true
+    lists.delete(key)
+    lists.set(key, ids)
+    for (const oldest of lists.keys()) {
+      if (lists.size <= maxLists) break
+      lists.delete(oldest)
+      listsDirty = true
+    }
+  }
+
+  /** The held events of a list's last answer: an id since trimmed is left out, and a catch-up fetches it again. */
+  function heldList(key: string): SignedEvent[] | null {
+    const ids = lists.get(key)
+    if (!ids) return null
+    const out: SignedEvent[] = []
+    for (const id of ids) {
+      const held = events.get(id)
+      if (held) out.push(held.event)
+    }
+    return out
+  }
+
+  /** A list caught up: its ids are what it held, less what the relay no longer lists, plus what it fetched. */
+  function settleList(key: string, fetched: SignedEvent[], gone: string[]) {
+    const seenAt = now()
+    for (const event of fetched) hold({ event, seenAt }, true)
+    const left = new Set(gone)
+    const ids = new Set<string>()
+    for (const event of heldList(key) ?? []) if (!left.has(event.id)) ids.add(event.id)
+    for (const event of fetched) ids.add(event.id)
+    // Seen now, fetched or not, so a list a catch-up never re-sends is not the first trimmed.
+    for (const id of ids) {
+      const stored = events.get(id)
+      if (stored) hold({ ...stored, seenAt }, true)
+    }
+    setList(key, ids)
     trim()
     schedule()
   }
@@ -635,12 +761,21 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       else take(asked, answer)
     },
     held(filter) {
+      if (filter.fields !== undefined) {
+        const key = snapshotListKey(filter)
+        return key === null ? null : heldList(key)
+      }
       if (!answerable(filter)) return null
       return candidates(filter).filter(snapshotMatcher(filter))
     },
     caughtUp(asked, reconciled, fetched, gone) {
       // A catch-up builds its held set from the copy, so it runs after `ready`; one before is ignored.
-      if (loaded) settle(asked, reconciled, fetched, gone)
+      if (!loaded || closed) return
+      if (asked.fields === undefined) settle(asked, reconciled, fetched, gone)
+      else {
+        const key = snapshotListKey(asked)
+        if (key !== null) settleList(key, fetched, gone)
+      }
     },
     plaintextOf(content) {
       const id = byContent.get(content)
@@ -688,14 +823,21 @@ export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string
       return {
         epoch,
         record: record
-          ? { ...record, events: [...record.events], filters: [...record.filters], whole: [...(record.whole ?? [])] }
+          ? {
+              ...record,
+              events: [...record.events],
+              filters: [...record.filters],
+              whole: [...(record.whole ?? [])],
+              lists: { ...record.lists },
+            }
           : null,
       }
     },
     async save(scope, change) {
       if (change.epoch !== epoch) return
       const record = records.get(scope)
-      const held = new Map(record && record.version === change.version ? record.events.map((s) => [s.event.id, s]) : [])
+      const same = record && record.version === change.version
+      const held = new Map(same ? record.events.map((s) => [s.event.id, s]) : [])
       for (const id of change.remove) held.delete(id)
       for (const stored of change.put) held.set(stored.event.id, stored)
       records.set(scope, {
@@ -703,6 +845,7 @@ export function memorySnapshotStorage(): SnapshotStorage & { records: Map<string
         events: [...held.values()],
         filters: [...change.filters],
         whole: [...change.whole],
+        lists: { ...(change.lists ?? (same ? record.lists : undefined)) },
       })
     },
     async clear() {
@@ -809,7 +952,9 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
       const tx = database.transaction([EVENTS, META], 'readonly')
       const [epoch, meta, rows] = await Promise.all([
         epochOf(tx.objectStore(META)),
-        request(tx.objectStore(META).get(scope)) as Promise<{ version: number; filters: string[]; whole?: string[] } | undefined>,
+        request(tx.objectStore(META).get(scope)) as Promise<
+          { version: number; filters: string[]; whole?: string[]; lists?: Record<string, string[]> } | undefined
+        >,
         request(tx.objectStore(EVENTS).index('scope').getAll(scope)) as Promise<(StoredSnapshotEvent & { scope: string; id: string })[]>,
       ])
       if (!meta) return { epoch, record: null }
@@ -819,6 +964,7 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
           version: meta.version,
           filters: meta.filters,
           whole: meta.whole ?? [],
+          lists: meta.lists ?? {},
           events: rows.map(({ event, plaintext, seenAt }) => ({ event, seenAt, ...(plaintext !== undefined ? { plaintext } : {}) })),
         },
       }
@@ -832,7 +978,7 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
       const events = tx.objectStore(EVENTS)
       const [epoch, meta] = await Promise.all([
         epochOf(metaStore),
-        request(metaStore.get(scope)) as Promise<{ version: number } | undefined>,
+        request(metaStore.get(scope)) as Promise<{ version: number; lists?: Record<string, string[]> } | undefined>,
       ])
       if (epoch === change.epoch) {
         if (meta && meta.version !== change.version) {
@@ -841,7 +987,9 @@ export function indexedDbSnapshotStorage(indexedDB: IdbFactoryLike, name = 'esti
         }
         for (const id of change.remove) events.delete([scope, id])
         for (const stored of change.put) events.put({ scope, id: stored.event.id, ...stored })
-        metaStore.put({ scope, version: change.version, filters: change.filters, whole: change.whole })
+        // The lists are written only when one changed: a save of events alone keeps those stored.
+        const lists = change.lists ?? (meta && meta.version === change.version ? meta.lists : undefined) ?? {}
+        metaStore.put({ scope, version: change.version, filters: change.filters, whole: change.whole, lists })
       }
       await done(tx)
     },
