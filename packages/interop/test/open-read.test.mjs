@@ -280,4 +280,13 @@ describe("a Folder's deleted files, for the Archive's Deleted filter (ALO-6)", (
     )
     assert.deepEqual(relay.changesByA(), [], 'no file is read by `#a`, the deleted one included')
   })
+
+  test('a Folder with no state lists a deleted project placed in it by buzz-channel, under a query that catches lists up (THE-11)', async () => {
+    const CHANNEL = '33333333-0000-4000-8000-000000000003'
+    const placed = event({ kind: PLAN, tags: [['d', 'd-placed'], ['title', 'Placed'], ['buzz-channel', CHANNEL]] })
+    const removal = event({ kind: 1851, pubkey: OTHER, tags: [['a', addressOf(placed)], ['field', 'deleted'], ['value', 'true'], ['h', CHANNEL]] })
+    const relay = opening([app, placed, removal])
+    const files = await interop.resolveDeletedFiles(CHANNEL, interop.catchingUpLists(relay.query), noPeople)
+    assert.deepEqual(files.map((file) => file.slots.title?.value), ['Placed'])
+  })
 })

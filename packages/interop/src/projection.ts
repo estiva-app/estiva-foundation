@@ -39,7 +39,15 @@ import { anchorsOf, byOrder, isCommentOn, isReply, MAX_MENTIONED_PEOPLE, mention
  * leaves out, a deleted one, is still read by its current changes alone (SPEC §6.5, "Finding a team's deleted
  * files"). A query without it reads such a file as one this reader cannot read: never by every change it ever had.
  */
-export type QueryFn = ((filters: Record<string, unknown>[]) => Promise<SignedEvent[]>) & { times?: TimesFn }
+export type QueryFn = ((filters: Record<string, unknown>[]) => Promise<SignedEvent[]>) & {
+  times?: TimesFn
+  /**
+   * `true` when a list read asked again costs only what changed since: the query catches it up from a copy on the
+   * device (SPEC §6.13, "A list catches up too"). A listing then asks the workspace-wide list reads SPEC names, which
+   * are large once and nearly free after. Without it, a listing keeps the narrower reads it can ask every time.
+   */
+  catchesUpLists?: true
+}
 
 /** The relay's times read (`Relay.queryTimes`, or an app's own post through `timesOf`): every filter says `"fields": "times"`. */
 export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[]>
@@ -50,6 +58,17 @@ export type TimesFn = (filters: Record<string, unknown>[]) => Promise<FileTimes[
  */
 export function withTimes(query: (filters: Record<string, unknown>[]) => Promise<SignedEvent[]>, times: TimesFn): QueryFn {
   return Object.assign((filters: Record<string, unknown>[]) => query(filters), { times })
+}
+
+/**
+ * `query` marked as catching a list read up from a copy ({@link QueryFn.catchesUpLists}), keeping its `times`. Only
+ * for a query that really does: a listing then asks a workspace-wide list read on every load.
+ */
+export function catchingUpLists(query: QueryFn): QueryFn {
+  return Object.assign((filters: Record<string, unknown>[]) => query(filters), {
+    ...(query.times ? { times: query.times } : {}),
+    catchesUpLists: true as const,
+  })
 }
 
 /** An unsigned Nostr event, ready for `sign.ts`. */
@@ -8712,7 +8731,7 @@ export async function resolveDeletedFiles(
   const everyAddress =
     state && tagValue(state, 'd') === folder
       ? await listedAddressesOf(state, query)
-      : (await addressesByContainment(folder, query, cache)).addresses
+      : (await addressesByContainment(folder, query, cache, { deleted: true })).addresses
   const files = everyAddress.flatMap((address) => {
     const pointer = addressPointerOf(address)
     return pointer && FILE_KINDS.includes(pointer.kind) ? [{ address, pointer }] : []
@@ -8788,6 +8807,9 @@ async function addressesOfIds(ids: readonly string[], query: QueryFn): Promise<M
   return out
 }
 
+/** A project's first record: the one file kind stored workspace-wide and placed by `buzz-channel` (SPEC §3.1, §6.13). */
+const KIND_PROJECT = 30850
+
 /** Ids per filter when a Folder state's `o` entries are resolved. */
 const ID_GROUP = 50
 
@@ -8844,6 +8866,8 @@ async function addressesByContainment(
   folder: string,
   query: QueryFn,
   cache?: ProjectionCache,
+  /** For the deleted files' listing: the projects' first records, deleted ones included, not the list read. */
+  options: { deleted?: boolean } = {},
 ): Promise<{ addresses: string[]; placed: Map<string, SignedEvent[]> }> {
   // Which kinds could be files? Every kind any app declares a projection for.
   // The only non-app-specific source for a kind number is a published manifest,
@@ -8869,12 +8893,30 @@ async function addressesByContainment(
     if (manifest.records) rules.set(manifest.records.changeKind, manifest.records)
   }
 
-  const found = await query([
-    { '#h': [folder], kinds, limit: 500 },
-    { '#buzz-channel': [folder], kinds, limit: 500 },
-    ...(rules.size ? [{ '#h': [folder], kinds: [...rules.keys()], limit: 500 }] : []),
+  // The projects placed here by `buzz-channel` (THE-11). SPEC §6.13: projects are stored workspace-wide, and
+  // `buzz-channel` is not a tag a Nostr filter asks for, so a team's are the ones the workspace's project list read
+  // names it in. A query that catches lists up from a copy asks that, once per load (`createLoadQuery` holds it), and
+  // a reopen costs only what changed. Any other asks buzz's own `#buzz-channel` on `/query`, a few KB a Folder, rather
+  // than the whole list (about 430 KB, 139 projects, on 25 Nov) on every open; over a socket the relay ignores that
+  // tag and answered 500 unrelated files, which is why Peek, reading over one, moved first.
+  const byList = query.catchesUpLists === true
+  const [found, projects] = await Promise.all([
+    query([
+      { '#h': [folder], kinds, limit: 500 },
+      ...(byList ? [] : [{ '#buzz-channel': [folder], kinds, limit: 500 }]),
+      ...(rules.size ? [{ '#h': [folder], kinds: [...rules.keys()], limit: 500 }] : []),
+    ]),
+    // A list read goes on its own: a relay refuses a request mixing it with plain ones. It leaves a deleted file out
+    // (§6.13), so the deleted files' listing reads the first records instead, a plain read the copy catches up too.
+    byList
+      ? query([options.deleted ? { kinds: [KIND_PROJECT] } : { fields: 'newest', kinds: [KIND_PROJECT] }])
+      : Promise.resolve([]),
   ])
-  const held = found.filter((event) => kinds.includes(event.kind))
+  const held = [
+    ...found.filter((event) => kinds.includes(event.kind)),
+    // First records only: the changes beside them are the list's, not placements in this Folder.
+    ...projects.filter((event) => event.kind === KIND_PROJECT && kinds.includes(event.kind) && tagValue(event, 'buzz-channel') === folder),
+  ]
 
   const addressOf = (event: SignedEvent) =>
     pointerToAddress({

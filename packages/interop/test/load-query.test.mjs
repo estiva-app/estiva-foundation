@@ -417,6 +417,24 @@ describe('a file several Folders list is list-read once per load (APP-11)', () =
     assert.deepEqual(base.requests.at(-1), listRead(['north']))
   })
 
+  test('a refused workspace project list read fails its askers, and the next ask in the load goes to the relay again (THE-11)', async () => {
+    const wide = [{ fields: 'newest', kinds: [30850] }]
+    const project = event({ kind: 30850, tags: [['d', 'launch'], ['buzz-channel', APIARY]] })
+    const sent = []
+    let refuse = true
+    const query = createLoadQuery(
+      interop.catchingUpLists(async (filters) => {
+        sent.push(filters)
+        if (refuse) throw new Error('rate-limited')
+        return [project]
+      }),
+    )
+    await assert.rejects(Promise.all([query(wide), query(wide)]), /rate-limited/)
+    refuse = false
+    assert.deepEqual(ids(await query(wide)), [project.id])
+    assert.equal(sent.length, 2, 'one refused ask, then one more to the relay')
+  })
+
   test('another load reads the file afresh', async () => {
     const relay = listRelay(world())
     await createLoadQuery(relay.query)(listRead(['north']))

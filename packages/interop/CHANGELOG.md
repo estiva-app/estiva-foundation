@@ -6,6 +6,34 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.120.0 — 2026-11-25
+
+**Manifest: no change to what a manifest declares or how it is read. Wire: a
+Folder with no state finds its projects by SPEC §6.13's rule, under a query
+that catches lists up** (THE-11). Projects are stored workspace-wide and placed
+by `buzz-channel`, which is not a tag a Nostr filter asks for: a socket `REQ`
+ignores it (production answered 500 unrelated files, 575 KB, per Folder, on
+Miky's reopen of 25 Nov) and a catch-up refuses it. Such a Folder's projects
+are now the workspace project list read's (`{"fields": "newest", "kinds":
+[30850]}`) whose `buzz-channel` names it.
+
+- **`QueryFn` may carry `catchesUpLists: true`**, and
+  `catchingUpLists(query)` marks one (keeping its `times`). Mark only a query
+  that catches a list read up from a copy (`@estiva-app/platform` ≥ 0.14.0
+  over a socket that speaks NIP-77): the list read is about 430 KB once (139
+  projects, QA-1, 25 Nov) and about 40 bytes after.
+- **`createLoadQuery` keeps the mark and holds that list read for the load**,
+  so every Folder of one load asks it once.
+- **A query without the mark asks `#buzz-channel` on `/query` as before**, a
+  few KB a Folder, rather than the whole list on every open, until its app
+  keeps a copy.
+- **`resolveDeletedFiles` reads projects' first records** (`{"kinds":
+  [30850]}`) under a marked query, not the list read, which leaves a deleted
+  file out.
+- **The list read is one relay page on a cold open** (1,000 first records;
+  139 projects today); a catch-up compares the whole set, so past 1,000
+  projects a team's listing is complete from the first reopen on.
+
 ## 0.119.0 — 2026-11-25
 
 **Manifest: no change to what a manifest declares or how it is read. Wire: a

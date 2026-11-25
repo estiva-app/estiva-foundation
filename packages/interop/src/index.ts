@@ -99,6 +99,7 @@ export {
   type ResolvedManifest,
   type QueryFn,
   withTimes,
+  catchingUpLists,
   type PeopleFn,
   type People,
   type ForeignObject,

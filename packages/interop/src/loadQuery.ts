@@ -178,6 +178,12 @@ function completeByValue(shape: ByTag, answer: SignedEvent[], paged: boolean): M
   return !paged && matched >= Math.min(shape.limit, RELAY_PAGE_CEILING) ? null : byValue
 }
 
+/** A list read of whole kinds, with no tag, limit or window: SPEC §6.13's workspace project list. */
+function isWideList(filter: Filter): boolean {
+  const { kinds, fields, ...rest } = filter
+  return fields === 'newest' && Object.keys(rest).length === 0 && Array.isArray(kinds) && kinds.length > 0 && kinds.every((kind) => typeof kind === 'number')
+}
+
 export interface LoadQueryOptions {
   /** The query answers every filter in full, paging past the relay's page (`Relay.queryAll`): see the module's note. */
   paged?: boolean
@@ -203,6 +209,9 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
   const files = new Map<string, Promise<SignedEvent[]>>()
   const fileKey = (read: ListRead, d: string) => `${read.text ? 'text' : 'list'}:${read.kind}:${read.author}:${d}`
   const flights = new Map<string, Promise<SignedEvent[]>>()
+  // A workspace-wide list read (`{ fields: 'newest', kinds }`, nothing else) by its filter: every Folder of the load
+  // finds its projects in one (THE-11). Only under a query that catches lists up, which answers it whole.
+  const wideLists = new Map<string, Promise<SignedEvent[]>>()
 
   const remember = <K>(memo: Map<K, Held>, key: K, entry: Held) => {
     // A larger read of the same, in flight or done, is kept.
@@ -225,9 +234,19 @@ export function createLoadQuery(query: QueryFn, options: LoadQueryOptions = {}):
   }
 
   // The times read goes straight to the relay: a deleted file is rare, and held reads hold events, not times.
-  return Object.assign(load, query.times ? { times: query.times } : {})
+  return Object.assign(load, query.times ? { times: query.times } : {}, query.catchesUpLists ? { catchesUpLists: true as const } : {})
 
   async function load(filters: Record<string, unknown>[]): Promise<SignedEvent[]> {
+    if (query.catchesUpLists && filters.length === 1 && isWideList(filters[0])) {
+      const key = JSON.stringify(filters[0])
+      const held = wideLists.get(key)
+      if (held) return held
+      const read = query(filters)
+      wideLists.set(key, read)
+      // A refused read is forgotten, so the next ask goes to the relay.
+      read.catch(() => wideLists.get(key) === read && wideLists.delete(key))
+      return read
+    }
     const send: Filter[] = []
     const asked: ByTag[] = []
     const askedWhole: WholeKinds[] = []
