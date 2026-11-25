@@ -22,8 +22,13 @@ fetches none of the list again. Needs a relay whose NIP-77 takes `fields`
 - A list is never windowed or split by time: its `since` and `until` pick first
   records, and a change goes with its file. A list the relay calls too big is
   asked plainly.
-- Stored with the copy (`SnapshotRecord.lists`); a save of events alone keeps
-  the stored lists. `snapshotListKey(filter)` is exported.
+- Stored with the copy (`SnapshotRecord.lists`), written only when a list
+  changed; a save of events alone keeps the stored lists. At most
+  `SNAPSHOT_MAX_LISTS` (500, option `maxLists`) are remembered, the least
+  recently answered forgotten first. `snapshotListKey(filter)` is exported.
+- Not covered: interop's team listing asks `#buzz-channel` beside `#h`, which
+  neither the copy nor a catch-up takes; it is still asked plainly until
+  interop finds a team's projects by §6.13's rule (a blocker in the project).
 
 ## 0.13.1
 

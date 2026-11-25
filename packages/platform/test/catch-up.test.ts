@@ -441,6 +441,22 @@ test('a file list with a limit is caught up only when the limit cannot cut it', 
   assert.equal(r.sent.reconciles, 1)
 })
 
+test('past the most lists the copy remembers, the least recently answered is forgotten and asked plainly', async () => {
+  const r = fakeRelay({ teams: new Set(['t1', 't2', 't3']) })
+  for (const [i, name] of ['t1', 't2', 't3'].entries()) filesIn(r, name, 20, 1_000 + i * 100)
+  const snap = createEventSnapshot({ storage: memorySnapshotStorage(), scope: `wss://r|${OWNER}`, version: 1, timers: still, maxLists: 2 })
+  await snap.ready
+  for (const name of ['t1', 't2']) snap.absorb([listOf(name)], await r.relay.query([listOf(name)]))
+  await catchUp(snap, [listOf('t1')], r.relay) // t1 answered again: now t2 is the oldest
+  snap.absorb([listOf('t3')], await r.relay.query([listOf('t3')]))
+
+  assert.equal(snap.held(listOf('t2')), null, 'the least recently answered list is forgotten')
+  assert.ok(snap.held(listOf('t1')) && snap.held(listOf('t3')))
+  const result = await catchUp(snap, [listOf('t2')], r.relay)
+  assert.equal(result.asked, 1, 'and asked plainly')
+  assert.deepEqual(ids(result.events), await listedNow(r, listOf('t2')))
+})
+
 test('a relay that refuses a file list, or calls it too big, is asked plainly, never split by time', async () => {
   for (const relayOptions of [{ refusesLists: true }, { maxSet: 10 }]) {
     const r = fakeRelay({ teams: new Set(['t1']), ...relayOptions })

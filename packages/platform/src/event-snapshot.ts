@@ -126,6 +126,8 @@ export interface EventSnapshotOptions {
   version: number
   /** Past this many events the least recently seen are dropped. */
   maxEvents?: number
+  /** Past this many list reads remembered the least recently answered is forgotten. */
+  maxLists?: number
   /** The most events the relay returns to a filter, with no `limit` or a bigger one (NIP-11 `max_limit`). */
   relayMaxLimit?: number
   /** How long after a change the copy is written. */
@@ -174,6 +176,12 @@ export interface EventSnapshot {
  * that part again each time; this leaves room for the Desk and what is read ahead.
  */
 export const SNAPSHOT_MAX_EVENTS = 20_000
+/**
+ * Interop pools a set of files into `#d` lists whose sets change as the files
+ * do, so old lists are never asked again; this keeps room for every list one
+ * Desk asks, several times over.
+ */
+export const SNAPSHOT_MAX_LISTS = 500
 /** What our relay returns to a filter at most (NIP-11 `max_limit`), whatever its `limit`. */
 export const SNAPSHOT_RELAY_MAX_LIMIT = 1_000
 export const SNAPSHOT_SAVE_AFTER_MS = 1_000
@@ -338,6 +346,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   /** The storage's sign-out count when this copy was read; no read, no write. */
   let epoch: number | undefined
   const maxEvents = options.maxEvents ?? SNAPSHOT_MAX_EVENTS
+  const maxLists = options.maxLists ?? SNAPSHOT_MAX_LISTS
   const relayMaxLimit = options.relayMaxLimit ?? SNAPSHOT_RELAY_MAX_LIMIT
   const saveAfterMs = options.saveAfterMs ?? SNAPSHOT_SAVE_AFTER_MS
   const seenRefreshMs = options.seenRefreshMs ?? SNAPSHOT_SEEN_REFRESH_MS
@@ -560,8 +569,20 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     for (const event of answer) {
       if (event.tags.some((tag) => tag[0] === 'a' && tag[1] !== undefined && addresses.has(tag[1]))) ids.add(event.id)
     }
+    setList(key, ids)
+  }
+
+  /** A list's ids, now the most recently answered; written only when they changed. */
+  function setList(key: string, ids: Set<string>) {
+    const before = lists.get(key)
+    if (!before || before.size !== ids.size || [...ids].some((id) => !before.has(id))) listsDirty = true
+    lists.delete(key)
     lists.set(key, ids)
-    listsDirty = true
+    for (const oldest of lists.keys()) {
+      if (lists.size <= maxLists) break
+      lists.delete(oldest)
+      listsDirty = true
+    }
   }
 
   /** The held events of a list's last answer: an id since trimmed is left out, and a catch-up fetches it again. */
@@ -589,8 +610,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       const stored = events.get(id)
       if (stored) hold({ ...stored, seenAt }, true)
     }
-    lists.set(key, ids)
-    listsDirty = true
+    setList(key, ids)
     trim()
     schedule()
   }
