@@ -8731,7 +8731,7 @@ export async function resolveDeletedFiles(
   const everyAddress =
     state && tagValue(state, 'd') === folder
       ? await listedAddressesOf(state, query)
-      : (await addressesByContainment(folder, query, cache)).addresses
+      : (await addressesByContainment(folder, query, cache, { deleted: true })).addresses
   const files = everyAddress.flatMap((address) => {
     const pointer = addressPointerOf(address)
     return pointer && FILE_KINDS.includes(pointer.kind) ? [{ address, pointer }] : []
@@ -8866,6 +8866,8 @@ async function addressesByContainment(
   folder: string,
   query: QueryFn,
   cache?: ProjectionCache,
+  /** For the deleted files' listing: the projects' first records, deleted ones included, not the list read. */
+  options: { deleted?: boolean } = {},
 ): Promise<{ addresses: string[]; placed: Map<string, SignedEvent[]> }> {
   // Which kinds could be files? Every kind any app declares a projection for.
   // The only non-app-specific source for a kind number is a published manifest,
@@ -8904,8 +8906,11 @@ async function addressesByContainment(
       ...(byList ? [] : [{ '#buzz-channel': [folder], kinds, limit: 500 }]),
       ...(rules.size ? [{ '#h': [folder], kinds: [...rules.keys()], limit: 500 }] : []),
     ]),
-    // A list read goes on its own: a relay refuses a request mixing it with plain ones.
-    byList ? query([{ fields: 'newest', kinds: [KIND_PROJECT] }]) : Promise.resolve([]),
+    // A list read goes on its own: a relay refuses a request mixing it with plain ones. It leaves a deleted file out
+    // (§6.13), so the deleted files' listing reads the first records instead, a plain read the copy catches up too.
+    byList
+      ? query([options.deleted ? { kinds: [KIND_PROJECT] } : { fields: 'newest', kinds: [KIND_PROJECT] }])
+      : Promise.resolve([]),
   ])
   const held = [
     ...found.filter((event) => kinds.includes(event.kind)),

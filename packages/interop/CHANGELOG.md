@@ -27,6 +27,12 @@ are now the workspace project list read's (`{"fields": "newest", "kinds":
 - **A query without the mark asks `#buzz-channel` on `/query` as before**, a
   few KB a Folder, rather than the whole list on every open, until its app
   keeps a copy.
+- **`resolveDeletedFiles` reads projects' first records** (`{"kinds":
+  [30850]}`) under a marked query, not the list read, which leaves a deleted
+  file out.
+- **The list read is one relay page on a cold open** (1,000 first records;
+  139 projects today); a catch-up compares the whole set, so past 1,000
+  projects a team's listing is complete from the first reopen on.
 
 ## 0.119.0 — 2026-11-25
 
