@@ -43,7 +43,16 @@ const coordinate = (e: SignedEvent) =>
 const CHANGE = 1851
 const FILE = 30_840
 
-function fakeRelay(options: { speaks?: boolean; maxSet?: number; teams?: Set<string>; refusesLists?: boolean } = {}) {
+function fakeRelay(
+  options: {
+    speaks?: boolean
+    maxSet?: number
+    teams?: Set<string>
+    refusesLists?: boolean
+    /** The relay's quota refusals, one per reconciliation, in order, before it answers again (THE-15). */
+    quota?: string[]
+  } = {},
+) {
   const stored: SignedEvent[] = []
   const readable = options.teams ?? new Set<string>()
   const sent = { events: 0, reconciles: 0, queries: 0, blocked: 0 }
@@ -89,6 +98,8 @@ function fakeRelay(options: { speaks?: boolean; maxSet?: number; teams?: Set<str
     speaksNip77: () => options.speaks ?? true,
     async reconcile(filter, held): Promise<ReconcileOutcome> {
       sent.reconciles += 1
+      const refusal = options.quota?.shift()
+      if (refusal !== undefined) return { ok: false, reason: 'refused', message: refusal }
       if (filter.fields !== undefined && options.refusesLists) {
         return { ok: false, reason: 'refused', message: 'invalid: a reconciliation does not take the filter key "fields"' }
       }
@@ -204,6 +215,55 @@ test('a relay that does not speak NIP-77 is asked again, and the copy ends the s
   assert.equal(r.sent.reconciles, 0)
   assert.equal(result.asked, 1)
   assert.deepEqual(heldIds(snap, filters), await askedAgain(r.relay, filters))
+})
+
+test('a catch-up refused for the person’s quota waits the relay’s stated pause and compares again, fetching only what changed', async () => {
+  for (const [refusal, waited] of [
+    ['rate-limited: quota exceeded; retry in 2s', 2_000],
+    // The window just rolled over: still a moment, never none.
+    ['rate-limited: quota exceeded; retry in 0s', 1_000],
+  ] as const) {
+    const r = fakeRelay({ teams: new Set(['t1']), quota: [refusal] })
+    const messages = team('t1', 50)
+    r.publish(...messages)
+    const filters = [{ kinds: [9], '#h': ['t1'] }]
+    const snap = await copy()
+    snap.absorb(filters, await r.relay.query(filters))
+    r.publish(ev(9, 3_000, [['h', 't1']]))
+    r.remove(messages[0]!.id)
+    r.sent.queries = 0
+    const waits: number[] = []
+
+    const result = await catchUp(snap, filters, r.relay, { sleep: async (ms) => void waits.push(ms) })
+    assert.deepEqual(waits, [waited], refusal)
+    assert.equal(r.sent.reconciles, 2, 'compared again after the pause')
+    assert.equal(result.asked, 0, 'never asked whole')
+    assert.equal(result.reconciled, 1)
+    assert.equal(result.fetched, 1, 'only the new message')
+    assert.equal(result.dropped, 1, 'the deleted one left the copy')
+    assert.deepEqual(heldIds(snap, filters), await askedAgain(r.relay, filters))
+  }
+})
+
+test('a quota refusal with no stated pause, a long one, or a second one is asked whole without waiting longer', async () => {
+  for (const quota of [
+    ['rate-limited: quota exceeded'],
+    ['rate-limited: quota exceeded; retry in 12s'],
+    ['rate-limited: quota exceeded; retry in 1s', 'rate-limited: quota exceeded; retry in 1s'],
+  ]) {
+    const r = fakeRelay({ teams: new Set(['t1']), quota: [...quota] })
+    r.publish(...team('t1', 50))
+    const filters = [{ kinds: [9], '#h': ['t1'] }]
+    const snap = await copy()
+    snap.absorb(filters, await r.relay.query(filters))
+    r.publish(ev(9, 3_000, [['h', 't1']]))
+    const waits: number[] = []
+
+    const result = await catchUp(snap, filters, r.relay, { sleep: async (ms) => void waits.push(ms) })
+    assert.equal(result.asked, 1, quota.join(' / '))
+    assert.ok(waits.length <= 1 && waits.every((ms) => ms <= 5_000), `waited ${waits.join(', ')}`)
+    assert.deepEqual(heldIds(snap, filters), await askedAgain(r.relay, filters))
+  }
 })
 
 test('a question the relay calls too big is split by time and still ends whole', async () => {
