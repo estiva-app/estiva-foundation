@@ -56,6 +56,13 @@
  * fetched. An id that leaves a list leaves only that list: a replaced change or
  * a deleted file is still a signed event that may be read by id.
  *
+ * Interop batches a set of files by what one load has not read yet, so the
+ * same files come back in `#d` lists the copy never answered as such. A list
+ * asked by `#d` that it has not remembered is held as the pieces of each file
+ * it names under the other lists of the same question but for `#d`: the file's
+ * first record and the changes whose `a` names it. A catch-up corrects what
+ * that misses or holds too much, as for any other list (THE-14).
+ *
  * why: https://github.com/estiva-app/estiva-docs/blob/main/decisions/a-file-list-catches-up-with-nip-77-too.md
  */
 import type { SignedEvent } from '@estiva-app/protocol'
@@ -317,6 +324,17 @@ function mostMatches(filter: SnapshotFilter): number {
   return most
 }
 
+/**
+ * A list key's files: where it sits among lists the same but for `#d`, and its
+ * `#d` values; `null` for a list not asked by `#d`.
+ */
+function listFiles(key: string): { shape: string; ds: string[] } | null {
+  const entries = JSON.parse(key) as [string, unknown][]
+  const ds = entries.find(([field]) => field === '#d')?.[1]
+  if (!Array.isArray(ds)) return null
+  return { shape: JSON.stringify(entries.filter(([field]) => field !== '#d')), ds: ds as string[] }
+}
+
 /** Where a filter's `field` list sits among answered lists: the filter without that field or its `limit`. */
 function coverShape(filter: SnapshotFilter, field: string): string {
   const rest: SnapshotFilter = {}
@@ -373,6 +391,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   let covers: Map<string, Set<string>> | undefined
   /** Each list read's last answer, by {@link snapshotListKey}. */
   const lists = new Map<string, Set<string>>()
+  /** The lists that named each file, by list shape and `d`, the most recently answered last. */
+  const fileLists = new Map<string, Set<string>>()
   let listsDirty = false
   const dirty = new Set<string>()
   const removed = new Set<string>()
@@ -502,7 +522,10 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
         for (const stored of record.events) hold(stored, false)
         for (const key of record.filters) filters.add(key)
         for (const key of record.whole ?? []) if (filters.has(key)) whole.add(key)
-        for (const [key, ids] of Object.entries(record.lists ?? {})) lists.set(key, new Set(ids))
+        for (const [key, ids] of Object.entries(record.lists ?? {})) {
+          lists.set(key, new Set(ids))
+          indexList(key, true)
+        }
         // An answer asked before the stored copy was read built what is covered without it.
         covers = undefined
       }
@@ -561,7 +584,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     if (key === null) return
     const roots = answer.filter(snapshotMatcher(listRoots(filter)))
     if (roots.length >= relayMaxLimit) {
-      if (lists.delete(key)) listsDirty = true
+      forgetList(key)
       return
     }
     const ids = new Set(roots.map((event) => event.id))
@@ -578,10 +601,30 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     if (!before || before.size !== ids.size || [...ids].some((id) => !before.has(id))) listsDirty = true
     lists.delete(key)
     lists.set(key, ids)
+    indexList(key, true)
     for (const oldest of lists.keys()) {
       if (lists.size <= maxLists) break
-      lists.delete(oldest)
-      listsDirty = true
+      forgetList(oldest)
+    }
+  }
+
+  function forgetList(key: string) {
+    if (!lists.delete(key)) return
+    listsDirty = true
+    indexList(key, false)
+  }
+
+  /** Add a list to, or take it from, the lists that named each of its files. */
+  function indexList(key: string, add: boolean) {
+    const files = listFiles(key)
+    if (!files) return
+    for (const d of files.ds) {
+      const at = `${files.shape}\n${d}`
+      const named = fileLists.get(at) ?? new Set<string>()
+      named.delete(key)
+      if (add) named.add(key)
+      if (named.size) fileLists.set(at, named)
+      else fileLists.delete(at)
     }
   }
 
@@ -597,13 +640,46 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     return out
   }
 
+  /**
+   * A list asked by `#d` the copy has not remembered, held as each file's
+   * pieces under the most recent list that named it: its first record and the
+   * changes whose `a` names it. `null` when no list named any of its files.
+   */
+  function heldFromFiles(filter: SnapshotFilter, key: string): SignedEvent[] | null {
+    const files = listFiles(key)
+    if (!files) return null
+    const answers = new Map<string, SignedEvent[]>()
+    const out = new Map<string, SignedEvent>()
+    let named = false
+    for (const d of files.ds) {
+      const by = fileLists.get(`${files.shape}\n${d}`)
+      if (!by) continue
+      named = true
+      const from = [...by].at(-1)!
+      let held = answers.get(from)
+      if (!held) answers.set(from, (held = heldList(from) ?? []))
+      const isRoot = snapshotMatcher(listRoots({ ...filter, '#d': [d] }))
+      const root = held.find(isRoot)
+      // Named, and no first record: the file was not there to read when it was asked.
+      if (!root) continue
+      const address = replaceableKey(root)
+      out.set(root.id, root)
+      for (const event of held) {
+        if (event.tags.some((tag) => tag[0] === 'a' && tag[1] === address)) out.set(event.id, event)
+      }
+    }
+    return named ? [...out.values()] : null
+  }
+
   /** A list caught up: its ids are what it held, less what the relay no longer lists, plus what it fetched. */
-  function settleList(key: string, fetched: SignedEvent[], gone: string[]) {
+  function settleList(asked: SnapshotFilter, key: string, fetched: SignedEvent[], gone: string[]) {
     const seenAt = now()
+    // What it held, worked out before what was fetched joins the copy.
+    const held = heldList(key) ?? heldFromFiles(asked, key) ?? []
     for (const event of fetched) hold({ event, seenAt }, true)
     const left = new Set(gone)
     const ids = new Set<string>()
-    for (const event of heldList(key) ?? []) if (!left.has(event.id)) ids.add(event.id)
+    for (const event of held) if (!left.has(event.id)) ids.add(event.id)
     for (const event of fetched) ids.add(event.id)
     // Seen now, fetched or not, so a list a catch-up never re-sends is not the first trimmed.
     for (const id of ids) {
@@ -763,7 +839,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     held(filter) {
       if (filter.fields !== undefined) {
         const key = snapshotListKey(filter)
-        return key === null ? null : heldList(key)
+        return key === null ? null : (heldList(key) ?? heldFromFiles(filter, key))
       }
       if (!answerable(filter)) return null
       return candidates(filter).filter(snapshotMatcher(filter))
@@ -774,7 +850,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (asked.fields === undefined) settle(asked, reconciled, fetched, gone)
       else {
         const key = snapshotListKey(asked)
-        if (key !== null) settleList(key, fetched, gone)
+        if (key !== null) settleList(asked, key, fetched, gone)
       }
     },
     plaintextOf(content) {

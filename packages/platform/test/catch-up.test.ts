@@ -441,6 +441,62 @@ test('a file list with a limit is caught up only when the limit cannot cut it', 
   assert.equal(r.sent.reconciles, 1)
 })
 
+test('a batch of files the copy never asked as one list catches up from each file’s pieces under the lists that named them (THE-14)', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const { roots, titles } = filesIn(r, 't1', 20)
+  const dOf = (root: SignedEvent) => root.tags.find((t) => t[0] === 'd')![1]!
+  const byD = (ds: string[]): SnapshotFilter => ({ fields: 'newest', kinds: [FILE], authors: [OWNER], '#d': ds, limit: ds.length })
+  const d = roots.map(dOf)
+  const snap = await copy()
+  // One open batched the files as two lists.
+  for (const batch of [byD(d.slice(0, 10)), byD(d.slice(10))]) snap.absorb([batch], await r.relay.query([batch]))
+
+  // The next open batches them otherwise, beside a file created since, and one held file was retitled meanwhile.
+  const created = ev(FILE, 2_000, [['d', 't1-new'], ['h', 't1']])
+  const createdTitle = change(created, 'title', 'New', 2_001)
+  const retitle = change(roots[7]!, 'title', 'Renamed', 3_000)
+  r.publish(created, createdTitle, retitle)
+  const batch = byD([...d.slice(5, 15), 't1-new'])
+  assert.equal(snap.held(byD(d.slice(5, 15)))?.length, 20, 'held: each named file’s first record and title')
+  assert.equal(snap.held({ ...byD(d.slice(5, 15)), kinds: [FILE + 1] }), null, 'another question’s lists are not its pieces')
+
+  r.sent.events = 0
+  let result = await catchUp(snap, [batch], r.relay)
+  assert.equal(result.reconciled, 1, 'caught up, not asked again')
+  assert.equal(r.sent.events, 3, 'only the new file, its title and the new title were downloaded')
+  assert.ok(!result.events.some((e) => e.id === titles[7]!.id), 'the replaced title left the batch')
+  assert.deepEqual(ids(result.events), await listedNow(r, batch))
+
+  r.sent.events = 0
+  result = await catchUp(snap, [batch], r.relay)
+  assert.equal(r.sent.events, 0, 'the batch is remembered as it was caught up')
+  assert.equal(result.fetched + result.dropped, 0)
+})
+
+test('reopened from storage, a batch of held files batched otherwise downloads nothing (THE-14)', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const { roots } = filesIn(r, 't1', 20)
+  const d = roots.map((root) => root.tags.find((t) => t[0] === 'd')![1]!)
+  const byD = (ds: string[]): SnapshotFilter => ({ fields: 'newest', kinds: [FILE], authors: [OWNER], '#d': ds, limit: ds.length })
+  const storage = memorySnapshotStorage()
+  const open = async () => {
+    const snap = createEventSnapshot({ storage, scope: `wss://r|${OWNER}`, version: 1, timers: still })
+    await snap.ready
+    return snap
+  }
+  const first = await open()
+  for (const batch of [byD(d.slice(0, 10)), byD(d.slice(10))]) first.absorb([batch], await r.relay.query([batch]))
+  await first.flush()
+
+  const reopened = await open()
+  const batch = byD(d.slice(3, 17))
+  r.sent.events = 0
+  const result = await catchUp(reopened, [batch], r.relay)
+  assert.equal(result.reconciled, 1)
+  assert.equal(r.sent.events, 0)
+  assert.deepEqual(ids(result.events), await listedNow(r, batch))
+})
+
 test('past the most lists the copy remembers, the least recently answered is forgotten and asked plainly', async () => {
   const r = fakeRelay({ teams: new Set(['t1', 't2', 't3']) })
   for (const [i, name] of ['t1', 't2', 't3'].entries()) filesIn(r, name, 20, 1_000 + i * 100)

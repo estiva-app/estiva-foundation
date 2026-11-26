@@ -1,5 +1,22 @@
 # @estiva-app/platform
 
+## 0.14.1
+
+A batch of files the copy never answered as one list catches up from the copy
+anyway (THE-14). Interop batches a set of files by what one load has not read
+yet, so a reopen asks the same files in `#d` lists whose sets depend on timing,
+and a batch the copy had never answered was asked plainly: about 0.4 MB of
+Miky's issues on one reopen in six.
+
+- `held(filter)` answers a list asked by `#d` that it has not remembered with
+  each named file's pieces under the most recent list of the same question but
+  for `#d` that named it: its first record and the changes whose `a` names it.
+  `null` only when no such list named any of its files.
+- A file named before and found absent adds nothing, and one never named is
+  simply missing: the catch-up fetches it, as for any list.
+- After the catch-up the batch is remembered under its own key from what it
+  held so, plus what it fetched, less what the relay no longer lists.
+
 ## 0.14.0
 
 A file list (SPEC §6.13, `"fields": "newest"`) catches up from the copy too
