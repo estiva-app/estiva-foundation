@@ -246,11 +246,11 @@ test('a catch-up refused for the person’s quota waits the relay’s stated pau
 })
 
 test('a quota refusal with no stated pause, a long one, or a second one is asked whole without waiting longer', async () => {
-  for (const quota of [
-    ['rate-limited: quota exceeded'],
-    ['rate-limited: quota exceeded; retry in 12s'],
-    ['rate-limited: quota exceeded; retry in 1s', 'rate-limited: quota exceeded; retry in 1s'],
-  ]) {
+  for (const [quota, waited] of [
+    [['rate-limited: quota exceeded'], []],
+    [['rate-limited: quota exceeded; retry in 12s'], []],
+    [['rate-limited: quota exceeded; retry in 1s', 'rate-limited: quota exceeded; retry in 1s'], [1_000]],
+  ] as const) {
     const r = fakeRelay({ teams: new Set(['t1']), quota: [...quota] })
     r.publish(...team('t1', 50))
     const filters = [{ kinds: [9], '#h': ['t1'] }]
@@ -261,9 +261,36 @@ test('a quota refusal with no stated pause, a long one, or a second one is asked
 
     const result = await catchUp(snap, filters, r.relay, { sleep: async (ms) => void waits.push(ms) })
     assert.equal(result.asked, 1, quota.join(' / '))
-    assert.ok(waits.length <= 1 && waits.every((ms) => ms <= 5_000), `waited ${waits.join(', ')}`)
+    assert.deepEqual(waits, waited, quota.join(' / '))
     assert.deepEqual(heldIds(snap, filters), await askedAgain(r.relay, filters))
   }
+})
+
+test('a question split by time while the quota is spent never waits longer than the allowance in all', async () => {
+  const r = fakeRelay({
+    maxSet: 120,
+    teams: new Set(['t1']),
+    // Refused, then too big when compared again; each half refused once more.
+    quota: ['rate-limited: quota exceeded; retry in 3s'],
+  })
+  r.publish(...team('t1', 400))
+  const filters = [{ kinds: [9], '#h': ['t1'] }]
+  const snap = await copy()
+  snap.absorb(filters, await r.relay.query(filters))
+  const relay: CatchUpRelay = {
+    ...r.relay,
+    async reconcile(filter, held) {
+      const outcome = await r.relay.reconcile(filter, held)
+      // After the first wait, the halves of the split are refused for quota too.
+      return filter.since !== undefined ? { ok: false, reason: 'refused', message: 'rate-limited: quota exceeded; retry in 3s' } : outcome
+    },
+  }
+  const waits: number[] = []
+
+  const result = await catchUp(snap, filters, relay, { now: () => 2_000_000, sleep: async (ms) => void waits.push(ms) })
+  assert.deepEqual(waits, [3_000], 'one 3 s wait; a second would pass the 5 s allowance')
+  assert.equal(result.asked, 1)
+  assert.deepEqual(heldIds(snap, filters), await askedAgain(r.relay, filters))
 })
 
 test('a question the relay calls too big is split by time and still ends whole', async () => {

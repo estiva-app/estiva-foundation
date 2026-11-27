@@ -83,19 +83,23 @@ const MAX_SPLITS = 6
  */
 export const CATCH_UP_QUOTA_WAIT_MS = 5_000
 
+/** A catch-up's allowance for quota waits: each question's, its splits by time included, is at most `maxMs`. */
 interface QuotaWait {
   maxMs: number
   sleep: (ms: number) => Promise<void>
 }
 
-/** How long to wait before comparing again, or `null` to ask whole: a quota refusal whose stated wait fits. */
-function quotaRetryMs(outcome: ReconcileOutcome, quota: QuotaWait): number | null {
+/**
+ * How long to wait before comparing again, or `null` to ask whole: a quota refusal whose stated wait fits in what is
+ * left of the allowance `spent` already used.
+ */
+function quotaRetryMs(outcome: ReconcileOutcome, quota: QuotaWait, spent: number): number | null {
   if (outcome.ok || outcome.reason !== 'refused' || !isRateLimited(outcome.message)) return null
   const hint = retryHintMs(outcome.message)
   if (hint === undefined) return null
   // `retry in 0s`: the window just rolled over, and the question that would go now is the one refused.
   const wait = Math.max(hint, MIN_BACKOFF_MS)
-  return wait <= quota.maxMs ? wait : null
+  return spent + wait <= quota.maxMs ? wait : null
 }
 
 /** Whether a relay's NIP-11 document lists NIP-77. */
@@ -127,6 +131,7 @@ async function reconcileSplitting(
   splits: number,
   now: number,
   quota: QuotaWait,
+  spent = 0,
 ): Promise<Reconciled> {
   const compare = () =>
     relay.reconcile(
@@ -134,10 +139,12 @@ async function reconcileSplitting(
       held.map((event) => ({ id: event.id, created_at: event.created_at })),
     )
   let outcome = await compare()
-  // Refused for the person's quota with a short stated pause: wait it out and compare once more (THE-15).
-  const retryMs = quotaRetryMs(outcome, quota)
+  // Refused for the person's quota with a short stated pause: wait it out and compare once more (THE-15). The halves
+  // of a split carry their parent's wait, so a question never waits longer than the allowance in all.
+  const retryMs = quotaRetryMs(outcome, quota, spent)
   if (retryMs !== null) {
     await quota.sleep(retryMs)
+    spent += retryMs
     outcome = await compare()
   }
   if (outcome.ok) return { need: outcome.need, have: outcome.have }
@@ -151,8 +158,8 @@ async function reconcileSplitting(
   const older = { ...filter, since: from, until: middle }
   const newer = { ...filter, since: middle + 1, until: to }
   const [a, b] = await Promise.all([
-    reconcileSplitting(relay, older, held.filter((e) => e.created_at <= middle), splits - 1, now, quota),
-    reconcileSplitting(relay, newer, held.filter((e) => e.created_at > middle), splits - 1, now, quota),
+    reconcileSplitting(relay, older, held.filter((e) => e.created_at <= middle), splits - 1, now, quota, spent),
+    reconcileSplitting(relay, newer, held.filter((e) => e.created_at > middle), splits - 1, now, quota, spent),
   ])
   if (!a || !b) return null
   return { need: [...a.need, ...b.need], have: [...a.have, ...b.have] }
