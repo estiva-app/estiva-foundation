@@ -253,7 +253,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
   /** The page the person is on, as the router has it. */
   const here = pathname + search
   /** The place a sentence asked here is about (`LauncherHost.path`): on Peek's Desk, the file it shows, not the page. */
-  const place = host.path.place ?? pathname
+  const place = host.path.place || pathname
   const [request, setRequest] = useState<{ intent: Intent; text: string } | null>(null)
   const [sentFrom, setSentFrom] = useState<{ context: LauncherContext; path: string; place: string } | null>(null)
   const [draft, setDraft] = useState<string | null | false>(null)
