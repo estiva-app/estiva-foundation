@@ -1,5 +1,20 @@
 # @estiva-app/platform
 
+## 0.15.1
+
+A file list whose files changed since it was last asked catches up from the
+lists it replaces, instead of being read again whole. Interop pools a set of
+files into `#d` lists cut in arrival order, so one new or moved issue makes a
+list the copy never answered; on Miky's reopen after an hour away (27 Nov)
+that read 628 KB and 174 KB of issues the copy already held.
+
+- `held()` of a list read the copy never answered (`"fields": "newest"` with
+  `#d`) is what its remembered lists of the same shape (the same key but for
+  `#d`) hold for the asked files: each first record it matches and each change
+  those lists carried for one. `null` when none holds any of them, as before.
+- `caughtUp()` remembers such a list from that set, less what the relay no
+  longer lists, plus what it fetched.
+
 ## 0.15.0
 
 A catch-up refused for the person's quota waits out the pause and compares
