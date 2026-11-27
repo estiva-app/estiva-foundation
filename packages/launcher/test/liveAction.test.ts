@@ -20,6 +20,7 @@ import {
   vocabulariesFrom,
   type CreatableKindRead,
 } from '../src/liveAction.js'
+import { launcherApps } from '../src/launcherActions.js'
 
 /** Exactly what the runtime returns for Ship's live `add-issue`. */
 const addIssue: ResolvedAction = {
@@ -129,6 +130,60 @@ describe('creationsFor — an action goes to the app that declared it (MAN-8)', 
     expect(creationsFor({ parentKind: 30850 }, new Map([[30850, null]]))).toBeNull()
     const own = new Map<number, CreatableKindRead | null>([[30850, reads.get(30850)!], [39000, null]])
     expect(creationsFor({ parentKind: 30850 }, own)!.map((c) => c.action.id)).toEqual(['add-issue'])
+  })
+})
+
+describe("Leaf's New document, in every other app's ⌘K (KIN-9)", () => {
+  /** Leaf's manifest: the address its committed key publishes (leaf `src/manifest-address.ts`). */
+  const LEAF_MANIFEST = '31990:9b0ff001e909e0c6eb9165b81118b0c580db2584c87e1c794a2ec9339f7541ec:estiva-leaf'
+  const SHIP_MANIFEST = '31990:88ac:estiva-ship'
+  const addDocument = (address: string): ResolvedAction => ({
+    ...addIssue,
+    id: 'add-document',
+    label: 'New document',
+    createsUnder: undefined,
+    listed: true,
+    declaredBy: { address, appName: 'Leaf' },
+  })
+  const addProject: ResolvedAction = { ...addIssue, id: 'add-project', label: 'New project', createsUnder: undefined, declaredBy: { address: SHIP_MANIFEST, appName: 'Estiva Ship' } }
+  const team = { address: '39000:relay:ops', title: 'Ops' }
+  const reads = new Map<number, CreatableKindRead | null>([
+    [30850, { actions: [addIssue], parents: [{ address: '30850:88ac:p1', title: 'Payments' }], manifest: SHIP_MANIFEST }],
+    [
+      39000,
+      {
+        actions: [startConversation, addProject, addDocument(LEAF_MANIFEST)],
+        parents: [{ address: DM, title: 'A DM' }],
+        manifest: FOLDER_ACTIONS_ADDRESS,
+        parentsFor: { 'add-project': [team], 'add-document': [team] },
+      },
+    ],
+  ])
+  const app = (host: string, id: string) => {
+    const found = launcherApps(host).find((a) => a.id === id)
+    expect(found, `${id} in ${host}'s ⌘K`).toBeDefined()
+    return found!
+  }
+
+  it("lists Leaf in Peek's and Ship's ⌘K with New document, into the teams", () => {
+    for (const host of ['peek', 'ship']) {
+      const leaf = creationsFor(app(host, 'leaf'), reads)!
+      expect(leaf.map((c) => [c.action.id, c.parentNoun, c.parents.map((p) => p.label)])).toEqual([['add-document', 'team', ['Ops']]])
+    }
+  })
+
+  it("leaves Leaf's New document out of Ship's and Peek's own sections", () => {
+    expect(creationsFor(app('peek', 'ship'), reads)!.map((c) => c.action.id)).toEqual(['add-issue', 'add-project'])
+    expect(creationsFor(app('ship', 'peek'), reads)!.map((c) => c.action.id)).toEqual(['start-a-conversation'])
+  })
+
+  it("offers a New document only from Leaf's own key: another key's manifest declaring the same action is offered by nobody", () => {
+    const forged = new Map<number, CreatableKindRead | null>([[39000, { ...reads.get(39000)!, actions: [addDocument('31990:ee11:estiva-leaf')] }]])
+    expect(creationsFor(app('peek', 'leaf'), forged)).toBeNull()
+  })
+
+  it("keeps Leaf's own ⌘K on its built-in New document, never a second row from its manifest", () => {
+    expect(creationsFor(app('leaf', 'leaf'), reads)).toBeNull()
   })
 })
 

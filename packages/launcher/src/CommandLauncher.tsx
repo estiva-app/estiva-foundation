@@ -3,7 +3,7 @@ import { IconAlignLeft, IconDownload, IconEraser, IconPencil, IconRefresh, IconS
 import { Avatar, KindIcon, CommandPalette, CommandPaletteAnswer, type CommandPaletteChip, CommandPaletteForm, type CommandPaletteGroup, CommandPaletteQuote, type CommandPaletteRow, CommandPaletteSearch, CommandPaletteWorking, FieldLine, isApplePlatform, isPlainClick, useToast } from '@estiva-app/ui'
 import { ActionFormFields } from './ActionFormFields.js'
 import { useKeptAsks } from './keptAsks.js'
-import { applyPrefill, draftValues, missingFields, seedDraft, type FormDraft } from './formDraft.js'
+import { applyPrefill, draftValues, missingFields, seedDraft, withAnswer, type FormDraft } from './formDraft.js'
 import { KIND_CHANNEL_METADATA, type ResolvedAction } from '@estiva-app/interop'
 import { addrToNaddr } from '@estiva-app/protocol'
 import { fileEmptyState, isPrompt, launcherMatch, matchPeople, messageEmptyState, type MessageSearchState } from './launcherSearch.js'
@@ -20,6 +20,7 @@ import {
   creationsFor,
   launcherActionFrom,
   proseSubmission,
+  readKindOf,
   splitSubmission,
   type CreatableKindRead,
 } from './liveAction.js'
@@ -404,7 +405,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     async (required: number, ownKindOnly = false): Promise<Map<number, CreatableKindRead | null>> => {
       // A team is read whichever apps are listed: what another app declares on one (Ship's New project) is found
       // there, and an app that does not list Peek still offers it (KIN-11, Leaf).
-      const kinds = ownKindOnly ? [required] : [...new Set([...probeable(LAUNCHER_APPS).map((app) => app.parentKind as number), KIND_CHANNEL_METADATA])]
+      const kinds = ownKindOnly ? [required] : [...new Set([...probeable(LAUNCHER_APPS).map((app) => readKindOf(app) as number), KIND_CHANNEL_METADATA])]
       const reads = await Promise.allSettled(
         kinds.map((kind) => {
           let read = kindReads.current.get(kind)
@@ -431,10 +432,11 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
   const readLive = useCallback(
     (app: LauncherApp) => {
       // An app with no parent kind is never probed: nothing about it is live.
-      if (typeof app.parentKind !== 'number' || asked.current.has(app.id)) return
+      const kind = readKindOf(app)
+      if (kind === undefined || asked.current.has(app.id)) return
       asked.current.add(app.id)
       setLive((l) => ({ ...l, [app.id]: { state: 'loading' } }))
-      readKinds(app.parentKind, !!app.isHost)
+      readKinds(kind, !!app.isHost)
         .then((reads) => {
           const found = creationsFor(app, reads)
           if (!found) {
@@ -1071,7 +1073,12 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
             label: action.label,
             description: app.isHost ? undefined : app.label,
             leading: <span className="flex size-8 items-center justify-center">{appMark(app, 16)}</span>,
-            onSelect: () => setStack((s) => [...s, { level: { kind: 'form', action, app, sentence: typed }, query: '' }]),
+            onSelect: () => {
+              const level = { kind: 'form', action, app, sentence: typed } as const
+              // Picked under an answer, a new document starts with it as its text (KIN-9).
+              if (answer) setDrafts((d) => ({ ...d, [formKey(level)]: withAnswer(d[formKey(level)] ?? seedFor(level), action, answer.text) }))
+              setStack((s) => [...s, { level, query: '' }])
+            },
           },
           // Only words this package wrote: a live row's label comes from a manifest on the relay, and whoever wrote
           // that could word it to win every sentence, or to fail the check and switch the guess off.
@@ -1340,7 +1347,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     const rows = actions
       .filter((a) => !q || launcherMatch(a.label, query))
       .map((action) => ({ id: action.id, label: action.label, icon: icon(IconPencil), onSelect: () => push({ kind: 'form', action, app }) }))
-    const loading = typeof app.parentKind === 'number' && (!read || read.state === 'loading')
+    const loading = readKindOf(app) !== undefined && (!read || read.state === 'loading')
     return {
       groups: [{ label: `${app.label} actions`, rows }],
       // Say what is happening rather than showing an empty section: a blank list

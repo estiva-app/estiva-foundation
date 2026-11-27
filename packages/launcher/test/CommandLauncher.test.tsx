@@ -235,3 +235,49 @@ describe('another app’s creation on a team, where the app whose kind a team is
     expect(optionNamed('New project')).toBeTruthy()
   })
 })
+
+describe("Leaf's New document in Ship's and Peek's ⌘K (KIN-9)", () => {
+  const LEAF = '31990:9b0ff001e909e0c6eb9165b81118b0c580db2584c87e1c794a2ec9339f7541ec:estiva-leaf'
+  const declared = (id: string, label: string, address: string) => ({
+    id,
+    label,
+    control: 'form',
+    fields: [{ name: 'title', type: 'string', required: true }],
+    declaredBy: { address },
+  })
+  // With no `maySign`, the box offers every action read, as Peek's does.
+  const box = (declaredBy: string, maySign?: (kind: number) => boolean) => {
+    const ops = [{ address: '39000:rr:ops', title: 'Ops' }]
+    const reads = {
+      39000: {
+        // Leaf's own key also declares a New page, so a box that has read the team shows it either way.
+        actions: [declared('add-document', 'New document', declaredBy), declared('add-page', 'New page', LEAF)],
+        parents: [],
+        parentsFor: { 'add-document': ops, 'add-page': ops },
+      },
+    } as unknown as Record<number, Awaited<ReturnType<LauncherHost['manifests']['creatableUnder']>>>
+    return standIn({
+      apps: launcherApps('ship'),
+      ...(maySign ? { maySign } : {}),
+      manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction: async () => ({ ok: true }), resolveObject: async () => null },
+    })
+  }
+
+  it("suggests Leaf's New document, marked Leaf, in Ship's box when Ship may sign a document", async () => {
+    const { type } = mount(box(LEAF, (kind) => [30850, 30851, 30842].includes(kind)))
+
+    type('write a document for the launch plan')
+
+    await waitFor(() => expect(optionNamed('New document')).toBeTruthy())
+    expect(optionNamed('New document')!.textContent).toContain('Leaf')
+  })
+
+  it("does not suggest a New document that another key's manifest declares as Leaf's", async () => {
+    const { type } = mount(box('31990:ee11:estiva-leaf'))
+
+    type('write a document for the launch plan')
+
+    await waitFor(() => expect(optionNamed('New page')).toBeTruthy())
+    expect(optionNamed('New document')).toBeUndefined()
+  })
+})

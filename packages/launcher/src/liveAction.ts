@@ -229,10 +229,10 @@ export interface AppCreation {
  * nothing, which is the section's "none".
  */
 export function creationsFor(
-  app: { parentKind?: number; parentNoun?: string; offersFolderBuiltIns?: boolean },
+  app: { parentKind?: number; parentNoun?: string; offersFolderBuiltIns?: boolean; declaredBy?: string },
   reads: ReadonlyMap<number, CreatableKindRead | null>,
 ): AppCreation[] | null {
-  if (typeof app.parentKind !== 'number') return null
+  if (typeof app.parentKind !== 'number') return app.declaredBy ? declaredBy(app.declaredBy, reads) : null
   const own = reads.get(app.parentKind)
   if (!own) return null
   const out: AppCreation[] = []
@@ -271,6 +271,38 @@ export function creationsFor(
     }
   }
   return out
+}
+
+/**
+ * The kind an app's section reads to find its creations: its own `parentKind`, or a team's for an app known by the
+ * manifest that declares its actions (KIN-9). Undefined for an app that is never read.
+ */
+export function readKindOf(app: { parentKind?: number; declaredBy?: string }): number | undefined {
+  return typeof app.parentKind === 'number' ? app.parentKind : app.declaredBy ? KIND_CHANNEL_METADATA : undefined
+}
+
+/**
+ * The creations one manifest declared, on whichever kind they were read (KIN-9): an action is this app's only when
+ * that manifest, by its address, is the one that declared it. Never a team's built-in, and never one another key's
+ * manifest declares under the same id. Null when it declared none.
+ */
+function declaredBy(manifest: string, reads: ReadonlyMap<number, CreatableKindRead | null>): AppCreation[] | null {
+  const out: AppCreation[] = []
+  const seen = new Set<string>()
+  for (const [kind, read] of reads) {
+    if (!read) continue
+    for (const action of read.actions) {
+      if (action.declaredBy?.address !== manifest || isFolderBuiltIn(action) || seen.has(action.id)) continue
+      seen.add(action.id)
+      out.push({
+        action,
+        parents: (read.parentsFor?.[action.id] ?? read.parents).map((p) => ({ value: p.address, label: p.title })),
+        // A team is a team whoever draws it (TEA-8).
+        parentNoun: kind === KIND_CHANNEL_METADATA ? 'team' : (read.noun ?? 'parent'),
+      })
+    }
+  }
+  return out.length > 0 ? out : null
 }
 
 /**

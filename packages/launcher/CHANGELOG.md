@@ -2,6 +2,26 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.5.0 — 2026-11-27
+
+**Leaf's New document in every other app's ⌘K, with the answer you just read
+as its text (KIN-9).** A host whose `maySign` is set adds `30842` to offer it,
+and needs `manifests.creatableUnder` and `applyAction` to read and make a
+creation on a team (Ship's returned nothing until now). Leaf's own box is
+unchanged: its built-in New document still opens the page.
+
+- Leaf is listed in Peek's and Ship's box. Its section reads the teams and
+  takes only what Leaf's manifest, by its committed key's address
+  (`LEAF_MANIFEST`), declared there: a 31990 by any other key declaring the same
+  action is offered by nobody. `LauncherApp.declaredBy` names that manifest.
+- An action picked under an answer starts with the answer, without its
+  numbered citations, in its declared prose field (a text its app declares as
+  a block document) when the person has not typed in it. The conversation's
+  suggestion no longer replaces it. A form with no such field is unchanged, so
+  Ship's New project still starts empty.
+- The registry comment no longer says an app nobody here wrote works the same
+  day: that waits for the workspace's added apps (WOR-2).
+
 ## 0.4.2 — 2026-11-27
 
 **An answer is put only in the conversation it was asked in (KIN-12 review).**
