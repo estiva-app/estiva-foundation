@@ -37,13 +37,17 @@
 import { isFileId } from '@estiva-app/protocol'
 
 /**
- * A v4 uuid at the very end of a ref.
+ * A v4 uuid at the very end of a ref, as the whole ref or after the slug's `-`.
  *
  * Anchored at the end rather than searched for, because §7.2's rule is
  * positional: the identity is the tail, and everything before it is a human
- * label that may itself contain hyphens, digits and hex.
+ * label that may itself contain hyphens, digits and hex. The `-` before it is
+ * §7.2's `<slug>-<d>`: a uuid after anything else is not a ref. Peek's old
+ * long link, `/topic/<kind>:<pubkey>:<d>`, ends in a uuid after a `:`, and no
+ * app reads that link any more (LIN-8), so it opens nothing rather than the
+ * file it once named.
  */
-const TRAILING_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const TRAILING_UUID_RE = /(?:^|-)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
 
 /**
  * A 64-character event id at the very end of a ref.
@@ -92,7 +96,7 @@ export function objectRef(identifier: string, title?: string): string {
  */
 export function identifierFromRef(ref: string): string | null {
   const match = TRAILING_UUID_RE.exec(ref)
-  return match ? match[0].toLowerCase() : null
+  return match ? match[1]!.toLowerCase() : null
 }
 
 /**
