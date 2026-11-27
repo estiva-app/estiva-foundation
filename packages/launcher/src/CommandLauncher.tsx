@@ -254,6 +254,12 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
   const here = pathname + search
   /** The place a sentence asked here is about (`LauncherHost.path`): on Peek's Desk, the file it shows, not the page. */
   const place = host.path.place || pathname
+  /*
+    The place as last drawn, for a wait that outlives this render (`putInComposer`). Set while drawing, not in
+    an effect: the page's message box registers from its own effect, which runs before this one's.
+  */
+  const placeNow = useRef(place)
+  placeNow.current = place
   const [request, setRequest] = useState<{ intent: Intent; text: string } | null>(null)
   const [sentFrom, setSentFrom] = useState<{ context: LauncherContext; path: string; place: string } | null>(null)
   const [draft, setDraft] = useState<string | null | false>(null)
@@ -669,7 +675,12 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     navigate(sentFrom.path)
     // A name is not an address: if the person leaves that page before its box opens, nothing is written.
     const to = sentFrom.path
-    const stillThere = () => window.location.pathname + window.location.search === to
+    /*
+      The address alone is not the conversation: a DM picked on Peek's Desk is not in it, so going back to
+      `/app/desk` can show another DM, whose box may carry the same name. Only the place it was asked in takes it.
+    */
+    const asked = sentFrom.place
+    const stillThere = () => window.location.pathname + window.location.search === to && placeNow.current === asked
     void composer.insertTextWhenOpens(label, text, stillThere).then((placed) => (placed ? onClose() : lost()))
   }
 

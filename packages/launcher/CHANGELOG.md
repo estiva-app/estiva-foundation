@@ -2,6 +2,17 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.4.2 — 2026-11-27
+
+**An answer is put only in the conversation it was asked in (KIN-12 review).**
+No host has to change.
+
+- "Put the answer in the message box", from somewhere else, goes back to where
+  the sentence was asked and writes once that conversation's box opens. It now
+  also waits for the same `place`, not only the same address: going back to
+  Peek's Desk can show another DM there, whose box may carry the same name.
+  Then nothing is written and the box says it could not reach it.
+
 ## 0.4.1 — 2026-11-27
 
 **An ask made in one conversation on a Desk waits under Recent in the next

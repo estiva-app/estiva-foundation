@@ -1,6 +1,6 @@
 {
   "name": "@estiva-app/launcher",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "The ⌘K box every Estiva app mounts: a name finds anything, a sentence asks about what is open, and the box suggests what to do with it. Each app hands it a host: where the person is, the people, the relay's search and the manifest runtime.",
   "license": "MIT",
   "type": "module",
