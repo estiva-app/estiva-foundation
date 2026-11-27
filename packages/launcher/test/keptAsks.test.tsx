@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ToastProvider } from '@estiva-app/ui'
 import { CommandLauncher } from '../src/CommandLauncher.js'
-import type { LauncherContext } from '../src/host.js'
+import type { LauncherContext, LauncherHost } from '../src/host.js'
 import { useKeptLauncher } from '../src/useKeptLauncher.js'
 import { standIn } from './standIn.js'
 
@@ -37,13 +37,13 @@ function model() {
   }
 }
 
-function mountApp() {
+function mountApp(over: Partial<LauncherHost> = {}) {
   const m = model()
   const put: string[] = []
   function App() {
     const [at, setAt] = useState(WEEKLY)
     const capture = useCallback(() => place(at), [at])
-    const base = standIn()
+    const base = standIn(over)
     const host = {
       ...base,
       path: { pathname: `/t/${at.replace(' ', '-').toLowerCase()}`, search: '' },
@@ -169,6 +169,47 @@ describe('the dot says what a kept ask is doing', () => {
     expect(row('who reviews the new colours')?.textContent).toContain(`in ${DESIGN}`)
     fireEvent.click(row('who reviews the new colours')!)
     await waitFor(() => expect(screen.getByTestId('answer').textContent).toContain('Katerina does'))
+  })
+})
+
+describe('a kept ask comes back as its sentence and answer', () => {
+  it('after a suggested action under the answer was done, not as the form that did it', async () => {
+    const applied: string[] = []
+    const reads = {
+      30850: {
+        actions: [{ id: 'add-issue', label: 'Add issue', control: 'form', fields: [{ name: 'title', type: 'string', required: true }] }],
+        manifest: '31990:bb:estiva-ship',
+        parents: [{ address: `30850:${'b'.repeat(64)}:website`, title: 'Website' }],
+      },
+    } as unknown as Record<number, Awaited<ReturnType<ReturnType<typeof standIn>['manifests']['creatableUnder']>>>
+    const app = mountApp({
+      maySign: (kind) => kind === 30850 || kind === 30851,
+      manifests: {
+        creatableUnder: async (kind) => reads[kind] ?? null,
+        applyAction: async (apply) => (applied.push(apply.actionId), { ok: true }),
+        resolveObject: async () => null,
+      },
+    })
+    app.search()
+    app.ask('make an issue for the login bug')
+    await waitFor(() => expect(app.asked()).toBe(1))
+    app.answer(0, 'The login fails after the bump [1].')
+    await waitFor(() => expect(row('Add issue')).toBeTruthy())
+
+    fireEvent.click(row('Add issue')!)
+    const title = await screen.findByRole('textbox', { name: /title/i })
+    fireEvent.change(title, { target: { value: 'Login fails after the bump' } })
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Website' }))
+    fireEvent.keyDown(title, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(applied).toEqual(['add-issue']))
+    await waitFor(() => expect(app.field()).toBeNull())
+
+    app.search()
+    fireEvent.click(row('make an issue for the login bug')!)
+
+    await waitFor(() => expect(app.field()?.value).toBe('make an issue for the login bug'))
+    expect(screen.getByTestId('answer').textContent).toContain('The login fails after the bump')
   })
 })
 

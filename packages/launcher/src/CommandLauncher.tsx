@@ -210,7 +210,7 @@ function initialStack(apps: readonly LauncherApp[], appId?: string, actionId?: s
 const formKey = (level: Extract<Level, { kind: 'form' }>) =>
   `${level.action.target ?? level.app?.id ?? ''}:${level.action.id}`
 
-export function CommandLauncher({ host, context: openedHere, onClose, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
+export function CommandLauncher({ host, context: openedHere, onClose: finished, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
   /*
     What the app hands over, under the names this file has always used for
     them. Read on every render, so each is as fresh as the app's own hooks.
@@ -264,6 +264,16 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     setDraft(null)
     setAnswer(null)
     setRequest(next)
+  }
+
+  /*
+    Done with the box. A sentence that was sent is kept under Recent (KIN-12), and
+    picking it shows the sentence and its answer: never the level it was left on,
+    such as a form already submitted from under the answer.
+  */
+  const onClose = () => {
+    if (request?.intent === 'ask' && sentFrom) setStack([{ level: { kind: 'first' }, query: request.text }])
+    finished()
   }
 
   const setQuery = (next: string) => {
