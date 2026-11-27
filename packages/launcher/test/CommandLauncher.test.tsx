@@ -235,3 +235,94 @@ describe('another app’s creation on a team, where the app whose kind a team is
     expect(optionNamed('New project')).toBeTruthy()
   })
 })
+
+describe("Leaf's New document in Ship's and Peek's ⌘K (KIN-9)", () => {
+  const LEAF = '31990:9b0ff001e909e0c6eb9165b81118b0c580db2584c87e1c794a2ec9339f7541ec:estiva-leaf'
+  const declared = (id: string, label: string, address: string) => ({
+    id,
+    label,
+    control: 'form',
+    fields: [{ name: 'title', type: 'string', required: true }],
+    declaredBy: { address },
+  })
+  // With no `maySign`, the box offers every action read, as Peek's does.
+  const box = (declaredBy: string, maySign?: (kind: number) => boolean) => {
+    const ops = [{ address: '39000:rr:ops', title: 'Ops' }]
+    const reads = {
+      39000: {
+        // Leaf's own key also declares a New page, so a box that has read the team shows it either way.
+        actions: [declared('add-document', 'New document', declaredBy), declared('add-page', 'New page', LEAF)],
+        parents: [],
+        parentsFor: { 'add-document': ops, 'add-page': ops },
+      },
+    } as unknown as Record<number, Awaited<ReturnType<LauncherHost['manifests']['creatableUnder']>>>
+    return standIn({
+      apps: launcherApps('ship'),
+      ...(maySign ? { maySign } : {}),
+      manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction: async () => ({ ok: true }), resolveObject: async () => null },
+    })
+  }
+
+  it("suggests Leaf's New document, marked Leaf, in Ship's box when Ship may sign a document", async () => {
+    const { type } = mount(box(LEAF, (kind) => [30850, 30851, 30842].includes(kind)))
+
+    type('write a document for the launch plan')
+
+    await waitFor(() => expect(optionNamed('New document')).toBeTruthy())
+    expect(optionNamed('New document')!.textContent).toContain('Leaf')
+  })
+
+  it("does not suggest a New document that another key's manifest declares as Leaf's", async () => {
+    const { type } = mount(box('31990:ee11:estiva-leaf'))
+
+    type('write a document for the launch plan')
+
+    await waitFor(() => expect(optionNamed('New page')).toBeTruthy())
+    expect(optionNamed('New document')).toBeUndefined()
+  })
+
+  // Both declare a document text; only New document is the one Miky decided starts with the answer.
+  const withText = (id: string, label: string) => ({
+    ...declared(id, label, LEAF),
+    fields: [
+      { name: 'title', type: 'string', required: true },
+      { name: 'description', type: 'string', target: 'content', format: 'estiva-blocks-1' },
+    ],
+  })
+  const answered = (id: string, label: string) => {
+    const ops = [{ address: `39000:${'d'.repeat(64)}:ops`, title: 'Ops' }]
+    const reads = {
+      39000: { actions: [withText('add-document', 'New document'), withText('add-page', 'New page')], parents: [], parentsFor: { 'add-document': ops, 'add-page': ops } },
+    } as unknown as Record<number, Awaited<ReturnType<LauncherHost['manifests']['creatableUnder']>>>
+    const applyAction = vi.fn<LauncherHost['manifests']['applyAction']>(async () => ({ ok: true }))
+    // Asked in the Ops team, so the form starts there.
+    const host = standIn({ apps: launcherApps('ship'), currentFolder: () => 'ops', manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction, resolveObject: async () => null } })
+    const mounted = mount({ ...host, model: { ...host.model, promptForText: async () => 'We launch on 3 December [1].' } }, PAGE)
+    return { ...mounted, applyAction, pick: () => fireEvent.click(optionNamed(label)!), id }
+  }
+  const submitAs = async ({ field, type, pick, applyAction }: ReturnType<typeof answered>) => {
+    type('when do we launch, write it as a document')
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    await waitFor(() => expect(screen.getByTestId('answer').textContent).toContain('3 December'))
+    pick()
+    fireEvent.change(await screen.findByRole('textbox', { name: /title/i }), { target: { value: 'Launch' } })
+    // The form's submit says the action's own label.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('button[type="submit"]')!)
+    await waitFor(() => expect(applyAction).toHaveBeenCalledTimes(1))
+    return applyAction.mock.calls[0][0].value as Record<string, unknown>
+  }
+
+  it('makes New document picked under an answer with the answer as its text', async () => {
+    const value = await submitAs(answered('add-document', 'New document'))
+    expect(value.title).toBe('Launch')
+    // As a block document, without the conversation's [1].
+    const text = JSON.parse(String(value.description)).content.map((block: { content: { text: string }[] }) => block.content.map((t) => t.text).join(''))
+    expect(text).toEqual(['We launch on 3 December.'])
+  })
+
+  it("leaves another action's text empty under an answer, though its app declares one", async () => {
+    const value = await submitAs(answered('add-page', 'New page'))
+    expect(value.title).toBe('Launch')
+    expect(value.description).toBeUndefined()
+  })
+})

@@ -145,7 +145,7 @@ export function readProposal(
   return { entry, preview: preview || entry.launcher.label }
 }
 
-/** The apps worth asking for a manifest — those that say what to query. */
+/** The apps worth asking for a manifest — those that say what to query, or which manifest declares theirs (KIN-9). */
 export function probeable(apps: readonly LauncherApp[]): LauncherApp[] {
-  return apps.filter((a) => typeof a.parentKind === 'number')
+  return apps.filter((a) => typeof a.parentKind === 'number' || !!a.declaredBy)
 }

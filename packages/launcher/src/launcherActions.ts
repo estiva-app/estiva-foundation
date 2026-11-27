@@ -88,6 +88,11 @@ export interface LauncherAction {
   /** The whole action exists in the live manifest (vs proposed). */
   declaredToday?: boolean
   /**
+   * Picked under an answer, its form starts with the answer as its text (KIN-9: Leaf's New document only, Miky at its
+   * kickoff). Another action's text, an issue's description, stays as it was until somebody decides it.
+   */
+  startsWithAnswer?: boolean
+  /**
    * The manifest that declared it, when that is not the parent's own — Ship's
    * `add-project` on a Folder (MAN-8). Passed to `applyAction` so the runtime
    * builds with the declaring manifest.
@@ -147,14 +152,21 @@ export interface LauncherApp {
    * **The one app-specific fact discovery cannot avoid**, and it lives here
    * rather than in whatever consumes it: a projection is per kind, so finding
    * an app's manifest means querying one of its records, and something must
-   * name the kind. Adding an app is then a registry entry, not a change to any
-   * consumer — which is INT-5's whole test (RFC 0.4 §15: an app nobody here
-   * wrote publishes a manifest, and this works for it the same day).
+   * name the kind. Adding an app is then a registry entry and a release of this
+   * package into every app — not yet RFC 0.4 §15's "an app nobody here wrote
+   * works the same day", which waits for the workspace to say which apps it
+   * added (record an-app-counts-only-once-the-workspace-adds-it; WOR-2).
    *
    * Absent for an app that creates nothing readable this way, and such an app
-   * is simply not probed.
+   * is not probed, unless it names `declaredBy`.
    */
   parentKind?: number
+  /**
+   * The manifest that declares this app's actions, by address, for an app whose creations sit on a kind it does not
+   * own — Leaf's New document on a team (KIN-9). Its section reads the teams and takes the actions this manifest
+   * declared there, and nothing else.
+   */
+  declaredBy?: string
   /**
    * What the parent picker calls the thing being picked — "project", "topic".
    *
@@ -385,8 +397,19 @@ const PEEK: LauncherApp = {
 }
 
 /**
- * Leaf, as the box running in it knows itself (KIN-5). No parent kind: Leaf's manifest declares nothing creatable yet
- * (KIN-9), so it is never probed, and its New document is the host's own action (`LauncherHost.ownActions`).
+ * Leaf's manifest, by its address: the key `leaf/src/manifest-address.ts` commits, which publishes it on every relay.
+ *
+ * Named here because a document's New document is declared on a team, whose own manifest is the specification's
+ * (SPEC §3.2), so the read of a team cannot say it is Leaf's: only the declaring manifest's address can. Pinning the
+ * key is also what keeps a stranger's 31990 out of the box until the workspace says which apps it added (record
+ * an-app-counts-only-once-the-workspace-adds-it; WOR-2): a manifest by any other key declaring the same action is
+ * offered by nobody.
+ */
+export const LEAF_MANIFEST = '31990:9b0ff001e909e0c6eb9165b81118b0c580db2584c87e1c794a2ec9339f7541ec:estiva-leaf'
+
+/**
+ * Leaf, as the box running in it knows itself (KIN-5): its New document is the host's own action
+ * (`LauncherHost.ownActions`), which opens the new page, so it is never probed there.
  */
 const LEAF: LauncherApp = {
   id: 'leaf',
@@ -398,6 +421,29 @@ const LEAF: LauncherApp = {
 }
 
 /**
+ * Leaf, as every other app's box knows it (KIN-9): New document, as Leaf's manifest declares it on a team, made in
+ * place in the app you are in (record an-app-makes-another-apps-file-in-place-from-its-declared-action).
+ */
+const LEAF_ELSEWHERE: LauncherApp = {
+  ...LEAF,
+  placeholder: "Try 'new document'...",
+  declaredBy: LEAF_MANIFEST,
+  actions: [
+    {
+      id: 'add-document',
+      label: 'New document',
+      guessAs: 'Write a new document, page or doc',
+      declaredToday: true,
+      startsWithAnswer: true,
+      appliesTo: '39000',
+      emits: { kind: 30842 },
+      submitLabel: 'Create document',
+      fields: [],
+    },
+  ],
+}
+
+/**
  * Every app the launcher knows, with the one it runs in marked `isHost` (KIN-4).
  *
  * Order matters: Ship first, matching the ask that started this (Cmd+K forms
@@ -405,7 +451,6 @@ const LEAF: LauncherApp = {
  */
 
 export function launcherApps(hostId: string): LauncherApp[] {
-  // Leaf is listed only where it is the host: elsewhere it would be an app with nothing to offer, until KIN-9.
-  const apps = hostId === LEAF.id ? [SHIP, PEEK, LEAF] : [SHIP, PEEK]
+  const apps = hostId === LEAF.id ? [SHIP, PEEK, LEAF] : [SHIP, PEEK, LEAF_ELSEWHERE]
   return apps.map((app) => (app.id === hostId ? { ...app, isHost: true } : app))
 }
