@@ -1077,8 +1077,9 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
             leading: <span className="flex size-8 items-center justify-center">{appMark(app, 16)}</span>,
             onSelect: () => {
               const level = { kind: 'form', action, app, sentence: typed } as const
-              // Picked under an answer, a new document starts with it as its text (KIN-9).
-              if (answer) setDrafts((d) => ({ ...d, [formKey(level)]: withAnswer(d[formKey(level)] ?? seedFor(level), action, answer.text) }))
+              // Picked under an answer, a new document starts with it as its text (KIN-9). Only an action the registry
+              // marks: the live one comes from a manifest on the relay.
+              if (answer && app.actions.find((a) => a.id === action.id)?.startsWithAnswer) setDrafts((d) => ({ ...d, [formKey(level)]: withAnswer(d[formKey(level)] ?? seedFor(level), action, answer.text) }))
               setStack((s) => [...s, { level, query: '' }])
             },
           },

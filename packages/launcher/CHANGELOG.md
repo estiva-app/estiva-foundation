@@ -14,11 +14,11 @@ unchanged: its built-in New document still opens the page.
   takes only what Leaf's manifest, by its committed key's address
   (`LEAF_MANIFEST`), declared there: a 31990 by any other key declaring the same
   action is offered by nobody. `LauncherApp.declaredBy` names that manifest.
-- An action picked under an answer starts with the answer, without its
-  numbered citations, in its declared prose field (a text its app declares as
-  a block document) when the person has not typed in it. The conversation's
-  suggestion no longer replaces it. A form with no such field is unchanged, so
-  Ship's New project still starts empty.
+- Leaf's New document picked under an answer starts with the answer, without
+  its numbered citations, as its text, when the person has not typed in it; a
+  later answer replaces one they left as it was. The conversation's suggestion
+  no longer replaces it. Only an action the registry marks `startsWithAnswer`
+  does this: Ship's Create issue and New project are unchanged.
 - A creation on a team starts in the team you are in (`host.currentFolder`),
   as Create topic did: Leaf's New document, and Ship's New project in Peek.
 - The registry comment no longer says an app nobody here wrote works the same

@@ -280,4 +280,49 @@ describe("Leaf's New document in Ship's and Peek's ⌘K (KIN-9)", () => {
     await waitFor(() => expect(optionNamed('New page')).toBeTruthy())
     expect(optionNamed('New document')).toBeUndefined()
   })
+
+  // Both declare a document text; only New document is the one Miky decided starts with the answer.
+  const withText = (id: string, label: string) => ({
+    ...declared(id, label, LEAF),
+    fields: [
+      { name: 'title', type: 'string', required: true },
+      { name: 'description', type: 'string', target: 'content', format: 'estiva-blocks-1' },
+    ],
+  })
+  const answered = (id: string, label: string) => {
+    const ops = [{ address: `39000:${'d'.repeat(64)}:ops`, title: 'Ops' }]
+    const reads = {
+      39000: { actions: [withText('add-document', 'New document'), withText('add-page', 'New page')], parents: [], parentsFor: { 'add-document': ops, 'add-page': ops } },
+    } as unknown as Record<number, Awaited<ReturnType<LauncherHost['manifests']['creatableUnder']>>>
+    const applyAction = vi.fn<LauncherHost['manifests']['applyAction']>(async () => ({ ok: true }))
+    // Asked in the Ops team, so the form starts there.
+    const host = standIn({ apps: launcherApps('ship'), currentFolder: () => 'ops', manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction, resolveObject: async () => null } })
+    const mounted = mount({ ...host, model: { ...host.model, promptForText: async () => 'We launch on 3 December [1].' } }, PAGE)
+    return { ...mounted, applyAction, pick: () => fireEvent.click(optionNamed(label)!), id }
+  }
+  const submitAs = async ({ field, type, pick, applyAction }: ReturnType<typeof answered>) => {
+    type('when do we launch, write it as a document')
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    await waitFor(() => expect(screen.getByTestId('answer').textContent).toContain('3 December'))
+    pick()
+    fireEvent.change(await screen.findByRole('textbox', { name: /title/i }), { target: { value: 'Launch' } })
+    // The form's submit says the action's own label.
+    fireEvent.click(document.querySelector<HTMLButtonElement>('button[type="submit"]')!)
+    await waitFor(() => expect(applyAction).toHaveBeenCalledTimes(1))
+    return applyAction.mock.calls[0][0].value as Record<string, unknown>
+  }
+
+  it('makes New document picked under an answer with the answer as its text', async () => {
+    const value = await submitAs(answered('add-document', 'New document'))
+    expect(value.title).toBe('Launch')
+    // As a block document, without the conversation's [1].
+    const text = JSON.parse(String(value.description)).content.map((block: { content: { text: string }[] }) => block.content.map((t) => t.text).join(''))
+    expect(text).toEqual(['We launch on 3 December.'])
+  })
+
+  it("leaves another action's text empty under an answer, though its app declares one", async () => {
+    const value = await submitAs(answered('add-page', 'New page'))
+    expect(value.title).toBe('Launch')
+    expect(value.description).toBeUndefined()
+  })
 })

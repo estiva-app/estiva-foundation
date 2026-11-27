@@ -29,6 +29,8 @@ export interface FormDraft {
    * and never in one somebody has.
    */
   touched: string[]
+  /** The answer `withAnswer` put in, so a later answer replaces it while the person has not changed it (KIN-9). */
+  answered?: string
 }
 
 /** A new draft: each field's default, or the value it was opened with. */
@@ -101,17 +103,21 @@ export function answerAsText(answer: string): string {
  * November: "the answer you just read becomes the document's first text").
  *
  * Only into a declared `prose` field — a text the action's own app declares as a whole document (`format` in its
- * manifest) — and only one the person has not typed in. It counts as theirs from here, so the conversation's
- * suggestion (PEE-5) never replaces the answer they chose it for. A form with no such field is left as it is.
+ * manifest) — and only one the person has not typed in: a later answer replaces an earlier one they left as it was.
+ * It counts as touched, so the conversation's suggestion (PEE-5) never replaces the answer they chose it for. A form
+ * with no such field is left as it is. Which actions take an answer is the registry's (`startsWithAnswer`).
  */
 export function withAnswer(draft: FormDraft, action: LauncherAction, answer: string): FormDraft {
   const text = answerAsText(answer)
   const field = action.fields.find((f) => f.control === 'prose')
-  if (!text || !field || draft.touched.includes(field.key)) return draft
+  if (!text || !field) return draft
+  const typed = draft.touched.includes(field.key) && draft.values[field.key] !== draft.answered
+  if (typed) return draft
   const formats = { ...draft.formats }
   // Marker text, as every suggestion is.
   delete formats[field.key]
-  return { ...draft, values: { ...draft.values, [field.key]: text }, formats, touched: [...draft.touched, field.key] }
+  const touched = draft.touched.includes(field.key) ? draft.touched : [...draft.touched, field.key]
+  return { ...draft, values: { ...draft.values, [field.key]: text }, formats, touched, answered: text }
 }
 
 export function applyPrefill(draft: FormDraft, prefill: Record<string, string>): FormDraft {

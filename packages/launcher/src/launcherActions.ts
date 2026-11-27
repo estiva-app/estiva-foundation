@@ -88,6 +88,11 @@ export interface LauncherAction {
   /** The whole action exists in the live manifest (vs proposed). */
   declaredToday?: boolean
   /**
+   * Picked under an answer, its form starts with the answer as its text (KIN-9: Leaf's New document only, Miky at its
+   * kickoff). Another action's text, an issue's description, stays as it was until somebody decides it.
+   */
+  startsWithAnswer?: boolean
+  /**
    * The manifest that declared it, when that is not the parent's own — Ship's
    * `add-project` on a Folder (MAN-8). Passed to `applyAction` so the runtime
    * builds with the declaring manifest.
@@ -429,6 +434,7 @@ const LEAF_ELSEWHERE: LauncherApp = {
       label: 'New document',
       guessAs: 'Write a new document, page or doc',
       declaredToday: true,
+      startsWithAnswer: true,
       appliesTo: '39000',
       emits: { kind: 30842 },
       submitLabel: 'Create document',

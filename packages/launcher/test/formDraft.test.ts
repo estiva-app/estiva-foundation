@@ -29,6 +29,17 @@ describe('a form picked under an answer (KIN-9)', () => {
     expect(draft.values).toEqual({ title: 'Launch decisions', description: 'We decided three things:\n\n- Launch on 3 December.\n- Katerina owns the page.' })
   })
 
+  it('replaces an earlier answer with a later one while the person left it as it was', () => {
+    const first = withAnswer(seedDraft(newDocument), newDocument, 'Launch on 3 December [1].')
+    expect(withAnswer(first, newDocument, 'Launch on 10 December [2].').values.description).toBe('Launch on 10 December.')
+  })
+
+  it('keeps an answer the person then edited', () => {
+    const first = withAnswer(seedDraft(newDocument), newDocument, 'Launch on 3 December [1].')
+    const edited = { ...first, values: { ...first.values, description: 'Launch on 3 December, Katerina presents.' } }
+    expect(withAnswer(edited, newDocument, 'Launch on 10 December [2].').values.description).toBe('Launch on 3 December, Katerina presents.')
+  })
+
   it('never replaces a text the person typed', () => {
     const typed = { ...seedDraft(newDocument), values: { description: 'My own notes' }, touched: ['description'] }
     expect(withAnswer(typed, newDocument, ANSWER).values.description).toBe('My own notes')
