@@ -528,6 +528,71 @@ test('a file list with a limit is caught up only when the limit cannot cut it', 
   assert.equal(r.sent.reconciles, 1)
 })
 
+/* 3422b0d8 — a pooled list whose files changed since is a new question; it catches up from the lists it replaces. */
+
+const dOf = (root: SignedEvent) => root.tags.find((t) => t[0] === 'd')![1]!
+const pooled = (roots: SignedEvent[]): SnapshotFilter => {
+  const d = roots.map(dOf)
+  return { fields: 'newest', kinds: [FILE], authors: [OWNER], '#d': d, limit: d.length }
+}
+
+test('a list with a file added since catches up from the list it grew from: only the new file is downloaded', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const { roots } = filesIn(r, 't1', 20)
+  const snap = await copy()
+  const before = pooled(roots)
+  snap.absorb([before], await r.relay.query([before]))
+
+  const added = ev(FILE, 4_000, [['d', 't1-new'], ['h', 't1']])
+  const title = change(added, 'title', 'New file', 4_001)
+  r.publish(added, title)
+  const after = pooled([...roots, added])
+  r.sent.events = 0
+  const result = await catchUp(snap, [after], r.relay)
+  assert.equal(result.reconciled, 1, 'caught up, not asked again')
+  assert.equal(result.asked, 0)
+  assert.equal(r.sent.events, 2, 'only the new file and its title were downloaded')
+  assert.deepEqual(ids(result.events), await listedNow(r, after))
+
+  r.sent.events = 0
+  const again = await catchUp(snap, [after], r.relay)
+  assert.equal(r.sent.events, 0, 'the new list is remembered as it ended')
+  assert.deepEqual(ids(again.events), await listedNow(r, after))
+})
+
+test('a list rebuilt from neighbours still drops a replaced change and a file that left it', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const { roots, titles } = filesIn(r, 't1', 30)
+  const snap = await copy()
+  const [one, two] = [pooled(roots.slice(0, 15)), pooled(roots.slice(15))]
+  snap.absorb([one, two], await r.relay.query([one, two]))
+
+  const retitle = change(roots[2]!, 'title', 'Renamed', 4_000)
+  r.publish(retitle)
+  // One file moved out of the set; the rest are pooled across the old cut.
+  const after = pooled([...roots.slice(1, 10), ...roots.slice(20)])
+  r.sent.events = 0
+  const result = await catchUp(snap, [after], r.relay)
+  assert.equal(result.reconciled, 1)
+  assert.equal(r.sent.events, 1, 'only the new title was downloaded')
+  assert.ok(!result.events.some((e) => e.id === titles[2]!.id || e.id === roots[0]!.id), 'the replaced title and the file not asked are out')
+  assert.deepEqual(ids(result.events), await listedNow(r, after))
+})
+
+test('a list none of whose files the copy holds is asked plainly', async () => {
+  const r = fakeRelay({ teams: new Set(['t1']) })
+  const { roots } = filesIn(r, 't1', 40)
+  const snap = await copy()
+  const held = pooled(roots.slice(0, 20))
+  snap.absorb([held], await r.relay.query([held]))
+
+  const other = pooled(roots.slice(20))
+  assert.equal(snap.held(other), null, 'no remembered list holds its files')
+  const result = await catchUp(snap, [other], r.relay)
+  assert.equal(result.asked, 1)
+  assert.deepEqual(ids(result.events), await listedNow(r, other))
+})
+
 test('past the most lists the copy remembers, the least recently answered is forgotten and asked plainly', async () => {
   const r = fakeRelay({ teams: new Set(['t1', 't2', 't3']) })
   for (const [i, name] of ['t1', 't2', 't3'].entries()) filesIn(r, name, 20, 1_000 + i * 100)

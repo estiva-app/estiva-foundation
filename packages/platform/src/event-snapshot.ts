@@ -296,6 +296,12 @@ export function snapshotListKey(filter: SnapshotFilter): string | null {
   return JSON.stringify(keys.map((k) => [k, sortedValue(filter[k])]))
 }
 
+/** A list key ({@link snapshotListKey}) without its `#d` values: lists of one shape ask the same of other files. */
+function listShape(key: string): string | null {
+  const entries = JSON.parse(key) as [string, unknown][]
+  return entries.some(([k]) => k === '#d') ? JSON.stringify(entries.filter(([k]) => k !== '#d')) : null
+}
+
 const isReplaceableKind = (kind: number) => kind === 0 || kind === 3 || (kind >= 10_000 && kind < 20_000)
 const isAddressableKind = (kind: number) => kind >= 30_000 && kind < 40_000
 
@@ -373,6 +379,8 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   let covers: Map<string, Set<string>> | undefined
   /** Each list read's last answer, by {@link snapshotListKey}. */
   const lists = new Map<string, Set<string>>()
+  /** Each remembered list's key without its `#d` values ({@link listShape}), worked out once per key. */
+  const shapes = new Map<string, string | null>()
   let listsDirty = false
   const dirty = new Set<string>()
   const removed = new Set<string>()
@@ -597,13 +605,59 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     return out
   }
 
+  function shapeOf(key: string): string | null {
+    let shape = shapes.get(key)
+    if (shape === undefined) {
+      // Forgotten lists leave their shapes behind; past twice the lists, start again.
+      if (shapes.size > 2 * Math.max(lists.size, maxLists)) shapes.clear()
+      shape = listShape(key)
+      shapes.set(key, shape)
+    }
+    return shape
+  }
+
+  /**
+   * A list question the copy never answered, held as what its remembered lists of the same shape hold for the files
+   * it asks: each first record it matches, and each change those lists carried for one. Interop pools a set of files
+   * into `#d` lists cut in arrival order, so a file that is new or moved since changes a list, and the whole list was
+   * read again: 628 KB of issues on Miky's reopen after an hour away, 27 Nov. Caught up from this, the relay sends only
+   * the new files and the changes the copy lacks, and drops what it no longer lists. `null` when no remembered list
+   * holds any of its files.
+   */
+  function heldFromNeighbours(filter: SnapshotFilter, key: string): SignedEvent[] | null {
+    if (!Array.isArray(filter['#d'])) return null
+    const shape = shapeOf(key)
+    if (shape === null) return null
+    const isRoot = snapshotMatcher(listRoots(filter))
+    const roots = new Map<string, SignedEvent>()
+    const near: SignedEvent[] = []
+    for (const [other, ids] of lists) {
+      if (other === key || shapeOf(other) !== shape) continue
+      for (const id of ids) {
+        const held = events.get(id)?.event
+        if (!held) continue
+        if (isRoot(held)) roots.set(held.id, held)
+        else near.push(held)
+      }
+    }
+    if (!roots.size) return null
+    const addresses = new Set([...roots.values()].map(replaceableKey).filter((a): a is string => a !== null))
+    const out = new Map(roots)
+    for (const event of near) {
+      if (event.tags.some((tag) => tag[0] === 'a' && tag[1] !== undefined && addresses.has(tag[1]))) out.set(event.id, event)
+    }
+    return [...out.values()]
+  }
+
   /** A list caught up: its ids are what it held, less what the relay no longer lists, plus what it fetched. */
-  function settleList(key: string, fetched: SignedEvent[], gone: string[]) {
+  function settleList(asked: SnapshotFilter, key: string, fetched: SignedEvent[], gone: string[]) {
     const seenAt = now()
+    // What it held before the fetched events joined the copy: a new list's is its neighbours' share.
+    const before = heldList(key) ?? heldFromNeighbours(asked, key) ?? []
     for (const event of fetched) hold({ event, seenAt }, true)
     const left = new Set(gone)
     const ids = new Set<string>()
-    for (const event of heldList(key) ?? []) if (!left.has(event.id)) ids.add(event.id)
+    for (const event of before) if (!left.has(event.id)) ids.add(event.id)
     for (const event of fetched) ids.add(event.id)
     // Seen now, fetched or not, so a list a catch-up never re-sends is not the first trimmed.
     for (const id of ids) {
@@ -763,7 +817,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
     held(filter) {
       if (filter.fields !== undefined) {
         const key = snapshotListKey(filter)
-        return key === null ? null : heldList(key)
+        return key === null ? null : (heldList(key) ?? heldFromNeighbours(filter, key))
       }
       if (!answerable(filter)) return null
       return candidates(filter).filter(snapshotMatcher(filter))
@@ -774,7 +828,7 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
       if (asked.fields === undefined) settle(asked, reconciled, fetched, gone)
       else {
         const key = snapshotListKey(asked)
-        if (key !== null) settleList(key, fetched, gone)
+        if (key !== null) settleList(asked, key, fetched, gone)
       }
     },
     plaintextOf(content) {
