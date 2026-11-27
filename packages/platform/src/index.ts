@@ -76,6 +76,7 @@ export {
   type VisibilityTarget,
 } from './refresh.js'
 export {
+  CATCH_UP_QUOTA_WAIT_MS,
   CATCH_UP_SMALLEST_HELD,
   catchUp,
   relaySpeaksNip77,

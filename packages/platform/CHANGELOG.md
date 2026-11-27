@@ -1,5 +1,20 @@
 # @estiva-app/platform
 
+## 0.15.0
+
+A catch-up refused for the person's quota waits out the pause and compares
+again, instead of asking the question whole (THE-15). The relay's quota is the
+person's, spent by all their apps, and its pause is short (buzz counts it over
+5 s); asking whole the moment it said to back off cost one of Miky's reopens
+7 MB more on 26 Nov.
+
+- `catchUp` reads a refused reconciliation's `rate-limited: … retry in Ns`
+  and, when the stated wait (at least 1 s) is at most `quotaWaitMs` (default
+  `CATCH_UP_QUOTA_WAIT_MS`, 5 s), waits it and compares that question once
+  more. A refusal that names no wait, a longer one, or a second refusal asks
+  the question whole, as before.
+- `CatchUpOptions.sleep` for a test's clock.
+
 ## 0.14.0
 
 A file list (SPEC §6.13, `"fields": "newest"`) catches up from the copy too

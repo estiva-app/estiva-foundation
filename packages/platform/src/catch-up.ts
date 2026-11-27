@@ -10,7 +10,9 @@
  * Asking again stays, and is chosen per filter: for a relay that does not speak
  * NIP-77 or refuses, for a filter the copy cannot judge (`search`), for a small
  * one where two round trips cost more than the answer, and for a windowed one
- * (`limit`) whose window moved further than the catch-up saves.
+ * (`limit`) whose window moved further than the catch-up saves. A refusal for
+ * the person's quota is not a reason: a short stated pause is waited out and
+ * the question compared once more (THE-15).
  *
  * A file list (`"fields": "newest"`, SPEC §6.13) is caught up the same way,
  * from the ids of its last answer the copy remembers.
@@ -20,6 +22,7 @@
  */
 import type { ReconcileOutcome, SignedEvent } from '@estiva-app/protocol'
 import type { EventSnapshot, SnapshotFilter } from './event-snapshot.js'
+import { isRateLimited, MIN_BACKOFF_MS, retryHintMs } from './refresh.js'
 
 /** What a catch-up needs of the relay. Peek's `LiveRelay` and its read path provide it. */
 export interface CatchUpRelay {
@@ -39,6 +42,13 @@ export interface CatchUpOptions {
   filtersPerQuery?: number
   /** How many times a question the relay calls too big is split by time before it is asked again. */
   maxSplits?: number
+  /**
+   * The longest a catch-up waits out the relay's quota (`rate-limited: … retry in Ns`) to compare once more, rather
+   * than asking the question whole the moment the relay said to back off (THE-15). A refusal that names no wait, or
+   * a longer one, is asked whole as before. Default {@link CATCH_UP_QUOTA_WAIT_MS}; 0 never waits.
+   */
+  quotaWaitMs?: number
+  sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
 
@@ -65,6 +75,32 @@ export const CATCH_UP_SMALLEST_HELD = 16
 const IDS_PER_FILTER = 500
 const FILTERS_PER_QUERY = 10
 const MAX_SPLITS = 6
+
+/**
+ * The relay's quota is the person's, spent by all their apps, and its pause is short: buzz counts it over 5 s, and
+ * Miky's reopens met 0–3 s on 26 Nov. Waiting that long and comparing again costs a few hundred bytes; asking whole
+ * cost a reopen 7 MB more (THE-15).
+ */
+export const CATCH_UP_QUOTA_WAIT_MS = 5_000
+
+/** A catch-up's allowance for quota waits: each question's, its splits by time included, is at most `maxMs`. */
+interface QuotaWait {
+  maxMs: number
+  sleep: (ms: number) => Promise<void>
+}
+
+/**
+ * How long to wait before comparing again, or `null` to ask whole: a quota refusal whose stated wait fits in what is
+ * left of the allowance `spent` already used.
+ */
+function quotaRetryMs(outcome: ReconcileOutcome, quota: QuotaWait, spent: number): number | null {
+  if (outcome.ok || outcome.reason !== 'refused' || !isRateLimited(outcome.message)) return null
+  const hint = retryHintMs(outcome.message)
+  if (hint === undefined) return null
+  // `retry in 0s`: the window just rolled over, and the question that would go now is the one refused.
+  const wait = Math.max(hint, MIN_BACKOFF_MS)
+  return spent + wait <= quota.maxMs ? wait : null
+}
 
 /** Whether a relay's NIP-11 document lists NIP-77. */
 export function relaySpeaksNip77(info: unknown): boolean {
@@ -94,11 +130,23 @@ async function reconcileSplitting(
   held: SignedEvent[],
   splits: number,
   now: number,
+  quota: QuotaWait,
+  spent = 0,
 ): Promise<Reconciled> {
-  const outcome = await relay.reconcile(
-    filter,
-    held.map((event) => ({ id: event.id, created_at: event.created_at })),
-  )
+  const compare = () =>
+    relay.reconcile(
+      filter,
+      held.map((event) => ({ id: event.id, created_at: event.created_at })),
+    )
+  let outcome = await compare()
+  // Refused for the person's quota with a short stated pause: wait it out and compare once more (THE-15). The halves
+  // of a split carry their parent's wait, so a question never waits longer than the allowance in all.
+  const retryMs = quotaRetryMs(outcome, quota, spent)
+  if (retryMs !== null) {
+    await quota.sleep(retryMs)
+    spent += retryMs
+    outcome = await compare()
+  }
   if (outcome.ok) return { need: outcome.need, have: outcome.have }
   if (outcome.reason !== 'blocked' || splits <= 0) return null
   const from = typeof filter.since === 'number' ? filter.since : 0
@@ -110,8 +158,8 @@ async function reconcileSplitting(
   const older = { ...filter, since: from, until: middle }
   const newer = { ...filter, since: middle + 1, until: to }
   const [a, b] = await Promise.all([
-    reconcileSplitting(relay, older, held.filter((e) => e.created_at <= middle), splits - 1, now),
-    reconcileSplitting(relay, newer, held.filter((e) => e.created_at > middle), splits - 1, now),
+    reconcileSplitting(relay, older, held.filter((e) => e.created_at <= middle), splits - 1, now, quota, spent),
+    reconcileSplitting(relay, newer, held.filter((e) => e.created_at > middle), splits - 1, now, quota, spent),
   ])
   if (!a || !b) return null
   return { need: [...a.need, ...b.need], have: [...a.have, ...b.have] }
@@ -145,6 +193,11 @@ export async function catchUp(
     filtersPerQuery: options.filtersPerQuery ?? FILTERS_PER_QUERY,
   }
   const maxSplits = options.maxSplits ?? MAX_SPLITS
+  const quota: QuotaWait = {
+    maxMs: options.quotaWaitMs ?? CATCH_UP_QUOTA_WAIT_MS,
+    // This package compiles with neither the DOM nor the Node lib: the host's timer, as refresh.ts reaches it.
+    sleep: options.sleep ?? ((ms) => new Promise<void>((done) => void (globalThis as unknown as { setTimeout(run: () => void, ms: number): unknown }).setTimeout(done, ms))),
+  }
   const now = Math.floor((options.now ?? Date.now)() / 1000)
 
   await snapshot.ready
@@ -177,7 +230,7 @@ export async function catchUp(
         held = all.filter((event) => event.created_at >= since)
       }
 
-      const diff = await reconcileSplitting(relay, reconciled, held, list ? 0 : maxSplits, now)
+      const diff = await reconcileSplitting(relay, reconciled, held, list ? 0 : maxSplits, now, quota)
       // The window moved past what it holds: asking again is the smaller read.
       if (!diff || (limit !== undefined && diff.need.length > limit)) {
         askAgain.push(asked)
