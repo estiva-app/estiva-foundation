@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconAlignLeft, IconDownload, IconEraser, IconPencil, IconRefresh, IconWriting, IconCornerDownLeft } from '@tabler/icons-react'
+import { IconAlignLeft, IconDownload, IconEraser, IconPencil, IconRefresh, IconSparkles, IconWriting, IconCornerDownLeft } from '@tabler/icons-react'
 import { Avatar, KindIcon, CommandPalette, CommandPaletteAnswer, type CommandPaletteChip, CommandPaletteForm, type CommandPaletteGroup, CommandPaletteQuote, type CommandPaletteRow, CommandPaletteSearch, CommandPaletteWorking, FieldLine, isApplePlatform, isPlainClick, useToast } from '@estiva-app/ui'
 import { ActionFormFields } from './ActionFormFields.js'
+import { useKeptAsks } from './keptAsks.js'
 import { applyPrefill, draftValues, missingFields, seedDraft, type FormDraft } from './formDraft.js'
 import { KIND_CHANNEL_METADATA, type ResolvedAction } from '@estiva-app/interop'
 import { addrToNaddr } from '@estiva-app/protocol'
@@ -116,6 +117,11 @@ type LiveRead =
 export interface LauncherState {
   holds: boolean
   status: 'working' | 'waiting' | null
+  /**
+   * A sentence the person sent, which the frame keeps under Recent until they forget it (KIN-12): the sentence, the
+   * name of where it was asked, and whether the person is there now.
+   */
+  ask?: { text: string; where: string; here: boolean }
 }
 
 export interface CommandLauncherProps {
@@ -165,6 +171,32 @@ function whereFrom(context: LauncherContext, words: LauncherHost['words']): stri
   return `In ${label}`
 }
 
+/** Where a sentence was asked, as its row under Recent names it: "in Weekly sync", "in Launch plan" (KIN-12). */
+function placeName(context: LauncherContext): string {
+  const label = context.composer?.label
+  if (label) return label.startsWith('Reply to ') ? `a reply to ${label.slice('Reply to '.length)}` : label
+  const open = openOf(context)
+  return open?.title || (open?.kind === 'page' ? 'a page' : 'a conversation')
+}
+
+/** An ask's mark under Recent: the prompt's sparkles on the row's tile, with the search's own dot while it works or waits unseen. */
+function AskMark({ status }: { status: 'working' | 'waiting' | null }) {
+  return (
+    <span className="relative flex size-8 items-center justify-center rounded-sm bg-bg-inset text-text-secondary">
+      <IconSparkles size={16} stroke={1.5} />
+      {status && (
+        <>
+          <span className="sr-only">{status === 'working' ? 'working on what you asked' : 'an answer is waiting'}</span>
+          <span
+            aria-hidden
+            className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent-primary${status === 'working' ? ' animate-working motion-reduce:animate-none' : ''}`}
+          />
+        </>
+      )}
+    </span>
+  )
+}
+
 function initialStack(apps: readonly LauncherApp[], appId?: string, actionId?: string): Frame[] {
   const first: Frame = { level: { kind: 'first' }, query: '' }
   const app = apps.find((a) => a.id === appId)
@@ -178,7 +210,7 @@ function initialStack(apps: readonly LauncherApp[], appId?: string, actionId?: s
 const formKey = (level: Extract<Level, { kind: 'form' }>) =>
   `${level.action.target ?? level.app?.id ?? ''}:${level.action.id}`
 
-export function CommandLauncher({ host, context: openedHere, onClose, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
+export function CommandLauncher({ host, context: openedHere, onClose: finished, open = true, onHide, onState, initialAppId, initialActionId }: CommandLauncherProps) {
   /*
     What the app hands over, under the names this file has always used for
     them. Read on every render, so each is as fresh as the app's own hooks.
@@ -234,6 +266,16 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
     setRequest(next)
   }
 
+  /*
+    Done with the box. A sentence that was sent is kept under Recent (KIN-12), and
+    picking it shows the sentence and its answer: never the level it was left on,
+    such as a form already submitted from under the answer.
+  */
+  const onClose = () => {
+    if (request?.intent === 'ask' && sentFrom) setStack([{ level: { kind: 'first' }, query: request.text }])
+    finished()
+  }
+
   const setQuery = (next: string) => {
     setCannotAsk(null)
     // A changed sentence is a new one: its answer no longer answers it, and a request in flight is abandoned (KIN-2).
@@ -252,6 +294,8 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
   // The app's people: a row opens the person (in Peek, their DM; REM-3).
   const people = host.people
   const recents = host.recents?.list ?? []
+  /** The other sentences sent in this tab, when the frame keeps them (KIN-12). */
+  const kept = useKeptAsks()
 
   /*
     Files and messages live on the relay, matched by word starts as everything
@@ -578,7 +622,14 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
   }, [open, arrived])
   const holds = stack.length > 1 || query.trim() !== '' || request !== null
   const status = working ? 'working' : arrived && !seen ? 'waiting' : null
-  useEffect(() => onState?.({ holds, status }), [holds, status, onState])
+  /* The sentence that was sent, for Recent (KIN-12): what it was, where, and whether that is where the person is now. */
+  const askText = request?.intent === 'ask' && sentFrom ? request.text : null
+  const askWhere = askText !== null && sentFrom ? placeName(sentFrom.context) : ''
+  const askHere = askText !== null && sentFrom?.pathname === pathname
+  useEffect(
+    () => onState?.(askText === null ? { holds, status } : { holds, status, ask: { text: askText, where: askWhere, here: askHere } }),
+    [holds, status, askText, askWhere, askHere, onState],
+  )
   // Unmounted, it holds nothing and says nothing.
   useEffect(() => () => onState?.({ holds: false, status: null }), [onState])
 
@@ -1131,7 +1182,44 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
         .filter((r) => r.kind === 'person' && !isOpenPerson(r.id))
         .flatMap((r) => (people ?? []).filter((p) => p.id === r.id))
         .slice(0, 2)
-      const recentRows = [...recentTopics, ...recentPeople.map((p) => personRow(p, () => host.recents?.forget({ kind: 'person', id: p.id })))]
+      /*
+        The sentences sent in this tab come first (KIN-12; Miky, 23 and 25
+        November 2026): the sentence, where it was asked, and the search's dot
+        while it works or its answer waits unseen. Picking one shows it, about
+        where it was asked.
+      */
+      const askRows: CommandPaletteRow[] = (kept?.asks ?? []).slice(0, 3).map((a) => ({
+        id: `ask-${a.id}`,
+        label: a.text,
+        description: `in ${a.where}`,
+        leading: <AskMark status={a.status} />,
+        onSelect: () => kept?.show(a.id),
+        onForget: () => kept?.forget(a.id),
+      }))
+      const recentRows = [
+        ...askRows,
+        ...recentTopics,
+        ...recentPeople.map((p) => personRow(p, () => host.recents?.forget({ kind: 'person', id: p.id }))),
+      ]
+      const recentGroup: CommandPaletteGroup = {
+        label: 'Recent',
+        rows: recentRows.length
+          ? [
+              ...recentRows,
+              {
+                id: 'clear-recent',
+                label: 'Clear recent',
+                icon: icon(IconEraser),
+                onSelect: () => {
+                  host.recents?.clear()
+                  kept?.clear()
+                },
+              },
+            ]
+          : [],
+      }
+      /* An answer waits: Recent comes first, so the waiting ask is the lit row and Enter opens it (Miky, KIN-8). */
+      const waits = kept?.asks.some((a) => a.status === 'waiting') ?? false
       /*
         The host's own actions, before anything is typed (INT-13, Miky
         2026-10-12): below this conversation, above Recent, under "Actions" —
@@ -1148,19 +1236,10 @@ export function CommandLauncher({ host, context: openedHere, onClose, open = tru
         })),
       )
       const hostGroups = [{ label: 'Actions', rows: [...ownRows('host'), ...hostRows] }]
+      // No Ask, Draft or Make rows: you ask by writing a sentence (Miky, 20 November 2026).
+      const hereGroups = [{ label: words.openGroup, rows: changeRowsFor(changeRows) }, ...hostGroups]
       return {
-        groups: [
-          // No Ask, Draft or Make rows: you ask by writing a sentence (Miky, 20 November 2026).
-          { label: words.openGroup, rows: changeRowsFor(changeRows) },
-          ...hostGroups,
-          {
-            label: 'Recent',
-            rows: recentRows.length
-              ? [...recentRows, { id: 'clear-recent', label: 'Clear recent', icon: icon(IconEraser), onSelect: () => host.recents?.clear() }]
-              : [],
-          },
-          { label: 'Apps', rows: OTHER_APPS.map(appRow) },
-        ],
+        groups: [...(waits ? [recentGroup, ...hereGroups] : [...hereGroups, recentGroup]), { label: 'Apps', rows: OTHER_APPS.map(appRow) }],
         notes: [],
       }
     }

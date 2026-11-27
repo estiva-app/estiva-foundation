@@ -13,52 +13,9 @@ import { ToastProvider } from '@estiva-app/ui'
 import { CommandLauncher, type LauncherState } from '../src/CommandLauncher.js'
 import type { LauncherContext, LauncherHost } from '../src/host.js'
 import { launcherApps } from '../src/launcherActions.js'
+import { PLAN, standIn } from './standIn.js'
 
 afterEach(cleanup)
-
-const WORDS: LauncherHost['words'] = {
-  anywhere: 'Anywhere in Leaf',
-  inOpen: 'On this page',
-  search: 'Search Leaf, or choose an app',
-  searchOrAsk: 'Search, or ask about this page',
-  openGroup: 'This page',
-  nothingOpen: 'Open a page to ask about it.',
-  nothingYet: 'This page is empty.',
-  reading: 'Reading the page…',
-  downloadModel: 'Download the on-device model to ask about pages',
-}
-
-const PLAN = { id: '30023:aa:plan', title: 'Launch plan' }
-
-function standIn(over: Partial<LauncherHost> = {}): LauncherHost {
-  return {
-    // An app the registry does not list: none of the apps is the one the box runs in.
-    apps: launcherApps('leaf'),
-    mark: () => null,
-    words: WORDS,
-    path: { pathname: '/page/plan', search: '' },
-    navigate: () => {},
-    people: [{ id: 'p1', name: 'Katerina Novak', role: 'Designer' }],
-    openPerson: () => {},
-    file: { glyph: () => 'topic', open: () => {}, isOpen: () => false },
-    useFileSearch: (query) => (query.trim() ? { state: { kind: 'done', count: 1 }, hits: [PLAN] } : { state: { kind: 'idle' }, hits: [] }),
-    plain: (body) => body,
-    manifests: { creatableUnder: async () => null, applyAction: async () => ({ ok: true }), resolveObject: async () => null },
-    model: {
-      hasPromptApi: () => true,
-      prefillAvailability: async () => 'available',
-      canPrefill: async () => true,
-      downloadModel: async () => true,
-      promptForText: async () => null,
-      promptForObject: async () => null,
-    },
-    showSource: () => true,
-    // No form is opened here: the fields are drawn in Peek's suite, through Peek's host.
-    form: { references: {} as LauncherHost['form']['references'], mentions: {} as LauncherHost['form']['mentions'], referenceView: () => null, personField: () => null },
-    useReportFailure: () => {},
-    ...over,
-  }
-}
 
 const PAGE: LauncherContext = {
   conversation: {
@@ -239,9 +196,11 @@ describe('what the frame is told, so Escape can keep the box', () => {
     fireEvent.keyDown(field(), { key: 'Enter' })
 
     await waitFor(() => expect(screen.getByTestId('answer')).toBeTruthy())
-    await waitFor(() => expect(onState).toHaveBeenLastCalledWith({ holds: true, status: null }))
+    // The sentence is kept, named by where it was asked (KIN-12).
+    const ask = { text: 'when do we ship', where: 'a conversation', here: true }
+    await waitFor(() => expect(onState).toHaveBeenLastCalledWith({ holds: true, status: null, ask }))
     // On its way, the search would have said "working".
-    expect(onState).toHaveBeenCalledWith({ holds: true, status: 'working' })
+    expect(onState).toHaveBeenCalledWith({ holds: true, status: 'working', ask })
   })
 })
 

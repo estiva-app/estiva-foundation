@@ -2,6 +2,27 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.4.0 — 2026-11-27
+
+**The asks you made in this tab wait under Recent (KIN-12).** No host has to
+change: an app that holds the box with `useKeptLauncher` gets it with the bump.
+
+- Every sentence sent keeps its own box, mounted and hidden, so its request runs
+  on while the person moves; closing or acting no longer cancels it.
+- ⌘K where the shown ask was asked shows it, as before. Anywhere else it opens a
+  fresh box about where the person is, and Recent lists the asks first: the
+  sentence, "in <where it was asked>", and the search's dot while it works
+  (pulsing) or its answer is unseen (solid). Picking one shows it, about where
+  it was asked.
+- While any answer waits, Recent comes above the place's own groups, so that ask
+  is the lit row and Enter opens it.
+- Opening a result or using the answer closes the box and keeps the ask. Only
+  Ctrl+Backspace on its row, Clear recent (which clears asks too) or a reload
+  forget it. Nothing is written to the browser.
+- The bar's dot covers every ask the box is not showing.
+- `LauncherState` gains `ask` (the sentence, where, and whether the person is
+  there now); `KeptAsksContext` carries the other asks to each box.
+
 ## 0.3.4 — 2026-11-24
 
 **Ship's New project is offered in a box that does not list Peek (KIN-11).** No
