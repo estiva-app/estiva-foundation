@@ -381,6 +381,12 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
   const lists = new Map<string, Set<string>>()
   /** Each remembered list's key without its `#d` values ({@link listShape}), worked out once per key. */
   const shapes = new Map<string, string | null>()
+  /**
+   * The ids a list the copy never answered was last offered as ({@link heldFromNeighbours}), until it is caught up:
+   * what it remembers then is what the relay compared, not a share worked out again after the fetch, when another
+   * list of its shape may have been answered or forgotten (review-security).
+   */
+  const offered = new Map<string, Set<string>>()
   let listsDirty = false
   const dirty = new Set<string>()
   const removed = new Set<string>()
@@ -623,37 +629,62 @@ export function createEventSnapshot(options: EventSnapshotOptions): EventSnapsho
    * read again: 628 KB of issues on Miky's reopen after an hour away, 27 Nov. Caught up from this, the relay sends only
    * the new files and the changes the copy lacks, and drops what it no longer lists. `null` when no remembered list
    * holds any of its files.
+   *
+   * Each file is taken from the most recently answered list that holds it, found through the copy's `d` and `a`
+   * indexes: one author's pooled lists pile up as their sets change, and walking every one of them on each `held()`
+   * was hundreds of milliseconds of the main thread (code review).
    */
   function heldFromNeighbours(filter: SnapshotFilter, key: string): SignedEvent[] | null {
-    if (!Array.isArray(filter['#d'])) return null
+    const asked = filter['#d']
+    if (!Array.isArray(asked)) return null
     const shape = shapeOf(key)
     if (shape === null) return null
+    const neighbours: Set<string>[] = []
+    for (const [other, ids] of lists) if (other !== key && shapeOf(other) === shape) neighbours.push(ids)
+    if (!neighbours.length) return null
+    // `lists` runs from the least recently answered to the most.
+    neighbours.reverse()
     const isRoot = snapshotMatcher(listRoots(filter))
-    const roots = new Map<string, SignedEvent>()
-    const near: SignedEvent[] = []
-    for (const [other, ids] of lists) {
-      if (other === key || shapeOf(other) !== shape) continue
-      for (const id of ids) {
-        const held = events.get(id)?.event
-        if (!held) continue
-        if (isRoot(held)) roots.set(held.id, held)
-        else near.push(held)
-      }
+    const out: SignedEvent[] = []
+    for (const root of candidates({ '#d': asked })) {
+      if (!isRoot(root)) continue
+      const list = neighbours.find((ids) => ids.has(root.id))
+      if (!list) continue
+      out.push(root)
+      const address = replaceableKey(root)
+      if (address === null) continue
+      for (const change of candidates({ '#a': [address] })) if (list.has(change.id)) out.push(change)
     }
-    if (!roots.size) return null
-    const addresses = new Set([...roots.values()].map(replaceableKey).filter((a): a is string => a !== null))
-    const out = new Map(roots)
-    for (const event of near) {
-      if (event.tags.some((tag) => tag[0] === 'a' && tag[1] !== undefined && addresses.has(tag[1]))) out.set(event.id, event)
+    if (!out.length) return null
+    offered.delete(key)
+    offered.set(key, new Set(out.map((event) => event.id)))
+    for (const oldest of offered.keys()) {
+      if (offered.size <= maxLists) break
+      offered.delete(oldest)
     }
-    return [...out.values()]
+    return out
+  }
+
+  /** What a list held before its catch-up: its last answer, or the share it was offered as. */
+  function heldBefore(asked: SnapshotFilter, key: string): SignedEvent[] {
+    const known = heldList(key)
+    if (known) return known
+    const ids = offered.get(key)
+    if (!ids) return heldFromNeighbours(asked, key) ?? []
+    const out: SignedEvent[] = []
+    for (const id of ids) {
+      const held = events.get(id)
+      if (held) out.push(held.event)
+    }
+    return out
   }
 
   /** A list caught up: its ids are what it held, less what the relay no longer lists, plus what it fetched. */
   function settleList(asked: SnapshotFilter, key: string, fetched: SignedEvent[], gone: string[]) {
     const seenAt = now()
-    // What it held before the fetched events joined the copy: a new list's is its neighbours' share.
-    const before = heldList(key) ?? heldFromNeighbours(asked, key) ?? []
+    // What it held before the fetched events joined the copy: a new list's is the neighbours' share it was offered as.
+    const before = heldBefore(asked, key)
+    offered.delete(key)
     for (const event of fetched) hold({ event, seenAt }, true)
     const left = new Set(gone)
     const ids = new Set<string>()
