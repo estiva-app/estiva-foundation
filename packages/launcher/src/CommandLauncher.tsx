@@ -252,15 +252,17 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
   const { pathname, search } = host.path
   /** The page the person is on, as the router has it. */
   const here = pathname + search
+  /** The place a sentence asked here is about (`LauncherHost.path`): on Peek's Desk, the file it shows, not the page. */
+  const place = host.path.place || pathname
   const [request, setRequest] = useState<{ intent: Intent; text: string } | null>(null)
-  const [sentFrom, setSentFrom] = useState<{ context: LauncherContext; path: string; pathname: string } | null>(null)
+  const [sentFrom, setSentFrom] = useState<{ context: LauncherContext; path: string; place: string } | null>(null)
   const [draft, setDraft] = useState<string | null | false>(null)
   const [answer, setAnswer] = useState<AskAnswer | null | false>(null)
   const context = request && sentFrom ? sentFrom.context : openedHere
   /** Send, or drop (`null`), a request. What the last one brought goes with it at once, so an old answer is never read as the new one's. */
   const send = (next: { intent: Intent; text: string } | null) => {
     // Asking again from the same sentence keeps where it was first asked.
-    if (next && (!request || !sentFrom)) setSentFrom({ context: openedHere, path: here, pathname })
+    if (next && (!request || !sentFrom)) setSentFrom({ context: openedHere, path: here, place })
     setDraft(null)
     setAnswer(null)
     setRequest(next)
@@ -625,7 +627,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
   /* The sentence that was sent, for Recent (KIN-12): what it was, where, and whether that is where the person is now. */
   const askText = request?.intent === 'ask' && sentFrom ? request.text : null
   const askWhere = askText !== null && sentFrom ? placeName(sentFrom.context) : ''
-  const askHere = askText !== null && sentFrom?.pathname === pathname
+  const askHere = askText !== null && sentFrom?.place === place
   useEffect(
     () => onState?.(askText === null ? { holds, status } : { holds, status, ask: { text: askText, where: askWhere, here: askHere } }),
     [holds, status, askText, askWhere, askHere, onState],
@@ -655,7 +657,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     }
     // Still on that page: its message box is on screen, whatever else the address now carries (a thread, a message
     // it scrolled to) and whichever box has the cursor.
-    if (sentFrom.pathname === pathname && composer.insertTextInto(label, text)) return onClose()
+    if (sentFrom.place === place && composer.insertTextInto(label, text)) return onClose()
     const lost = () =>
       showToast({
         label: `Could not reach the message box of ${label ? `“${label}”` : 'that conversation'}. Open it and choose this again: the answer is still in search.`,
@@ -1443,7 +1445,7 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
         Not once the question was changed: the answer on screen is to the old one. Not on another page either: the
         answer is about where it was asked, and must not be written into a page it was never about (KIN-5 review).
       */
-      const askedHere = !sentFrom || sentFrom.pathname === pathname
+      const askedHere = !sentFrom || sentFrom.place === place
       if (answer && request && host.answerActions && !changed && askedHere) {
         // In the order the answer first cites them; an answer that cites nothing cites nothing, not every part read.
         const firstCited = [...new Set([...answer.text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])))]

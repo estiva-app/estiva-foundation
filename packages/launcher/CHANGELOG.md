@@ -2,6 +2,21 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.4.1 — 2026-11-27
+
+**An ask made in one conversation on a Desk waits under Recent in the next
+(KIN-12).** An app whose page can show one of several conversations (Peek's
+Desk) passes `path.place`, naming the conversation the same wherever it is
+shown; no other host has to change.
+
+- Where a sentence was asked is `host.path.place` when given, else the
+  pathname as before. On Peek's Desk every conversation is `/app/desk`, so ⌘K
+  in a second one showed the first one's sentence and answer, instead of a
+  fresh box with the ask under Recent.
+- The same place decides whether "Put the answer in the message box" writes
+  here or opens the conversation first, and whether the app's answer actions
+  are offered.
+
 ## 0.4.0 — 2026-11-27
 
 **The asks you made in this tab wait under Recent (KIN-12).** No host has to

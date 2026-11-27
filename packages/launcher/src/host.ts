@@ -33,8 +33,16 @@ export interface LauncherHost {
   /** The app's own words: the ones that name it, or what is open in it. */
   words: LauncherWords
 
-  /** Where the person is, as the app's router has it. */
-  path: { pathname: string; search: string }
+  /**
+   * Where the person is, as the app's router has it. `place` names the place a
+   * sentence asked there is about, when the pathname alone does not: Peek's
+   * Desk shows every file at `/app/desk`, the one beside its lists named by
+   * `?open=`. Without it (or empty) the place is the pathname, so a thread
+   * opened or a message scrolled to on the same page is still the same place.
+   * Name the conversation itself, the same wherever it is shown: one
+   * conversation on its own page and beside Desk's lists is one place.
+   */
+  path: { pathname: string; search: string; place?: string }
   /** Go to a path of this app. */
   navigate: (path: string) => void
 
