@@ -78,6 +78,15 @@ describe('identifierFromRef', () => {
     assert.equal(identifierFromRef('projects'), null)
     assert.equal(identifierFromRef(''), null)
   })
+
+  it('is null for an address, so Peek\'s old long link names no file (LIN-8)', () => {
+    assert.equal(identifierFromRef(`30840:${'b'.repeat(64)}:${UUID}`), null)
+    assert.equal(identifierFromRef(`30840%3A${'b'.repeat(64)}%3A${UUID}`), null)
+  })
+
+  it('is null for a uuid glued to the text before it without the slug\'s hyphen', () => {
+    assert.equal(identifierFromRef(`abc${UUID}`), null)
+  })
 })
 
 describe('matchObjectUrl', () => {

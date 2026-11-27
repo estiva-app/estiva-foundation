@@ -6,6 +6,16 @@ how a declaration is read, is a MAJOR — in `0.x`, a MINOR — even when no
 TypeScript signature moved. A consumer upgrading must be able to tell whether
 manifests already published still mean what they meant.
 
+## 0.121.0 — 2026-11-27
+
+**Manifest: no change to what a manifest declares or how it is read. Links: a
+ref is SPEC §7.2's `<slug>-<d>` and nothing looser** (LIN-8).
+`identifierFromRef` reads the trailing uuid only when it is the whole ref or
+follows the slug's `-`. Before, any trailing uuid counted, so Peek's old long
+link `/topic/<kind>:<pubkey>:<d>` still named its file through the short-link
+reader; no app reads that link any more, and it now names nothing. A link any
+app writes (`filePathOf`, `objectRef`) reads back exactly as before.
+
 ## 0.120.0 — 2026-11-25
 
 **Manifest: no change to what a manifest declares or how it is read. Wire: a
