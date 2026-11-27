@@ -37,7 +37,8 @@ function model() {
   }
 }
 
-function mountApp(over: Partial<LauncherHost> = {}) {
+/** `desk`: like Peek's Desk, every conversation is shown at one page, the open one named in the query. */
+function mountApp(over: Partial<LauncherHost> = {}, { desk = false } = {}) {
   const m = model()
   const put: string[] = []
   function App() {
@@ -46,7 +47,9 @@ function mountApp(over: Partial<LauncherHost> = {}) {
     const base = standIn(over)
     const host = {
       ...base,
-      path: { pathname: `/t/${at.replace(' ', '-').toLowerCase()}`, search: '' },
+      path: desk
+        ? { pathname: '/desk', search: `?open=${slug(at)}`, place: `/desk?open=${slug(at)}` }
+        : { pathname: `/t/${slug(at)}`, search: '' },
       model: { ...base.model, promptForText: m.promptForText },
       answerActions: () => [{ id: 'put', label: 'Put the answer in the message box', run: () => (put.push(at), true) }],
     }
@@ -77,6 +80,10 @@ function mountApp(over: Partial<LauncherHost> = {}) {
   }
 }
 
+function slug(name: string) {
+  return name.replace(' ', '-').toLowerCase()
+}
+
 const options = () => screen.queryAllByRole('option')
 const row = (text: string) => options().find((o) => o.textContent?.includes(text))
 
@@ -101,6 +108,23 @@ describe('an ask waits under Recent wherever the person goes', () => {
 
     await waitFor(() => expect(app.field()!.value).toBe('when do we ship the launcher'))
     expect(screen.getByTestId('answer').textContent).toContain('On Friday')
+  })
+
+  it('opens fresh about the other conversation on a Desk, where every conversation is shown at the same page', async () => {
+    const app = mountApp({}, { desk: true })
+    app.search()
+    app.ask('when do we ship the launcher')
+    await waitFor(() => expect(app.asked()).toBe(1))
+    app.answer(0, 'On Friday [1].')
+    await waitFor(() => expect(screen.getByTestId('answer').textContent).toContain('On Friday'))
+
+    app.search()
+    app.move()
+    app.search()
+
+    expect(app.field()!.value).toBe('')
+    expect(screen.queryByTestId('answer')).toBeNull()
+    expect(row('when do we ship the launcher')?.textContent).toContain(`in ${WEEKLY}`)
   })
 
   it('shows the ask as it was where it was asked', async () => {
