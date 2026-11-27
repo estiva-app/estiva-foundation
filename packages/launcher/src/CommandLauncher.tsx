@@ -731,7 +731,10 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     if (!formLevel || !prefillFor) return
     const conversation = threadContext(bodies(opened))
     if (!conversation && !sentence) return
-    const built = formSchema(formLevel.action.fields, formLevel.app?.vocabularies ?? {})
+    // A New document's text is the answer you read, or nothing: never one the model wrote (KIN-9's Decided line).
+    const answerOnly = formLevel.app?.actions.find((a) => a.id === formLevel.action.id)?.startsWithAnswer
+    const fields = answerOnly ? formLevel.action.fields.filter((f) => f.control !== 'prose') : formLevel.action.fields
+    const built = formSchema(fields, formLevel.app?.vocabularies ?? {})
     if (!built) return
     let cancelled = false
     void (async () => {
