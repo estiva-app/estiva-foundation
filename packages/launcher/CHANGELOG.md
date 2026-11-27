@@ -19,6 +19,8 @@ unchanged: its built-in New document still opens the page.
   a block document) when the person has not typed in it. The conversation's
   suggestion no longer replaces it. A form with no such field is unchanged, so
   Ship's New project still starts empty.
+- A creation on a team starts in the team you are in (`host.currentFolder`),
+  as Create topic did: Leaf's New document, and Ship's New project in Peek.
 - The registry comment no longer says an app nobody here wrote works the same
   day: that waits for the workspace's added apps (WOR-2).
 

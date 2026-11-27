@@ -701,7 +701,9 @@ export function CommandLauncher({ host, context: openedHere, onClose: finished, 
     Folder that is not offered, the field starts empty and says so.
   */
   const seedFor = (form: Extract<Level, { kind: 'form' }>): FormDraft => {
-    const here = form.action.id === 'create-file' ? host.currentFolder?.() : undefined
+    // A creation on a team starts in the team you are in: a topic, and a document from Leaf (KIN-9).
+    const onATeam = form.action.id === 'create-file' || form.action.fields.some((f) => f.key === PARENT_FIELD && f.parentNoun === 'team')
+    const here = onATeam ? host.currentFolder?.() : undefined
     const read = form.app ? live[form.app.id] : undefined
     const match =
       here && read?.state === 'ready' ? read.parents[form.action.id]?.find((p) => p.value.endsWith(`:${here}`)) : undefined
