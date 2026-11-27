@@ -8,9 +8,8 @@
  * file's `d` holds: a colon in it included. A link to another file must not.
  *
  * The links are the ones the apps write: Ship's, Leaf's and Peek's short form
- * `/<word>/<slug>-<d>`, and Peek's long form for a file whose `d` is not a uuid,
- * `/topic/<kind>:<pubkey>:<d escaped>` (peek-app `src/lib/objectUrl.ts`
- * `filePath`).
+ * `/<word>/<slug>-<d>`. Peek's old long form, `/topic/<kind>:<pubkey>:<d>`,
+ * names nothing since the stored ones were rewritten (LIN-8).
  *
  * A failure prints the smallest input that breaks the rule and the seed that
  * replays it: `FC_SEED=<seed> npm test -w packages/conversation`.
@@ -58,11 +57,11 @@ test('a short link to a file names that file, on any host, after any title', () 
   )
 })
 
-test("Peek's long link to a file names that file, whatever its d holds, a colon included", () => {
+test("Peek's old long link names no file, not even its own (LIN-8)", () => {
   fc.assert(
-    fc.property(anyDArb, hex64Arb(), kindArb, fc.constantFrom(...HOSTS), tailArb, (d, pubkey, kind, host, tail) => {
+    fc.property(fc.oneof(fc.uuid(), anyDArb), hex64Arb(), kindArb, fc.constantFrom(...HOSTS), tailArb, (d, pubkey, kind, host, tail) => {
       const url = peekLongLink(host, kind, pubkey, d) + tail
-      assert.equal(urlNames(url, `${kind}:${pubkey}:${d}`), true, url)
+      assert.equal(urlNames(url, `${kind}:${pubkey}:${d}`), false, url)
     }),
     settings,
   )

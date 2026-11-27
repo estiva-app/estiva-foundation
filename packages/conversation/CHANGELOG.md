@@ -6,6 +6,14 @@ none. A change to how an event is read is a MINOR in `0.x` even when no
 signature moved, because two apps on different versions would then disagree
 about a conversation.
 
+## 0.48.0 — 2026-11-27
+
+- **SPEC §13.6.1 (no rule changed):** `urlNames` no longer reads Peek's old
+  long link, `/topic/<kind>:<pubkey>:<d>` (LIN-8). The stored ones were
+  rewritten to the short link, and no app reads the old shapes after that, so
+  a message whose text holds only a long link keeps no card for that file. A
+  short link `…/<slug>-<uuid>` names its file exactly as before.
+
 ## 0.47.0 — 2026-11-24
 
 - **SPEC §6.4, §6.13 (no rule changed; the switch is gone):** a comment,
