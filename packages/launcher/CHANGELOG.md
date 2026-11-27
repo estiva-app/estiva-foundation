@@ -2,6 +2,15 @@
 
 Every entry says whether an app that mounts the box has to change its `host`.
 
+## 0.5.1 — 2026-11-27
+
+**A New document's text is the answer you read, or nothing (KIN-9 review).**
+No host has to change.
+
+- The conversation's suggestion for a form no longer writes a New document's
+  text: with no answer it fills the title and summary only, as decided at
+  KIN-9's kickoff. Other forms are filled as before.
+
 ## 0.5.0 — 2026-11-27
 
 **Leaf's New document in every other app's ⌘K, with the answer you just read

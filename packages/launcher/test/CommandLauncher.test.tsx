@@ -297,9 +297,33 @@ describe("Leaf's New document in Ship's and Peek's ⌘K (KIN-9)", () => {
     const applyAction = vi.fn<LauncherHost['manifests']['applyAction']>(async () => ({ ok: true }))
     // Asked in the Ops team, so the form starts there.
     const host = standIn({ apps: launcherApps('ship'), currentFolder: () => 'ops', manifests: { creatableUnder: async (kind) => reads[kind] ?? null, applyAction, resolveObject: async () => null } })
-    const mounted = mount({ ...host, model: { ...host.model, promptForText: async () => 'We launch on 3 December [1].' } }, PAGE)
-    return { ...mounted, applyAction, pick: () => fireEvent.click(optionNamed(label)!), id }
+    // The conversation's suggestion for the form (PEE-5), which writes a text of its own.
+    const promptForObject = vi.fn(async () => ({ title: 'Launch plan', description: 'The model wrote this.' }))
+    const mounted = mount({ ...host, model: { ...host.model, promptForText: async () => 'We launch on 3 December [1].', promptForObject } }, PAGE)
+    return { ...mounted, applyAction, promptForObject, pick: () => fireEvent.click(optionNamed(label)!), id }
   }
+  // Picked from the sentence, with nothing asked: the conversation's suggestion fills the form.
+  const submitUnasked = async ({ type, pick, applyAction, promptForObject }: ReturnType<typeof answered>) => {
+    type('write a document for the launch plan')
+    await waitFor(() => expect(optionNamed('New page')).toBeTruthy())
+    pick()
+    await waitFor(() => expect(promptForObject).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByRole('textbox', { name: /title/i }) as HTMLInputElement).value).toBe('Launch plan'))
+    fireEvent.click(document.querySelector<HTMLButtonElement>('button[type="submit"]')!)
+    await waitFor(() => expect(applyAction).toHaveBeenCalledTimes(1))
+    return applyAction.mock.calls[0][0].value as Record<string, unknown>
+  }
+
+  it("makes New document with no answer with the suggested title and no text the model wrote", async () => {
+    const value = await submitUnasked(answered('add-document', 'New document'))
+    expect(value.title).toBe('Launch plan')
+    expect(value.description).toBeUndefined()
+  })
+
+  it("still lets the suggestion fill another action's text", async () => {
+    const value = await submitUnasked(answered('add-page', 'New page'))
+    expect(String(value.description)).toContain('The model wrote this.')
+  })
   const submitAs = async ({ field, type, pick, applyAction }: ReturnType<typeof answered>) => {
     type('when do we launch, write it as a document')
     fireEvent.keyDown(field(), { key: 'Enter' })
@@ -323,6 +347,6 @@ describe("Leaf's New document in Ship's and Peek's ⌘K (KIN-9)", () => {
   it("leaves another action's text empty under an answer, though its app declares one", async () => {
     const value = await submitAs(answered('add-page', 'New page'))
     expect(value.title).toBe('Launch')
-    expect(value.description).toBeUndefined()
+    expect(String(value.description ?? '')).not.toContain('3 December')
   })
 })
